@@ -95,6 +95,12 @@ class MediaViewerPanel(Container):
     
     MediaViewerPanel Collapsible {
         margin-top: 1;
+        height: auto;
+    }
+    
+    MediaViewerPanel Collapsible > Container {
+        height: auto;
+        padding: 0;
     }
     
     MediaViewerPanel .metadata-buttons {
@@ -195,8 +201,130 @@ class MediaViewerPanel(Container):
         width: 100%;
     }
     
+    MediaViewerPanel TabbedContent > ContentSwitcher {
+        height: 1fr;
+        width: 100%;
+    }
+    
     MediaViewerPanel TabPane {
+        padding: 0;
+        height: 100%;
+    }
+    
+    MediaViewerPanel .analysis-scroll-container {
+        height: 100%;
         padding: 1;
+    }
+    
+    MediaViewerPanel .analysis-controls {
+        padding: 1;
+        background: $boost;
+        margin-bottom: 1;
+        height: auto;
+    }
+    
+    MediaViewerPanel .analysis-display-scroll {
+        height: 1fr;
+        padding: 1;
+    }
+    
+    MediaViewerPanel #analysis-display {
+        min-height: 20;
+        margin: 1;
+        height: auto;
+        padding: 1;
+        border: solid $primary;
+        background: $surface;
+    }
+    
+    MediaViewerPanel .provider-row {
+        layout: horizontal;
+        height: 3;
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+    
+    MediaViewerPanel .provider-row Select {
+        width: 1fr;
+        margin-right: 1;
+    }
+    
+    MediaViewerPanel .compact-collapsible {
+        height: auto;
+        padding: 0;
+        margin-bottom: 1;
+    }
+    
+    MediaViewerPanel .compact-collapsible > Container {
+        height: auto;
+        padding: 1 0;
+    }
+    
+    MediaViewerPanel .compact-collapsible CollapsibleTitle {
+        padding: 0 1;
+    }
+    
+    MediaViewerPanel .api-params-row {
+        layout: horizontal;
+        height: auto;
+        margin-top: 1;
+        margin-bottom: 0;
+    }
+    
+    MediaViewerPanel .param-group {
+        layout: vertical;
+        width: 1fr;
+        height: auto;
+        margin: 0 1;
+    }
+    
+    MediaViewerPanel .param-group Label {
+        margin-bottom: 0;
+        text-style: bold;
+        color: $text-muted;
+        height: 1;
+    }
+    
+    MediaViewerPanel .param-group Input {
+        width: 100%;
+        height: 3;
+        margin-bottom: 0;
+    }
+    
+    MediaViewerPanel .prompt-label {
+        margin-top: 1;
+        margin-bottom: 0;
+        text-style: bold;
+    }
+    
+    MediaViewerPanel .prompt-textarea {
+        height: 6;
+        margin-bottom: 1;
+        width: 100%;
+    }
+    
+    MediaViewerPanel #generate-analysis-btn {
+        width: auto;
+        margin: 1;
+        height: 3;
+    }
+    
+    MediaViewerPanel .analysis-actions {
+        layout: horizontal;
+        height: 3;
+        margin-top: 1;
+        margin-bottom: 1;
+        padding: 1;
+    }
+    
+    MediaViewerPanel .analysis-actions Button {
+        margin-right: 1;
+        min-width: 10;
+    }
+    
+    MediaViewerPanel .bottom-spacer {
+        height: 2;
+        width: 100%;
     }
     """
     
@@ -206,12 +334,20 @@ class MediaViewerPanel(Container):
     format_for_reading: reactive[bool] = reactive(False)
     search_matches: reactive[List[Tuple[int, int]]] = reactive([])
     current_match: reactive[int] = reactive(-1)
+    current_analysis: reactive[Optional[str]] = reactive(None)
+    has_existing_analysis: reactive[bool] = reactive(False)
+    analysis_edit_mode: reactive[bool] = reactive(False)
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the viewer panel."""
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self._original_data = None
+        
+    def on_mount(self) -> None:
+        """Called when the widget is mounted."""
+        # Populate providers on mount
+        self.populate_providers()
         
     def compose(self) -> ComposeResult:
         """Compose the viewer panel UI."""
@@ -284,8 +420,108 @@ class MediaViewerPanel(Container):
             
             # Analysis tab
             with TabPane("Analysis", id="analysis-tab"):
-                with VerticalScroll(classes="content-viewer"):
+                # Wrap all content in a VerticalScroll container
+                with VerticalScroll(classes="analysis-scroll-container"):
+                    # API Settings in a Collapsible
+                    with Collapsible(title="API Settings", collapsed=False, id="analysis-api-settings", classes="compact-collapsible"):
+                        # Provider and Model selection row
+                        with Horizontal(classes="provider-row"):
+                            yield Select(
+                                [],  # Will be populated on mount
+                                prompt="Select Provider",
+                                id="analysis-provider-select"
+                            )
+                            yield Select(
+                                [],  # Will be populated based on provider
+                                prompt="Select Model",
+                                id="analysis-model-select"
+                            )
+                        
+                        # Temperature, Top-P, Min-P, Max Tokens settings row
+                        with Horizontal(classes="api-params-row"):
+                            with Vertical(classes="param-group"):
+                                yield Label("Temperature")
+                                yield Input(
+                                    placeholder="0.7",
+                                    id="analysis-temperature",
+                                    value="0.7"
+                                )
+                            with Vertical(classes="param-group"):
+                                yield Label("Top P")
+                                yield Input(
+                                    placeholder="0.95",
+                                    id="analysis-top-p",
+                                    value="0.95"
+                                )
+                            with Vertical(classes="param-group"):
+                                yield Label("Min P")
+                                yield Input(
+                                    placeholder="0.05",
+                                    id="analysis-min-p",
+                                    value="0.05"
+                                )
+                            with Vertical(classes="param-group"):
+                                yield Label("Max Tokens")
+                                yield Input(
+                                    placeholder="4096",
+                                    id="analysis-max-tokens",
+                                    value="4096"
+                                )
+                    
+                    # Prompt search and filtering
+                    yield Label("Search Prompts:", classes="prompt-label")
+                    yield Input(
+                        placeholder="Search for prompts...",
+                        id="prompt-search-input"
+                    )
+                        
+                    yield Label("Filter by Keywords:", classes="prompt-label")
+                    yield Input(
+                        placeholder="Enter keywords separated by commas...",
+                        id="prompt-keyword-input"
+                    )
+                    
+                    # Prompt selection dropdown
+                    yield Select(
+                        [],  # Will be populated by search results
+                        prompt="Select a prompt",
+                        id="prompt-select"
+                    )
+                    
+                    # System prompt
+                    yield Label("System Prompt:", classes="prompt-label")
+                    yield TextArea(
+                        "",
+                        id="system-prompt-area",
+                        classes="prompt-textarea"
+                    )
+                    
+                    # User prompt
+                    yield Label("User Prompt:", classes="prompt-label")
+                    yield TextArea(
+                        "",
+                        id="user-prompt-area",
+                        classes="prompt-textarea"
+                    )
+                    
+                    # Generate button
+                    yield Button(
+                        "Generate Analysis",
+                        id="generate-analysis-btn",
+                        variant="primary"
+                    )
+                    
+                    # Analysis display area
                     yield Markdown("", id="analysis-display")
+                    
+                    # Analysis action buttons
+                    with Horizontal(classes="analysis-actions"):
+                        yield Button("Save", id="save-analysis-btn", variant="success", disabled=True)
+                        yield Button("Edit", id="edit-analysis-btn", variant="primary", disabled=True)
+                        yield Button("Overwrite", id="overwrite-analysis-btn", variant="warning", disabled=True)
+                    
+                    # Add some padding at the bottom to ensure scrolling works
+                    yield Static("", classes="bottom-spacer")
     
     def watch_media_data(self, media_data: Optional[Dict[str, Any]]) -> None:
         """Update display when media data changes."""
@@ -407,9 +643,16 @@ class MediaViewerPanel(Container):
             
             if not analysis:
                 analysis_display.update("*No analysis available*")
-                return
+                self.has_existing_analysis = False
+                self.current_analysis = None
+            else:
+                analysis_display.update(analysis)
+                self.has_existing_analysis = True
+                self.current_analysis = analysis
+                
+            # Update button states
+            self._update_analysis_button_states()
             
-            analysis_display.update(analysis)
         except Exception as e:
             logger.error(f"Error updating analysis display: {e}")
     
@@ -651,71 +894,86 @@ class MediaViewerPanel(Container):
             search_input.value = ""
         except:
             pass
+        # Populate providers
+        try:
+            self.populate_providers()
+        except Exception as e:
+            logger.debug(f"Could not populate providers: {e}")
     
     # Analysis Methods
     def populate_providers(self) -> None:
         """Populate the provider dropdown with available LLM providers."""
         try:
-            logger.debug("Populating providers...")
-            # Import here to avoid circular imports
-            from ...config import get_cli_setting
+            from ...config import get_cli_providers_and_models, load_settings
             
-            # Get available providers from config
-            providers = []
+            providers_models = get_cli_providers_and_models()
+            config = load_settings()
+            analysis_defaults = config.get('analysis_defaults', {})
             
-            # Check each provider type
-            if get_cli_setting("API", "openai_api_key"):
-                providers.append(("OpenAI", "OpenAI"))
-            if get_cli_setting("API", "anthropic_api_key"):
-                providers.append(("Anthropic", "Anthropic"))
-            if get_cli_setting("API", "google_api_key"):
-                providers.append(("Google", "Google"))
-            if get_cli_setting("API", "openrouter_api_key"):
-                providers.append(("OpenRouter", "OpenRouter"))
-            if get_cli_setting("API", "deepseek_api_key"):
-                providers.append(("DeepSeek", "DeepSeek"))
-            if get_cli_setting("API", "local_llm_enabled"):
-                providers.append(("Local", "Local LLM"))
+            if providers_models:
+                provider_options = [(provider, provider) for provider in providers_models.keys()]
+                provider_select = self.query_one("#analysis-provider-select", Select)
+                provider_select.set_options(provider_options)
+                
+                # Set default provider from config or use first available
+                default_provider = analysis_defaults.get('provider', provider_options[0][0] if provider_options else None)
+                if default_provider and any(p[0] == default_provider for p in provider_options):
+                    provider_select.value = default_provider
+                    self.update_models_for_provider(default_provider)
+                elif provider_options:
+                    provider_select.value = provider_options[0][0]
+                    self.update_models_for_provider(provider_options[0][0])
+                    
+            # Set default temperature, top_p, min_p, max_tokens
+            temp_input = self.query_one("#analysis-temperature", Input)
+            temp_input.value = str(analysis_defaults.get('temperature', '0.7'))
             
-            logger.debug(f"Found {len(providers)} providers")
+            top_p_input = self.query_one("#analysis-top-p", Input)
+            top_p_input.value = str(analysis_defaults.get('top_p', '0.95'))
             
-            # Update the provider select
-            provider_select = self.query_one("#analysis-provider-select", Select)
-            provider_select.set_options(providers)
-            logger.debug("Provider select updated")
+            min_p_input = self.query_one("#analysis-min-p", Input)
+            min_p_input.value = str(analysis_defaults.get('min_p', '0.05'))
+            
+            max_tokens_input = self.query_one("#analysis-max-tokens", Input)
+            max_tokens_input.value = str(analysis_defaults.get('max_tokens', '4096'))
+            
+            # Set default system prompt
+            system_prompt_area = self.query_one("#system-prompt-area", TextArea)
+            system_prompt_area.text = analysis_defaults.get('system_prompt', 'You are an AI assistant specialized in analyzing media content.')
             
         except Exception as e:
-            logger.error(f"Error populating providers: {e}", exc_info=True)
+            logger.error(f"Error populating providers: {e}")
     
     def update_models_for_provider(self, provider: str) -> None:
         """Update model dropdown based on selected provider."""
         try:
-            from ...config import get_cli_setting
+            from ...config import get_cli_providers_and_models, load_settings
             
-            models = []
+            providers_models = get_cli_providers_and_models()
+            config = load_settings()
+            analysis_defaults = config.get('analysis_defaults', {})
             
-            if provider == "OpenAI":
-                # Get OpenAI models
-                models_str = get_cli_setting("API", "available_openai_models", "gpt-4o,gpt-4o-mini,gpt-4-turbo")
-                models = [(m.strip(), m.strip()) for m in models_str.split(",")]
-            elif provider == "Anthropic":
-                # Get Anthropic models
-                models_str = get_cli_setting("API", "available_anthropic_models", "claude-3-5-sonnet-20241022,claude-3-opus-20240229,claude-3-haiku-20240307")
-                models = [(m.strip(), m.strip()) for m in models_str.split(",")]
-            elif provider == "Google":
-                # Get Google models
-                models_str = get_cli_setting("API", "available_google_models", "gemini-2.0-flash,gemini-1.5-pro,gemini-1.5-flash")
-                models = [(m.strip(), m.strip()) for m in models_str.split(",")]
-            elif provider == "DeepSeek":
-                models = [("deepseek-reasoner", "DeepSeek Reasoner"), ("deepseek-chat", "DeepSeek Chat")]
-            elif provider == "Local":
-                # Get local model endpoint
-                endpoint = get_cli_setting("local-llm", "endpoint", "")
-                models = [("local", f"Local Model ({endpoint})")]
+            models_list = providers_models.get(provider, [])
             
-            # Update model select
-            model_select = self.query_one("#analysis-model-select", Select)
-            model_select.set_options(models)
+            if models_list:
+                model_options = [(model, model) for model in models_list]
+                model_select = self.query_one("#analysis-model-select", Select)
+                model_select.set_options(model_options)
+                
+                # Set default model from config or use first available
+                default_model = analysis_defaults.get('model')
+                if default_model and any(m[0] == default_model for m in model_options):
+                    model_select.value = default_model
+                else:
+                    model_select.value = model_options[0][0]
+                
+                # Select first model if available
+                if model_options:
+                    model_select.value = model_options[0][0]
+            else:
+                # No models available for this provider
+                model_select = self.query_one("#analysis-model-select", Select)
+                model_select.set_options([])
             
         except Exception as e:
             logger.error(f"Error updating models for provider {provider}: {e}")
@@ -791,17 +1049,22 @@ class MediaViewerPanel(Container):
             
             # Replace placeholders with actual media content
             if self.media_data:
+                # Truncate content if too long
+                content = self.media_data.get('content', '')
+                if len(content) > 10000:
+                    content = content[:10000] + "\n\n[Content truncated...]"
+                
                 replacements = {
                     "{title}": self.media_data.get('title', 'Untitled'),
-                    "{content}": self.media_data.get('content', ''),
+                    "{content}": content,
                     "{type}": self.media_data.get('type', ''),
                     "{author}": self.media_data.get('author', ''),
                     "{url}": self.media_data.get('url', ''),
                 }
                 
                 for placeholder, value in replacements.items():
-                    system_prompt = system_prompt.replace(placeholder, value)
-                    user_prompt = user_prompt.replace(placeholder, value)
+                    system_prompt = system_prompt.replace(placeholder, str(value))
+                    user_prompt = user_prompt.replace(placeholder, str(value))
             
             return system_prompt, user_prompt
             
@@ -886,35 +1149,63 @@ class MediaViewerPanel(Container):
             provider_select = self.query_one("#analysis-provider-select", Select)
             model_select = self.query_one("#analysis-model-select", Select)
             
-            if not provider_select.value or provider_select.value == Select.BLANK:
-                self.app_instance.notify("Please select a provider", severity="warning")
+            provider = provider_select.value if provider_select.value != Select.BLANK else None
+            model = model_select.value if model_select.value != Select.BLANK else None
+            
+            if not provider or not model:
+                self.app_instance.notify("Please select a provider and model", severity="warning")
                 return
             
-            if not model_select.value or model_select.value == Select.BLANK:
-                self.app_instance.notify("Please select a model", severity="warning")
-                return
-            
-            # Prepare prompts
+            # Get prompts from text areas
             system_prompt, user_prompt = self.prepare_analysis_messages()
             
             if not system_prompt and not user_prompt:
                 self.app_instance.notify("Please provide at least one prompt", severity="warning")
                 return
             
+            # Get temperature, top_p, min_p, max_tokens values
+            try:
+                temperature = float(self.query_one("#analysis-temperature", Input).value or "0.7")
+            except ValueError:
+                temperature = 0.7
+            
+            try:
+                top_p = float(self.query_one("#analysis-top-p", Input).value or "0.95")
+            except ValueError:
+                top_p = 0.95
+            
+            try:
+                min_p = float(self.query_one("#analysis-min-p", Input).value or "0.05")
+            except ValueError:
+                min_p = 0.05
+            
+            try:
+                max_tokens = int(self.query_one("#analysis-max-tokens", Input).value or "4096")
+            except ValueError:
+                max_tokens = 4096
+            
             # Post analysis request event
             from ...Event_Handlers.media_events import MediaAnalysisRequestEvent
             self.post_message(MediaAnalysisRequestEvent(
                 media_id=self.media_data['id'],
-                provider=provider_select.value,
-                model=model_select.value,
+                provider=provider.lower(),  # Normalize provider name
+                model=model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                temperature=temperature,
+                top_p=top_p,
+                min_p=min_p,
+                max_tokens=max_tokens,
                 type_slug=""  # Will be set by MediaWindow
             ))
             
             # Show loading state
             analysis_display = self.query_one("#analysis-display", Markdown)
             analysis_display.update("*Generating analysis...*")
+            
+            # Store current analysis as None while generating
+            self.current_analysis = None
+            self._update_analysis_button_states()
             
         except Exception as e:
             logger.error(f"Error generating analysis: {e}")

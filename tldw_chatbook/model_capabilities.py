@@ -60,6 +60,10 @@ DEFAULT_MODEL_PATTERNS = {
         {"pattern": r"moonshot-v1-8k-vision-preview", "vision": True},
         {"pattern": r"moonshot-v1-32k-vision-preview", "vision": True},
         {"pattern": r"moonshot-v1-128k-vision-preview", "vision": True}
+    ],
+    "ZAI": [
+        # Z.AI models - currently no vision support
+        {"pattern": r"^glm-", "vision": False}  # All GLM models currently don't support vision
     ]
 }
 
@@ -94,7 +98,15 @@ DEFAULT_MODEL_CAPABILITIES = {
     # Moonshot
     "moonshot-v1-8k-vision-preview": {"vision": True, "max_images": 1},
     "moonshot-v1-32k-vision-preview": {"vision": True, "max_images": 1},
-    "moonshot-v1-128k-vision-preview": {"vision": True, "max_images": 1}
+    "moonshot-v1-128k-vision-preview": {"vision": True, "max_images": 1},
+    
+    # Z.AI Models
+    "glm-4.5": {"vision": False, "max_tokens": 8192},
+    "glm-4.5-air": {"vision": False, "max_tokens": 8192},
+    "glm-4.5-x": {"vision": False, "max_tokens": 8192},
+    "glm-4.5-airx": {"vision": False, "max_tokens": 8192},
+    "glm-4.5-flash": {"vision": False, "max_tokens": 16384},
+    "glm-4-32b-0414-128k": {"vision": False, "max_tokens": 128000}
 }
 
 

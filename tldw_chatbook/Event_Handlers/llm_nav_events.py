@@ -71,6 +71,8 @@ LLM_NAV_BUTTON_HANDLERS = {
     "llm-nav-transformers": handle_llm_nav_button_pressed,
     "llm-nav-mlx-lm": handle_llm_nav_button_pressed,
     "llm-nav-onnx": handle_llm_nav_button_pressed,
+    "llm-nav-local-models": handle_llm_nav_button_pressed,
+    "llm-nav-download-models": handle_llm_nav_button_pressed,
 }
 
 #

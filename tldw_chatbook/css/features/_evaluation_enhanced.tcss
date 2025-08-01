@@ -522,10 +522,6 @@ $eval-accent: $accent;
     100% { background: $eval-card-bg; }
 }
 
-.loading {
-    animation: pulse 2s ease-in-out infinite;
-}
-
 /* --- Responsive Adjustments --- */
 @media (max-width: 100) {
     .evals-nav-pane {

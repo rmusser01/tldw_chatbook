@@ -11,13 +11,15 @@ from textual.containers import Container, VerticalScroll, Horizontal, Vertical, 
 from pathlib import Path
 from textual.css.query import QueryError
 from textual.reactive import reactive
-from textual.widgets import Static, Button, Label, ProgressBar, TabPane, TabbedContent, Input, Select, Collapsible, ListView, ListItem
+from textual.widgets import Static, Button, Label, ProgressBar, TabPane, TabbedContent, Input, Select, Collapsible, ListView, ListItem, Markdown
 from ..Widgets.loading_states import WorkflowProgress
 from textual.message import Message
+import math
 #
 # Local Imports
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
 from ..Widgets.form_components import create_form_field, create_form_row
+from ..Event_Handlers.worker_events import StreamingChunk, StreamingChunkWithLogits
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -33,11 +35,13 @@ EVALS_VIEW_SETUP = "evals-view-setup"
 EVALS_VIEW_RESULTS = "evals-view-results"
 EVALS_VIEW_MODELS = "evals-view-models"
 EVALS_VIEW_DATASETS = "evals-view-datasets"
+EVALS_VIEW_LOGITS = "evals-view-logits"
 
 EVALS_NAV_SETUP = "evals-nav-setup"
 EVALS_NAV_RESULTS = "evals-nav-results"
 EVALS_NAV_MODELS = "evals-nav-models"
 EVALS_NAV_DATASETS = "evals-nav-datasets"
+EVALS_NAV_LOGITS = "evals-nav-logits"
 
 
 class DatasetListItem(ListItem):
@@ -193,6 +197,9 @@ class EvalsWindow(Container):
             self._refresh_models_list()
         elif view_id == EVALS_VIEW_DATASETS:
             self._refresh_datasets_list()
+        elif view_id == EVALS_VIEW_LOGITS:
+            # No specific refresh needed for logits view on load
+            pass
     
     @work(exclusive=True)
     async def _refresh_results_dashboard(self) -> None:
@@ -271,6 +278,7 @@ class EvalsWindow(Container):
     @on(Button.Pressed, ".evals-nav-button")
     def handle_nav_button_press(self, event: Button.Pressed) -> None:
         """Handles a click on an evals navigation button."""
+        event.stop()  # Stop event propagation to prevent app-level handling
         if event.button.id:
             type_slug = event.button.id.replace("evals-nav-", "")
             self.evals_active_view = f"evals-view-{type_slug}"
@@ -490,6 +498,60 @@ class EvalsWindow(Container):
         # TODO: Implement dataset editor
         self.app.notify("Edit functionality coming soon", severity="information")
     
+    # --- Logits Checker Handlers ---
+    @on(Select.Changed, "#logits-provider-select")
+    def handle_logits_provider_change(self, event: Select.Changed) -> None:
+        """Handle provider selection change for logits checker."""
+        if event.value and event.value != Select.BLANK:
+            self._populate_models_for_logits_provider(event.value)
+    
+    @on(Button.Pressed, "#generate-logits-btn")
+    def handle_generate_logits(self, event: Button.Pressed) -> None:
+        """Handle generating tokens with logits."""
+        event.stop()  # Stop event propagation
+        # Validate inputs
+        provider_select = self.query_one("#logits-provider-select", Select)
+        model_select = self.query_one("#logits-model-select", Select)
+        prompt_input = self.query_one("#logits-prompt-input", Input)
+        
+        if not provider_select.value or provider_select.value == Select.BLANK:
+            self._update_status("logits-status", "Please select a provider", "error")
+            return
+        
+        # For llama_cpp and vLLM, model selection is not required (uses loaded model)
+        if provider_select.value not in ["llama_cpp", "vllm"]:
+            if not model_select.value or model_select.value == Select.BLANK:
+                self._update_status("logits-status", "Please select a model", "error")
+                return
+        
+        if not prompt_input.value.strip():
+            self._update_status("logits-status", "Please enter a prompt", "error")
+            return
+        
+        # Start generation
+        self._update_status("logits-status", "Generating tokens with logits...", "info")
+        self._start_logits_generation(
+            provider_select.value,
+            model_select.value,
+            prompt_input.value.strip()
+        )
+    
+    @on(Button.Pressed, ".token-button")
+    def handle_token_button_press(self, event: Button.Pressed) -> None:
+        """Handle clicks on token buttons."""
+        event.stop()  # Stop event propagation
+        
+        # Only handle token buttons in the logits view
+        if self.evals_active_view == EVALS_VIEW_LOGITS and event.button.id and event.button.id.startswith("token-btn-"):
+            try:
+                token_index = int(event.button.id.replace("token-btn-", ""))
+                self._select_token(token_index)
+                logger.debug(f"Selected token {token_index} via button press")
+            except ValueError:
+                logger.error(f"Invalid token button ID: {event.button.id}")
+            except Exception as e:
+                logger.error(f"Error selecting token from button: {e}")
+    
     # --- Cost Estimation Updates ---
     @on(Input.Changed, "#max-samples-input")
     def handle_samples_change(self, event: Input.Changed) -> None:
@@ -669,6 +731,27 @@ class EvalsWindow(Container):
         self.active_run_id = None
         self.show_evaluation_error(event.run_id, event.error, event.error_details)
     
+    # Logits streaming event handlers
+    def on_streaming_chunk_with_logits(self, event: 'StreamingChunkWithLogits') -> None:
+        """Handle streaming chunk with logprobs data."""
+        logger.debug(f"Received StreamingChunkWithLogits event: {event.text_chunk[:20]}... with logprobs: {bool(event.logprobs)}")
+        # Only handle if we're in logits view and have containers
+        if (self.evals_active_view == EVALS_VIEW_LOGITS and 
+            hasattr(self, '_logits_token_container') and 
+            hasattr(self, '_collected_tokens')):
+            self._handle_logits_chunk(event.text_chunk, event.logprobs)
+        else:
+            logger.debug(f"Skipping logits chunk - view: {self.evals_active_view}, has container: {hasattr(self, '_logits_token_container')}")
+    
+    def on_streaming_chunk(self, event: 'StreamingChunk') -> None:
+        """Handle regular streaming chunk without logprobs."""
+        logger.debug(f"Received regular StreamingChunk event (no logprobs): {event.text_chunk[:20]}...")
+        # Only handle if we're in logits view and have containers
+        if (self.evals_active_view == EVALS_VIEW_LOGITS and 
+            hasattr(self, '_logits_token_container') and 
+            hasattr(self, '_collected_tokens')):
+            self._handle_logits_chunk(event.text_chunk, None)
+    
     def _update_results_list(self) -> None:
         """Update the results list display."""
         try:
@@ -798,6 +881,326 @@ class EvalsWindow(Container):
                 "answer": "B) 4"
             }
         ]
+    
+    @work(exclusive=True)
+    async def _populate_models_for_logits_provider(self, provider: str) -> None:
+        """Populate model dropdown for logits checker based on selected provider."""
+        try:
+            model_select = self.query_one("#logits-model-select", Select)
+            model_select.set_options([("Loading models...", Select.BLANK)])
+            
+            # For llama_cpp and vLLM, we'll use the loaded model
+            if provider in ["llama_cpp", "vllm"]:
+                model_select.set_options([("Use Loaded Model", "loaded_model")])
+                return
+            
+            # Get models from config for other providers
+            from ..config import get_cli_providers_and_models
+            providers_and_models = get_cli_providers_and_models()
+            
+            # Map provider names to config keys
+            provider_map = {
+                "openai": "OpenAI",
+                "llama_cpp": "Llama_cpp",
+                "vllm": "vLLM"
+            }
+            
+            config_key = provider_map.get(provider, provider.title())
+            models = providers_and_models.get(config_key, [])
+            
+            if models:
+                # Filter out "None" entries
+                models = [m for m in models if m.lower() != "none"]
+                if models:
+                    model_options = [(m, m) for m in models]
+                    model_select.set_options([("Select Model", Select.BLANK)] + model_options)
+                else:
+                    model_select.set_options([("No models configured", Select.BLANK)])
+            else:
+                model_select.set_options([("No models available", Select.BLANK)])
+        except Exception as e:
+            logger.error(f"Error populating models for logits: {e}")
+    
+    @work(exclusive=True)
+    async def _start_logits_generation(self, provider: str, model: str, prompt: str) -> None:
+        """Start generating tokens with logits."""
+        try:
+            # Clear previous results
+            token_container = self.query_one("#token-display-container")
+            token_container.remove_children()
+            
+            logits_container = self.query_one("#logits-table-container")
+            logits_container.remove_children()
+            
+            # Clear any existing token buttons list
+            if hasattr(self, '_token_buttons'):
+                self._token_buttons.clear()
+            
+            # Get advanced settings
+            temp_input = self.query_one("#logits-temperature-input", Input)
+            top_logprobs_input = self.query_one("#logits-top-logprobs-input", Input)
+            max_tokens_input = self.query_one("#logits-max-tokens-input", Input)
+            
+            temperature = float(temp_input.value) if temp_input.value else 0.7
+            top_logprobs = int(top_logprobs_input.value) if top_logprobs_input.value else 10
+            max_tokens = int(max_tokens_input.value) if max_tokens_input.value else 100
+            
+            # Create container for token buttons
+            from textual.containers import Horizontal
+            self._token_button_container = Horizontal(classes="token-button-container")
+            token_container.mount(self._token_button_container)
+            
+            # Store references for updates
+            self._logits_token_container = token_container
+            self._logits_table_container = logits_container
+            self._collected_tokens = []
+            self._token_buttons = []  # List of button widgets
+            self._selected_token_index = None
+            
+            # Create message for the chat
+            from ..Chat.Chat_Functions import chat
+            from ..config import get_cli_setting
+            
+            # Get API key for the provider
+            api_key = get_cli_setting("API", f"{provider}_api_key")
+            
+            # Create message history (empty for logits checker)
+            history = []
+            
+            # For llama_cpp and vLLM, pass None as model so they use the loaded model
+            actual_model = None if provider in ["llama_cpp", "vllm"] else model
+            
+            # Start the chat with logprobs enabled
+            # Call the method directly - it's already decorated with @work(thread=True)
+            self._run_logits_chat(
+                provider,
+                actual_model,
+                prompt,
+                api_key,
+                temperature,
+                top_logprobs,
+                max_tokens
+            )
+            
+            self._update_status("logits-status", "Generating tokens with logits...", "info")
+            
+        except Exception as e:
+            logger.error(f"Error starting logits generation: {e}")
+            self._update_status("logits-status", f"Error: {str(e)}", "error")
+    
+    @work(thread=True)
+    def _run_logits_chat(self, provider: str, model: str, prompt: str, api_key: str, 
+                         temperature: float, top_logprobs: int, max_tokens: int) -> None:
+        """Run the chat API call with logprobs enabled."""
+        try:
+            from ..Chat.Chat_Functions import chat
+            from ..Event_Handlers.worker_events import StreamingChunkWithLogits, StreamingChunk
+            import json
+            
+            # Call chat directly and handle streaming ourselves
+            response = chat(
+                message=prompt,
+                history=[],
+                media_content=None,
+                selected_parts=[],
+                api_endpoint=provider,
+                api_key=api_key,
+                custom_prompt=None,
+                temperature=temperature,
+                system_message=None,
+                streaming=True,
+                model=model,
+                max_tokens=max_tokens,
+                llm_logprobs=True,
+                llm_top_logprobs=top_logprobs
+            )
+            
+            # Handle streaming response
+            if hasattr(response, '__iter__'):
+                for chunk_raw in response:
+                    if not chunk_raw:
+                        continue
+                        
+                    line = str(chunk_raw).strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                        
+                    json_str = line[len("data:"):].strip()
+                    if json_str == "[DONE]":
+                        break
+                        
+                    try:
+                        json_data = json.loads(json_str)
+                        choices = json_data.get("choices", [])
+                        if choices:
+                            delta = choices[0].get("delta", {})
+                            content = delta.get("content")
+                            
+                            if content:
+                                # Check for logprobs
+                                logprobs_data = None
+                                if "logprobs" in choices[0]:
+                                    logprobs_data = choices[0]["logprobs"]
+                                    if not hasattr(self, '_logged_logprobs_structure'):
+                                        logger.info(f"Logits Checker: Found logprobs in choice. Structure: {json.dumps(logprobs_data, indent=2)[:500]}...")
+                                        self._logged_logprobs_structure = True
+                                elif "logprobs" in delta:
+                                    logprobs_data = delta["logprobs"]
+                                    if not hasattr(self, '_logged_logprobs_structure'):
+                                        logger.info(f"Logits Checker: Found logprobs in delta. Structure: {json.dumps(logprobs_data, indent=2)[:500]}...")
+                                        self._logged_logprobs_structure = True
+                                else:
+                                    # Log available keys for debugging
+                                    logger.debug(f"Logits Checker: No logprobs found. Choice keys: {list(choices[0].keys())}, Delta keys: {list(delta.keys())}")
+                                    # Log the first chunk structure
+                                    if not hasattr(self, '_logged_first_chunk'):
+                                        logger.info(f"Logits Checker: First chunk structure: {json.dumps(json_data, indent=2)[:500]}...")
+                                        self._logged_first_chunk = True
+                                
+                                # Post event directly to this window
+                                if logprobs_data:
+                                    self.app_instance.call_from_thread(
+                                        self.on_streaming_chunk_with_logits,
+                                        StreamingChunkWithLogits(content, logprobs_data)
+                                    )
+                                else:
+                                    self.app_instance.call_from_thread(
+                                        self.on_streaming_chunk,
+                                        StreamingChunk(content)
+                                    )
+                                    
+                    except json.JSONDecodeError:
+                        continue
+            
+            self.app_instance.call_from_thread(self._update_status, "logits-status", "Generation complete", "success")
+            
+        except Exception as e:
+            logger.error(f"Error in logits chat: {e}")
+            self.app_instance.call_from_thread(self._update_status, "logits-status", f"Error: {str(e)}", "error")
+    
+    def _handle_logits_chunk(self, text_chunk: str, logprobs: Optional[Dict]) -> None:
+        """Handle a streaming chunk with logprobs data."""
+        try:
+            # Store token index
+            token_index = len(self._collected_tokens)
+            
+            # Log the logprobs structure for the first token with logprobs
+            if logprobs and not hasattr(self, '_logged_token_logprobs'):
+                import json
+                logger.info(f"Token logprobs structure: {json.dumps(logprobs, indent=2)[:1000]}...")
+                self._logged_token_logprobs = True
+            
+            # Store token data - extract the first token's data from content array
+            token_logprobs_data = None
+            if logprobs and isinstance(logprobs, dict):
+                content = logprobs.get("content", [])
+                if content and isinstance(content, list) and len(content) > 0:
+                    # Store just the first token's data (not wrapped in content)
+                    token_logprobs_data = content[0]
+            
+            self._collected_tokens.append({
+                "text": text_chunk,
+                "logprobs": token_logprobs_data,  # Store individual token data
+                "index": token_index
+            })
+            
+            # Create a button for this token
+            token_button = Button(
+                text_chunk,
+                id=f"token-btn-{token_index}",
+                classes="token-button"
+            )
+            
+            # Add selected class if this is the selected token
+            if token_index == self._selected_token_index:
+                token_button.add_class("selected")
+            
+            # Store button reference and mount it
+            self._token_buttons.append(token_button)
+            self._token_button_container.mount(token_button)
+            
+        except Exception as e:
+            logger.error(f"Error handling logits chunk: {e}")
+    
+    def _select_token(self, token_index: int) -> None:
+        """Handle token selection."""
+        try:
+            # Update selected state
+            self._selected_token_index = token_index
+            
+            # Update button states
+            for i, button in enumerate(self._token_buttons):
+                if i == token_index:
+                    button.add_class("selected")
+                else:
+                    button.remove_class("selected")
+            
+            # Display logprobs for selected token
+            token_data = self._collected_tokens[token_index]
+            logger.info(f"Token {token_index} data structure: {token_data}")
+            logger.info(f"Token has logprobs: {bool(token_data.get('logprobs'))}")
+            
+            if token_data.get("logprobs"):
+                self._display_logprobs(token_data["logprobs"])
+            else:
+                self._logits_table_container.remove_children()
+                self._logits_table_container.mount(
+                    Static("No logprobs data available for this token", classes="placeholder-text")
+                )
+                
+        except Exception as e:
+            logger.error(f"Error selecting token: {e}")
+    
+    def _display_logprobs(self, logprobs_data: Dict) -> None:
+        """Display logprobs data in the table."""
+        try:
+            # Ensure container is mounted
+            if not hasattr(self, '_logits_table_container') or not self._logits_table_container.is_mounted:
+                logger.warning("Logits table container not mounted yet")
+                return
+                
+            self._logits_table_container.remove_children()
+            
+            # Log the actual structure received
+            logger.info(f"_display_logprobs received data: {logprobs_data}")
+            
+            # Parse logprobs structure - now we receive individual token data directly
+            # Expected structure: {"token": "...", "logprob": ..., "top_logprobs": [...]}
+            if logprobs_data and isinstance(logprobs_data, dict):
+                top_logprobs = logprobs_data.get("top_logprobs", [])
+                
+                if top_logprobs:
+                    # Create all widgets first, then mount in batch
+                    widgets_to_mount = []
+                    
+                    for item in top_logprobs[:10]:  # Show top 10
+                        # Token text
+                        token_text = item.get("token", "")
+                        # Probability and logprob value
+                        logprob = item.get("logprob", 0)
+                        probability = math.exp(logprob) * 100
+                        
+                        # Use a single Static widget with formatted text
+                        logit_text = f'"{token_text}"    {probability:.2f}%    (logprob: {logprob:.3f})'
+                        logit_widget = Static(logit_text, classes="logit-item-text")
+                        
+                        # Mount the widget directly
+                        self._logits_table_container.mount(logit_widget)
+                else:
+                    self._logits_table_container.mount(
+                        Static("No alternative tokens available", classes="placeholder-text")
+                    )
+            else:
+                self._logits_table_container.mount(
+                    Static("No logprobs data available", classes="placeholder-text")
+                )
+                logger.debug(f"Logprobs data was None or not a dict: {type(logprobs_data)}")
+                
+        except Exception as e:
+            logger.error(f"Error displaying logprobs: {e}")
+            self._logits_table_container.mount(
+                Static(f"Error parsing logprobs: {str(e)}", classes="error-text")
+            )
 
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
@@ -843,6 +1246,15 @@ class EvalsWindow(Container):
             dataset_options = [(d['name'], d['id']) for d in datasets[:10]]
             dataset_select.set_options([("Select Dataset", Select.BLANK)] + dataset_options)
             
+            # Populate logits provider dropdown with specific providers that support logprobs
+            logits_provider_select = self.query_one("#logits-provider-select")
+            logits_provider_options = [
+                ("OpenAI", "openai"),
+                ("Llama.cpp", "llama_cpp"),
+                ("vLLM", "vllm")
+            ]
+            logits_provider_select.set_options([("Select Provider", Select.BLANK)] + logits_provider_options)
+            
         except Exception as e:
             logger.error(f"Error populating initial data: {e}")
 
@@ -854,6 +1266,7 @@ class EvalsWindow(Container):
             yield Button("Results Dashboard", id=EVALS_NAV_RESULTS, classes="evals-nav-button")
             yield Button("Model Management", id=EVALS_NAV_MODELS, classes="evals-nav-button")
             yield Button("Dataset Management", id=EVALS_NAV_DATASETS, classes="evals-nav-button")
+            yield Button("Logits Checker", id=EVALS_NAV_LOGITS, classes="evals-nav-button")
 
         # Main Content Pane
         with Container(classes="evals-content-pane", id="evals-content-pane"):
@@ -1139,6 +1552,72 @@ class EvalsWindow(Container):
                         yield Button("Creative Writing", id="template-creative-btn", classes="template-button")
                         yield Button("Story Completion", id="template-story-btn", classes="template-button")
                         yield Button("Summarization", id="template-summary-btn", classes="template-button")
+
+            # Logits Checker View
+            with Container(id=EVALS_VIEW_LOGITS, classes="evals-view-area"):
+                yield Static("🔢 Logits Checker", classes="pane-title")
+                
+                # Two-column layout for logits checker
+                with Horizontal(classes="logits-checker-layout"):
+                    # Left panel - Input and configuration
+                    with Container(classes="logits-input-panel"):
+                        yield Static("Configuration", classes="section-title")
+                        
+                        # Provider selection
+                        yield from create_form_field(
+                            "Provider",
+                            "logits-provider-select",
+                            "select",
+                            options=[("Select Provider", Select.BLANK)],
+                            required=True
+                        )
+                        
+                        # Model selection
+                        yield from create_form_field(
+                            "Model",
+                            "logits-model-select",
+                            "select",
+                            options=[("Select Model", Select.BLANK)],
+                            required=True
+                        )
+                        
+                        # Prompt input
+                        yield Label("Prompt:")
+                        yield Input(
+                            placeholder="Enter your prompt here...",
+                            id="logits-prompt-input",
+                            classes="logits-prompt-input"
+                        )
+                        
+                        # Advanced settings
+                        with Collapsible(title="Advanced Settings", collapsed=True, id="logits-advanced-settings"):
+                            yield Label("Temperature:")
+                            yield Input("0.7", id="logits-temperature-input", type="number")
+                            
+                            yield Label("Top Logprobs:")
+                            yield Input("10", id="logits-top-logprobs-input", type="integer")
+                            
+                            yield Label("Max Tokens:")
+                            yield Input("100", id="logits-max-tokens-input", type="integer")
+                        
+                        # Generate button
+                        yield Button("Generate with Logits", id="generate-logits-btn", classes="action-button primary")
+                        
+                        # Status display
+                        yield Static("", id="logits-status", classes="status-text")
+                    
+                    # Right panel - Logits display
+                    with Container(classes="logits-display-panel"):
+                        yield Static("Token Analysis", classes="section-title")
+                        
+                        # Token display area
+                        with Container(id="token-display-container", classes="token-display-container"):
+                            yield Static("Tokens will appear here...", id="token-display-placeholder", classes="placeholder-text")
+                        
+                        # Logits table
+                        yield Static("Top Alternatives", classes="section-title")
+                        with Container(id="logits-table-container", classes="logits-table-container"):
+                            yield Static("Select a token to see alternatives...", id="logits-table-placeholder", classes="placeholder-text")
 
             # Add footer with helpful information
             with Container(classes="footer-container"):

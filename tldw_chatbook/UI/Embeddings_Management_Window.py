@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Optional, List, Dict, Any
 from loguru import logger
 import os
+import time
 
 # Third-party imports
 from textual import events, on, work
@@ -17,11 +18,19 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import (
     Button, Input, Label, ListView, ListItem, Select, TextArea,
-    Collapsible, LoadingIndicator, Markdown, Static
+    Collapsible, LoadingIndicator, Markdown, Static, Checkbox
 )
+from textual.screen import ModalScreen
+
+# Local widget imports
+from ..Widgets.embeddings_list_items import ModelListItem, CollectionListItem
+from ..Widgets.empty_state import ModelsEmptyState, CollectionsEmptyState
+from ..Widgets.activity_log import ActivityLogWidget
+from ..Widgets.performance_metrics import PerformanceMetricsWidget
 
 # Local imports
 from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+from ..Utils.model_preferences import ModelPreferencesManager
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 
 # Check if embeddings dependencies are available
@@ -60,6 +69,7 @@ class EmbeddingsManagementWindow(Widget):
     selected_collection: reactive[Optional[str]] = reactive(None)
     left_pane_collapsed: reactive[bool] = reactive(False)
     is_loading: reactive[bool] = reactive(False)
+    loading_message: reactive[str] = reactive("Processing...")
     
     def __init__(self, app_instance: Any, **kwargs):
         """Initialize the Embeddings Management Window.
@@ -74,6 +84,13 @@ class EmbeddingsManagementWindow(Widget):
         self.chroma_manager: Optional[ChromaDBManager] = None
         self.available_models: List[str] = []
         self.collections: List[Dict[str, Any]] = []
+        self.model_preferences = ModelPreferencesManager()
+        self.model_filter: str = "all"  # all, favorites, recent, most_used
+        self.batch_mode_enabled: bool = False
+        self.selected_models: set[str] = set()
+        self.selected_collections: set[str] = set()
+        self.activity_log: Optional[ActivityLogWidget] = None
+        self.performance_metrics: Optional[PerformanceMetricsWidget] = None
         
         # Check dependencies
         if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
@@ -86,6 +103,14 @@ class EmbeddingsManagementWindow(Widget):
             with Container(classes="embeddings-left-pane", id="embeddings-left-pane"):
                 with VerticalScroll():
                     yield Label("Embedding Models", classes="embeddings-section-title")
+                    
+                    # Model filter dropdown
+                    yield Select(
+                        [("All Models", "all"), ("Favorites", "favorites"), 
+                         ("Recent", "recent"), ("Most Used", "most_used")],
+                        id="embeddings-model-filter",
+                        value="all"
+                    )
                     
                     # Search input for models
                     yield Input(
@@ -113,25 +138,49 @@ class EmbeddingsManagementWindow(Widget):
                         classes="sidebar-listview"
                     )
                     
+                    # Batch selection buttons for models (hidden by default)
+                    with Horizontal(id="batch-model-controls", classes="batch-controls hidden"):
+                        yield Button("Select All", id="select-all-models", classes="batch-button")
+                        yield Button("Select None", id="select-none-models", classes="batch-button")
+                        yield Button("Delete Selected", id="delete-selected-models", classes="batch-button", variant="error")
+                    
+                    # Batch selection buttons for collections (hidden by default)
+                    with Horizontal(id="batch-collection-controls", classes="batch-controls hidden"):
+                        yield Button("Select All", id="select-all-collections", classes="batch-button")
+                        yield Button("Select None", id="select-none-collections", classes="batch-button")
+                        yield Button("Delete Selected", id="delete-selected-collections", classes="batch-button", variant="error")
+                    
                     # Refresh button
                     yield Button(
                         "Refresh Lists",
                         id="embeddings-refresh-lists",
                         classes="embeddings-action-button"
                     )
+                    
+                    # Toggle batch mode button
+                    yield Button(
+                        "Batch Mode",
+                        id="toggle-batch-mode",
+                        classes="embeddings-action-button"
+                    )
             
-            # Toggle button
+            # Toggle button with better visibility
             yield Button(
-                "☰",
+                "◀ Hide Sidebar" if not self.left_pane_collapsed else "▶ Show Sidebar",
                 id="toggle-embeddings-pane",
-                classes="embeddings-toggle-button"
+                classes="embeddings-toggle-button-enhanced"
             )
             
             # Right pane - Details and Actions
             with Container(classes="embeddings-right-pane", id="embeddings-right-pane"):
+                # Loading overlay container
+                with Container(id="embeddings-loading-overlay", classes="embeddings-loading-overlay hidden"):
+                    yield LoadingIndicator(id="embeddings-loading-indicator")
+                    yield Label("Processing...", id="embeddings-loading-label", classes="embeddings-loading-label")
+                
                 with VerticalScroll():
-                    # Model information section
-                    with Collapsible(title="Model Information", id="embeddings-model-info-collapsible"):
+                    # Model information section - expanded by default
+                    with Collapsible(title="Model Information", id="embeddings-model-info-collapsible", collapsed=False):
                         yield Label("Provider:", classes="embeddings-info-label")
                         yield Static("", id="embeddings-model-provider", classes="embeddings-info-value")
                         
@@ -155,13 +204,14 @@ class EmbeddingsManagementWindow(Widget):
                         
                         # Model actions
                         with Horizontal():
+                            yield Button("⭐ Favorite", id="embeddings-favorite-model", classes="embeddings-action-button")
                             yield Button("Download", id="embeddings-download-model", classes="embeddings-action-button")
                             yield Button("Load Model", id="embeddings-load-model", classes="embeddings-action-button")
                             yield Button("Unload Model", id="embeddings-unload-model", classes="embeddings-action-button")
                             yield Button("Delete Model", id="embeddings-delete-model", classes="embeddings-action-button")
                     
-                    # Collection information section
-                    with Collapsible(title="Collection Information", id="embeddings-collection-info-collapsible"):
+                    # Collection information section - expanded by default
+                    with Collapsible(title="Collection Information", id="embeddings-collection-info-collapsible", collapsed=False):
                         yield Label("Name:", classes="embeddings-info-label")
                         yield Static("", id="embeddings-collection-name", classes="embeddings-info-value")
                         
@@ -181,8 +231,8 @@ class EmbeddingsManagementWindow(Widget):
                             yield Button("Delete Collection", id="embeddings-delete-collection", classes="embeddings-action-button")
                             yield Button("Export Collection", id="embeddings-export-collection", classes="embeddings-action-button")
                     
-                    # Testing section
-                    with Collapsible(title="Test Embeddings", id="embeddings-test-collapsible"):
+                    # Testing section - expanded by default
+                    with Collapsible(title="Test Embeddings", id="embeddings-test-collapsible", collapsed=False):
                         yield Label("Test Text:", classes="embeddings-info-label")
                         yield TextArea(
                             "Enter text to test embeddings...",
@@ -200,22 +250,46 @@ class EmbeddingsManagementWindow(Widget):
                             classes="embeddings-info-value"
                         )
                     
-                    # Performance metrics section
-                    with Collapsible(title="Performance Metrics", id="embeddings-metrics-collapsible"):
-                        yield Label("Memory Usage:", classes="embeddings-info-label")
-                        yield Static("", id="embeddings-memory-usage", classes="embeddings-info-value")
-                        
-                        yield Label("Average Processing Time:", classes="embeddings-info-label")
-                        yield Static("", id="embeddings-avg-time", classes="embeddings-info-value")
-                        
-                        yield Label("Total Embeddings Generated:", classes="embeddings-info-label")
-                        yield Static("", id="embeddings-total-generated", classes="embeddings-info-value")
+                    # Performance metrics section - expanded by default
+                    with Collapsible(title="Performance Metrics", id="embeddings-metrics-collapsible", collapsed=False):
+                        yield PerformanceMetricsWidget(
+                            id="embeddings-performance-metrics",
+                            show_charts=True,
+                            show_alerts=True,
+                            compact=False
+                        )
+                    
+                    # Activity log section
+                    with Collapsible(title="Activity Log", id="embeddings-activity-collapsible", collapsed=False):
+                        yield ActivityLogWidget(
+                            id="embeddings-activity-log",
+                            show_filters=True,
+                            show_search=True,
+                            show_actions=True,
+                            max_entries=500
+                        )
     
     async def on_mount(self) -> None:
         """Handle mount event - initialize embeddings components."""
+        # Get activity log widget
+        try:
+            self.activity_log = self.query_one("#embeddings-activity-log", ActivityLogWidget)
+        except:
+            logger.warning("Activity log widget not found")
+        
+        # Get performance metrics widget
+        try:
+            self.performance_metrics = self.query_one("#embeddings-performance-metrics", PerformanceMetricsWidget)
+        except:
+            logger.warning("Performance metrics widget not found")
+        
         await self._initialize_embeddings()
         await self._load_models_list()
         await self._load_collections_list()
+        
+        # Log initialization
+        if self.activity_log:
+            self.activity_log.log_info("Embeddings Management Window initialized", "system")
     
     async def _initialize_embeddings(self) -> None:
         """Initialize embedding factory and ChromaDB manager."""
@@ -298,10 +372,35 @@ class EmbeddingsManagementWindow(Widget):
             if config and hasattr(config, 'models'):
                 self.available_models = list(config.models.keys())
                 
-                for model_id in self.available_models:
-                    await model_list.append(ListItem(Label(model_id), id=f"model-{model_id}"))
+                # Filter models based on current filter
+                display_models = self._filter_models(self.available_models)
+                
+                for model_id in display_models:
+                    # Get model info from config
+                    model_spec = config.models.get(model_id, {})
+                    model_info = {
+                        'provider': getattr(model_spec, 'provider', 'unknown'),
+                        'is_downloaded': self._check_model_downloaded(model_id),
+                        'is_loaded': model_id in getattr(self.embedding_factory, '_cache', {}),
+                        'dimension': getattr(model_spec, 'dimension', None),
+                        'is_favorite': self.model_preferences.is_favorite(model_id),
+                        'usage_stats': self.model_preferences.get_model_stats(model_id)
+                    }
+                    
+                    item = ModelListItem(
+                        model_id,
+                        model_info,
+                        show_selection=self.batch_mode_enabled,
+                        id=f"model-{model_id}"
+                    )
+                    await model_list.append(item)
                 
                 logger.info(f"Loaded {len(self.available_models)} models")
+            
+            # Show empty state if no models
+            if not display_models:
+                empty_state = ModelsEmptyState()
+                await model_list.append(empty_state)
             
         except Exception as e:
             logger.error(f"Failed to load models list: {e}")
@@ -320,12 +419,55 @@ class EmbeddingsManagementWindow(Widget):
             # to interface with ChromaDB's collection listing API
             self.collections = []  # Placeholder for actual collection data
             
+            # Show empty state if no collections
+            if not self.collections:
+                empty_state = CollectionsEmptyState()
+                await collection_list.append(empty_state)
+            else:
+                for collection_name in self.collections:
+                    # Create collection info (placeholder)
+                    collection_info = {
+                        'document_count': 0,
+                        'last_modified': None,
+                        'status': 'ready'
+                    }
+                    
+                    item = CollectionListItem(
+                        collection_name,
+                        collection_info,
+                        show_selection=self.batch_mode_enabled,
+                        id=f"collection-{collection_name}"
+                    )
+                    await collection_list.append(item)
+            
             logger.info("Collections list loaded")
             
         except Exception as e:
             logger.error(f"Failed to load collections list: {e}")
     
+    def _filter_models(self, models: List[str]) -> List[str]:
+        """Filter models based on current filter setting."""
+        if self.model_filter == "all":
+            return models
+        elif self.model_filter == "favorites":
+            favorites = self.model_preferences.get_favorite_models()
+            return [m for m in models if m in favorites]
+        elif self.model_filter == "recent":
+            recent = self.model_preferences.get_recent_models(limit=10)
+            return [m for m in models if m in recent]
+        elif self.model_filter == "most_used":
+            most_used = self.model_preferences.get_most_used_models(limit=10)
+            most_used_ids = [m[0] for m in most_used]
+            return [m for m in models if m in most_used_ids]
+        return models
+    
     # Event handlers
+    @on(Select.Changed, "#embeddings-model-filter")
+    async def on_filter_changed(self, event: Select.Changed) -> None:
+        """Handle model filter change."""
+        self.model_filter = event.value
+        await self._load_models_list()
+    
     @on(ListView.Selected, "#embeddings-model-list")
     async def on_model_selected(self, event: ListView.Selected) -> None:
         """Handle model selection."""
@@ -341,6 +483,28 @@ class EmbeddingsManagementWindow(Widget):
             collection_name = event.item.id.replace("collection-", "")
             self.selected_collection = collection_name
             await self._update_collection_info(collection_name)
+    
+    def watch_left_pane_collapsed(self, is_collapsed: bool) -> None:
+        """Update toggle button text when pane state changes."""
+        try:
+            toggle_button = self.query_one("#toggle-embeddings-pane", Button)
+            toggle_button.label = "▶ Show Sidebar" if is_collapsed else "◀ Hide Sidebar"
+        except Exception as e:
+            logger.warning(f"Could not update toggle button text: {e}")
+    
+    def watch_is_loading(self, is_loading: bool) -> None:
+        """Show/hide loading overlay when loading state changes."""
+        try:
+            overlay = self.query_one("#embeddings-loading-overlay")
+            loading_label = self.query_one("#embeddings-loading-label", Label)
+            
+            if is_loading:
+                overlay.remove_class("hidden")
+                loading_label.update(self.loading_message)
+            else:
+                overlay.add_class("hidden")
+        except Exception as e:
+            logger.warning(f"Could not toggle loading overlay: {e}")
     
     @on(Button.Pressed, "#toggle-embeddings-pane")
     def on_toggle_pane(self, event: Button.Pressed) -> None:
@@ -375,14 +539,24 @@ class EmbeddingsManagementWindow(Widget):
             return
         
         try:
+            self.loading_message = f"Loading model {self.selected_model}..."
             self.is_loading = True
             # Prefetch the model to load it into cache
             self.embedding_factory.prefetch([self.selected_model])
+            # Record model usage
+            self.model_preferences.record_model_use(self.selected_model)
             self.notify(f"Model {self.selected_model} loaded successfully", severity="information")
+            
+            # Log to activity log
+            if self.activity_log:
+                self.activity_log.log_success(f"Loaded model: {self.selected_model}", "models")
+            
             await self._update_model_info(self.selected_model)
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
             self.notify(f"Failed to load model: {str(e)}", severity="error")
+            if self.activity_log:
+                self.activity_log.log_error(f"Failed to load model {self.selected_model}: {str(e)}", "models")
         finally:
             self.is_loading = False
     
@@ -408,7 +582,12 @@ class EmbeddingsManagementWindow(Widget):
             return
         
         try:
+            self.loading_message = "Generating embedding..."
             self.is_loading = True
+            
+            # Track performance
+            start_time = time.time()
+            
             # Generate embedding
             embedding = await self.embedding_factory.async_embed(
                 [text],
@@ -416,13 +595,29 @@ class EmbeddingsManagementWindow(Widget):
                 as_list=True
             )
             
+            # Calculate processing time
+            processing_time_ms = (time.time() - start_time) * 1000
+            
             # Display result
             result_text = f"Model: {self.selected_model}\n"
             result_text += f"Dimension: {len(embedding[0]) if embedding else 0}\n"
             result_text += f"First 10 values: {embedding[0][:10] if embedding else []}\n"
-            result_text += f"Norm: {sum(x**2 for x in embedding[0])**0.5 if embedding else 0:.4f}"
+            result_text += f"Norm: {sum(x**2 for x in embedding[0])**0.5 if embedding else 0:.4f}\n"
+            result_text += f"Processing time: {processing_time_ms:.1f}ms"
             
             test_result.text = result_text
+            
+            # Update performance metrics
+            if self.performance_metrics:
+                self.performance_metrics.record_embedding_processed(1)
+                self.performance_metrics.record_chunk_processed(processing_time_ms)
+            
+            # Log success
+            if self.activity_log:
+                self.activity_log.log_success(
+                    f"Generated test embedding in {processing_time_ms:.1f}ms",
+                    "embeddings"
+                )
             
         except Exception as e:
             logger.error(f"Failed to generate test embedding: {e}")
@@ -459,6 +654,7 @@ class EmbeddingsManagementWindow(Widget):
                 self.notify("Only HuggingFace models can be downloaded", severity="warning")
                 return
             
+            self.loading_message = f"Downloading model {self.selected_model}..."
             self.is_loading = True
             download_status = self.query_one("#embeddings-model-download-status", Static)
             download_status.update("Downloading...")
@@ -495,6 +691,9 @@ class EmbeddingsManagementWindow(Widget):
                 self.notify("Model is not loaded", severity="warning")
                 return
             
+            self.loading_message = f"Unloading model {self.selected_model}..."
+            self.is_loading = True
+            
             # Remove from cache
             if hasattr(self.embedding_factory, '_cache') and self.selected_model in self.embedding_factory._cache:
                 del self.embedding_factory._cache[self.selected_model]
@@ -504,6 +703,8 @@ class EmbeddingsManagementWindow(Widget):
         except Exception as e:
             logger.error(f"Failed to unload model: {e}")
             self.notify(f"Failed to unload model: {str(e)}", severity="error")
+        finally:
+            self.is_loading = False
     
     @on(Button.Pressed, "#embeddings-delete-model")
     async def on_delete_model(self, event: Button.Pressed) -> None:
@@ -514,8 +715,33 @@ class EmbeddingsManagementWindow(Widget):
             self.notify("Please select a model first", severity="warning")
             return
         
-        # TODO: Implement model deletion from cache directory
-        self.notify("Model deletion not yet implemented", severity="information")
+        # Create a simple confirmation dialog
+        class DeleteModelDialog(ModalScreen):
+            """Modal dialog for confirming model deletion."""
+            def __init__(self, model_name: str) -> None:
+                self.model_name = model_name
+                super().__init__()
+            
+            def compose(self) -> ComposeResult:
+                with Container(id="dialog-container"):
+                    yield Label(f"Delete model '{self.model_name}'?", id="dialog-title")
+                    yield Label("This will remove the downloaded model files.", id="dialog-message")
+                    with Horizontal(id="dialog-buttons"):
+                        yield Button("Cancel", id="cancel", variant="default")
+                        yield Button("Delete", id="confirm", variant="error")
+            
+            @on(Button.Pressed)
+            async def on_button_pressed(self, event: Button.Pressed) -> None:
+                self.dismiss(event.button.id == "confirm")
+        
+        # Show confirmation dialog
+        confirm = await self.app.push_screen(DeleteModelDialog(self.selected_model), wait_for_dismiss=True)
+        
+        if confirm:
+            # TODO: Implement actual model deletion
+            # Remove from preferences when deleted
+            self.model_preferences.remove_model(self.selected_model)
+            self.notify(f"Model deletion for '{self.selected_model}' not yet implemented", severity="information")
     
     
     async def _update_model_info(self, model_id: str) -> None:
@@ -552,7 +778,6 @@ class EmbeddingsManagementWindow(Widget):
                 # Check if model exists in cache
                 try:
                     from huggingface_hub import cached_download
-                    import os
                     cache_dir = getattr(model_spec, 'cache_dir', None)
                     if cache_dir:
                         cache_dir = os.path.expanduser(cache_dir)
@@ -570,6 +795,11 @@ class EmbeddingsManagementWindow(Widget):
             is_cached = model_id in getattr(self.embedding_factory, '_cache', {})
             status_widget.update("Loaded in Memory" if is_cached else "Not Loaded")
             
+            # Update favorite button text
+            favorite_button = self.query_one("#embeddings-favorite-model", Button)
+            is_favorite = self.model_preferences.is_favorite(model_id)
+            favorite_button.label = "★ Favorited" if is_favorite else "⭐ Favorite"
+            
             # Update cache location
             cache_location_widget = self.query_one("#embeddings-model-cache-location", Static)
             cache_dir = getattr(model_spec, 'cache_dir', None)
@@ -577,9 +807,14 @@ class EmbeddingsManagementWindow(Widget):
                 cache_location_widget.update(os.path.expanduser(cache_dir))
             else:
                 cache_location_widget.update("Default HuggingFace Cache")
-            
         except Exception as e:
             logger.error(f"Failed to update model info: {e}")
+    
+    def _check_model_downloaded(self, model_id: str) -> bool:
+        """Check if a model is downloaded."""
+        # This is a simplified check - actual implementation would
+        # check the model cache directory
+        return False
     
     async def _update_collection_info(self, collection_name: str) -> None:
         """Update the collection information display."""
@@ -649,6 +884,14 @@ class EmbeddingsManagementWindow(Widget):
             
             logger.info(f"Model {self.selected_model} downloaded successfully")
             
+            # Log to activity log
+            if self.activity_log:
+                self.call_from_thread(
+                    self.activity_log.log_success,
+                    f"Downloaded model: {self.selected_model}",
+                    "models"
+                )
+            
         except Exception as e:
             logger.error(f"Failed to download model: {e}", exc_info=True)
             # Post message to update UI
@@ -678,6 +921,239 @@ class EmbeddingsManagementWindow(Widget):
     def handle_set_loading(self, message: SetLoadingMessage) -> None:
         """Handle set loading message from worker."""
         self._set_loading(message.loading)
+    
+    @on(Button.Pressed, "#embeddings-delete-collection")
+    async def on_delete_collection(self, event: Button.Pressed) -> None:
+        """Delete the selected collection."""
+        event.stop()  # Stop event propagation
+        
+        if not self.selected_collection:
+            self.notify("Please select a collection first", severity="warning")
+            return
+        
+        # Create a simple confirmation dialog
+        class DeleteCollectionDialog(ModalScreen):
+            """Modal dialog for confirming collection deletion."""
+            def __init__(self, collection_name: str) -> None:
+                self.collection_name = collection_name
+                super().__init__()
+            
+            def compose(self) -> ComposeResult:
+                with Container(id="dialog-container"):
+                    yield Label(f"Delete collection '{self.collection_name}'?", id="dialog-title")
+                    yield Label("This action cannot be undone.", id="dialog-message")
+                    with Horizontal(id="dialog-buttons"):
+                        yield Button("Cancel", id="cancel", variant="default")
+                        yield Button("Delete", id="confirm", variant="error")
+            
+            @on(Button.Pressed)
+            async def on_button_pressed(self, event: Button.Pressed) -> None:
+                self.dismiss(event.button.id == "confirm")
+        
+        # Show confirmation dialog
+        confirm = await self.app.push_screen(DeleteCollectionDialog(self.selected_collection), wait_for_dismiss=True)
+        
+        if confirm:
+            # TODO: Implement actual collection deletion
+            self.notify(f"Collection deletion for '{self.selected_collection}' not yet implemented", severity="information")
+    
+    @on(Button.Pressed, "#embeddings-favorite-model")
+    async def on_favorite_model(self, event: Button.Pressed) -> None:
+        """Toggle favorite status for the selected model."""
+        event.stop()  # Stop event propagation
+        
+        if not self.selected_model:
+            self.notify("Please select a model first", severity="warning")
+            return
+        
+        # Toggle favorite status
+        is_favorite = self.model_preferences.toggle_favorite(self.selected_model)
+        
+        # Update button text
+        favorite_button = self.query_one("#embeddings-favorite-model", Button)
+        favorite_button.label = "★ Favorited" if is_favorite else "⭐ Favorite"
+        
+        # Notify user
+        if is_favorite:
+            self.notify(f"Added {self.selected_model} to favorites", severity="success")
+        else:
+            self.notify(f"Removed {self.selected_model} from favorites", severity="information")
+        
+        # Refresh list if we're viewing favorites
+        if self.model_filter == "favorites":
+            await self._load_models_list()
+    
+    @on(Button.Pressed, "#toggle-batch-mode")
+    async def on_toggle_batch_mode(self, event: Button.Pressed) -> None:
+        """Toggle batch mode for selection."""
+        event.stop()
+        
+        self.batch_mode_enabled = not self.batch_mode_enabled
+        
+        # Update button text
+        toggle_button = self.query_one("#toggle-batch-mode", Button)
+        toggle_button.label = "Exit Batch Mode" if self.batch_mode_enabled else "Batch Mode"
+        
+        # Show/hide batch controls
+        model_controls = self.query_one("#batch-model-controls")
+        collection_controls = self.query_one("#batch-collection-controls")
+        
+        if self.batch_mode_enabled:
+            model_controls.remove_class("hidden")
+            collection_controls.remove_class("hidden")
+        else:
+            model_controls.add_class("hidden")
+            collection_controls.add_class("hidden")
+            # Clear selections
+            self.selected_models.clear()
+            self.selected_collections.clear()
+        
+        # Reload lists to show/hide checkboxes
+        await self._load_models_list()
+        await self._load_collections_list()
+    
+    @on(Button.Pressed, "#select-all-models")
+    async def on_select_all_models(self, event: Button.Pressed) -> None:
+        """Select all models."""
+        event.stop()
+        
+        model_list = self.query_one("#embeddings-model-list", ListView)
+        for item in model_list.children:
+            if isinstance(item, ModelListItem):
+                item.is_selected = True
+                self.selected_models.add(item.model_id)
+    
+    @on(Button.Pressed, "#select-none-models")
+    async def on_select_none_models(self, event: Button.Pressed) -> None:
+        """Deselect all models."""
+        event.stop()
+        
+        model_list = self.query_one("#embeddings-model-list", ListView)
+        for item in model_list.children:
+            if isinstance(item, ModelListItem):
+                item.is_selected = False
+        self.selected_models.clear()
+    
+    @on(Button.Pressed, "#delete-selected-models")
+    async def on_delete_selected_models(self, event: Button.Pressed) -> None:
+        """Delete selected models."""
+        event.stop()
+        
+        if not self.selected_models:
+            self.notify("No models selected", severity="warning")
+            return
+        
+        # Create confirmation dialog
+        class BatchDeleteDialog(ModalScreen):
+            """Modal dialog for confirming batch deletion."""
+            def __init__(self, count: int) -> None:
+                self.count = count
+                super().__init__()
+            
+            def compose(self) -> ComposeResult:
+                with Container(id="dialog-container"):
+                    yield Label(f"Delete {self.count} models?", id="dialog-title")
+                    yield Label("This will remove the downloaded model files.", id="dialog-message")
+                    with Horizontal(id="dialog-buttons"):
+                        yield Button("Cancel", id="cancel", variant="default")
+                        yield Button("Delete", id="confirm", variant="error")
+            
+            @on(Button.Pressed)
+            async def on_button_pressed(self, event: Button.Pressed) -> None:
+                self.dismiss(event.button.id == "confirm")
+        
+        # Show confirmation dialog
+        confirm = await self.app.push_screen(BatchDeleteDialog(len(self.selected_models)), wait_for_dismiss=True)
+        
+        if confirm:
+            # TODO: Implement batch model deletion
+            self.notify(f"Batch deletion of {len(self.selected_models)} models not yet implemented", severity="information")
+            # Clear selections after operation
+            self.selected_models.clear()
+            await self._load_models_list()
+    
+    @on(Button.Pressed, "#select-all-collections")
+    async def on_select_all_collections(self, event: Button.Pressed) -> None:
+        """Select all collections."""
+        event.stop()
+        
+        collection_list = self.query_one("#embeddings-collection-list", ListView)
+        for item in collection_list.children:
+            if isinstance(item, CollectionListItem):
+                item.is_selected = True
+                self.selected_collections.add(item.collection_name)
+    
+    @on(Button.Pressed, "#select-none-collections")
+    async def on_select_none_collections(self, event: Button.Pressed) -> None:
+        """Deselect all collections."""
+        event.stop()
+        
+        collection_list = self.query_one("#embeddings-collection-list", ListView)
+        for item in collection_list.children:
+            if isinstance(item, CollectionListItem):
+                item.is_selected = False
+        self.selected_collections.clear()
+    
+    @on(Button.Pressed, "#delete-selected-collections")
+    async def on_delete_selected_collections(self, event: Button.Pressed) -> None:
+        """Delete selected collections."""
+        event.stop()
+        
+        if not self.selected_collections:
+            self.notify("No collections selected", severity="warning")
+            return
+        
+        # Create confirmation dialog
+        class BatchDeleteCollectionsDialog(ModalScreen):
+            """Modal dialog for confirming batch collection deletion."""
+            def __init__(self, count: int) -> None:
+                self.count = count
+                super().__init__()
+            
+            def compose(self) -> ComposeResult:
+                with Container(id="dialog-container"):
+                    yield Label(f"Delete {self.count} collections?", id="dialog-title")
+                    yield Label("This action cannot be undone.", id="dialog-message")
+                    with Horizontal(id="dialog-buttons"):
+                        yield Button("Cancel", id="cancel", variant="default")
+                        yield Button("Delete", id="confirm", variant="error")
+            
+            @on(Button.Pressed)
+            async def on_button_pressed(self, event: Button.Pressed) -> None:
+                self.dismiss(event.button.id == "confirm")
+        
+        # Show confirmation dialog
+        confirm = await self.app.push_screen(BatchDeleteCollectionsDialog(len(self.selected_collections)), wait_for_dismiss=True)
+        
+        if confirm:
+            # TODO: Implement batch collection deletion
+            self.notify(f"Batch deletion of {len(self.selected_collections)} collections not yet implemented", severity="information")
+            # Clear selections after operation
+            self.selected_collections.clear()
+            await self._load_collections_list()
+    
+    @on(Checkbox.Changed)
+    async def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """Handle checkbox changes in list items."""
+        checkbox_id = event.checkbox.id
+        
+        if checkbox_id and checkbox_id.startswith("select-"):
+            # Extract the item type and id
+            parts = checkbox_id.split("-", 2)
+            if len(parts) >= 3:
+                item_type = parts[1]
+                item_id = parts[2]
+                
+                if item_type == "model":
+                    if event.value:
+                        self.selected_models.add(item_id)
+                    else:
+                        self.selected_models.discard(item_id)
+                elif item_type == "collection":
+                    if event.value:
+                        self.selected_collections.add(item_id)
+                    else:
+                        self.selected_collections.discard(item_id)
 
 # End of Embeddings_Management_Window.py
 ########################################################################################################################

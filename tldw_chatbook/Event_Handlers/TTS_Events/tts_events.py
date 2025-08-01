@@ -259,9 +259,8 @@ class TTSEventHandler:
     ) -> None:
         """Generate TTS audio"""
         try:
-            # Import cost tracker
-            from tldw_chatbook.TTS.cost_tracker import get_cost_tracker
-            cost_tracker = get_cost_tracker()
+            # Import metrics logger
+            from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
             
             # Send initial progress
             if message_id:
@@ -414,16 +413,21 @@ class TTSEventHandler:
                         )
                     )
                 
-                # Track usage for cost tracking
+                # Track TTS generation metrics
                 generation_time = asyncio.get_event_loop().time() - start_time
-                cost_tracker.track_usage(
-                    provider=provider,
-                    model=request.model,
-                    text=text,
-                    voice=request.voice,
-                    format=request.response_format,
-                    duration_seconds=generation_time
-                )
+                log_counter("tts_generation_total", labels={
+                    "provider": provider,
+                    "model": request.model,
+                    "voice": request.voice,
+                    "format": request.response_format
+                })
+                log_histogram("tts_generation_duration_seconds", generation_time, labels={
+                    "provider": provider,
+                    "model": request.model
+                })
+                log_histogram("tts_character_count", len(text), labels={
+                    "provider": provider
+                })
                 
                 # Post completion event
                 self.app.post_message(

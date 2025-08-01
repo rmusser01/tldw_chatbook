@@ -24,6 +24,7 @@ from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.UI.Dictation_Window_Improved import ImprovedDictationWindow as DictationWindow
 # Note: Not using form_components due to generator/widget incompatibility
 
 import json
@@ -4128,7 +4129,7 @@ class STTSWindow(Container):
             yield Rule()
             yield Label("Additional Features:", classes="section-title")
             yield Button("🎙️ Voice Cloning", id="view-voice-cloning-btn", classes="sidebar-button")
-            yield Button("🔤 Speech Recognition", id="view-stt-btn", classes="sidebar-button", disabled=True)
+            yield Button("🔤 Speech Recognition", id="view-stt-btn", classes="sidebar-button")
             yield Button("🎵 Audio Effects", id="view-effects-btn", classes="sidebar-button", disabled=True)
         
         # Content area
@@ -4159,6 +4160,8 @@ class STTSWindow(Container):
             content_container.mount(TTSSettingsWidget())
         elif new_view == "audiobook":
             content_container.mount(AudioBookGenerationWidget())
+        elif new_view == "dictation":
+            content_container.mount(DictationWindow())
         
         # Update button variants
         for btn in self.query(".sidebar-button").results(Button):
@@ -4170,6 +4173,8 @@ class STTSWindow(Container):
             self.query_one("#view-settings-btn", Button).variant = "primary"
         elif new_view == "audiobook":
             self.query_one("#view-audiobook-btn", Button).variant = "primary"
+        elif new_view == "dictation":
+            self.query_one("#view-stt-btn", Button).variant = "primary"
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle sidebar button presses and delegate to content widgets"""
@@ -4185,7 +4190,7 @@ class STTSWindow(Container):
             from tldw_chatbook.UI.Voice_Cloning_Window import VoiceCloningWindow
             self.app.push_screen(VoiceCloningWindow())
         elif event.button.id == "view-stt-btn":
-            self.app.notify("Speech Recognition coming soon!", severity="information")
+            self.current_view = "dictation"
         elif event.button.id == "view-effects-btn":
             self.app.notify("Audio Effects coming soon!", severity="information")
         else:

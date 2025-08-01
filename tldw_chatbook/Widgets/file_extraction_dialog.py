@@ -125,10 +125,21 @@ class FileExtractionDialog(ModalScreen):
         table = self.query_one("#file-list", DataTable)
         
         for i, file in enumerate(self.extracted_files):
-            size_str = f"{len(file.content)} bytes"
+            # Get file icon based on type
+            icon = self._get_file_icon(file.filename, file.language)
+            
+            # Format file size
+            size_bytes = len(file.content.encode('utf-8'))
+            if size_bytes < 1024:
+                size_str = f"{size_bytes} B"
+            elif size_bytes < 1024 * 1024:
+                size_str = f"{size_bytes / 1024:.1f} KB"
+            else:
+                size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+            
             table.add_row(
                 "✓" if i in self._selected_files else " ",
-                file.filename,
+                f"{icon} {file.filename}",
                 file.language,
                 size_str,
                 key=str(i)
@@ -139,6 +150,11 @@ class FileExtractionDialog(ModalScreen):
             table.cursor_type = "row"
             self.selected_index = 0
             self._update_preview(0)
+            
+        # Update dialog title with file count
+        title = self.query_one(".dialog-title", Label)
+        file_count = len(self.extracted_files)
+        title.update(f"📎 Extracted Files ({file_count} file{'s' if file_count != 1 else ''})")
     
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection in the file list."""
@@ -182,6 +198,318 @@ class FileExtractionDialog(ModalScreen):
             # Add syntax highlighting hint
             preview.update(f"```{file.language}\n{content}\n```")
     
+    def _get_file_icon(self, filename: str, language: str) -> str:
+        """Get an appropriate icon for the file type."""
+        ext = Path(filename).suffix.lower()
+        
+        # Map extensions to icons
+        icon_map = {
+            # Data files
+            '.csv': '📊',
+            '.tsv': '📊',
+            '.json': '📋',
+            '.yaml': '📋',
+            '.yml': '📋',
+            '.xml': '📄',
+            '.sql': '🗃️',
+            
+            # Code files
+            '.py': '🐍',
+            '.js': '🟨',
+            '.ts': '🔷',
+            '.html': '🌐',
+            '.css': '🎨',
+            '.java': '☕',
+            '.cpp': '⚙️',
+            '.c': '⚙️',
+            '.go': '🐹',
+            '.rs': '🦀',
+            '.rb': '💎',
+            '.php': '🐘',
+            '.swift': '🦉',
+            '.kt': '🟪',
+            '.r': '📊',
+            '.R': '📊',
+            
+            # Script files
+            '.sh': '🖥️',
+            '.bash': '🖥️',
+            '.ps1': '🖥️',
+            
+            # Document files
+            '.md': '📝',
+            '.txt': '📄',
+            '.ini': '⚙️',
+            '.toml': '⚙️',
+            '.env': '🔐',
+            
+            # New types
+            '.vcf': '👤',
+            '.vcard': '👤',
+            '.ics': '📅',
+            '.ical': '📅',
+            '.gpx': '🗺️',
+            '.kml': '🌍',
+            '.dot': '🔀',
+            '.puml': '📊',
+            '.plantuml': '📊',
+            '.mmd': '📊',
+            '.mermaid': '📊',
+            '.svg': '🎨',
+            
+            # Jupyter notebooks
+            '.ipynb': '📓',
+            
+            # Infrastructure as Code
+            '.tf': '🔧',
+            '.tfvars': '🔧',
+            
+            # CI/CD
+            '.yml': '⚙️',
+            '.yaml': '⚙️',
+            
+            # API definitions
+            '.proto': '🔌',
+            '.graphql': '🔗',
+            '.gql': '🔗',
+            
+            # Data formats
+            '.ndjson': '📋',
+            '.jsonl': '📋',
+            '.parquet': '🗄️',
+            '.avro': '🗄️',
+            
+            # System files
+            '.service': '⚡',
+            
+            # Dependencies
+            '.lock': '🔒',
+            
+            # Configuration files
+            '.conf': '⚙️',
+            '.cfg': '⚙️',
+            '.properties': '⚙️',
+            '.gradle': '🐘',
+            '.sbt': '🔧',
+            '.cmake': '🔧',
+            '.pri': '🔧',
+            '.pro': '🔧',
+            
+            # Template files
+            '.hbs': '📝',
+            '.handlebars': '📝',
+            '.ejs': '📝',
+            '.pug': '🐶',
+            '.jade': '🐶',
+            '.liquid': '💧',
+            '.mustache': '👨',
+            '.njk': '📝',
+            '.j2': '📝',
+            
+            # Script files
+            '.psm1': '💠',
+            '.psd1': '💠',
+            '.ps1': '💠',
+            '.bat': '🖥️',
+            '.cmd': '🖥️',
+            '.awk': '🔧',
+            '.sed': '🔧',
+            '.vim': '📝',
+            '.vimrc': '📝',
+            '.el': '🧬',
+            '.lisp': '🧬',
+            '.scm': '🧬',
+            '.rkt': '🧬',
+            
+            # Programming languages
+            '.dart': '🎯',
+            '.scala': '🏛️',
+            '.clj': '☯️',
+            '.cljs': '☯️',
+            '.cljc': '☯️',
+            '.ex': '💧',
+            '.exs': '💧',
+            '.erl': '📡',
+            '.hrl': '📡',
+            '.nim': '👑',
+            '.nims': '👑',
+            '.zig': '⚡',
+            '.v': '✌️',
+            '.vsh': '✌️',
+            '.jl': '🔬',
+            '.pas': '📐',
+            '.pp': '📐',
+            '.inc': '📐',
+            '.hs': '🎓',
+            '.lhs': '🎓',
+            '.elm': '🌳',
+            '.purs': '🎨',
+            '.idr': '🎓',
+            '.agda': '🎓',
+            '.lean': '🎓',
+            '.coq': '🎓',
+            '.ml': '🐫',
+            '.mli': '🐫',
+            '.fs': '🔷',
+            '.fsx': '🔷',
+            '.fsi': '🔷',
+            
+            # Web Assembly & Low Level
+            '.wat': '🔤',
+            '.wasm': '🔤',
+            '.ll': '🔧',
+            '.s': '⚙️',
+            '.asm': '⚙️',
+            '.nasm': '⚙️',
+            '.masm': '⚙️',
+            
+            # Documentation
+            '.texi': '📖',
+            '.texinfo': '📖',
+            '.man': '📖',
+            '.rdoc': '📖',
+            '.pod': '📖',
+            '.adoc': '📖',
+            '.asciidoc': '📖',
+            '.org': '📖',
+            
+            # Build & Project files
+            '.proj': '🏗️',
+            '.csproj': '🏗️',
+            '.vbproj': '🏗️',
+            '.fsproj': '🏗️',
+            '.vcxproj': '🏗️',
+            '.vcproj': '🏗️',
+            '.sln': '🏗️',
+            '.cabal': '🏗️',
+            '.mix': '🏗️',
+            '.bazel': '🏗️',
+            '.bzl': '🏗️',
+            '.buck': '🏗️',
+            '.pants': '🏗️',
+            
+            # API & Testing
+            '.http': '🌐',
+            '.rest': '🌐',
+            '.feature': '🥒',
+            '.spec': '🧪',
+            
+            # Data formats
+            '.jsonld': '🔗',
+            '.geojson': '🗺️',
+            '.rdf': '🔗',
+            '.ttl': '🔗',
+            '.xsd': '📋',
+            
+            # Other files
+            '.env': '🔐',
+            '.example': '📋',
+            '.sample': '📋',
+            '.tmpl': '📝',
+            '.tpl': '📝',
+            '.in': '📥',
+            '.ac': '🔧',
+            '.am': '🔧',
+            '.m4': '🔧',
+            '.mk': '🔧',
+            '.mak': '🔧',
+        }
+        
+        # Special cases for specific filenames
+        filename_lower = filename.lower()
+        if filename_lower == 'dockerfile':
+            return '🐳'
+        elif filename_lower == 'makefile':
+            return '🔨'
+        elif filename_lower == 'jenkinsfile':
+            return '🔧'
+        elif filename_lower == 'pipfile' or filename_lower == 'pipfile.lock':
+            return '🐍'
+        elif filename_lower == 'gemfile' or filename_lower == 'gemfile.lock':
+            return '💎'
+        elif filename_lower == '.gitignore':
+            return '🚫'
+        elif filename_lower == '.htaccess':
+            return '🔐'
+        elif filename_lower == 'requirements.txt' or filename_lower == 'requirements.in':
+            return '🐍'
+        elif filename_lower == 'package.json' or filename_lower == 'package-lock.json':
+            return '📦'
+        elif filename_lower == 'composer.json' or filename_lower == 'composer.lock':
+            return '🎼'
+        elif filename_lower == 'cargo.toml' or filename_lower == 'cargo.lock':
+            return '🦀'
+        elif filename_lower == 'docker-compose.yml' or filename_lower == 'docker-compose.yaml':
+            return '🐳'
+        elif filename_lower.endswith(('.github/workflows/', 'workflow.yml', 'workflow.yaml')):
+            return '🎯'
+        elif filename_lower == '.gitlab-ci.yml':
+            return '🦊'
+        elif filename_lower == '.travis.yml':
+            return '🏗️'
+        elif filename_lower == 'rakefile':
+            return '💎'
+        elif filename_lower == 'guardfile':
+            return '💂'
+        elif filename_lower == 'capfile':
+            return '🚀'
+        elif filename_lower == 'vagrantfile':
+            return '📦'
+        elif filename_lower == 'berksfile':
+            return '👨‍🍳'
+        elif filename_lower == 'appfile':
+            return '📱'
+        elif filename_lower == 'deliverfile':
+            return '🚚'
+        elif filename_lower == 'fastfile':
+            return '🏃'
+        elif filename_lower == 'scanfile':
+            return '🔍'
+        elif filename_lower == 'snapfile':
+            return '📸'
+        elif filename_lower == 'gymfile':
+            return '🏋️'
+        elif filename_lower == 'matchfile':
+            return '🎯'
+        elif filename_lower == 'podfile' or filename_lower == 'podfile.lock':
+            return '🌱'
+        elif filename_lower == 'cartfile' or filename_lower == 'cartfile.resolved':
+            return '🛒'
+        elif filename_lower == 'mintfile':
+            return '🌿'
+        elif filename_lower == 'brewfile':
+            return '🍺'
+        elif filename_lower == '.eslintrc.json' or filename_lower == '.eslintrc.js' or filename_lower == '.eslintrc':
+            return '✔️'
+        elif filename_lower == '.prettierrc' or filename_lower == '.prettierrc.json' or filename_lower == '.prettierrc.js':
+            return '💅'
+        elif filename_lower == '.babelrc' or filename_lower == 'babel.config.js':
+            return '🐦'
+        elif filename_lower == '.editorconfig':
+            return '📝'
+        elif filename_lower == 'jest.config.js' or filename_lower == 'jest.config.ts':
+            return '🃏'
+        elif filename_lower == 'webpack.config.js' or filename_lower == 'webpack.config.ts':
+            return '📦'
+        elif filename_lower == 'rollup.config.js' or filename_lower == 'rollup.config.ts':
+            return '🎯'
+        elif filename_lower == 'vite.config.js' or filename_lower == 'vite.config.ts':
+            return '⚡'
+        elif filename_lower == 'nginx.conf':
+            return '🌐'
+        elif filename_lower == 'httpd.conf' or filename_lower == 'apache2.conf':
+            return '🪶'
+        elif filename_lower == 'redis.conf':
+            return '🔴'
+        elif filename_lower == 'my.cnf' or filename_lower == 'mysql.conf':
+            return '🐬'
+        elif filename_lower == 'postgresql.conf' or filename_lower == 'pg_hba.conf':
+            return '🐘'
+        elif filename_lower == 'ssh_config' or filename_lower == 'sshd_config':
+            return '🔐'
+        
+        return icon_map.get(ext, '📄')  # Default icon
+    
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle filename changes."""
         if event.input.id == "filename-input" and self.selected_index is not None:
@@ -190,9 +518,10 @@ class FileExtractionDialog(ModalScreen):
             if new_filename and self.selected_index < len(self.extracted_files):
                 self.extracted_files[self.selected_index].filename = new_filename
                 
-                # Update the table
+                # Update the table with icon
                 table = self.query_one("#file-list", DataTable)
-                table.update_cell(str(self.selected_index), "Filename", new_filename)
+                icon = self._get_file_icon(new_filename, self.extracted_files[self.selected_index].language)
+                table.update_cell(str(self.selected_index), "Filename", f"{icon} {new_filename}")
     
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

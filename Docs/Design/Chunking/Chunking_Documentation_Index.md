@@ -62,10 +62,10 @@ Future enhancements and development plans.
 
 ## Related Documentation
 
-- [Main Architecture Document](Architecture_and_Design.md) - Overall system architecture
-- [RAG Search Modes](../Development/rag_search_modes.md) - How chunking integrates with RAG
-- [Migration Guide](../../tldw_chatbook/Chunking/MIGRATION_GUIDE.md) - Migrating to template system
-- [Template Examples](../../tldw_chatbook/Chunking/templates/example_usage.py) - Working code examples
+- [Main Architecture Document](../Architecture_and_Design.md) - Overall system architecture
+- [RAG Search Modes](../../Development/rag_search_modes.md) - How chunking integrates with RAG
+- [Migration Guide](../../../tldw_chatbook/Chunking/MIGRATION_GUIDE.md) - Migrating to template system
+- [Template Examples](../../../tldw_chatbook/Chunking/templates/example_usage.py) - Working code examples
 
 ## Key Concepts
 

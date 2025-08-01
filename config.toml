@@ -75,11 +75,23 @@ max_tokens = 4096
 # max_tokens = 4096
 # api_region = "international"  # Options: "international" or "china"
 
+# [api_settings.zai]
+# api_key = ""
+# model = "glm-4.5-flash"  # Options: glm-4.5, glm-4.5-air, glm-4.5-x, glm-4.5-airx, glm-4.5-flash, glm-4-32b-0414-128k
+# temperature = 0.7
+# max_tokens = 4096
+# api_base_url = "https://api.z.ai/api/paas/v4"
+# streaming = true
+
 # --- Add other API providers as needed ---
 
 [providers]
-# List of available LLM providers to show in UI
-available = ["openai", "anthropic", "moonshot", "local"]
+# List of available LLM providers and their models
+OpenAI = ["gpt-4o-2024-11-20", "gpt-4o-mini-2024-07-18", "gpt-4-turbo", "gpt-3.5-turbo"]
+Anthropic = ["claude-3-5-sonnet-20241022", "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307"]
+Moonshot = ["kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"]
+Zai = ["glm-4.5", "glm-4.5-air", "glm-4.5-x", "glm-4.5-airx", "glm-4.5-flash", "glm-4-32b-0414-128k"]
+Local = ["llama3", "mixtral", "codellama"]
 
 [chat_defaults]
 system_message = ""

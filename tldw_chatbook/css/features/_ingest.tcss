@@ -6,7 +6,14 @@
 
 /* --- Ingest Content Tab --- */
 #ingest-window { /* Matches TAB_INGEST */
-    layout: horizontal;
+    layout: vertical !important; /* Override .window class */
+    height: 100%;
+    width: 100%;
+}
+
+/* Override the horizontal layout from .window class */
+#ingest-window.window {
+    layout: vertical !important;
 }
 .tldw-api-media-specific-options { /* Common class for specific option blocks */
     padding: 1;
@@ -173,7 +180,18 @@
 
 /* Ensure VerticalScroll containers fill their parent */
 .ingest-view-area VerticalScroll {
-    height: 100%;
+    height: 1fr;
+    width: 100%;
+}
+
+/* Ensure VerticalScroll containers fill available space */
+VerticalScroll.ingest-view-area {
+    height: 1fr;
+    width: 100%;
+}
+
+VerticalScroll.ingest-form-scrollable {
+    height: 1fr;
     width: 100%;
 }
 
@@ -279,5 +297,398 @@
 
 /* --- Visibility styles for ingest views --- */
 /* Views are controlled programmatically via styles.display */
+
+/* --- Tabbed Ingest Window Styles --- */
+#ingest-media-tabs {
+    height: 100%;
+    width: 100%;
+}
+
+#ingest-media-tabs TabPane {
+    padding: 0;
+    height: 100%;
+}
+
+/* Ensure the IngestWindowTabbed container fills available space */
+IngestWindowTabbed {
+    height: 1fr;
+    width: 100%;
+    layout: vertical;
+}
+
+/* Ensure TabbedContent in ingest window displays properly */
+#ingest-window TabbedContent {
+    height: 1fr;  /* Use fr unit for flexible sizing */
+    width: 100%;
+}
+
+.media-tab-container {
+    height: 1fr;  /* Use fr unit instead of 100% */
+    padding: 1;
+}
+
+.source-toggle-container {
+    dock: top;
+    height: auto;
+    padding: 1;
+    margin-bottom: 1;
+    border-bottom: solid $primary;
+}
+
+.tab-title {
+    text-style: bold;
+
+    margin-bottom: 1;
+}
+
+.source-toggle {
+    layout: horizontal;
+    height: auto;
+    margin-top: 1;
+}
+
+.source-toggle RadioButton {
+    margin-right: 2;
+}
+
+.source-content {
+    height: 1fr;
+    width: 100%;
+    overflow-y: auto;
+}
+
+/* Ensure content areas within tabs fill space */
+.ingest-form-scrollable {
+    height: 1fr;
+    width: 100%;
+}
+
+/* Ensure TabbedContent and its children are visible and properly sized */
+#ingest-media-tabs {
+    height: 1fr !important;
+    width: 100% !important;
+}
+
+#ingest-media-tabs TabPane {
+    height: 100% !important;
+    width: 100% !important;
+    padding: 1;
+}
+
+/* Ensure all containers within TabPane are visible */
+#ingest-media-tabs TabPane > * {
+    display: block !important;
+    visibility: visible !important;
+}
+
+/* Ensure tab panes have proper sizing */
+#ingest-media-tabs TabPane Container {
+    height: 100%;
+    width: 100%;
+}
+
+#ingest-media-tabs TabPane Vertical {
+    height: 100%;
+    width: 100%;
+}
+
+#ingest-media-tabs TabPane VerticalScroll {
+    height: 1fr;
+    width: 100%;
+    min-height: 10; /* Ensure minimum height */
+}
+
+.source-content.hidden {
+    display: none;
+}
+
+/* Compact file lists for better space usage */
+.ingest-selected-files-list {
+    min-height: 3;
+    max-height: 8;
+    height: auto;
+    border: round $primary;
+    margin-bottom: 1;
+    background: $surface;
+}
+
+/* Status section at top of forms */
+.status-dashboard {
+    dock: top;
+    height: auto;
+    min-height: 3;
+    background: $surface;
+    border: round $primary;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+/* Simplified form sections */
+.essential-fields {
+    border: round $accent;
+    padding: 1;
+    margin-bottom: 2;
+    background: $surface-lighten-1;
+}
+
+/* Placeholder text */
+.placeholder-text {
+    color: $text-muted;
+    text-align: center;
+    padding: 4;
+}
+
+/* Mode toggle styles */
+.mode-toggle-container {
+    dock: top;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+.mode-toggle {
+    layout: horizontal;
+    height: auto;
+}
+
+.mode-toggle RadioButton {
+    margin-right: 2;
+}
+
+/* File selection row */
+.file-selection-row {
+    height: 3;
+    margin-bottom: 1;
+}
+
+.file-selection-row Button {
+    margin-right: 1;
+}
+
+/* Enhanced file list with metadata */
+.file-list-with-metadata {
+    min-height: 5;
+    max-height: 10;
+    border: round $primary;
+    background: $surface;
+}
+
+/* Metadata row */
+.metadata-row {
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+.metadata-col {
+    width: 50%;
+    padding-right: 1;
+}
+
+/* Process button */
+.process-button {
+    width: 100%;
+    height: 4;
+    margin-top: 2;
+    text-style: bold;
+}
+
+/* Basic options container */
+.basic-options-container {
+    border: round $surface;
+    padding: 1;
+    margin-top: 1;
+    background: $surface-lighten-1;
+}
+
+/* Advanced options container */
+.advanced-options-container {
+    margin-top: 1;
+}
+
+.advanced-options-container.hidden {
+    display: none;
+}
+
+/* Time range row */
+.time-range-row {
+    margin-top: 1;
+}
+
+.time-col {
+    width: 50%;
+    padding-right: 1;
+}
+
+/* Chunk settings row */
+.chunk-settings-row {
+    margin-top: 1;
+}
+
+.chunk-col {
+    width: 50%;
+    padding-right: 1;
+}
+
+/* Form labels */
+.form-label-primary {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+/* Status Dashboard Styles */
+.status-dashboard-container {
+    border: round $primary;
+    background: $surface;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+.status-main-row {
+    height: 3;
+    align: left middle;
+}
+
+.status-message {
+    width: 1fr;
+    text-style: bold;
+}
+
+.file-counter {
+    width: auto;
+    margin-left: 2;
+    color: $text-muted;
+}
+
+.time-display {
+    width: auto;
+    margin-left: 2;
+    color: $text-muted;
+}
+
+.action-buttons {
+    width: auto;
+    dock: right;
+    layout: horizontal;
+}
+
+.action-buttons.hidden {
+    display: none;
+}
+
+.small-button {
+    height: 3;
+    min-width: 8;
+    margin-left: 1;
+}
+
+.small-button.hidden {
+    display: none;
+}
+
+/* Progress bar in dashboard */
+.status-dashboard-container ProgressBar {
+    margin-top: 1;
+    height: 1;
+}
+
+.status-dashboard-container ProgressBar.hidden {
+    display: none;
+}
+
+/* Alert container */
+.alert-container {
+    margin-top: 1;
+    padding: 1;
+    border: round $error;
+    background: $error 10%;
+}
+
+.alert-container.hidden {
+    display: none;
+}
+
+.alert-messages {
+    color: $text;
+    max-height: 6;
+    overflow-y: auto;
+}
+
+/* Enhanced File List Styles */
+.file-list-enhanced {
+    border: round $primary;
+    background: $surface;
+    padding: 0;
+}
+
+.file-items-container {
+    max-height: 10;
+    overflow-y: auto;
+    padding: 1;
+}
+
+.file-list-item-container {
+    padding: 1;
+    margin-bottom: 1;
+    border: round $surface-lighten-2;
+    background: $surface-lighten-1;
+    height: auto;
+}
+
+.file-list-item-container:hover {
+    background: $surface-lighten-2;
+    border: round $primary;
+}
+
+.file-info-main {
+    width: 1fr;
+}
+
+.file-name-row {
+    height: auto;
+    margin-bottom: 0;
+}
+
+.file-icon {
+    width: 3;
+    text-align: center;
+}
+
+.file-name {
+    width: 1fr;
+    text-style: bold;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-metadata {
+    color: $text-muted;
+
+    margin-left: 3;
+}
+
+.file-remove-button {
+    width: 3;
+    height: 3;
+    min-width: 3;
+    margin: 0;
+    padding: 0;
+    text-align: center;
+}
+
+.no-files-message {
+    text-align: center;
+    color: $text-muted;
+    padding: 3;
+}
+
+.file-list-summary {
+    dock: bottom;
+    height: 3;
+    padding: 1;
+    border-top: solid $primary;
+    background: $surface-darken-1;
+    text-align: center;
+    color: $text-muted;
+}
 
 /* --- END OF INTEGRATED NEW CSS --- */

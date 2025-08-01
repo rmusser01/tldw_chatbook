@@ -25,17 +25,29 @@ logger = logger.bind(module="Embeddings_Window")
 
 # Local Imports
 from .Embeddings_Management_Window import EmbeddingsManagementWindow
-from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE, force_recheck_embeddings
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
 from ..Third_Party.textual_fspicker import Filters
 
+# Force a recheck of embeddings dependencies to ensure they're properly detected
+embeddings_available = force_recheck_embeddings()
+logger.info(f"Embeddings dependencies available: {embeddings_available}")
+
 # Check if embeddings dependencies are available
-if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
-    from ..Embeddings.Embeddings_Lib import EmbeddingFactory
-    from ..Embeddings.Chroma_Lib import ChromaDBManager
-    from ..Chunking.Chunk_Lib import chunk_for_embedding
+if embeddings_available or DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+    try:
+        from ..Embeddings.Embeddings_Lib import EmbeddingFactory
+        from ..Embeddings.Chroma_Lib import ChromaDBManager
+        from ..Chunking.Chunk_Lib import chunk_for_embedding
+        logger.info("Successfully imported embeddings modules")
+    except ImportError as e:
+        logger.error(f"Failed to import embeddings modules: {e}")
+        EmbeddingFactory = None
+        ChromaDBManager = None
+        chunk_for_embedding = None
+        DEPENDENCIES_AVAILABLE['embeddings_rag'] = False
 else:
     EmbeddingFactory = None
     ChromaDBManager = None
@@ -114,13 +126,26 @@ class EmbeddingsWindow(Container):
         """Compose the embeddings window with navigation and content areas."""
         logger.debug("Composing EmbeddingsWindow UI")
         
+        # Force recheck dependencies one more time
+        embeddings_available = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
+        logger.info(f"Embeddings available check in compose: {embeddings_available}")
+        
+        # Log individual dependency states
+        logger.debug(f"torch: {DEPENDENCIES_AVAILABLE.get('torch', False)}")
+        logger.debug(f"transformers: {DEPENDENCIES_AVAILABLE.get('transformers', False)}")
+        logger.debug(f"numpy: {DEPENDENCIES_AVAILABLE.get('numpy', False)}")
+        logger.debug(f"chromadb: {DEPENDENCIES_AVAILABLE.get('chromadb', False)}")
+        logger.debug(f"sentence_transformers: {DEPENDENCIES_AVAILABLE.get('sentence_transformers', False)}")
+        
         # Check if embeddings dependencies are available
-        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+        if not embeddings_available:
             with Container(classes="embeddings-not-available"):
                 yield Static("⚠️ Embeddings/RAG functionality not available", classes="warning-title")
                 yield Static("The required dependencies for embeddings are not installed.", classes="warning-message")
                 yield Static("To enable embeddings, please install with:", classes="warning-message")
                 yield Static("pip install tldw_chatbook[embeddings_rag]", classes="code-block")
+                yield Static("", classes="warning-message")
+                yield Static("All required packages appear to be installed. Try restarting the application.", classes="warning-message")
             return
         
         # Left navigation pane
@@ -367,6 +392,12 @@ class EmbeddingsWindow(Container):
     async def on_mount(self) -> None:
         """Handle mount event - initialize embeddings components."""
         logger.debug("EmbeddingsWindow on_mount called")
+        
+        # Check if embeddings dependencies are available
+        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+            logger.warning("Embeddings dependencies not available, skipping initialization")
+            return
+            
         await self._initialize_embeddings()
         
         # Small delay to ensure DOM is fully ready
@@ -621,6 +652,10 @@ class EmbeddingsWindow(Container):
     
     def watch_embeddings_active_view(self, old: str, new: str) -> None:
         """React to view changes by showing/hiding containers."""
+        # Skip if embeddings dependencies are not available
+        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+            return
+            
         logger.debug(f"Switching from view {old} to {new}")
         
         # Hide all views first

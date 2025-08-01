@@ -453,44 +453,61 @@ def run_llamacpp_server_worker(app_instance: "TldwCli", command: List[str]) -> s
                 process.kill()
 
 
-# FIXME
-def run_model_download_worker(app_instance: "TldwCli", command: List[str]):
-    """Background worker that executes *command* to download a model.
-
-    The implementation simply shells‑out to **huggingface‑cli** so that we
-    do **not** add an unconditional *huggingface‑hub* dependency to
-    *tldw‑cli*.  Users that prefer the Python API can adapt this easily.
+class ModelDownloadWorker(Worker):
+    """Textual worker for downloading models using huggingface-cli.
+    
+    This worker executes the huggingface-cli command to download models
+    without adding a direct dependency on huggingface-hub.
     """
-
-    logger = getattr(app_instance, "loguru_logger", logging.getLogger(__name__))
-    logger.info("Model‑download worker begins: %s", " ".join(command))
-
-    try:
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            cwd=str(Path.home()),  # run in a writable location
-        )
-
-        app_instance.call_from_thread(
-            app_instance._update_model_download_log,
-            f"Download started (PID: {process.pid})…\n")
-        _stream_process(app_instance, "_update_model_download_log", process)
-        process.wait()
-        yield f"Download command exited with code: {process.returncode}\n"
-    except FileNotFoundError:
-        msg = "ERROR: huggingface‑cli (or specified executable) not found.\n"
-        logger.error(msg.rstrip())
-        app_instance.call_from_thread(app_instance._update_model_download_log, msg)
-        yield msg
-    except Exception as err:  # pragma: no cover
-        msg = f"ERROR in model‑download worker: {err}\n"
-        logger.error(msg.rstrip(), exc_info=True)
-        app_instance.call_from_thread(app_instance._update_model_download_log, msg)
-        yield msg
+    
+    def __init__(self, app_instance: "TldwCli", command: List[str]):
+        """
+        Initialize the worker.
+        
+        Args:
+            app_instance: The application instance
+            command: The command to execute
+        """
+        super().__init__()
+        self.app_instance = app_instance
+        self.command = command
+        self.logger = getattr(app_instance, "loguru_logger", logging.getLogger(__name__))
+    
+    async def run(self):
+        """Run the model download process."""
+        self.logger.info("Model download worker begins: %s", " ".join(self.command))
+        
+        try:
+            process = subprocess.Popen(
+                self.command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                cwd=str(Path.home()),  # run in a writable location
+            )
+            
+            self.app_instance.call_from_thread(
+                self.app_instance._update_model_download_log,
+                f"Download started (PID: {process.pid})…\n")
+            
+            _stream_process(self.app_instance, "_update_model_download_log", process)
+            process.wait()
+            
+            final_message = f"Download command exited with code: {process.returncode}\n"
+            yield final_message
+            
+        except FileNotFoundError:
+            msg = "ERROR: huggingface‑cli (or specified executable) not found.\n"
+            self.logger.error(msg.rstrip())
+            self.app_instance.call_from_thread(self.app_instance._update_model_download_log, msg)
+            yield msg
+            
+        except Exception as err:  # pragma: no cover
+            msg = f"ERROR in model‑download worker: {err}\n"
+            self.logger.error(msg.rstrip(), exc_info=True)
+            self.app_instance.call_from_thread(self.app_instance._update_model_download_log, msg)
+            yield msg
 
 
 ###############################################################################
@@ -945,12 +962,10 @@ async def handle_start_model_download_button_pressed(app: "TldwCli", event: Butt
         log_output_widget.write(f"Executing: {' '.join(command)}\n")
 
         app.run_worker(
-            run_model_download_worker,
-            args=[app, command],
+            ModelDownloadWorker(app, command),
             group="model_download",
             description="Downloading model via huggingface-cli",
             exclusive=False,  # Can run multiple downloads
-            thread=True,  # <--- ADDED THIS
             done=lambda w: app.call_from_thread(
                 stream_worker_output_to_log, app, w, "#model-download-log-output"
             ))
@@ -970,30 +985,38 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
         app.loguru_logger.debug("LLM Management Window not found, skipping help text population.")
         return
     
+    # Wait a bit for widgets to be fully mounted
+    import asyncio
+    await asyncio.sleep(0.1)
+    
     try:
-        # Llama.cpp
-        llamacpp_help_widget = app.query_one("#llamacpp-args-help-display", RichLog)
-        llamacpp_help_widget.clear()  # Clear any old content
-        llamacpp_help_widget.write(LLAMA_CPP_SERVER_ARGS_HELP_TEXT)
-        app.loguru_logger.debug("Populated Llama.cpp args help.")
+        # Llama.cpp - only populate if the view is active
+        if app.llm_active_view == "llm-view-llama-cpp":
+            llamacpp_help_widget = llm_window.query_one("#llamacpp-args-help-display", RichLog)
+            llamacpp_help_widget.clear()  # Clear any old content
+            llamacpp_help_widget.write(LLAMA_CPP_SERVER_ARGS_HELP_TEXT)
+            app.loguru_logger.debug("Populated Llama.cpp args help.")
     except QueryError:
         app.loguru_logger.debug("Failed to find #llamacpp-args-help-display widget.")
     except Exception as e:
         app.loguru_logger.error(f"Error populating Llama.cpp help: {e}", exc_info=True)
     try:
-        llamafile_help_widget = app.query_one("#llamafile-args-help-display", RichLog)
-        llamafile_help_widget.clear()  # Clear existing content
-        llamafile_help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)  # Write new content
-        app.loguru_logger.debug("Populated Llamafile args help.")
+        # Llamafile - only populate if the view is active
+        if app.llm_active_view == "llm-view-llamafile":
+            llamafile_help_widget = llm_window.query_one("#llamafile-args-help-display", RichLog)
+            llamafile_help_widget.clear()  # Clear existing content
+            llamafile_help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)  # Write new content
+            app.loguru_logger.debug("Populated Llamafile args help.")
     except QueryError:
         app.loguru_logger.debug("Failed to find #llamafile-args-help-display widget.")
     except Exception as e:
         app.loguru_logger.error(f"Error populating Llamafile help: {e}", exc_info=True)
     try:
-        # MLX-LM
-        mlx_help_widget = app.query_one("#mlx-args-help-display", RichLog)
-        mlx_help_widget.clear()  # Clear existing content
-        mlx_help_widget.write(MLX_LM_SERVER_ARGS_HELP_TEXT)  # Write new content
+        # MLX-LM - only populate if the view is active
+        if app.llm_active_view == "llm-view-mlx-lm":
+            mlx_help_widget = llm_window.query_one("#mlx-args-help-display", RichLog)
+            mlx_help_widget.clear()  # Clear existing content
+            mlx_help_widget.write(MLX_LM_SERVER_ARGS_HELP_TEXT)  # Write new content
         app.loguru_logger.debug("Populated MLX-LM args help.")
     except QueryError:
         app.loguru_logger.debug("Failed to find #mlx-args-help-display widget.")

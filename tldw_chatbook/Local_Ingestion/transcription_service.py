@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List, Union, Callable
 import json
 from loguru import logger
+import requests
 
 # Fix for multiprocessing issues in some environments
 os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
@@ -407,6 +408,10 @@ class TranscriptionService:
                     raise ValueError(f"NeMo toolkit is not installed. Install with: pip install nemo-toolkit[asr]")
                 result = self._transcribe_with_canary(
                     wav_path, model, source_lang, target_lang, progress_callback=progress_callback, **kwargs
+                )
+            elif provider == 'remote-whisper':
+                result = self._transcribe_with_remote_whisper(
+                    wav_path, model, source_lang, progress_callback=progress_callback, **kwargs
                 )
             else:
                 available = self.get_available_providers()
@@ -1712,6 +1717,214 @@ class TranscriptionService:
                     f"Parakeet MLX transcription failed: {error_msg}"
                 ) from e
     
+    def _transcribe_with_remote_whisper(
+        self,
+        audio_path: str,
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Transcribe audio using a remote OpenAI Whisper API compatible endpoint.
+        
+        Args:
+            audio_path: Path to audio file
+            model: Model name (e.g., 'whisper-1')
+            language: Language code for transcription
+            progress_callback: Optional callback for progress updates
+            
+        Returns:
+            Dict with 'text' and 'segments' keys
+        """
+        logger.info(f"Starting remote whisper transcription: {audio_path}")
+        transcribe_start = time.time()
+        
+        # Get configuration
+        from ..config import get_cli_setting
+        remote_config = get_cli_setting('transcription.remote_whisper', {})
+        
+        if not remote_config.get('enabled', False):
+            raise ValueError("Remote whisper is not enabled in configuration. Set transcription.remote_whisper.enabled = true")
+        
+        api_endpoint = remote_config.get('api_endpoint', 'http://localhost:8000/v1/audio/transcriptions')
+        api_key_env_var = remote_config.get('api_key_env_var', 'REMOTE_WHISPER_API_KEY')
+        api_key = remote_config.get('api_key', '')
+        
+        # Get API key from environment if specified
+        if api_key_env_var and not api_key:
+            api_key = os.environ.get(api_key_env_var, '')
+        
+        timeout = remote_config.get('timeout', 300)
+        response_format = remote_config.get('response_format', 'json')
+        temperature = remote_config.get('temperature', 0.0)
+        prompt = remote_config.get('prompt', '')
+        
+        # Use provided model or fall back to config
+        model = model or remote_config.get('model', 'whisper-1')
+        
+        logger.debug(f"Remote whisper config: endpoint={api_endpoint}, model={model}, format={response_format}")
+        
+        # Progress callback
+        if progress_callback:
+            progress_callback(10, "Preparing audio file for upload", {"stage": "preparing"})
+        
+        try:
+            # Read audio file
+            with open(audio_path, 'rb') as audio_file:
+                files = {'file': (os.path.basename(audio_path), audio_file, 'audio/wav')}
+                
+                # Prepare form data
+                data = {
+                    'model': model,
+                    'response_format': response_format
+                }
+                
+                if language:
+                    data['language'] = language
+                
+                if temperature > 0:
+                    data['temperature'] = str(temperature)
+                
+                if prompt:
+                    data['prompt'] = prompt
+                
+                # Add any additional parameters from config
+                additional_params = remote_config.get('additional_params', {})
+                if isinstance(additional_params, dict):
+                    data.update(additional_params)
+                
+                # Prepare headers
+                headers = {}
+                if api_key:
+                    headers['Authorization'] = f'Bearer {api_key}'
+                
+                logger.info(f"Sending request to {api_endpoint}")
+                if progress_callback:
+                    progress_callback(20, "Uploading audio to remote server", {"stage": "uploading"})
+                
+                # Make request
+                response = requests.post(
+                    api_endpoint,
+                    files=files,
+                    data=data,
+                    headers=headers,
+                    timeout=timeout
+                )
+                
+                if progress_callback:
+                    progress_callback(80, "Processing server response", {"stage": "processing"})
+                
+                # Check response
+                if response.status_code != 200:
+                    error_detail = response.text
+                    logger.error(f"Remote whisper API error: {response.status_code} - {error_detail}")
+                    raise TranscriptionError(f"Remote whisper API returned {response.status_code}: {error_detail}")
+                
+                # Parse response based on format
+                if response_format == 'json' or response_format == 'verbose_json':
+                    result_data = response.json()
+                    
+                    # Handle different response structures
+                    if 'text' in result_data:
+                        text = result_data['text']
+                    elif 'transcription' in result_data:
+                        text = result_data['transcription']
+                    else:
+                        text = str(result_data)
+                    
+                    # Extract segments if available
+                    segments = []
+                    if 'segments' in result_data:
+                        for seg in result_data['segments']:
+                            segment = {
+                                "start": seg.get('start', 0.0),
+                                "end": seg.get('end', 0.0),
+                                "text": seg.get('text', ''),
+                                "Time_Start": seg.get('start', 0.0),
+                                "Time_End": seg.get('end', 0.0),
+                                "Text": seg.get('text', '')
+                            }
+                            segments.append(segment)
+                    elif text:
+                        # No segments, create a single segment
+                        segments = [{
+                            "start": 0.0,
+                            "end": 0.0,
+                            "text": text,
+                            "Time_Start": 0.0,
+                            "Time_End": 0.0,
+                            "Text": text
+                        }]
+                    
+                    # Get language if provided
+                    detected_language = result_data.get('language', language or 'unknown')
+                    
+                else:
+                    # Plain text response
+                    text = response.text.strip()
+                    segments = [{
+                        "start": 0.0,
+                        "end": 0.0,
+                        "text": text,
+                        "Time_Start": 0.0,
+                        "Time_End": 0.0,
+                        "Text": text
+                    }] if text else []
+                    detected_language = language or 'unknown'
+                
+                # Calculate timing
+                total_time = time.time() - transcribe_start
+                
+                logger.info(f"Remote whisper transcription complete:")
+                logger.info(f"  - Endpoint: {api_endpoint}")
+                logger.info(f"  - Model: {model}")
+                logger.info(f"  - Total characters: {len(text)}")
+                logger.info(f"  - Total segments: {len(segments)}")
+                logger.info(f"  - Total time: {total_time:.2f}s")
+                
+                if text:
+                    logger.debug(f"First 200 chars: {text[:200]}...")
+                
+                # Final progress
+                if progress_callback:
+                    progress_callback(
+                        100,
+                        f"Transcription complete: {len(segments)} segments, {len(text)} characters",
+                        {
+                            "total_segments": len(segments),
+                            "total_chars": len(text),
+                            "model": model
+                        }
+                    )
+                
+                return {
+                    "text": text,
+                    "segments": segments,
+                    "language": detected_language,
+                    "provider": "remote-whisper",
+                    "model": model,
+                    "endpoint": api_endpoint,
+                    "response_format": response_format
+                }
+                
+        except requests.exceptions.Timeout:
+            error_msg = f"Remote whisper request timed out after {timeout} seconds"
+            logger.error(error_msg)
+            raise TranscriptionError(error_msg)
+        except requests.exceptions.ConnectionError as e:
+            error_msg = f"Failed to connect to remote whisper endpoint: {str(e)}"
+            logger.error(error_msg)
+            raise TranscriptionError(error_msg)
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Remote whisper request failed: {str(e)}"
+            logger.error(error_msg)
+            raise TranscriptionError(error_msg)
+        except Exception as e:
+            error_msg = f"Remote whisper transcription failed: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            raise TranscriptionError(error_msg) from e
+    
     def get_available_providers(self) -> List[str]:
         """Get list of available transcription providers based on installed dependencies."""
         logger.debug("Checking available transcription providers...")
@@ -1736,6 +1949,10 @@ class TranscriptionService:
         if NEMO_AVAILABLE:
             providers.extend(['parakeet', 'canary'])
             logger.debug("parakeet and canary are available (NeMo installed)")
+        
+        # Remote whisper is always available (requires only requests library)
+        providers.append('remote-whisper')
+        logger.debug("remote-whisper is available (OpenAI API compatible)")
             
         logger.info(f"Available transcription providers: {providers}")
         return providers
@@ -1789,6 +2006,18 @@ class TranscriptionService:
                 'nvidia/canary-1b-flash',
                 'nvidia/canary-1b'
             ]
+        
+        # Remote whisper models depend on the server, but we'll list common ones
+        models['remote-whisper'] = [
+            'whisper-1',  # OpenAI's model
+            'whisper-large-v3',
+            'whisper-large-v2',
+            'whisper-medium',
+            'whisper-small',
+            'whisper-base',
+            'whisper-tiny',
+            'custom'  # For user-defined models
+        ]
         
         if provider:
             result = {provider: models.get(provider, [])}

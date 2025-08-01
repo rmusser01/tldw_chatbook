@@ -489,18 +489,19 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                 chat_window = app.query_one(ChatWindowEnhanced)
                 
                 # Try new attachment system first
-                if hasattr(chat_window, 'pending_attachment') and chat_window.pending_attachment:
-                    pending_attachment = chat_window.pending_attachment
-                    loguru_logger.info(f"DEBUG: Retrieved pending_attachment from chat window - file_type: {pending_attachment.get('file_type')}, insert_mode: {pending_attachment.get('insert_mode')}")
-                    # For backward compatibility, if it's an image, also set pending_image
-                    if pending_attachment.get('file_type') == 'image':
-                        pending_image = {
-                            'data': pending_attachment['data'],
-                            'mime_type': pending_attachment['mime_type'],
-                            'path': pending_attachment.get('path')
-                        }
-                        loguru_logger.info(f"DEBUG: Also set pending_image for backward compatibility")
-                    loguru_logger.debug(f"Enhanced chat window - pending attachment: {pending_attachment.get('file_type', 'unknown')} ({pending_attachment.get('display_name', 'unnamed')})")
+                if hasattr(chat_window, 'get_pending_attachment'):
+                    pending_attachment = chat_window.get_pending_attachment()
+                    if pending_attachment:
+                        loguru_logger.info(f"DEBUG: Retrieved pending_attachment from chat window - file_type: {pending_attachment.get('file_type')}, insert_mode: {pending_attachment.get('insert_mode')}")
+                        # For backward compatibility, if it's an image, also set pending_image
+                        if pending_attachment.get('file_type') == 'image':
+                            pending_image = {
+                                'data': pending_attachment['data'],
+                                'mime_type': pending_attachment['mime_type'],
+                                'path': pending_attachment.get('path')
+                            }
+                            loguru_logger.info(f"DEBUG: Also set pending_image for backward compatibility")
+                        loguru_logger.debug(f"Enhanced chat window - pending attachment: {pending_attachment.get('file_type', 'unknown')} ({pending_attachment.get('display_name', 'unnamed')})")
                 # Fall back to old pending_image system
                 elif hasattr(chat_window, 'get_pending_image'):
                     pending_image = chat_window.get_pending_image()
@@ -784,34 +785,50 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         # For images, check if model supports vision
         vision_capable = is_vision_capable(selected_provider, selected_model)
         loguru_logger.info(f"DEBUG: Vision capability check - provider: {selected_provider}, model: {selected_model}, is_vision_capable: {vision_capable}")
-        if file_type == 'image' and vision_capable:
-            try:
-                import base64
-                media_content_for_api = {
-                    "base64_data": base64.b64encode(pending_attachment['data']).decode(),
-                    "mime_type": pending_attachment['mime_type']
-                }
-                loguru_logger.info(f"Including image attachment in API call (type: {pending_attachment['mime_type']}, size: {len(pending_attachment['data'])} bytes)")
-            except Exception as e:
-                loguru_logger.error(f"Failed to prepare image attachment for API: {e}")
-                # Continue without image
+        if file_type == 'image':
+            if vision_capable:
+                try:
+                    import base64
+                    media_content_for_api = {
+                        "base64_data": base64.b64encode(pending_attachment['data']).decode(),
+                        "mime_type": pending_attachment['mime_type']
+                    }
+                    loguru_logger.info(f"Including image attachment in API call (type: {pending_attachment['mime_type']}, size: {len(pending_attachment['data'])} bytes)")
+                    # Notify user that image is being sent
+                    app.notify(f"Sending image with message ({pending_attachment.get('display_name', 'image')})", severity="information", timeout=2)
+                except Exception as e:
+                    loguru_logger.error(f"Failed to prepare image attachment for API: {e}")
+                    app.notify("Failed to prepare image attachment", severity="error")
+                    # Continue without image
+            else:
+                # Model doesn't support vision
+                loguru_logger.warning(f"Model {selected_model} does not support vision. Image attachment will be ignored.")
+                app.notify(f"⚠️ {selected_model} doesn't support images. Image not sent.", severity="warning", timeout=5)
         else:
             # For non-image attachments, we could potentially handle them differently in the future
             # For now, log that we have an attachment but it's not being sent
             loguru_logger.debug(f"Attachment of type '{file_type}' present but not included in API call")
     
     # Fall back to legacy pending_image if no attachment
-    elif pending_image and is_vision_capable(selected_provider, selected_model):
-        try:
-            import base64
-            media_content_for_api = {
-                "base64_data": base64.b64encode(pending_image['data']).decode(),
-                "mime_type": pending_image['mime_type']
-            }
-            loguru_logger.info(f"Including image in API call (legacy) (type: {pending_image['mime_type']}, size: {len(pending_image['data'])} bytes)")
-        except Exception as e:
-            loguru_logger.error(f"Failed to prepare image for API (legacy): {e}")
-            # Continue without image
+    elif pending_image:
+        vision_capable = is_vision_capable(selected_provider, selected_model)
+        loguru_logger.info(f"DEBUG: Legacy image path - vision_capable: {vision_capable}")
+        if vision_capable:
+            try:
+                import base64
+                media_content_for_api = {
+                    "base64_data": base64.b64encode(pending_image['data']).decode(),
+                    "mime_type": pending_image['mime_type']
+                }
+                loguru_logger.info(f"Including image in API call (legacy) (type: {pending_image['mime_type']}, size: {len(pending_image['data'])} bytes)")
+                app.notify(f"Sending image with message", severity="information", timeout=2)
+            except Exception as e:
+                loguru_logger.error(f"Failed to prepare image for API (legacy): {e}")
+                app.notify("Failed to prepare image", severity="error")
+                # Continue without image
+        else:
+            loguru_logger.warning(f"Model {selected_model} does not support vision. Image will be ignored.")
+            app.notify(f"⚠️ {selected_model} doesn't support images. Image not sent.", severity="warning", timeout=5)
 
     # Log API parameters for debugging
     api_params = {
@@ -841,7 +858,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     worker_target = lambda: app.chat_wrapper(
         message=message_text_with_world_info, # Current user utterance with RAG context and world info
         history=chat_history_for_api,    # History *before* current utterance
-        media_content=media_content_for_api, # Pass media content as expected by chat function
+        media_content={}, # Empty dict - media_content is for RAG text, not images
         api_endpoint=selected_provider,
         api_key=api_key_for_call,
         custom_prompt=custom_prompt,
@@ -1688,6 +1705,15 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
         button_event = Button.Pressed(button)
         # Call the continue response handler
         await handle_continue_response_button_pressed(app, button_event, action_widget)
+    
+    elif "suggest-response-button" in button_classes and message_role == "AI":
+        loguru_logger.info(
+            f"Action: Suggest Response clicked for AI message ID: {getattr(action_widget, 'message_id_internal', 'N/A')}"
+        )
+        # Create a Button.Pressed event for the suggest handler
+        button_event = Button.Pressed(button)
+        # Call the respond for me handler
+        await handle_respond_for_me_button_pressed(app, button_event)
 async def handle_chat_new_temp_chat_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle New Temp Chat button - creates an ephemeral chat."""
     loguru_logger.info("New Temp Chat button pressed.")

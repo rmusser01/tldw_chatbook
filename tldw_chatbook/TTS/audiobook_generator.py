@@ -21,7 +21,7 @@ from tldw_chatbook.TTS import get_tts_service
 from tldw_chatbook.TTS.audio_service import get_audio_service
 # Text processing is handled by AdvancedTextProcessor
 from tldw_chatbook.TTS.text_processor_advanced import AdvancedTextProcessor
-from tldw_chatbook.TTS.cost_tracker import CostTracker
+from ..Metrics.metrics_logger import log_counter, log_histogram
 
 #######################################################################################################################
 #
@@ -359,7 +359,6 @@ class AudioBookGenerator:
     def __init__(self, tts_service=None):
         self.tts_service = tts_service
         self.audio_service = get_audio_service()
-        self.cost_tracker = CostTracker()
         self.text_processor = AdvancedTextProcessor()
         self.progress = AudioBookProgress()
         self._generation_task = None
@@ -576,13 +575,17 @@ class AudioBookGenerator:
             
             segment_audio_data.append(audio_data)
             
-            # Track costs
-            self.cost_tracker.track_usage(
-                provider=request.provider,
-                model=request.model,
-                input_length=len(normalized_text),
-                output_format=request.output_format
-            )
+            # Track TTS generation metrics
+            log_counter("tts_generation_total", labels={
+                "provider": request.provider,
+                "model": request.model,
+                "voice": request.voice,
+                "format": request.output_format
+            })
+            log_histogram("tts_character_count", len(normalized_text), labels={
+                "provider": request.provider,
+                "model": request.model
+            })
         
         # Combine segments with appropriate pauses
         combined_audio = await self._combine_segments(
@@ -880,16 +883,6 @@ class AudioBookGenerator:
     def get_progress(self) -> AudioBookProgress:
         """Get current generation progress"""
         return self.progress
-    
-    def get_cost_estimate(self, request: AudioBookRequest) -> float:
-        """Estimate cost for audiobook generation"""
-        word_count = len(request.content.split())
-        return self.cost_tracker.estimate_cost(
-            provider=request.provider,
-            model=request.model,
-            input_length=word_count * 5,  # Rough character estimate
-            output_format=request.output_format
-        )
 
 #
 # End of audiobook_generator.py

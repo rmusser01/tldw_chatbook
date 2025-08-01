@@ -64,7 +64,26 @@ from ..Utils.splash_animations import (
     DataStreamEffect,
     FractalZoomEffect,
     ASCIISpinnerEffect,
-    HackerTerminalEffect
+    HackerTerminalEffect,
+    CyberpunkGlitchEffect,
+    ASCIIMandalaEffect,
+    HolographicInterfaceEffect,
+    QuantumTunnelEffect,
+    ChaoticTypewriterEffect,
+    SpyVsSpyEffect,
+    PhoneboothsDialingEffect,
+    EmojiFaceEffect,
+    CustomImageEffect,
+    ASCIIAquariumEffect,
+    BookshelfBrowserEffect,
+    TrainJourneyEffect,
+    ClockMechanismEffect,
+    WeatherSystemEffect,
+    MusicVisualizerEffect,
+    OrigamiFoldingEffect,
+    AntColonyEffect,
+    NeonSignFlickerEffect,
+    ZenGardenEffect
 )
 
 class SplashScreen(Container):
@@ -162,7 +181,9 @@ class SplashScreen(Container):
                 # New 15 animated effects
                 "neural_network", "quantum_particles", "ascii_wave", "binary_matrix", "constellation_map",
                 "typewriter_news", "dna_sequence", "circuit_trace", "plasma_field", "ascii_fire",
-                "rubiks_cube", "data_stream", "fractal_zoom", "ascii_spinner", "hacker_terminal"
+                "rubiks_cube", "data_stream", "fractal_zoom", "ascii_spinner", "hacker_terminal",
+                # Latest additions
+                "spy_vs_spy", "phonebooths", "emoji_face"
             ]
         }
 
@@ -629,8 +650,142 @@ class SplashScreen(Container):
                 "effect": "hacker_terminal",
                 "title": "TLDW Chatbook",
                 "animation_speed": 0.05
+            },
+            "cyberpunk_glitch": {
+                "type": "animated",
+                "effect": "cyberpunk_glitch",
+                "title": "tldw chatbook",
+                "subtitle": splashscreen_message_selection,
+                "style": "black on black",
+                "animation_speed": 0.05
+            },
+            "ascii_mandala": {
+                "type": "animated",
+                "effect": "ascii_mandala",
+                "title": "tldw chatbook",
+                "subtitle": splashscreen_message_selection,
+                "style": "black on black",
+                "animation_speed": 0.05
+            },
+            "holographic_interface": {
+                "type": "animated",
+                "effect": "holographic_interface",
+                "title": "tldw chatbook",
+                "subtitle": splashscreen_message_selection,
+                "style": "black on black",
+                "animation_speed": 0.05
+            },
+            "quantum_tunnel": {
+                "type": "animated",
+                "effect": "quantum_tunnel",
+                "title": "tldw chatbook",
+                "subtitle": splashscreen_message_selection,
+                "style": "black on black",
+                "animation_speed": 0.05
+            },
+            "chaotic_typewriter": {
+                "type": "animated",
+                "effect": "chaotic_typewriter",
+                "title": "tldw chatbook",
+                "subtitle": splashscreen_message_selection,
+                "style": "black on black",
+                "animation_speed": 0.03
+            },
+            "spy_vs_spy": {
+                "type": "animated",
+                "effect": "spy_vs_spy",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "phonebooths": {
+                "type": "animated",
+                "effect": "phonebooths_dialing",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "emoji_face": {
+                "type": "animated",
+                "effect": "emoji_face",
+                "style": "white on black",
+                "animation_speed": 0.05
+            },
+            "custom_image": {
+                "type": "animated",
+                "effect": "custom_image",
+                "image_path": "",  # Will be overridden by config
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "ascii_aquarium": {
+                "type": "animated",
+                "effect": "ascii_aquarium",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "bookshelf_browser": {
+                "type": "animated",
+                "effect": "bookshelf_browser",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "train_journey": {
+                "type": "animated",
+                "effect": "train_journey",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "clock_mechanism": {
+                "type": "animated",
+                "effect": "clock_mechanism",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "weather_system": {
+                "type": "animated",
+                "effect": "weather_system",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "music_visualizer": {
+                "type": "animated",
+                "effect": "music_visualizer",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "origami_folding": {
+                "type": "animated",
+                "effect": "origami_folding",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "ant_colony": {
+                "type": "animated",
+                "effect": "ant_colony",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "neon_sign_flicker": {
+                "type": "animated",
+                "effect": "neon_sign_flicker",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "zen_garden": {
+                "type": "animated",
+                "effect": "zen_garden",
+                "style": "white on black",
+                "animation_speed": 0.05
             }
         }
+
+        # Check if custom image is requested and path is provided
+        if card_name == "custom_image":
+            custom_image_path = get_cli_setting("splash_screen.custom_image_path", None, "")
+            if custom_image_path:
+                built_in_cards["custom_image"]["image_path"] = custom_image_path
+            else:
+                # Fallback to default if no image path provided
+                return built_in_cards["default"]
 
         card_selection = random.choice(list(built_in_cards.keys()))
         return built_in_cards.get(card_name, built_in_cards[card_selection])
@@ -1267,6 +1422,246 @@ class SplashScreen(Container):
             self.effect_handler = HackerTerminalEffect(
                 self,
                 title=self.card_data.get("title", "TLDW Chatbook"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "cyberpunk_glitch":
+            width, height = self._get_terminal_size()
+            self.effect_handler = CyberpunkGlitchEffect(
+                self,
+                title=self.card_data.get("title", "tldw chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "ascii_mandala":
+            width, height = self._get_terminal_size()
+            self.effect_handler = ASCIIMandalaEffect(
+                self,
+                title=self.card_data.get("title", "tldw chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "holographic_interface":
+            width, height = self._get_terminal_size()
+            self.effect_handler = HolographicInterfaceEffect(
+                self,
+                title=self.card_data.get("title", "tldw chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "quantum_tunnel":
+            width, height = self._get_terminal_size()
+            self.effect_handler = QuantumTunnelEffect(
+                self,
+                title=self.card_data.get("title", "tldw chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "chaotic_typewriter":
+            width, height = self._get_terminal_size()
+            self.effect_handler = ChaoticTypewriterEffect(
+                self,
+                title=self.card_data.get("title", "tldw chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.03)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.03),
+                self._update_animation
+            )
+        elif effect_type == "spy_vs_spy":
+            width, height = self._get_terminal_size()
+            self.effect_handler = SpyVsSpyEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "phonebooths_dialing":
+            width, height = self._get_terminal_size()
+            self.effect_handler = PhoneboothsDialingEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "emoji_face":
+            width, height = self._get_terminal_size()
+            self.effect_handler = EmojiFaceEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "custom_image":
+            width, height = self._get_terminal_size()
+            image_path = self.card_data.get("image_path", "")
+            self.effect_handler = CustomImageEffect(
+                self,
+                image_path=image_path,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "ascii_aquarium":
+            width, height = self._get_terminal_size()
+            self.effect_handler = ASCIIAquariumEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "bookshelf_browser":
+            width, height = self._get_terminal_size()
+            self.effect_handler = BookshelfBrowserEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "train_journey":
+            width, height = self._get_terminal_size()
+            self.effect_handler = TrainJourneyEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "clock_mechanism":
+            width, height = self._get_terminal_size()
+            self.effect_handler = ClockMechanismEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "weather_system":
+            width, height = self._get_terminal_size()
+            self.effect_handler = WeatherSystemEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "music_visualizer":
+            width, height = self._get_terminal_size()
+            self.effect_handler = MusicVisualizerEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "origami_folding":
+            width, height = self._get_terminal_size()
+            self.effect_handler = OrigamiFoldingEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "ant_colony":
+            width, height = self._get_terminal_size()
+            self.effect_handler = AntColonyEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "neon_sign_flicker":
+            width, height = self._get_terminal_size()
+            self.effect_handler = NeonSignFlickerEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "zen_garden":
+            width, height = self._get_terminal_size()
+            self.effect_handler = ZenGardenEffect(
+                self,
                 width=width,
                 height=height,
                 speed=self.card_data.get("animation_speed", 0.05)

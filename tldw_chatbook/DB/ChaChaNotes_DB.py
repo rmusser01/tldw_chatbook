@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import logging
-from typing import List, Dict, Optional, Any, Union, Set
+from typing import List, Dict, Optional, Any, Union, Set, Tuple
 
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
@@ -128,7 +128,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 10 # Incremented schema version to fix world books FTS triggers
+    _CURRENT_SCHEMA_VERSION = 11 # Incremented schema version to add study tables (learning paths, flashcards, mindmaps)
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
 
     _FULL_SCHEMA_SQL_V4 = """
@@ -1402,6 +1402,217 @@ UPDATE db_schema_version
    AND version = 9;
 """
 
+    _MIGRATE_V10_TO_V11_SQL = """
+-- Migration from V10 to V11: Add study-related tables
+
+-- Learning paths table
+CREATE TABLE IF NOT EXISTS learning_paths (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by TEXT NOT NULL,
+    last_modified_by TEXT NOT NULL,
+    version INTEGER DEFAULT 1,
+    is_deleted INTEGER DEFAULT 0,
+    path_order TEXT,  -- JSON array of topic IDs in order
+    metadata TEXT     -- JSON for additional data
+);
+
+-- Topics table
+CREATE TABLE IF NOT EXISTS topics (
+    id TEXT PRIMARY KEY,
+    path_id TEXT REFERENCES learning_paths(id) ON DELETE CASCADE,
+    parent_id TEXT REFERENCES topics(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    content TEXT,
+    topic_order INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'not_started',  -- not_started, in_progress, completed
+    progress REAL DEFAULT 0.0,  -- 0.0 to 1.0
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by TEXT NOT NULL,
+    last_modified_by TEXT NOT NULL,
+    version INTEGER DEFAULT 1,
+    is_deleted INTEGER DEFAULT 0,
+    metadata TEXT     -- JSON for additional data
+);
+
+-- Flashcard decks table
+CREATE TABLE IF NOT EXISTS decks (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by TEXT NOT NULL,
+    last_modified_by TEXT NOT NULL,
+    version INTEGER DEFAULT 1,
+    is_deleted INTEGER DEFAULT 0,
+    card_count INTEGER DEFAULT 0,
+    metadata TEXT     -- JSON for Anki export settings, etc.
+);
+
+-- Flashcards table
+CREATE TABLE IF NOT EXISTS flashcards (
+    id TEXT PRIMARY KEY,
+    deck_id TEXT REFERENCES decks(id) ON DELETE CASCADE,
+    front TEXT NOT NULL,  -- Question/prompt
+    back TEXT NOT NULL,   -- Answer
+    tags TEXT,            -- Space-separated tags
+    type TEXT DEFAULT 'basic',  -- basic, cloze, reverse, etc.
+    
+    -- Spaced repetition fields (SM-2 algorithm)
+    interval INTEGER DEFAULT 0,  -- Days until next review
+    repetitions INTEGER DEFAULT 0,
+    ease_factor REAL DEFAULT 2.5,
+    next_review TIMESTAMP,
+    last_review TIMESTAMP,
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by TEXT NOT NULL,
+    last_modified_by TEXT NOT NULL,
+    version INTEGER DEFAULT 1,
+    is_deleted INTEGER DEFAULT 0,
+    is_suspended INTEGER DEFAULT 0,
+    metadata TEXT     -- JSON for additional Anki fields
+);
+
+-- Review history table
+CREATE TABLE IF NOT EXISTS review_history (
+    id TEXT PRIMARY KEY,
+    flashcard_id TEXT REFERENCES flashcards(id) ON DELETE CASCADE,
+    reviewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    rating INTEGER NOT NULL,  -- 0-5 (Again, Hard, Good, Easy, etc.)
+    time_taken INTEGER,       -- Seconds to answer
+    interval_before INTEGER,  -- Previous interval
+    interval_after INTEGER,   -- New interval
+    ease_before REAL,
+    ease_after REAL
+);
+
+-- Mindmaps table
+CREATE TABLE IF NOT EXISTS mindmaps (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    root_node_id TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by TEXT NOT NULL,
+    last_modified_by TEXT NOT NULL,
+    version INTEGER DEFAULT 1,
+    is_deleted INTEGER DEFAULT 0,
+    metadata TEXT     -- JSON for styling, layout preferences
+);
+
+-- Mindmap nodes table
+CREATE TABLE IF NOT EXISTS mindmap_nodes (
+    id TEXT PRIMARY KEY,
+    mindmap_id TEXT REFERENCES mindmaps(id) ON DELETE CASCADE,
+    parent_id TEXT REFERENCES mindmap_nodes(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    position_x REAL DEFAULT 0,
+    position_y REAL DEFAULT 0,
+    node_order INTEGER DEFAULT 0,
+    color TEXT,
+    icon TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    metadata TEXT     -- JSON for additional properties
+);
+
+-- Study sessions table (for tracking study time and progress)
+CREATE TABLE IF NOT EXISTS study_sessions (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,  -- topic, flashcard_deck, mindmap
+    entity_id TEXT NOT NULL,
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP,
+    duration INTEGER,  -- Seconds
+    cards_reviewed INTEGER DEFAULT 0,
+    topics_completed INTEGER DEFAULT 0,
+    metadata TEXT     -- JSON for session details
+);
+
+-- Create FTS5 virtual tables for search
+CREATE VIRTUAL TABLE IF NOT EXISTS topics_fts USING fts5(
+    title, content, content=topics, content_rowid=rowid
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS flashcards_fts USING fts5(
+    front, back, tags, content=flashcards, content_rowid=rowid
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS mindmap_nodes_fts USING fts5(
+    text, content=mindmap_nodes, content_rowid=rowid
+);
+
+-- Create triggers to keep FTS tables in sync
+CREATE TRIGGER IF NOT EXISTS topics_ai AFTER INSERT ON topics BEGIN
+    INSERT INTO topics_fts(rowid, title, content) 
+    VALUES (new.rowid, new.title, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS topics_ad AFTER DELETE ON topics BEGIN
+    DELETE FROM topics_fts WHERE rowid = old.rowid;
+END;
+
+CREATE TRIGGER IF NOT EXISTS topics_au AFTER UPDATE ON topics BEGIN
+    DELETE FROM topics_fts WHERE rowid = old.rowid;
+    INSERT INTO topics_fts(rowid, title, content) 
+    VALUES (new.rowid, new.title, new.content);
+END;
+
+-- Similar triggers for flashcards
+CREATE TRIGGER IF NOT EXISTS flashcards_ai AFTER INSERT ON flashcards BEGIN
+    INSERT INTO flashcards_fts(rowid, front, back, tags) 
+    VALUES (new.rowid, new.front, new.back, new.tags);
+END;
+
+CREATE TRIGGER IF NOT EXISTS flashcards_ad AFTER DELETE ON flashcards BEGIN
+    DELETE FROM flashcards_fts WHERE rowid = old.rowid;
+END;
+
+CREATE TRIGGER IF NOT EXISTS flashcards_au AFTER UPDATE ON flashcards BEGIN
+    DELETE FROM flashcards_fts WHERE rowid = old.rowid;
+    INSERT INTO flashcards_fts(rowid, front, back, tags) 
+    VALUES (new.rowid, new.front, new.back, new.tags);
+END;
+
+-- Similar triggers for mindmap_nodes
+CREATE TRIGGER IF NOT EXISTS mindmap_nodes_ai AFTER INSERT ON mindmap_nodes BEGIN
+    INSERT INTO mindmap_nodes_fts(rowid, text) 
+    VALUES (new.rowid, new.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS mindmap_nodes_ad AFTER DELETE ON mindmap_nodes BEGIN
+    DELETE FROM mindmap_nodes_fts WHERE rowid = old.rowid;
+END;
+
+CREATE TRIGGER IF NOT EXISTS mindmap_nodes_au AFTER UPDATE ON mindmap_nodes BEGIN
+    DELETE FROM mindmap_nodes_fts WHERE rowid = old.rowid;
+    INSERT INTO mindmap_nodes_fts(rowid, text) 
+    VALUES (new.rowid, new.text);
+END;
+
+-- Create indexes
+CREATE INDEX IF NOT EXISTS idx_topics_path_id ON topics(path_id);
+CREATE INDEX IF NOT EXISTS idx_topics_parent_id ON topics(parent_id);
+CREATE INDEX IF NOT EXISTS idx_flashcards_deck_id ON flashcards(deck_id);
+CREATE INDEX IF NOT EXISTS idx_flashcards_next_review ON flashcards(next_review);
+CREATE INDEX IF NOT EXISTS idx_review_history_flashcard_id ON review_history(flashcard_id);
+CREATE INDEX IF NOT EXISTS idx_mindmap_nodes_mindmap_id ON mindmap_nodes(mindmap_id);
+CREATE INDEX IF NOT EXISTS idx_study_sessions_entity ON study_sessions(entity_type, entity_id);
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 11
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 10;
+"""
+
     def __init__(self, db_path: Union[str, Path], client_id: str, 
                  check_integrity_on_startup: bool = False):
         """
@@ -2040,6 +2251,41 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V9→V10] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V9 to V10 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v10_to_v11(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 10 to version 11.
+
+        This migration adds study-related tables for learning paths, flashcards, 
+        mindmaps, and study session tracking.
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 11 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V10 to V11 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V10_TO_V11_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V10→V11] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 11:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V10→V11] Migration version check failed. Expected 11, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V10→V11] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V10→V11] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V10 to V11 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V10→V11] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V10 to V11 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 7 to version 8.
@@ -2131,6 +2377,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 9 and target_version > 9:
                         self._migrate_from_v9_to_v10(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 10 and target_version > 10:
+                        self._migrate_from_v10_to_v11(conn)
                 elif current_db_version == 4 and target_version >= 5:
                     self._migrate_from_v4_to_v5(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2148,6 +2397,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 9 and target_version > 9:
                         self._migrate_from_v9_to_v10(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 10 and target_version > 10:
+                        self._migrate_from_v10_to_v11(conn)
                 elif current_db_version == 5 and target_version >= 6:
                     self._migrate_from_v5_to_v6(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2162,6 +2414,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 9 and target_version > 9:
                         self._migrate_from_v9_to_v10(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 10 and target_version > 10:
+                        self._migrate_from_v10_to_v11(conn)
                 elif current_db_version == 6 and target_version >= 7:
                     self._migrate_from_v6_to_v7(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2173,12 +2428,17 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 9 and target_version > 9:
                         self._migrate_from_v9_to_v10(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 10 and target_version > 10:
+                        self._migrate_from_v10_to_v11(conn)
                 elif current_db_version == 7 and target_version == 8:
                     self._migrate_from_v7_to_v8(conn)
                 elif current_db_version == 8 and target_version == 9:
                     self._migrate_from_v8_to_v9(conn)
                 elif current_db_version == 9 and target_version == 10:
                     self._migrate_from_v9_to_v10(conn)
+                elif current_db_version == 10 and target_version == 11:
+                    self._migrate_from_v10_to_v11(conn)
                 elif current_initial_version < target_version: # An older schema exists
                     # For versions older than 4, we don't have a migration path
                     raise SchemaError(
@@ -5189,6 +5449,332 @@ UPDATE db_schema_version
         except Exception as e:
             logger.error(f"Failed to vacuum database: {e}")
             raise CharactersRAGDBError(f"Vacuum failed: {e}") from e
+    
+    # --- Study Methods (Learning Paths, Flashcards, Mindmaps) ---
+    
+    def create_flashcard(self, card_data: Dict[str, Any]) -> str:
+        """
+        Create a new flashcard.
+        
+        Args:
+            card_data: Dictionary containing flashcard data with keys:
+                - deck_id: ID of the deck this card belongs to
+                - front: Front text of the card (question)
+                - back: Back text of the card (answer)
+                - tags: Optional space-separated tags
+                - type: Card type (default: 'basic')
+                - metadata: Optional JSON metadata
+        
+        Returns:
+            The ID of the created flashcard.
+            
+        Raises:
+            InputError: If required fields are missing or invalid.
+            CharactersRAGDBError: If database operation fails.
+        """
+        if not card_data.get('front') or not card_data.get('back'):
+            raise InputError("Flashcard must have both front and back text")
+            
+        card_id = self._generate_uuid()
+        
+        with self.transaction() as cursor:
+            cursor.execute("""
+                INSERT INTO flashcards (
+                    id, deck_id, front, back, tags, type,
+                    created_by, last_modified_by, metadata
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                card_id,
+                card_data.get('deck_id'),
+                card_data['front'],
+                card_data['back'],
+                card_data.get('tags', ''),
+                card_data.get('type', 'basic'),
+                card_data.get('created_by', self.client_id),
+                card_data.get('last_modified_by', self.client_id),
+                json.dumps(card_data.get('metadata', {})) if card_data.get('metadata') else None
+            ))
+            
+        return card_id
+    
+    def get_flashcard(self, card_id: str) -> Optional[Dict[str, Any]]:
+        """Get a flashcard by ID."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM flashcards 
+            WHERE id = ? AND is_deleted = 0
+        """, (card_id,))
+        
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+    
+    def update_flashcard_review(self, card_id: str, rating: int) -> None:
+        """
+        Update flashcard after review using SM-2 algorithm.
+        
+        Args:
+            card_id: ID of the flashcard
+            rating: Review rating (0-5)
+                0 - Complete blackout
+                1 - Incorrect response; correct one remembered
+                2 - Incorrect response; correct one seemed easy to recall
+                3 - Correct response; with difficulty
+                4 - Correct response; after hesitation
+                5 - Perfect response
+        """
+        if rating < 0 or rating > 5:
+            raise InputError("Rating must be between 0 and 5")
+            
+        with self.transaction() as cursor:
+            # Get current card data
+            cursor.execute("""
+                SELECT interval, repetitions, ease_factor
+                FROM flashcards
+                WHERE id = ? AND is_deleted = 0
+            """, (card_id,))
+            
+            row = cursor.fetchone()
+            if not row:
+                raise InputError(f"Flashcard {card_id} not found")
+                
+            interval = row['interval']
+            repetitions = row['repetitions']
+            ease_factor = row['ease_factor']
+            
+            # SM-2 algorithm
+            if rating < 3:
+                repetitions = 0
+                interval = 1
+            else:
+                if repetitions == 0:
+                    interval = 1
+                elif repetitions == 1:
+                    interval = 6
+                else:
+                    interval = int(interval * ease_factor)
+                    
+                repetitions += 1
+                
+            # Update ease factor
+            ease_factor = ease_factor + 0.1 - (5 - rating) * (0.08 + (5 - rating) * 0.02)
+            if ease_factor < 1.3:
+                ease_factor = 1.3
+                
+            # Calculate next review date
+            from datetime import datetime, timedelta
+            next_review = datetime.now(timezone.utc) + timedelta(days=interval)
+            
+            # Update flashcard
+            cursor.execute("""
+                UPDATE flashcards
+                SET interval = ?, repetitions = ?, ease_factor = ?,
+                    next_review = ?, last_review = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP, version = version + 1
+                WHERE id = ?
+            """, (interval, repetitions, ease_factor, next_review.isoformat(), card_id))
+            
+            # Add review history
+            review_id = self._generate_uuid()
+            cursor.execute("""
+                INSERT INTO review_history (
+                    id, flashcard_id, rating, interval_after, ease_after
+                ) VALUES (?, ?, ?, ?, ?)
+            """, (review_id, card_id, rating, interval, ease_factor))
+    
+    def get_due_flashcards(self, deck_id: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get flashcards due for review."""
+        query = """
+            SELECT * FROM flashcards
+            WHERE is_deleted = 0 AND is_suspended = 0
+                AND (next_review IS NULL OR next_review <= CURRENT_TIMESTAMP)
+        """
+        params = []
+        
+        if deck_id:
+            query += " AND deck_id = ?"
+            params.append(deck_id)
+            
+        query += " ORDER BY next_review ASC LIMIT ?"
+        params.append(limit)
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        
+        return [dict(row) for row in cursor.fetchall()]
+    
+    def create_deck(self, name: str, description: Optional[str] = None) -> str:
+        """Create a new flashcard deck."""
+        deck_id = self._generate_uuid()
+        
+        with self.transaction() as cursor:
+            cursor.execute("""
+                INSERT INTO decks (
+                    id, name, description, created_by, last_modified_by
+                ) VALUES (?, ?, ?, ?, ?)
+            """, (deck_id, name, description, self.client_id, self.client_id))
+            
+        return deck_id
+    
+    def create_learning_path(self, title: str, description: Optional[str] = None) -> str:
+        """Create a new learning path."""
+        path_id = self._generate_uuid()
+        
+        with self.transaction() as cursor:
+            cursor.execute("""
+                INSERT INTO learning_paths (
+                    id, title, description, created_by, last_modified_by
+                ) VALUES (?, ?, ?, ?, ?)
+            """, (path_id, title, description, self.client_id, self.client_id))
+            
+        return path_id
+    
+    def create_topic(self, topic_data: Dict[str, Any]) -> str:
+        """Create a new topic within a learning path."""
+        topic_id = self._generate_uuid()
+        
+        with self.transaction() as cursor:
+            cursor.execute("""
+                INSERT INTO topics (
+                    id, path_id, parent_id, title, content,
+                    topic_order, created_by, last_modified_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                topic_id,
+                topic_data.get('path_id'),
+                topic_data.get('parent_id'),
+                topic_data['title'],
+                topic_data.get('content', ''),
+                topic_data.get('topic_order', 0),
+                self.client_id,
+                self.client_id
+            ))
+            
+        return topic_id
+    
+    def update_topic_progress(self, topic_id: str, progress: float, status: Optional[str] = None) -> None:
+        """Update topic progress and status."""
+        if progress < 0 or progress > 1:
+            raise InputError("Progress must be between 0 and 1")
+            
+        with self.transaction() as cursor:
+            query = """
+                UPDATE topics
+                SET progress = ?, updated_at = CURRENT_TIMESTAMP, version = version + 1
+            """
+            params = [progress]
+            
+            if status:
+                if status not in ['not_started', 'in_progress', 'completed']:
+                    raise InputError("Invalid topic status")
+                query += ", status = ?"
+                params.append(status)
+                
+            query += " WHERE id = ? AND is_deleted = 0"
+            params.append(topic_id)
+            
+            cursor.execute(query, params)
+    
+    def create_mindmap(self, title: str) -> str:
+        """Create a new mindmap."""
+        mindmap_id = self._generate_uuid()
+        
+        with self.transaction() as cursor:
+            cursor.execute("""
+                INSERT INTO mindmaps (
+                    id, title, created_by, last_modified_by
+                ) VALUES (?, ?, ?, ?)
+            """, (mindmap_id, title, self.client_id, self.client_id))
+            
+        return mindmap_id
+    
+    def add_mindmap_node(self, mindmap_id: str, text: str, parent_id: Optional[str] = None,
+                        position: Optional[Tuple[float, float]] = None) -> str:
+        """Add a node to a mindmap."""
+        node_id = self._generate_uuid()
+        
+        with self.transaction() as cursor:
+            cursor.execute("""
+                INSERT INTO mindmap_nodes (
+                    id, mindmap_id, parent_id, text,
+                    position_x, position_y
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                node_id,
+                mindmap_id,
+                parent_id,
+                text,
+                position[0] if position else 0,
+                position[1] if position else 0
+            ))
+            
+        return node_id
+    
+    def search_flashcards(self, query: str, deck_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Search flashcards using FTS."""
+        base_query = """
+            SELECT f.* FROM flashcards f
+            JOIN flashcards_fts fts ON f.rowid = fts.rowid
+            WHERE flashcards_fts MATCH ? AND f.is_deleted = 0
+        """
+        params = [query]
+        
+        if deck_id:
+            base_query += " AND f.deck_id = ?"
+            params.append(deck_id)
+            
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(base_query, params)
+        
+        return [dict(row) for row in cursor.fetchall()]
+    
+    def get_study_stats(self, days: int = 30) -> Dict[str, Any]:
+        """Get study statistics for the last N days."""
+        from datetime import datetime, timedelta
+        start_date = datetime.now(timezone.utc) - timedelta(days=days)
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Cards reviewed
+        cursor.execute("""
+            SELECT COUNT(*) as total_reviews,
+                   AVG(rating) as avg_rating
+            FROM review_history
+            WHERE reviewed_at >= ?
+        """, (start_date.isoformat(),))
+        
+        review_stats = dict(cursor.fetchone())
+        
+        # Topics completed
+        cursor.execute("""
+            SELECT COUNT(*) as topics_completed
+            FROM topics
+            WHERE status = 'completed' AND updated_at >= ?
+        """, (start_date.isoformat(),))
+        
+        topic_stats = dict(cursor.fetchone())
+        
+        # Study sessions
+        cursor.execute("""
+            SELECT COUNT(*) as total_sessions,
+                   SUM(duration) as total_duration,
+                   AVG(duration) as avg_duration
+            FROM study_sessions
+            WHERE started_at >= ?
+        """, (start_date.isoformat(),))
+        
+        session_stats = dict(cursor.fetchone())
+        
+        return {
+            'reviews': review_stats,
+            'topics': topic_stats,
+            'sessions': session_stats
+        }
 
 
 # --- Transaction Context Manager Class (Helper for `with db.transaction():`) ---
@@ -5198,44 +5784,59 @@ class TransactionContextManager:
         self.conn: Optional[sqlite3.Connection] = None
         self.is_outermost_transaction = False
 
-    def __enter__(self) -> sqlite3.Connection:
-        self.conn = self.db.get_connection()
-        if not self.conn.in_transaction:
-            # Using deferred transaction by default. Could be "IMMEDIATE" or "EXCLUSIVE" if needed.
-            self.conn.execute("BEGIN")
-            self.is_outermost_transaction = True
-            logger.debug(f"Transaction started (outermost) on thread {threading.get_ident()}.")
+    def __enter__(self):
+        # Ensure transaction_depth is initialized for this thread
+        if not hasattr(self.db._local, 'transaction_depth'):
+            self.db._local.transaction_depth = 0
+            
+        # If we already have a connection from a parent transaction, use it
+        if self.db._local.transaction_depth > 0:
+            self.conn = self.db.get_connection()
+            self.db._local.transaction_depth += 1
+            logger.debug(f"Entered nested transaction level {self.db._local.transaction_depth} on thread {threading.get_ident()}.")
+            return self.conn.cursor()
         else:
-            # SQLite handles nested transactions using savepoints automatically with BEGIN/COMMIT.
-            # However, true nested transactions are not supported directly. Python's `in_transaction`
-            # might not reflect savepoint depth. We only manage the outermost BEGIN/COMMIT/ROLLBACK.
-            logger.debug(
-                f"Entering possibly nested transaction block on thread {threading.get_ident()}.")
-        return self.conn
+            # This is the outermost transaction
+            self.conn = self.db.get_connection()
+            self.is_outermost_transaction = True
+            self.db._local.transaction_depth = 1
+            # SQLite doesn't support nested transactions directly, but we use SAVEPOINTs for nested behavior
+            self.conn.execute("BEGIN")
+            logger.debug(f"Started outermost transaction on thread {threading.get_ident()}.")
+            return self.conn.cursor()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if not self.conn:  # Should not happen if __enter__ succeeded
-            logger.error("Transaction context: Connection is None in __exit__.")
-            return False # Re-raise exception if any
+        """
+        Handles the exit of the transaction context.
+
+        - If this is the outermost transaction and no exception occurred, commits the transaction.
+        - If this is the outermost transaction and an exception occurred, rolls back the transaction.
+        - If this is a nested transaction, decrements the depth counter and does nothing else.
+
+        Args:
+            exc_type: The type of the exception raised in the with block, if any.
+            exc_val: The value/instance of the exception raised in the with block, if any.
+            exc_tb: The traceback of the exception raised in the with block, if any.
+
+        Returns:
+            False to propagate any exceptions.
+        """
+        # Ensure transaction_depth is initialized and decrement it
+        if not hasattr(self.db._local, 'transaction_depth'):
+            self.db._local.transaction_depth = 0
+        else:
+            self.db._local.transaction_depth -= 1
 
         if self.is_outermost_transaction:
-            if exc_type:
-                logger.error(
-                    f"Transaction (outermost) failed, rolling back on thread {threading.get_ident()}: {exc_type.__name__} - {exc_val}",
-                    exc_info=False) # exc_info=exc_tb if full traceback wanted here
-                try:
-                    self.conn.rollback()
-                    logger.debug(f"Rollback successful on thread {threading.get_ident()}.")
-                except sqlite3.Error as rb_err:
-                    logger.critical(f"Rollback FAILED on thread {threading.get_ident()}: {rb_err}", exc_info=True)
-            else:
+            # We're exiting the outermost transaction
+            if exc_type is None:
+                # No exception, so commit
                 try:
                     self.conn.commit()
-                    logger.debug(
-                        f"Transaction (outermost) committed successfully on thread {threading.get_ident()}.")
+                    logger.debug(f"Transaction (outermost) committed successfully on thread {threading.get_ident()}.")
                 except sqlite3.Error as commit_err:
-                    logger.error(f"Commit FAILED on thread {threading.get_ident()}, attempting rollback: {commit_err}",
-                                 exc_info=True)
+                    logger.error(f"Failed to commit transaction on thread {threading.get_ident()}: {commit_err}", exc_info=True)
+                    # Attempt rollback after failed commit
                     try:
                         self.conn.rollback()
                         logger.debug(f"Rollback after failed commit successful on thread {threading.get_ident()}.")
@@ -5249,6 +5850,19 @@ class TransactionContextManager:
                         raise CharactersRAGDBError(f"Commit failed: {commit_err}") from commit_err
                     else:
                         raise commit_err
+            else:
+                # An exception occurred in the with block, so rollback
+                try:
+                    self.conn.rollback()
+                    logger.debug(
+                        f"Transaction (outermost) rolled back due to exception ({exc_type.__name__}) on thread {threading.get_ident()}.")
+                except sqlite3.Error as rollback_err:
+                    logger.error(
+                        f"Failed to rollback transaction after exception on thread {threading.get_ident()}: {rollback_err}",
+                        exc_info=True)
+                    # If rollback also fails, we wrap both errors
+                    raise CharactersRAGDBError(
+                        f"Rollback failed after exception: {rollback_err}. Original exception: {exc_val}") from rollback_err
         elif exc_type:
             # If an exception occurred in a nested block, we don't do anything here.
             # The outermost block will handle the rollback.

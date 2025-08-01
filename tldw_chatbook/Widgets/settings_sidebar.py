@@ -97,16 +97,6 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
         # Enhanced Header with Mode Toggle and Search
         # -------------------------------------------------------------------
         yield Static("Chat Settings", classes="sidebar-title")
-        
-        # Mode toggle container
-        with Horizontal(id=f"{id_prefix}-mode-toggle-container", classes="mode-toggle-container"):
-            yield Label("Basic", classes="mode-label")
-            yield Switch(
-                value=False,  # False = Basic, True = Advanced
-                id=f"{id_prefix}-settings-mode-toggle",
-                classes="settings-mode-toggle"
-            )
-            yield Label("Advanced", classes="mode-label")
 
         # -------------------------------------------------------------------
         # Quick Settings (Always visible)
@@ -181,6 +171,15 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 placeholder="e.g., user-123",
                 classes="sidebar-input",
                 tooltip="Optional user identifier for personalizing context"
+            )
+            
+            # Advanced Settings toggle checkbox
+            yield Checkbox(
+                "Advanced Settings",
+                id=f"{id_prefix}-settings-mode-toggle",
+                value=False,  # Unchecked by default (Basic mode)
+                classes="advanced-settings-checkbox",
+                tooltip="Enable advanced settings and options"
             )
 
         # -------------------------------------------------------------------

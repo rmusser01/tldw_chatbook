@@ -73,7 +73,7 @@ from .config import (
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_EMBEDDINGS, TAB_STTS, TAB_SUBSCRIPTIONS
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
@@ -139,17 +139,19 @@ from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Evals_Window_v3 import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
+from .UI.Study_Window import StudyWindow
 from .UI.Tab_Bar import TabBar
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
-from .UI.Embeddings_Window import EmbeddingsWindow
 from .UI.Subscription_Window import SubscriptionWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
     SEARCH_NAV_RAG_CHAT,
     SEARCH_NAV_RAG_MANAGEMENT,
-    SEARCH_NAV_WEB_SEARCH
+    SEARCH_NAV_WEB_SEARCH,
+    SEARCH_NAV_EMBEDDINGS_CREATE,
+    SEARCH_NAV_EMBEDDINGS_MANAGE
 )
 API_IMPORTS_SUCCESSFUL = True
 #
@@ -780,7 +782,7 @@ class PlaceholderWindow(Container):
             logger.info(f"Window {self.window_id} initialized in {duration:.3f} seconds")
             
         except Exception as e:
-            logger.error(f"Failed to initialize window {self.window_id}: {e}", exc_info=True)
+            logger.error(f"Failed to initialize window {self.window_id}: {str(e)}", exc_info=True)
             # Clear any existing children before showing error
             for child in list(self.children):
                 child.remove()
@@ -997,9 +999,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     llm_active_view: reactive[Optional[str]] = reactive(None)
     _initial_llm_view: Optional[str] = "llm-view-llama-cpp"
     
-    # Embeddings Tab
-    embeddings_active_view: reactive[Optional[str]] = reactive("embeddings-view-create")
-    _initial_embeddings_view: Optional[str] = "embeddings-view-create"
     llamacpp_server_process: Optional[subprocess.Popen] = None
     llamafile_server_process: Optional[subprocess.Popen] = None
     vllm_server_process: Optional[subprocess.Popen] = None
@@ -1331,6 +1330,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                                                          reactive_attr="search_active_sub_tab"),
             SEARCH_NAV_WEB_SEARCH: functools.partial(_handle_nav, prefix="search",
                                                      reactive_attr="search_active_sub_tab"),
+            SEARCH_NAV_EMBEDDINGS_CREATE: functools.partial(_handle_nav, prefix="search", 
+                                                           reactive_attr="search_active_sub_tab"),
+            SEARCH_NAV_EMBEDDINGS_MANAGE: functools.partial(_handle_nav, prefix="search",
+                                                           reactive_attr="search_active_sub_tab"),
             **search_events.SEARCH_BUTTON_HANDLERS,
         }
 
@@ -1391,13 +1394,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             TAB_SEARCH: search_handlers,
             TAB_EVALS: evals_handlers,
             TAB_CODING: {},  # Empty for now - coding handles its own events
-            TAB_EMBEDDINGS: {
-                "embeddings-nav-create": functools.partial(_handle_nav, prefix="embeddings",
-                                                           reactive_attr="embeddings_active_view"),
-                "embeddings-nav-manage": functools.partial(_handle_nav, prefix="embeddings",
-                                                           reactive_attr="embeddings_active_view"),
-            },
             TAB_STTS: {}, # STTS handles its own events
+            TAB_STUDY: {}, # Study handles its own events
             TAB_SUBSCRIPTIONS: {
                 "subscription-add-button": subscription_events.handle_add_subscription,
                 "subscription-check-all-button": subscription_events.handle_check_all_subscriptions,
@@ -1521,8 +1519,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("logs", LogsWindow, "logs-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
-            ("embeddings", EmbeddingsWindow, "embeddings-window"),
             ("stts", STTSWindow, "stts-window"),
+            ("study", StudyWindow, "study-window"),
             ("subscriptions", SubscriptionWindow, "subscriptions-window"),
         ]
         
@@ -1599,8 +1597,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("logs", LogsWindow, "logs-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
-            ("embeddings", EmbeddingsWindow, "embeddings-window"),
             ("stts", STTSWindow, "stts-window"),
+            ("study", StudyWindow, "study-window"),
         ]
         
         window_widgets = []
@@ -2406,7 +2404,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         else:
                             self.loguru_logger.debug(f"Llama.cpp help text in {new_view} already populated or not empty.")
                     except QueryError:
-                        self.loguru_logger.warning(f"Help display widget #llamacpp-args-help-display not found in {new_view} during view switch.")
+                        self.loguru_logger.debug(f"Help display widget #llamacpp-args-help-display not found in {new_view} during view switch - may not be mounted yet.")
                     except Exception as e_help_populate:
                         self.loguru_logger.error(f"Error ensuring Llama.cpp help text in {new_view}: {e_help_populate}", exc_info=True)
                 elif new_view == "llm-view-llamafile":
@@ -2416,8 +2414,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)
                         self.loguru_logger.debug(f"Ensured Llamafile help text in {new_view}.")
                     except QueryError:
-                        self.loguru_logger.warning(
-                            f"Help display widget for Llamafile not found in {new_view} during view switch.")
+                        self.loguru_logger.debug(
+                            f"Help display widget for Llamafile not found in {new_view} during view switch - may not be mounted yet.")
                 # Add similar for other views like llamafile, vllm if they have help sections
                 # elif new_view == "llm-view-llamafile":
                 #     try:
@@ -2429,51 +2427,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.loguru_logger.error(f"UI component '{new_view}' not found in #llm-content-pane: {e}",
                                          exc_info=True)
     
-    def watch_embeddings_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
-        """Shows the correct view in the Embeddings tab and hides others."""
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        
-        self.loguru_logger.debug(f"Embeddings active view changing from '{old_view}' to: '{new_view}'")
-        
-        try:
-            content_pane = self.query_one("#embeddings-content-pane")
-        except QueryError:
-            self.loguru_logger.error("#embeddings-content-pane not found. Cannot switch Embeddings views.")
-            return
-        
-        # Hide all views first
-        for child in content_pane.query(".embeddings-view-area"):
-            child.styles.display = "none"
-        
-        if new_view:
-            try:
-                target_view_id_selector = f"#{new_view}"
-                view_to_show = content_pane.query_one(target_view_id_selector, Container)
-                view_to_show.styles.display = "block"
-                self.loguru_logger.info(f"Switched Embeddings view to: {new_view}")
-                
-                # Update navigation button styles
-                try:
-                    nav_pane = self.query_one("#embeddings-nav-pane")
-                    for button in nav_pane.query(".embeddings-nav-button"):
-                        button.remove_class("-active")
-                    
-                    # Add active class to the clicked button
-                    button_id = new_view.replace("-view-", "-nav-")
-                    active_button = nav_pane.query_one(f"#{button_id}", Button)
-                    active_button.add_class("-active")
-                except QueryError as e:
-                    self.loguru_logger.warning(f"Could not update navigation button styles: {e}")
-                    
-            except QueryError as e:
-                self.loguru_logger.error(f"UI component '{new_view}' not found in #embeddings-content-pane: {e}",
-                                         exc_info=True)
-        else:
-            self.loguru_logger.debug("Embeddings active view is None, all views hidden.")
-
     def watch_current_chat_is_ephemeral(self, is_ephemeral: bool) -> None:
         self.loguru_logger.debug(f"Chat ephemeral state changed to: {is_ephemeral}")
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
@@ -2996,6 +2949,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
+        import asyncio
         logging.info("--- App Unmounting ---")
         self._ui_ready = False
         
@@ -3388,12 +3342,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         elif new_tab == TAB_EVALS: # Added for Evals tab
             # Placeholder for any specific actions when Evals tab is selected
             pass
-        elif new_tab == TAB_EMBEDDINGS:
-            if not self.embeddings_active_view:
-                self.loguru_logger.debug(
-                    f"Switched to Embeddings tab, activating initial view: {self._initial_embeddings_view}")
-                self.call_later(setattr, self, 'embeddings_active_view', self._initial_embeddings_view)
-            # For example, if EvalsWindow has sub-views or needs initial data loading:
             # if not self.evals_active_view: # Assuming an 'evals_active_view' reactive
             #     self.loguru_logger.debug(f"Switched to Evals tab, activating initial view...")
             #     self.call_later(setattr, self, 'evals_active_view', self._initial_evals_view) # Example
@@ -3624,7 +3572,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_video_models(self) -> None:
         """Initialize models for the video ingestion window."""
         try:
-            from .UI.Ingest_Window import IngestWindow
             ingest_window = self.query_one("#ingest-window", IngestWindow)
             if ingest_window._local_video_window:
                 self.log.debug("Initializing video window models")
@@ -3635,7 +3582,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_audio_models(self) -> None:
         """Initialize models for the audio ingestion window."""
         try:
-            from .UI.Ingest_Window import IngestWindow
             ingest_window = self.query_one("#ingest-window", IngestWindow)
             if ingest_window._local_audio_window:
                 self.log.debug("Initializing audio window models")
@@ -4173,7 +4119,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 TAB_STATS: "stats-window",
                 TAB_EVALS: "evals-window",
                 TAB_CODING: "coding-window",
-                TAB_STTS: "stts-window"
+                TAB_STTS: "stts-window",
+                TAB_STUDY: "study-window"
             }
 
             window_id = window_id_map.get(self.current_tab)
@@ -4395,10 +4342,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Handle attach button visibility toggle
             from .config import save_setting_to_cli_config
             save_setting_to_cli_config("chat.images", "show_attach_button", event.value)
-        elif checkbox_id == "chat-worldbook-enable-checkbox" and current_active_tab == TAB_CHAT:
-            await chat_events_worldbooks.handle_worldbook_enable_checkbox(self, event.value)
-        elif checkbox_id == "chat-dictionary-enable-checkbox" and current_active_tab == TAB_CHAT:
-            await chat_events_dictionaries.handle_dictionary_enable_checkbox(self, event.value)
             
             # Update the UI if enhanced chat window is active
             use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
@@ -4409,6 +4352,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     await chat_window.toggle_attach_button_visibility(event.value)
                 except Exception as e:
                     loguru_logger.error(f"Error toggling attach button visibility: {e}")
+        elif checkbox_id == "chat-worldbook-enable-checkbox" and current_active_tab == TAB_CHAT:
+            await chat_events_worldbooks.handle_worldbook_enable_checkbox(self, event.value)
+        elif checkbox_id == "chat-dictionary-enable-checkbox" and current_active_tab == TAB_CHAT:
+            await chat_events_dictionaries.handle_dictionary_enable_checkbox(self, event.value)
+        elif checkbox_id == "chat-settings-mode-toggle" and current_active_tab == TAB_CHAT:
+            # Handle settings mode toggle checkbox
+            await self.handle_settings_mode_toggle_checkbox(event)
         # Add handlers for checkboxes in other tabs if any
 
     async def on_switch_changed(self, event: Switch.Changed) -> None:
@@ -4418,9 +4368,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         switch_id = event.switch.id
         current_active_tab = self.current_tab
         
-        if switch_id == "chat-settings-mode-toggle" and current_active_tab == TAB_CHAT:
-            await self.handle_settings_mode_toggle(event)
-        elif switch_id == "notes-auto-save-toggle":
+        if switch_id == "notes-auto-save-toggle":
             await self.handle_notes_auto_save_toggle(event)
 
 
@@ -4581,6 +4529,33 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # --- End of Chat Event Handlers for Streaming & thinking tags ---
     #####################################################################
 
+    async def handle_settings_mode_toggle_checkbox(self, event: Checkbox.Changed) -> None:
+        """Handles the settings mode toggle checkbox between Basic and Advanced."""
+        try:
+            # Update reactive variable
+            self.chat_settings_mode = "advanced" if event.value else "basic"
+            
+            # Update sidebar class for CSS styling
+            sidebar = self.query_one("#chat-left-sidebar")
+            if self.chat_settings_mode == "basic":
+                sidebar.add_class("basic-mode")
+                sidebar.remove_class("advanced-mode")
+            else:
+                sidebar.add_class("advanced-mode")
+                sidebar.remove_class("basic-mode")
+            
+            # Notify user
+            mode_name = "Advanced" if event.value else "Basic"
+            self.notify(f"Switched to {mode_name} mode", timeout=2)
+            
+            # Save preference to config
+            from .config import save_setting_to_cli_config
+            save_setting_to_cli_config("chat_defaults", "advanced_mode", event.value)
+            
+        except Exception as e:
+            loguru_logger.error(f"Error toggling settings mode: {e}", exc_info=True)
+            self.notify("Error switching modes", severity="error", timeout=4)
+    
     async def handle_settings_mode_toggle(self, event: Switch.Changed) -> None:
         """Handles the settings mode toggle between Basic and Advanced."""
         try:

@@ -16,6 +16,7 @@
 # 7. chat_with_huggingface(api_key, input_data, custom_prompt_arg, system_prompt=None, streaming=None)
 # 8. chat_with_deepseek(api_key, input_data, custom_prompt_arg, system_prompt=None, streaming=None)
 # 9. chat_with_moonshot(api_key, input_data, custom_prompt_arg, system_prompt=None, streaming=None)
+# 10. chat_with_zai(api_key, input_data, model, custom_prompt_arg, streaming=None)
 #
 #
 ####################
@@ -2666,6 +2667,235 @@ def chat_with_moonshot(
         })
         logger.error(f"Moonshot: Unexpected error in chat_with_moonshot: {e}", exc_info=True)
         raise ChatProviderError(provider="moonshot", message=f"Unexpected error: {e}")
+
+def chat_with_zai(
+        input_data: List[Dict[str, Any]],  # Mapped from 'messages_payload'
+        model: Optional[str] = None,  # Mapped from 'model'
+        api_key: Optional[str] = None,  # Mapped from 'api_key'
+        system_message: Optional[str] = None,  # Mapped from 'system_message'
+        temp: Optional[float] = None,  # Mapped from 'temp' (temperature)
+        maxp: Optional[float] = None,  # Mapped from 'maxp' (top_p)
+        streaming: Optional[bool] = False,  # Mapped from 'streaming'
+        # Z.AI specific parameters
+        max_tokens: Optional[int] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        do_sample: Optional[bool] = None,
+        request_id: Optional[str] = None,
+        custom_prompt_arg: Optional[str] = None  # Legacy
+):
+    """
+    Sends a chat completion request to the Z.AI API.
+    
+    Z.AI provides GLM model access through an OpenAI-compatible API endpoint, supporting models:
+    - glm-4.5: Standard GLM-4.5 model
+    - glm-4.5-air: GLM-4.5 optimized for speed
+    - glm-4.5-x: GLM-4.5 extended capabilities
+    - glm-4.5-airx: GLM-4.5 air with extended features
+    - glm-4.5-flash: Fast inference GLM-4.5 model
+    - glm-4-32b-0414-128k: GLM-4 32B with 128K context
+    
+    Args:
+        input_data: List of message objects (OpenAI format).
+        model: ID of the model to use (e.g., glm-4.5-flash).
+        api_key: Z.AI API key.
+        system_message: Optional system message to prepend.
+        temp: Sampling temperature (0-1).
+        maxp: Top-p (nucleus) sampling parameter.
+        streaming: Whether to stream the response.
+        max_tokens: Maximum number of tokens to generate.
+        tools: A list of tools the model may call.
+        do_sample: Whether to use sampling (temperature/top_p).
+        request_id: Optional request ID for tracking.
+        custom_prompt_arg: Legacy, largely ignored.
+    """
+    cli_api_settings = settings.get('api_settings', {})
+    zai_config = cli_api_settings.get('zai', {})
+    
+    final_api_key = api_key or zai_config.get('api_key')
+    if not final_api_key:
+        logger.error("Z.AI: API key is missing.")
+        raise ChatConfigurationError(provider="zai", message="Z.AI API Key is required but not found.")
+    
+    log_key_display = f"{final_api_key[:5]}...{final_api_key[-5:]}" if final_api_key and len(final_api_key) > 9 else "Key Provided"
+    logger.debug(f"Z.AI: Using API Key: {log_key_display}")
+    
+    # Resolve parameters
+    current_model = model or zai_config.get('model', 'glm-4.5-flash')
+    current_temp = temp if temp is not None else float(zai_config.get('temperature', 0.7))
+    current_top_p = maxp if maxp is not None else float(zai_config.get('top_p', 0.95))
+    current_streaming_cfg = zai_config.get('streaming', False)
+    current_streaming = streaming if streaming is not None else \
+        (str(current_streaming_cfg).lower() == 'true' if isinstance(current_streaming_cfg, str) else bool(
+            current_streaming_cfg))
+    current_max_tokens = max_tokens if max_tokens is not None else _safe_cast(zai_config.get('max_tokens'), int, 4096)
+    
+    # Log request metrics
+    log_counter("zai_api_request", labels={"model": current_model, "streaming": str(current_streaming)})
+    
+    # Build messages array
+    api_messages = []
+    if system_message:
+        api_messages.append({"role": "system", "content": system_message})
+    api_messages.extend(input_data)
+    
+    # Build request payload
+    payload = {
+        "model": current_model,
+        "messages": api_messages,
+        "stream": current_streaming,
+    }
+    
+    # Add optional parameters
+    if current_temp is not None:
+        payload["temperature"] = current_temp
+    if current_top_p is not None:
+        payload["top_p"] = current_top_p
+    if current_max_tokens is not None:
+        payload["max_tokens"] = current_max_tokens
+    if do_sample is not None:
+        payload["do_sample"] = do_sample
+    if tools is not None:
+        payload["tools"] = tools
+    if request_id is not None:
+        payload["request_id"] = request_id
+    
+    headers = {
+        'Authorization': f'Bearer {final_api_key}',
+        'Content-Type': 'application/json'
+    }
+    
+    api_base_url = zai_config.get('api_base_url', 'https://api.z.ai/api/paas/v4')
+    api_url = api_base_url.rstrip('/') + '/chat/completions'
+    
+    logger.debug(f"Z.AI Request Payload (excluding messages): {{k: v for k, v in payload.items() if k != 'messages'}}")
+    
+    start_time = time.time()
+    
+    try:
+        if current_streaming:
+            logger.debug("Z.AI: Posting request (streaming)")
+            with requests.Session() as session:
+                response = session.post(api_url, headers=headers, json=payload, stream=True, timeout=180)
+                response.raise_for_status()
+                
+                # Log streaming success metrics
+                duration = time.time() - start_time
+                log_histogram("zai_api_response_time", duration, labels={
+                    "model": current_model,
+                    "streaming": "true",
+                    "status_code": str(response.status_code)
+                })
+                log_counter("zai_api_success", labels={"model": current_model, "streaming": "true"})
+                
+                def stream_generator():
+                    try:
+                        for line in response.iter_lines(decode_unicode=True):
+                            if line and line.strip():
+                                # Z.AI provides OpenAI-compatible SSE
+                                yield line if line.endswith("\n") else line + "\n"
+                    except requests.exceptions.ChunkedEncodingError as e:
+                        logger.error(f"Z.AI: ChunkedEncodingError: {e}", exc_info=True)
+                        yield f"data: {json.dumps({'error': {'message': f'Stream error: {str(e)}', 'type': 'zai_stream_error'}})}\n\n"
+                    except Exception as e:
+                        logger.error(f"Z.AI: Stream iteration error: {e}", exc_info=True)
+                        yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'zai_stream_error'}})}\n\n"
+                    finally:
+                        yield "data: [DONE]\n\n"
+                        if response:
+                            response.close()
+                
+                return stream_generator()
+        
+        else:  # Non-streaming
+            logger.debug("Z.AI: Posting request (non-streaming)")
+            retry_count = int(zai_config.get('api_retries', 3))
+            retry_delay = float(zai_config.get('api_retry_delay', 1.0))
+            
+            retry_strategy = Retry(
+                total=retry_count,
+                backoff_factor=retry_delay,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["POST"]
+            )
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            with requests.Session() as session:
+                session.mount("https://", adapter)
+                response = session.post(api_url, headers=headers, json=payload,
+                                        timeout=float(zai_config.get('api_timeout', 90.0)))
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            # Log non-streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("zai_api_response_time", duration, labels={
+                "model": current_model,
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("zai_api_success", labels={"model": current_model, "streaming": "false"})
+            
+            # Log token usage if available
+            usage = result.get("usage", {})
+            if usage:
+                log_histogram("zai_api_prompt_tokens", usage.get("prompt_tokens", 0), labels={"model": current_model})
+                log_histogram("zai_api_completion_tokens", usage.get("completion_tokens", 0), labels={"model": current_model})
+                log_histogram("zai_api_total_tokens", usage.get("total_tokens", 0), labels={"model": current_model})
+            
+            logger.debug("Z.AI: Non-streaming request successful.")
+            return result
+    
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else 500
+        error_text = e.response.text if e.response is not None else str(e)
+        
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        log_counter("zai_api_error", labels={
+            "model": current_model,
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("zai_api_error_response_time", duration, labels={
+            "model": current_model,
+            "status_code": str(status_code)
+        })
+        
+        logger.error(f"Z.AI Full Error Response (status {status_code}): {error_text[:500]}")
+        
+        if status_code == 401:
+            raise ChatAuthenticationError(provider="zai", message=f"Auth failed. Detail: {error_text[:200]}")
+        elif status_code == 429:
+            raise ChatRateLimitError(provider="zai", message=f"Rate limit. Detail: {error_text[:200]}")
+        elif 400 <= status_code < 500:
+            raise ChatBadRequestError(provider="zai", message=f"Bad request ({status_code}). Detail: {error_text[:200]}")
+        else:
+            raise ChatProviderError(provider="zai", message=f"API error ({status_code}). Detail: {error_text[:200]}", status_code=status_code)
+    
+    except requests.exceptions.RequestException as e:
+        # Log network error metrics
+        duration = time.time() - start_time
+        log_counter("zai_api_error", labels={
+            "model": current_model,
+            "error_type": "network_error"
+        })
+        log_histogram("zai_api_error_response_time", duration, labels={
+            "model": current_model,
+            "error_type": "network"
+        })
+        logger.error(f"Z.AI RequestException: {e}", exc_info=True)
+        raise ChatProviderError(provider="zai", message=f"Network error: {str(e)}")
+    
+    except Exception as e:
+        # Log unexpected error metrics
+        duration = time.time() - start_time
+        log_counter("zai_api_error", labels={
+            "model": current_model,
+            "error_type": "unexpected"
+        })
+        logger.error(f"Z.AI: Unexpected error in chat_with_zai: {e}", exc_info=True)
+        raise ChatProviderError(provider="zai", message=f"Unexpected error: {e}")
+
 
 #
 #

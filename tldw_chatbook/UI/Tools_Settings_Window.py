@@ -31,6 +31,7 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
 from ..Utils.path_validation import validate_path
+from .Theme_Editor_Window import ThemeEditorView
 #
 # Local Imports
 #
@@ -564,103 +565,104 @@ class ToolsSettingsWindow(Container):
     
     def _compose_config_file_settings(self) -> ComposeResult:
         """Compose the Configuration File Settings UI with organized sections."""
-        yield Static("Configuration File Settings", classes="section-title")
-        yield Static("Edit all configuration values with organized sections or raw TOML", classes="section-description")
-        
-        with TabbedContent(id="config-tabs"):
-            # Raw TOML Editor Tab
-            with TabPane("Raw TOML", id="tab-raw-toml"):
-                yield Static("Direct TOML Configuration Editor", classes="tab-description")
-                config_text = ""
-                try:
-                    if self.config_data:
-                        config_text = toml.dumps(self.config_data)
-                    else:
-                        config_text = "# No configuration data loaded"
-                except Exception as e:
-                    config_text = f"# Error loading configuration: {e}\n# Please check the configuration file."
-                yield TextArea(
-                    text=config_text,
-                    read_only=False,
-                    id="config-text-area",
-                    classes="config-editor"
-                )
-                with Container(classes="config-button-container"):
-                    yield Button("Save TOML", id="save-config-button", variant="primary")
-                    yield Button("Reload", id="reload-config-button")
-                    yield Button("Validate", id="validate-config-button")
+        with Container(classes="config-file-settings-inner"):
+            yield Static("Configuration File Settings", classes="section-title")
+            yield Static("Edit all configuration values with organized sections or raw TOML", classes="section-description")
             
-            # General Configuration Tab
-            with TabPane("General", id="tab-general-config"):
-                yield Static("Application General Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_general_config_form()
+            with TabbedContent(id="config-tabs"):
+                # Raw TOML Editor Tab
+                with TabPane("Raw TOML", id="tab-raw-toml"):
+                    yield Static("Direct TOML Configuration Editor", classes="tab-description")
+                    config_text = ""
+                    try:
+                        if self.config_data:
+                            config_text = toml.dumps(self.config_data)
+                        else:
+                            config_text = "# No configuration data loaded"
+                    except Exception as e:
+                        config_text = f"# Error loading configuration: {e}\n# Please check the configuration file."
+                    yield TextArea(
+                        text=config_text,
+                        read_only=False,
+                        id="config-text-area",
+                        classes="config-editor"
+                    )
+                    with Container(classes="config-button-container"):
+                        yield Button("Save TOML", id="save-config-button", variant="primary")
+                        yield Button("Reload", id="reload-config-button")
+                        yield Button("Validate", id="validate-config-button")
             
-            # API Settings Tab
-            with TabPane("API Settings", id="tab-api-config"):
-                yield Static("API Provider Configurations", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_api_config_form()
+                # General Configuration Tab
+                with TabPane("General", id="tab-general-config"):
+                    yield Static("Application General Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_general_config_form()
             
-            # Database Settings Tab
-            with TabPane("Database", id="tab-database-config"):
-                yield Static("Database Configuration", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_database_config_form()
+                # API Settings Tab
+                with TabPane("API Settings", id="tab-api-config"):
+                    yield Static("API Provider Configurations", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_api_config_form()
             
-            # RAG Settings Tab
-            with TabPane("RAG Settings", id="tab-rag-config"):
-                yield Static("Retrieval-Augmented Generation Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_rag_config_form()
+                # Database Settings Tab
+                with TabPane("Database", id="tab-database-config"):
+                    yield Static("Database Configuration", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_database_config_form()
             
-            # Providers Tab
-            with TabPane("Providers", id="tab-providers-config"):
-                yield Static("Available Models by Provider", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_providers_config_form()
+                # RAG Settings Tab
+                with TabPane("RAG Settings", id="tab-rag-config"):
+                    yield Static("Retrieval-Augmented Generation Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_rag_config_form()
             
-            # Chat Configuration Tab
-            with TabPane("Chat", id="tab-chat-config"):
-                yield Static("Chat Default Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_chat_config_form()
+                # Providers Tab
+                with TabPane("Providers", id="tab-providers-config"):
+                    yield Static("Available Models by Provider", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_providers_config_form()
             
-            # Character Configuration Tab
-            with TabPane("Character", id="tab-character-config"):
-                yield Static("Character Default Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_character_config_form()
+                # Chat Configuration Tab
+                with TabPane("Chat", id="tab-chat-config"):
+                    yield Static("Chat Default Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_chat_config_form()
             
-            # Notes Configuration Tab
-            with TabPane("Notes", id="tab-notes-config"):
-                yield Static("Notes Synchronization Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_notes_config_form()
+                # Character Configuration Tab
+                with TabPane("Character", id="tab-character-config"):
+                    yield Static("Character Default Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_character_config_form()
             
-            # TTS Configuration Tab
-            with TabPane("TTS", id="tab-tts-config"):
-                yield Static("Text-to-Speech Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_tts_config_form()
+                # Notes Configuration Tab
+                with TabPane("Notes", id="tab-notes-config"):
+                    yield Static("Notes Synchronization Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_notes_config_form()
             
-            # Embedding Configuration Tab
-            with TabPane("Embeddings", id="tab-embedding-config"):
-                yield Static("Embedding Model Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_embedding_config_form()
+                # TTS Configuration Tab
+                with TabPane("TTS", id="tab-tts-config"):
+                    yield Static("Text-to-Speech Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_tts_config_form()
             
-            # Advanced Tab
-            with TabPane("Advanced", id="tab-advanced-config"):
-                yield Static("Advanced Configuration Options", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_advanced_config_form()
+                # Embedding Configuration Tab
+                with TabPane("Embeddings", id="tab-embedding-config"):
+                    yield Static("Embedding Model Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_embedding_config_form()
             
-            # Encryption Tab
-            with TabPane("Encryption", id="tab-encryption-config"):
-                yield Static("Config File Encryption", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_encryption_config_form()
+                # Advanced Tab
+                with TabPane("Advanced", id="tab-advanced-config"):
+                    yield Static("Advanced Configuration Options", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_advanced_config_form()
+            
+                # Encryption Tab
+                with TabPane("Encryption", id="tab-encryption-config"):
+                    yield Static("Config File Encryption", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_encryption_config_form()
     
     def _compose_general_config_form(self) -> ComposeResult:
         """Form for general configuration section."""
@@ -1852,8 +1854,7 @@ class ToolsSettingsWindow(Container):
             
             # Splash Screen Gallery
             yield Static("Splash Screen Customization", classes="form-section-title")
-            yield Static("View and customize splash screen animations", classes="section-description")
-            yield Button("Open Splash Screen Gallery", id="appearance-splash-gallery", variant="primary")
+            yield Static("View and customize splash screen animations in the Splash Screen Gallery section", classes="section-description")
             
             # Color Customization
             yield Static("Color Customization", classes="form-section-title")
@@ -1893,6 +1894,10 @@ class ToolsSettingsWindow(Container):
             with Container(classes="settings-button-container"):
                 yield Button("Save Appearance Settings", id="save-appearance-settings", variant="primary")
                 yield Button("Reset to Defaults", id="reset-appearance-settings")
+    
+    def _compose_theme_editor(self) -> ComposeResult:
+        """Compose the Theme Editor UI."""
+        yield ThemeEditorView()
     
     def _compose_encryption_config_form(self) -> ComposeResult:
         """Form for encryption configuration section."""
@@ -2038,6 +2043,16 @@ class ToolsSettingsWindow(Container):
             with Collapsible(title="Tool Usage Statistics", collapsed=True):
                 yield Static("Tool execution history and statistics will be displayed here.", classes="tool-stats")
 
+    def _compose_splash_gallery(self) -> ComposeResult:
+        """Compose the Splash Screen Gallery section."""
+        from ..Widgets.splash_screen_viewer import SplashScreenViewer
+        
+        yield Static("🎨 Splash Screen Gallery", classes="section-title")
+        yield Static("Browse and preview all available splash screen animations", classes="section-description")
+        
+        # Include the splash screen viewer directly
+        yield SplashScreenViewer(classes="embedded-splash-viewer")
+    
     def _compose_about(self) -> ComposeResult:
         """Compose the About section."""
         yield Static("About tldw-chatbook", classes="section-title")
@@ -2088,6 +2103,8 @@ Thank you for using tldw-chatbook! 🎉
             yield Button("Configuration File Settings", id="ts-nav-config-file-settings", classes="ts-nav-button")
             yield Button("Database Tools", id="ts-nav-db-tools", classes="ts-nav-button")
             yield Button("Appearance", id="ts-nav-appearance", classes="ts-nav-button")
+            yield Button("Theme Editor", id="ts-nav-theme-editor", classes="ts-nav-button")
+            yield Button("Splash Screen Gallery", id="ts-nav-splash-gallery", classes="ts-nav-button")
             yield Button("Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button")
             yield Button("About", id="ts-nav-about", classes="ts-nav-button")
 
@@ -2100,7 +2117,7 @@ Thank you for using tldw-chatbook! 🎉
             yield Container(
                 *self._compose_config_file_settings(),
                 id="ts-view-config-file-settings",
-                classes="ts-view-area",
+                classes="ts-view-area config-file-settings-container",
             )
             yield Container(
                 *self._compose_database_tools(),
@@ -2113,8 +2130,18 @@ Thank you for using tldw-chatbook! 🎉
                 classes="ts-view-area",
             )
             yield Container(
+                *self._compose_theme_editor(),
+                id="ts-view-theme-editor",
+                classes="ts-view-area",
+            )
+            yield Container(
                 *self._compose_tool_settings(),
                 id="ts-view-tool-settings",
+                classes="ts-view-area",
+            )
+            yield Container(
+                *self._compose_splash_gallery(),
+                id="ts-view-splash-gallery",
                 classes="ts-view-area",
             )
             yield Container(
@@ -2145,6 +2172,10 @@ Thank you for using tldw-chatbook! 🎉
             await self._show_view("ts-view-db-tools")
         elif button_id == "ts-nav-appearance":
             await self._show_view("ts-view-appearance")
+        elif button_id == "ts-nav-theme-editor":
+            await self._show_view("ts-view-theme-editor")
+        elif button_id == "ts-nav-splash-gallery":
+            await self._show_view("ts-view-splash-gallery")
         elif button_id == "ts-nav-tool-settings":
             await self._show_view("ts-view-tool-settings")
         elif button_id == "ts-nav-about":
@@ -2258,9 +2289,6 @@ Thank you for using tldw-chatbook! 🎉
         elif button_id == "db-reset-all":
             await self._reset_databases()
         
-        # Appearance handlers
-        elif button_id == "appearance-splash-gallery":
-            await self._open_splash_gallery()
 
     async def _save_general_settings(self) -> None:
         """Save General Settings to the configuration file."""
@@ -3272,32 +3300,14 @@ Thank you for using tldw-chatbook! 🎉
     async def _show_view(self, view_id: str) -> None:
         """Show the specified view and hide all others."""
         # Use ContentSwitcher to switch views
-        try:
-            content_switcher = self.query_one("#tools-settings-content-pane", ContentSwitcher)
-            content_switcher.current = view_id
-        except Exception as e:
-            # If ContentSwitcher fails, fall back to the old method
-            # List of all view IDs
-            view_ids = [
-                "ts-view-general-settings",
-                "ts-view-config-file-settings", 
-                "ts-view-db-tools",
-                "ts-view-appearance",
-                "ts-view-tool-settings"
-            ]
-            
-            # Hide all views by removing active class
-            for v_id in view_ids:
-                try:
-                    view = self.query_one(f"#{v_id}")
-                    view.remove_class("active")
-                except Exception:
-                    pass  # View might not exist yet
-            
-            # Show the requested view by adding active class
+        content_switcher = self.query_one("#tools-settings-content-pane", ContentSwitcher)
+        content_switcher.current = view_id
+        
+        # Force a refresh for the config file settings view
+        if view_id == "ts-view-config-file-settings":
             try:
-                view = self.query_one(f"#{view_id}")
-                view.add_class("active")
+                config_view = self.query_one("#ts-view-config-file-settings")
+                config_view.refresh(layout=True)
             except Exception:
                 pass
             
@@ -3307,7 +3317,10 @@ Thank you for using tldw-chatbook! 🎉
             "ts-view-config-file-settings": "ts-nav-config-file-settings",
             "ts-view-db-tools": "ts-nav-db-tools",
             "ts-view-appearance": "ts-nav-appearance",
-            "ts-view-tool-settings": "ts-nav-tool-settings"
+            "ts-view-theme-editor": "ts-nav-theme-editor",
+            "ts-view-tool-settings": "ts-nav-tool-settings",
+            "ts-view-splash-gallery": "ts-nav-splash-gallery",
+            "ts-view-about": "ts-nav-about"
         }
         
         for v_id, btn_id in nav_buttons.items():
@@ -3751,35 +3764,6 @@ Thank you for using tldw-chatbook! 🎉
                 return f"{size_bytes:.1f} {unit}"
             size_bytes /= 1024.0
         return f"{size_bytes:.1f} TB"
-    
-    async def _open_splash_gallery(self) -> None:
-        """Open the splash screen gallery viewer."""
-        from ..Widgets.splash_screen_viewer import SplashScreenViewer
-        
-        try:
-            # Create a modal screen with the splash viewer
-            class SplashGalleryScreen(Screen):
-                """Modal screen for splash screen gallery."""
-                
-                BINDINGS = [
-                    ("escape", "dismiss", "Close"),
-                ]
-                
-                def compose(self) -> ComposeResult:
-                    """Compose the modal layout."""
-                    with Container(classes="modal-container"):
-                        yield SplashScreenViewer(classes="splash-gallery-modal")
-                
-                def action_dismiss(self) -> None:
-                    """Close the modal."""
-                    self.dismiss()
-            
-            # Push the modal screen
-            await self.app_instance.push_screen(SplashGalleryScreen())
-            
-        except Exception as e:
-            self.app_instance.notify(f"Error opening splash gallery: {e}", severity="error")
-            logger.error(f"Failed to open splash gallery: {e}")
     
     async def on_mount(self) -> None:
         """Called when the widget is mounted. Set initial view."""

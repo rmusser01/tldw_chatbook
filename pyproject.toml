@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tldw_chatbook"
-version = "0.1.4.1"
+version = "0.1.5.0"
 authors = [
   { name="Robert Musser", email="contact@rmusser.net" },
 ]
@@ -194,6 +194,11 @@ nemo = [
     "nemo-toolkit[asr]>=1.20.0",  # For NVIDIA Parakeet and Canary models
     "torch",  # Required by NeMo
     "torchaudio",  # Required for audio processing
+]
+speech_recording = [
+    "pyaudio>=0.2.14",  # Primary audio backend
+    "sounddevice>=0.4.6",  # Fallback audio backend
+    "webrtcvad>=2.0.10",  # Voice activity detection
 ]
 ocr_docext = [
     "docext",  # NanoNets document extraction toolkit
