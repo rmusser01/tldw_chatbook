@@ -56,6 +56,7 @@ dependencies = [
     "markdownify",
     "aiofiles",
     "textual-image",
+    "anytree",
 ]
 
 # --- Optional Dependencies ---
@@ -154,6 +155,10 @@ chatterbox = [
     "torchaudio",
     "torch",
     "faster-whisper",  # For validation of generated audio
+]
+mindmap = [
+    # anytree is already in base dependencies
+    # No additional dependencies needed for basic functionality
 ]
 local_tts = [
     "kokoro-onnx",

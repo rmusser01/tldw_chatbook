@@ -143,7 +143,6 @@ class ChatbookExportManagementWindow(ModalScreen):
     
     .details-title {
         text-style: bold;
-        font-size: 110%;
         margin-bottom: 1;
         color: $primary;
     }

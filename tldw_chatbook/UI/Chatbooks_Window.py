@@ -107,12 +107,19 @@ class ChatbookCard(Container):
 
 
 class EmptyStateWidget(Container):
-    """Enhanced empty state widget."""
+    """Enhanced empty state widget with better layout."""
     
     DEFAULT_CSS = """
     EmptyStateWidget {
         align: center middle;
         height: 100%;
+        width: 100%;
+    }
+    
+    .empty-state-container {
+        align: center middle;
+        max-width: 80;
+        width: 100%;
         padding: 4;
     }
     
@@ -120,56 +127,100 @@ class EmptyStateWidget(Container):
         text-align: center;
         color: $primary;
         text-style: bold;
-        margin-bottom: 2;
+        margin-bottom: 3;
+        width: 100%;
     }
     
     .empty-state-title {
         text-align: center;
         text-style: bold;
         color: $text;
-        margin-bottom: 1;
+        margin-bottom: 2;
+        width: 100%;
     }
     
     .empty-state-description {
         text-align: center;
         color: $text-muted;
-        margin-bottom: 3;
-        width: 60;
+        margin-bottom: 4;
+        width: 100%;
+        max-width: 60;
     }
     
-    .empty-state-actions {
-        layout: horizontal;
-        height: auto;
+    .empty-state-cards {
+        layout: vertical;
+        width: 100%;
+        max-width: 50;
         align: center middle;
-        margin-top: 2;
     }
     
-    .empty-state-actions Button {
+    .primary-action-button {
+        width: 100%;
+        height: 12;
+        margin-bottom: 2;
+        text-align: center;
+        padding: 2;
+    }
+    
+    .secondary-actions {
+        layout: horizontal;
+        width: 100%;
+        height: 10;
+    }
+    
+    .secondary-action-button {
+        width: 1fr;
+        height: 100%;
         margin: 0 1;
+        text-align: center;
+        padding: 1;
     }
     """
     
     def compose(self) -> ComposeResult:
-        # ASCII art book icon
-        book_art = """
-    📚 📖 📚
- ╭─────────╮
- │ CHATBOOK│
- │ LIBRARY │
- ╰─────────╯
-        """
-        yield Static(book_art, classes="empty-state-icon")
-        yield Static("No Chatbooks Yet", classes="empty-state-title")
-        yield Static(
-            "Chatbooks are portable knowledge packs containing conversations, notes, "
-            "characters, and media. Create your first one to get started!",
-            classes="empty-state-description"
-        )
-        
-        with Container(classes="empty-state-actions"):
-            yield Button("✨ Create New", id="empty-create-btn", variant="primary")
-            yield Button("📥 Import", id="empty-import-btn", variant="default")
-            yield Button("📋 Browse Templates", id="empty-templates-btn", variant="default")
+        with Container(classes="empty-state-container"):
+            # Larger ASCII art
+            book_art = """
+        📚 Welcome to Chatbooks 📚
+    
+    ╔════════════════════════╗
+    ║                        ║
+    ║     CHATBOOK           ║
+    ║     LIBRARY            ║
+    ║                        ║
+    ╚════════════════════════╝
+            """
+            yield Static(book_art, classes="empty-state-icon")
+            yield Static("Start Your Knowledge Collection", classes="empty-state-title")
+            yield Static(
+                "Chatbooks are portable knowledge packs that bundle conversations, notes, "
+                "characters, and media into shareable archives. Perfect for research projects, "
+                "story development, or knowledge sharing.",
+                classes="empty-state-description"
+            )
+            
+            with Container(classes="empty-state-cards"):
+                # Primary action - Create New
+                yield Button(
+                    "✨\nCreate New Chatbook\nStart from scratch with a wizard",
+                    id="empty-create-btn",
+                    classes="primary-action-button",
+                    variant="primary"
+                )
+                
+                # Secondary actions
+                with Container(classes="secondary-actions"):
+                    yield Button(
+                        "📥\nImport\nFrom .zip file",
+                        id="empty-import-btn",
+                        classes="secondary-action-button"
+                    )
+                    
+                    yield Button(
+                        "📋\nTemplates\nPre-made configs",
+                        id="empty-templates-btn",
+                        classes="secondary-action-button"
+                    )
 
 
 class ChatbooksWindow(Container):
@@ -188,11 +239,12 @@ class ChatbooksWindow(Container):
     ChatbooksWindow {
         layout: vertical;
         background: $background;
+        height: 100%;
     }
     
     .chatbooks-header {
         height: auto;
-        background: $boost;
+        background: $surface;
         padding: 2;
         border-bottom: thick $background-darken-1;
     }
@@ -209,48 +261,44 @@ class ChatbooksWindow(Container):
         color: $text-muted;
     }
     
-    .quick-actions {
+    #chatbooks-main-content {
+        height: 1fr;
+        width: 100%;
+    }
+    
+    /* Styles for when chatbooks exist */
+    .chatbooks-toolbar {
         height: auto;
         padding: 2;
         background: $panel;
         border-bottom: solid $background-darken-1;
     }
     
-    .quick-actions-grid {
-        layout: grid;
-        grid-size: 4 1;
-        grid-gutter: 2;
+    .toolbar-row {
+        layout: horizontal;
         height: auto;
+        align: left middle;
         margin-bottom: 1;
     }
     
-    .action-card {
-        padding: 2;
-        background: $boost;
-        border: round $background-darken-1;
-        align: center middle;
-        height: 8;
-    }
-    
-    .action-card:hover {
-        background: $primary 20%;
-        border: round $primary;
-    }
-    
-    .action-icon {
-        text-align: center;
-        margin-bottom: 1;
-    }
-    
-    .action-label {
-        text-align: center;
-        text-style: bold;
-    }
-    
-    .search-bar {
+    .toolbar-actions {
+        layout: horizontal;
+        width: auto;
         height: 3;
-        padding: 0 2;
-        margin-top: 1;
+    }
+    
+    .toolbar-button {
+        margin-right: 1;
+        min-width: 12;
+    }
+    
+    .toolbar-spacer {
+        width: 1fr;
+    }
+    
+    .search-container {
+        width: 40;
+        height: 3;
     }
     
     .search-input {
@@ -262,16 +310,16 @@ class ChatbooksWindow(Container):
         padding: 2;
     }
     
-    .section-header {
+    .content-header {
         layout: horizontal;
         height: 3;
-        margin-bottom: 1;
+        margin-bottom: 2;
         align: left middle;
     }
     
-    .section-title {
+    .content-title {
         text-style: bold;
-        color: $primary;
+        color: $text;
         width: 1fr;
     }
     
@@ -288,14 +336,14 @@ class ChatbooksWindow(Container):
     .chatbooks-grid {
         layout: grid;
         grid-size: 3;
-        grid-gutter: 1;
+        grid-gutter: 2;
         height: auto;
-        padding: 1;
+        width: 100%;
     }
     
     .chatbooks-list {
         height: 100%;
-        padding: 1;
+        width: 100%;
     }
     
     .stats-bar {
@@ -311,6 +359,12 @@ class ChatbooksWindow(Container):
         text-align: center;
         color: $text-muted;
     }
+    
+    .no-results {
+        text-align: center;
+        color: $text-muted;
+        padding: 4;
+    }
     """
     
     # Reactive properties
@@ -320,15 +374,15 @@ class ChatbooksWindow(Container):
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
-        self.app_instance_instance = app_instance
+        self.app_instance = app_instance
         
         # Get export path from config or use default
-        config = self.app_instance_instance.app_config.get("chatbooks", {})
+        config = self.app_instance.app_config.get("chatbooks", {})
         self._export_path = Path(config.get("export_directory", "~/Documents/Chatbooks")).expanduser()
         self._export_path.mkdir(parents=True, exist_ok=True)
         
     def compose(self) -> ComposeResult:
-        # Header
+        # Always show header
         with Container(classes="chatbooks-header"):
             yield Static("📚 Chatbooks", classes="chatbooks-title")
             yield Static(
@@ -336,58 +390,8 @@ class ChatbooksWindow(Container):
                 classes="chatbooks-subtitle"
             )
         
-        # Quick actions
-        with Container(classes="quick-actions"):
-            with Grid(classes="quick-actions-grid"):
-                # Create card
-                with Container(classes="action-card", id="create-action"):
-                    yield Static("✨", classes="action-icon")
-                    yield Static("Create New", classes="action-label")
-                
-                # Import card
-                with Container(classes="action-card", id="import-action"):
-                    yield Static("📥", classes="action-icon")
-                    yield Static("Import", classes="action-label")
-                
-                # Templates card
-                with Container(classes="action-card", id="templates-action"):
-                    yield Static("📋", classes="action-icon")
-                    yield Static("Templates", classes="action-label")
-                
-                # Manage card
-                with Container(classes="action-card", id="manage-action"):
-                    yield Static("⚙️", classes="action-icon")
-                    yield Static("Manage", classes="action-label")
-            
-            # Search bar
-            with Container(classes="search-bar"):
-                yield Input(
-                    placeholder="🔍 Search chatbooks...",
-                    id="chatbook-search",
-                    classes="search-input"
-                )
-        
-        # Content area
-        with VerticalScroll(classes="content-area"):
-            # Section header
-            with Container(classes="section-header"):
-                yield Static("Recent Chatbooks", classes="section-title", id="section-title")
-                
-                # View mode toggles
-                with Container(classes="view-toggles"):
-                    yield Button("▦ Grid", id="view-grid", classes="view-toggle", variant="primary")
-                    yield Button("☰ List", id="view-list", classes="view-toggle")
-            
-            # Content container (will be populated based on chatbooks)
-            yield Container(id="chatbooks-container")
-        
-        # Stats bar
-        with Container(classes="stats-bar"):
-            yield Static(
-                "0 chatbooks • 0 MB total",
-                id="stats-text",
-                classes="stats-text"
-            )
+        # Main content container that will be updated based on state
+        yield Container(id="chatbooks-main-content")
     
     async def on_mount(self) -> None:
         """Called when screen is mounted."""
@@ -395,63 +399,135 @@ class ChatbooksWindow(Container):
         
     def watch_chatbooks(self, old_value: List[Dict], new_value: List[Dict]) -> None:
         """React to chatbooks list changes."""
-        self._update_content()
-        self._update_stats()
+        self._rebuild_layout()
         
     def watch_view_mode(self, old_value: str, new_value: str) -> None:
         """React to view mode changes."""
-        # Update button states
-        grid_btn = self.query_one("#view-grid", Button)
-        list_btn = self.query_one("#view-list", Button)
-        
-        if new_value == "grid":
-            grid_btn.variant = "primary"
-            list_btn.variant = "default"
-        else:
-            grid_btn.variant = "default"
-            list_btn.variant = "primary"
-            
-        self._update_content()
+        if self.chatbooks:  # Only update if we have chatbooks
+            self._update_chatbook_display()
         
     def watch_search_query(self, old_value: str, new_value: str) -> None:
         """React to search query changes."""
-        self._update_content()
+        if self.chatbooks:  # Only update if we have chatbooks
+            self._update_chatbook_display()
         
-    def _update_content(self) -> None:
-        """Update the content display."""
-        container = self.query_one("#chatbooks-container", Container)
-        container.remove_children()
+    def _rebuild_layout(self) -> None:
+        """Rebuild the entire layout based on whether chatbooks exist."""
+        main_content = self.query_one("#chatbooks-main-content", Container)
+        main_content.remove_children()
         
-        # Filter chatbooks based on search
-        filtered = self._filter_chatbooks()
-        
-        if not filtered:
+        if not self.chatbooks:
             # Show empty state
-            container.mount(EmptyStateWidget())
-            self.query_one("#section-title", Static).update(
-                "No chatbooks found" if self.search_query else "Recent Chatbooks"
-            )
+            main_content.mount(EmptyStateWidget())
         else:
-            self.query_one("#section-title", Static).update(
-                f"Found {len(filtered)} chatbooks" if self.search_query else "Recent Chatbooks"
-            )
+            # Show full interface with toolbar and content
+            # Toolbar
+            with main_content:
+                toolbar = Container(classes="chatbooks-toolbar")
+                with toolbar:
+                    with Container(classes="toolbar-row"):
+                        # Action buttons
+                        with Container(classes="toolbar-actions"):
+                            toolbar.mount(Button("✨ Create", id="toolbar-create", classes="toolbar-button", variant="primary"))
+                            toolbar.mount(Button("📥 Import", id="toolbar-import", classes="toolbar-button"))
+                            toolbar.mount(Button("📋 Templates", id="toolbar-templates", classes="toolbar-button"))
+                            toolbar.mount(Button("⚙️ Manage", id="toolbar-manage", classes="toolbar-button"))
+                        
+                        # Spacer
+                        toolbar.mount(Container(classes="toolbar-spacer"))
+                        
+                        # Search
+                        search_container = Container(classes="search-container")
+                        search_container.mount(
+                            Input(
+                                placeholder="🔍 Search chatbooks...",
+                                id="chatbook-search",
+                                classes="search-input"
+                            )
+                        )
+                        toolbar.mount(search_container)
+                
+                main_content.mount(toolbar)
+                
+                # Content area
+                content_area = VerticalScroll(classes="content-area")
+                with content_area:
+                    # Header with view toggles
+                    header = Container(classes="content-header")
+                    header.mount(Static("Your Chatbooks", classes="content-title", id="content-title"))
+                    
+                    toggles = Container(classes="view-toggles")
+                    toggles.mount(Button("▦ Grid", id="view-grid", classes="view-toggle", variant="primary"))
+                    toggles.mount(Button("☰ List", id="view-list", classes="view-toggle"))
+                    header.mount(toggles)
+                    
+                    content_area.mount(header)
+                    
+                    # Chatbook display container
+                    content_area.mount(Container(id="chatbook-display"))
+                
+                main_content.mount(content_area)
+                
+                # Stats bar
+                stats = Container(classes="stats-bar")
+                stats.mount(Static("", id="stats-text", classes="stats-text"))
+                main_content.mount(stats)
+                
+            # Update the display
+            self._update_chatbook_display()
+            self._update_stats()
+    
+    def _update_chatbook_display(self) -> None:
+        """Update just the chatbook display area."""
+        try:
+            display = self.query_one("#chatbook-display", Container)
+            display.remove_children()
             
-            if self.view_mode == "grid":
-                # Grid view
-                grid = Grid(classes="chatbooks-grid")
-                for cb_data in filtered:
-                    card = ChatbookCard(cb_data)
-                    grid.mount(card)
-                container.mount(grid)
+            # Filter chatbooks
+            filtered = self._filter_chatbooks()
+            
+            if not filtered and self.search_query:
+                # No search results
+                display.mount(Static(
+                    f"No chatbooks found matching '{self.search_query}'",
+                    classes="no-results"
+                ))
             else:
-                # List view
-                list_view = ListView(classes="chatbooks-list")
-                for cb_data in filtered:
-                    item = ListItem(
-                        Static(f"📚 {cb_data['name']} - {cb_data.get('description', 'No description')[:50]}...")
-                    )
-                    list_view.mount(item)
-                container.mount(list_view)
+                # Update title
+                title = self.query_one("#content-title", Static)
+                if self.search_query:
+                    title.update(f"Search Results ({len(filtered)} found)")
+                else:
+                    title.update(f"Your Chatbooks ({len(filtered)})")
+                
+                # Update view toggle states
+                grid_btn = self.query_one("#view-grid", Button)
+                list_btn = self.query_one("#view-list", Button)
+                
+                if self.view_mode == "grid":
+                    grid_btn.variant = "primary"
+                    list_btn.variant = "default"
+                else:
+                    grid_btn.variant = "default" 
+                    list_btn.variant = "primary"
+                
+                # Display chatbooks
+                if self.view_mode == "grid":
+                    grid = Grid(classes="chatbooks-grid")
+                    for cb_data in filtered:
+                        grid.mount(ChatbookCard(cb_data))
+                    display.mount(grid)
+                else:
+                    list_view = ListView(classes="chatbooks-list")
+                    for cb_data in filtered:
+                        item = ListItem(
+                            Static(f"📚 {cb_data['name']} - {cb_data.get('description', 'No description')[:50]}...")
+                        )
+                        list_view.mount(item)
+                    display.mount(list_view)
+        except Exception:
+            # If elements don't exist yet, ignore
+            pass
                 
     def _filter_chatbooks(self) -> List[Dict[str, Any]]:
         """Filter chatbooks based on search query."""
@@ -519,71 +595,80 @@ class ChatbooksWindow(Container):
             
         except Exception as e:
             logger.error(f"Error refreshing chatbooks: {e}")
-            self.app_instance.notify(f"Error loading chatbooks: {str(e)}", severity="error")
+            self.app.notify(f"Error loading chatbooks: {str(e)}", severity="error")
             
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         button_id = event.button.id
         
+        # View mode toggles
         if button_id in ["view-grid", "view-list"]:
             self.view_mode = "grid" if button_id == "view-grid" else "list"
-        elif button_id in ["empty-create-btn"]:
-            await self.action_create_chatbook()
-        elif button_id in ["empty-import-btn"]:
-            await self.action_import_chatbook()
-        elif button_id in ["empty-templates-btn"]:
-            await self.action_browse_templates()
+        
+        # Empty state buttons
+        elif button_id == "empty-create-btn":
+            self.action_create_chatbook()
+        elif button_id == "empty-import-btn":
+            self.action_import_chatbook()
+        elif button_id == "empty-templates-btn":
+            self.action_browse_templates()
+        
+        # Toolbar buttons
+        elif button_id == "toolbar-create":
+            self.action_create_chatbook()
+        elif button_id == "toolbar-import":
+            self.action_import_chatbook()
+        elif button_id == "toolbar-templates":
+            self.action_browse_templates()
+        elif button_id == "toolbar-manage":
+            self.action_manage_exports()
             
-    async def on_container_click(self, event) -> None:
-        """Handle container clicks for action cards."""
-        # Check if clicked element or parent is an action card
-        element = event.target
-        while element and element.id not in ["create-action", "import-action", "templates-action", "manage-action"]:
-            element = element.parent
-            
-        if element:
-            if element.id == "create-action":
-                await self.action_create_chatbook()
-            elif element.id == "import-action":
-                await self.action_import_chatbook()
-            elif element.id == "templates-action":
-                await self.action_browse_templates()
-            elif element.id == "manage-action":
-                await self.action_manage_exports()
                 
     async def on_input_changed(self, event: Input.Changed) -> None:
         """Handle search input changes."""
         if event.input.id == "chatbook-search":
             self.search_query = event.value
             
-    async def action_create_chatbook(self) -> None:
+    def action_create_chatbook(self) -> None:
         """Launch the chatbook creation wizard."""
+        self.run_worker(self._create_chatbook_async())
+    
+    async def _create_chatbook_async(self) -> None:
+        """Async worker for creating chatbook."""
         from .Wizards.ChatbookCreationWizard import ChatbookCreationWizard
         
         wizard = ChatbookCreationWizard(self.app_instance)
-        result = await self.app_instance.push_screen(wizard, wait_for_dismiss=True)
+        result = await self.app.push_screen(wizard, wait_for_dismiss=True)
         
         if result and result.get("success"):
-            self.app_instance.notify("Chatbook created successfully!", severity="success")
+            self.app.notify("Chatbook created successfully!", severity="success")
             await self._refresh_chatbooks()
             
-    async def action_import_chatbook(self) -> None:
+    def action_import_chatbook(self) -> None:
         """Launch the chatbook import wizard."""
+        self.run_worker(self._import_chatbook_async())
+    
+    async def _import_chatbook_async(self) -> None:
+        """Async worker for importing chatbook."""
         from .Wizards.ChatbookImportWizard import ChatbookImportWizard
         
         wizard = ChatbookImportWizard(self.app_instance)
-        result = await self.app_instance.push_screen(wizard, wait_for_dismiss=True)
+        result = await self.app.push_screen(wizard, wait_for_dismiss=True)
         
         if result and result.get("success"):
-            self.app_instance.notify("Chatbook imported successfully!", severity="success")
+            self.app.notify("Chatbook imported successfully!", severity="success")
             await self._refresh_chatbooks()
             
-    async def action_browse_templates(self) -> None:
+    def action_browse_templates(self) -> None:
         """Open the templates browser."""
+        self.run_worker(self._browse_templates_async())
+    
+    async def _browse_templates_async(self) -> None:
+        """Async worker for browsing templates."""
         from .ChatbookTemplatesWindow import ChatbookTemplatesWindow
         
         templates_window = ChatbookTemplatesWindow(self.app_instance)
-        result = await self.app_instance.push_screen(templates_window, wait_for_dismiss=True)
+        result = await self.app.push_screen(templates_window, wait_for_dismiss=True)
         
         if result:
             # User selected a template, launch creation wizard with pre-filled data
@@ -592,18 +677,22 @@ class ChatbooksWindow(Container):
             # Create wizard with template data
             wizard = ChatbookCreationWizard(self.app_instance)
             # TODO: Pass template data to wizard
-            create_result = await self.app_instance.push_screen(wizard, wait_for_dismiss=True)
+            create_result = await self.app.push_screen(wizard, wait_for_dismiss=True)
             
             if create_result and create_result.get("success"):
-                self.app_instance.notify("Chatbook created from template!", severity="success")
+                self.app.notify("Chatbook created from template!", severity="success")
                 await self._refresh_chatbooks()
                 
-    async def action_manage_exports(self) -> None:
+    def action_manage_exports(self) -> None:
         """Open the export management window."""
+        self.run_worker(self._manage_exports_async())
+    
+    async def _manage_exports_async(self) -> None:
+        """Async worker for managing exports."""
         from .ChatbookExportManagementWindow import ChatbookExportManagementWindow
         
         management_window = ChatbookExportManagementWindow(self.app_instance)
-        await self.app_instance.push_screen(management_window, wait_for_dismiss=True)
+        await self.app.push_screen(management_window, wait_for_dismiss=True)
         
         # Refresh after management in case anything was deleted
         await self._refresh_chatbooks()
@@ -611,7 +700,7 @@ class ChatbooksWindow(Container):
     async def action_refresh(self) -> None:
         """Refresh the chatbooks list."""
         await self._refresh_chatbooks()
-        self.app_instance.notify("Chatbooks refreshed", severity="info")
+        self.app.notify("Chatbooks refreshed", severity="info")
         
     async def action_close(self) -> None:
         """Close the chatbooks window."""

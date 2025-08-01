@@ -139,8 +139,12 @@ class CodingWindow(Container):
                     yield Button("Open Repository Selector", id="open-repo-selector", variant="primary")
 
     @on(Button.Pressed, "#open-repo-selector")
-    async def open_repo_selector(self, event: Button.Pressed) -> None:
+    def open_repo_selector(self, event: Button.Pressed) -> None:
         """Open the repository selector window."""
+        self.run_worker(self._open_repo_selector_worker(), exclusive=True)
+    
+    async def _open_repo_selector_worker(self) -> None:
+        """Worker to open the repository selector window."""
         repo_window = CodeRepoCopyPasteWindow(self.app_instance)
         result = await self.app.push_screen(repo_window, wait_for_dismiss=True)
         

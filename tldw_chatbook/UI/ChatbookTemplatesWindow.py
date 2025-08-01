@@ -166,7 +166,6 @@ class ChatbookTemplatesWindow(ModalScreen):
         text-style: bold;
         text-align: center;
         color: $primary;
-        font-size: 110%;
         margin-bottom: 1;
     }
     

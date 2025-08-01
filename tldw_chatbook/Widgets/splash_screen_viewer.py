@@ -145,7 +145,7 @@ class SplashScreenViewer(Container):
             try:
                 card_data = temp_splash._load_card(card_name)
                 self.splash_cards[card_name] = SplashCardInfo(card_name, card_data)
-                logger.debug(f"Loaded card: {card_name}")
+                # Removed verbose debug logging for each card
             except Exception as e:
                 logger.error(f"Failed to load card {card_name}: {e}")
         

@@ -158,7 +158,7 @@ class SplashScreen(Container):
         # Skip state
         self._skip_requested = False
         
-        logger.debug(f"SplashScreen initialized with card: {self.card_name}")
+        # SplashScreen initialized
     
     def _load_splash_config(self) -> Dict[str, Any]:
         """Load splash screen configuration from settings."""
@@ -214,7 +214,7 @@ class SplashScreen(Container):
         if effects_config:
             config.update(effects_config)
 
-        logger.debug(f"Loaded splash config: {config}")
+        # Removed verbose debug logging of full config
         return config
 
     def _select_card(self) -> str:
@@ -222,8 +222,7 @@ class SplashScreen(Container):
         selection_mode = self.config.get("card_selection", "random")
         active_cards = self.config.get("active_cards", ["default"])
 
-        logger.debug(f"Splash card selection mode: {selection_mode}")
-        logger.debug(f"Available active cards: {active_cards}")
+        # Removed verbose debug logging for selection mode and active cards
 
         if not active_cards:
             logger.warning("No active cards available, falling back to default")
@@ -232,19 +231,18 @@ class SplashScreen(Container):
         if selection_mode == "random":
             # Make a random choice from active cards
             selected = random.choice(active_cards) if active_cards else "default"
-            logger.debug(f"Randomly selected card: {selected}")
+            # Removed verbose debug logging for selected card
             return selected
         elif selection_mode == "sequential":
             # TODO: Implement sequential selection with persistence
             selected = active_cards[0] if active_cards else "default"
-            logger.debug(f"Sequential selection, chose: {selected}")
+            # Removed verbose debug logging for sequential selection
             return selected
         elif selection_mode in active_cards:
             # Specific card selected
-            logger.debug(f"Specific card selected: {selection_mode}")
             return selection_mode
         else:
-            logger.debug("Invalid selection mode, falling back to default")
+            # Invalid selection mode, falling back to default
             return "default"
 
     def _load_card(self, card_name: str) -> Dict[str, Any]:

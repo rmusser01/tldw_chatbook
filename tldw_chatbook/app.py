@@ -139,9 +139,10 @@ from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Evals_Window_v3 import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
-from .UI.Study_Window import StudyWindow
+from .UI.Mindmap_Viewer_Window import MindmapViewerWindow
 from .UI.Chatbooks_Window import ChatbooksWindow
 from .UI.Tab_Bar import TabBar
+from .UI.Tab_Dropdown import TabDropdown, TabChanged
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
 # from .UI.SubscriptionWindow import SubscriptionWindow  # Temporarily disabled due to FormField imports
@@ -1491,11 +1492,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                      labels={"component": "titlebar"}, 
                      documentation="Time to create UI component")
 
-        # Use new TabBar widget
+        # Check config for navigation type
+        use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
         component_start = time.perf_counter()
-        widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
+        
+        if use_dropdown:
+            # Use dropdown navigation
+            widgets.append(TabDropdown(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
+            logger.info("Using dropdown navigation for tabs")
+        else:
+            # Use traditional tab bar
+            widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
+            logger.info("Using traditional tab bar navigation")
+            
         log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-                     labels={"component": "tabbar"}, 
+                     labels={"component": "navigation"}, 
                      documentation="Time to create UI component")
 
         # Content area - all windows
@@ -1519,10 +1530,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
             ("llm_management", LLMManagementWindow, "llm_management-window"),
             ("logs", LogsWindow, "logs-window"),
+            ("coding", CodingWindow, "coding-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
-            ("study", StudyWindow, "study-window"),
+            ("study", MindmapViewerWindow, "study-window"),
             ("chatbooks", ChatbooksWindow, "chatbooks-window"),
             # ("subscriptions", SubscriptionWindow, "subscriptions-window"),  # Temporarily disabled
         ]
@@ -1602,7 +1614,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
-            ("study", StudyWindow, "study-window"),
+            ("study", MindmapViewerWindow, "study-window"),
             ("chatbooks", ChatbooksWindow, "chatbooks-window"),
         ]
         
@@ -3206,7 +3218,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # Show New Tab UI
         try:
-            self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
+            # Update navigation UI based on type
+            use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
+            if use_dropdown:
+                # Update dropdown selection if it exists and differs
+                try:
+                    dropdown = self.query_one(TabDropdown)
+                    dropdown.update_active_tab(new_tab)
+                except QueryError:
+                    pass
+            else:
+                # Update traditional tab bar button
+                self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
+            
             new_window = self.query_one(f"#{new_tab}-window")
             
             # Initialize placeholder window if needed
@@ -3333,10 +3357,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 # Use call_later to ensure the UI has settled after tab switch before changing sub-view
                 self.call_later(self._activate_initial_ingest_view)
         elif new_tab == TAB_TOOLS_SETTINGS:
-            if not self.tools_settings_active_view:
-                self.loguru_logger.debug(
-                    f"Switched to Tools & Settings tab, activating initial view: {self._initial_tools_settings_view}")
-                self.call_later(setattr, self, 'tools_settings_active_view', self._initial_tools_settings_view)
+            # Handle tools settings tab initialization with proper placeholder check
+            def initialize_tools_settings():
+                try:
+                    # Check if the window is actually initialized
+                    tools_window = self.query_one("#tools_settings-window")
+                    if isinstance(tools_window, PlaceholderWindow):
+                        # Window isn't initialized yet, try again later silently
+                        self.set_timer(0.1, initialize_tools_settings)
+                        return
+                    
+                    # Now it's safe to activate the initial view
+                    from .UI.Tools_Settings_Window import ToolsSettingsWindow
+                    if isinstance(tools_window, ToolsSettingsWindow):
+                        tools_window.activate_initial_view()
+                        if not self.tools_settings_active_view:
+                            self.tools_settings_active_view = self._initial_tools_settings_view
+                            self.loguru_logger.debug(f"Tools & Settings tab initialized with view: {self._initial_tools_settings_view}")
+                except QueryError:
+                    self.loguru_logger.error("Tools settings window not found during initialization")
+            
+            # Use a timer to ensure the window is ready
+            self.set_timer(0.1, initialize_tools_settings)
         elif new_tab == TAB_LLM:  # New elif block for LLM tab
             if not self.llm_active_view:  # If no view is active yet
                 self.loguru_logger.debug(
@@ -4109,6 +4151,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if button_id.startswith("tab-"):
             await tab_events.handle_tab_button_pressed(self, event)
             return
+    
+    @on(TabChanged)
+    async def on_tab_dropdown_changed(self, event: TabChanged) -> None:
+        """Handle tab changes from the dropdown navigation."""
+        new_tab_id = event.tab_id
+        self.loguru_logger.info(f"Dropdown tab change requested to '{new_tab_id}'")
+        if new_tab_id != self.current_tab:
+            self.current_tab = new_tab_id  # This will trigger the watch_current_tab method
 
         # 2. Try to delegate to the appropriate window component
         try:
@@ -5990,6 +6040,30 @@ def main_cli_runner():
     This function is referenced in pyproject.toml as the entry point for the tldw-chatbook command.
     It initializes logging early and then runs the TldwCli app.
     """
+    # Configure logging to suppress verbose debug messages early
+    import logging
+    import os
+    import warnings
+    
+    # Suppress various verbose loggers
+    logging.getLogger("torio._extension.utils").setLevel(logging.WARNING)
+    logging.getLogger("torio").setLevel(logging.WARNING)
+    logging.getLogger("torch").setLevel(logging.WARNING)
+    logging.getLogger("transformers").setLevel(logging.WARNING)
+    logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+    logging.getLogger("chromadb").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.INFO)
+    logging.getLogger("httpcore").setLevel(logging.INFO)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("filelock").setLevel(logging.WARNING)
+    
+    # Suppress torchaudio and FFmpeg warnings
+    warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
+    warnings.filterwarnings("ignore", message=".*FFmpeg.*")
+    
+    # Set environment variable to suppress FFmpeg output
+    os.environ["TORCHAUDIO_LOG_LEVEL"] = "ERROR"
+    
     # Set up signal handlers for clean exit
     import signal
     import os

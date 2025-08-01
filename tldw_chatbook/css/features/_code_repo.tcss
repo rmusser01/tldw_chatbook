@@ -62,7 +62,7 @@ CodeRepoCopyPasteWindow {
 
 /* Selection summary */
 .selection-summary {
-    grid-column-span: 4;
+    column-span: 4;
     layout: grid;
     grid-size: 3 1;
     grid-columns: 1fr 1fr 1fr;

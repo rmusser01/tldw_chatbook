@@ -115,11 +115,12 @@ class BasicInfoStep(WizardStep):
     async def on_mount(self) -> None:
         """Set default values on mount."""
         # Try to get username from config
-        if hasattr(self.wizard.app_instance, 'config_data'):
-            username = self.wizard.app_instance.config_data.get("general", {}).get("users_name")
-            if username:
-                author_input = self.query_one("#chatbook-author", Input)
-                author_input.value = username
+        if hasattr(self, 'wizard') and self.wizard and hasattr(self.wizard, 'app_instance'):
+            if hasattr(self.wizard.app_instance, 'config_data'):
+                username = self.wizard.app_instance.config_data.get("general", {}).get("users_name")
+                if username:
+                    author_input = self.query_one("#chatbook-author", Input)
+                    author_input.value = username
     
     def get_step_data(self) -> Dict[str, Any]:
         """Get form data."""
@@ -193,9 +194,10 @@ class ContentSelectionStep(WizardStep):
         
         try:
             # Load from app's database connections
-            if hasattr(self.wizard.app_instance, 'db') and self.wizard.app_instance.db:
-                # Conversations
-                conversations = self.wizard.app_instance.db.get_all_conversations()
+            if hasattr(self, 'wizard') and self.wizard and hasattr(self.wizard, 'app_instance'):
+                if hasattr(self.wizard.app_instance, 'db') and self.wizard.app_instance.db:
+                    # Conversations
+                    conversations = self.wizard.app_instance.db.get_all_conversations()
                 for conv_id, title in conversations:
                     # Get message count
                     messages = self.wizard.app_instance.db.get_messages_for_conversation(conv_id)
@@ -209,9 +211,9 @@ class ContentSelectionStep(WizardStep):
                             subtitle=f"{msg_count} messages"
                         )
                     )
-                
-                # Notes
-                notes = self.wizard.app_instance.db.get_all_notes()
+                    
+                    # Notes
+                    notes = self.wizard.app_instance.db.get_all_notes()
                 for note_id, title, content, _ in notes:
                     word_count = len(content.split()) if content else 0
                     
@@ -223,9 +225,9 @@ class ContentSelectionStep(WizardStep):
                             subtitle=f"{word_count} words"
                         )
                     )
-                
-                # Characters
-                characters = self.wizard.app_instance.db.get_all_characters()
+                    
+                    # Characters
+                    characters = self.wizard.app_instance.db.get_all_characters()
                 for char_id, name, description in characters:
                     content_data[ContentType.CHARACTER].append(
                         ContentNodeData(
@@ -235,45 +237,46 @@ class ContentSelectionStep(WizardStep):
                             subtitle=description[:50] + "..." if description and len(description) > 50 else description
                         )
                     )
-            
-            # Prompts
-            if hasattr(self.wizard.app_instance, 'prompts_db') and self.wizard.app_instance.prompts_db:
-                prompts = self.wizard.app_instance.prompts_db.get_all_prompts()
-                for prompt in prompts:
-                    content_data[ContentType.PROMPT].append(
-                        ContentNodeData(
-                            type=ContentType.PROMPT,
-                            id=str(prompt['id']),
-                            title=prompt['name'],
-                            subtitle=prompt.get('details', '')[:50] + "..." if prompt.get('details') else None
+                
+                # Prompts
+                if hasattr(self.wizard.app_instance, 'prompts_db') and self.wizard.app_instance.prompts_db:
+                    prompts = self.wizard.app_instance.prompts_db.get_all_prompts()
+                    for prompt in prompts:
+                        content_data[ContentType.PROMPT].append(
+                            ContentNodeData(
+                                type=ContentType.PROMPT,
+                                id=str(prompt['id']),
+                                title=prompt['name'],
+                                subtitle=prompt.get('details', '')[:50] + "..." if prompt.get('details') else None
+                            )
                         )
-                    )
-            
-            # Media
-            if hasattr(self.wizard.app_instance, 'media_db') and self.wizard.app_instance.media_db:
-                media_items = self.wizard.app_instance.media_db.get_all_media_items(limit=100)
-                for item in media_items:
-                    if isinstance(item, dict):
-                        media_id = item.get('media_id', item.get('id', 'unknown'))
-                        title = item.get('title', 'Untitled')
-                        media_type = item.get('media_type', 'unknown')
-                    else:
-                        media_id = getattr(item, 'media_id', getattr(item, 'id', 'unknown'))
-                        title = getattr(item, 'title', 'Untitled')
-                        media_type = getattr(item, 'media_type', 'unknown')
-                    
-                    content_data[ContentType.MEDIA].append(
-                        ContentNodeData(
-                            type=ContentType.MEDIA,
-                            id=str(media_id),
-                            title=title,
-                            subtitle=media_type
+                
+                # Media
+                if hasattr(self.wizard.app_instance, 'media_db') and self.wizard.app_instance.media_db:
+                    media_items = self.wizard.app_instance.media_db.get_all_media_items(limit=100)
+                    for item in media_items:
+                        if isinstance(item, dict):
+                            media_id = item.get('media_id', item.get('id', 'unknown'))
+                            title = item.get('title', 'Untitled')
+                            media_type = item.get('media_type', 'unknown')
+                        else:
+                            media_id = getattr(item, 'media_id', getattr(item, 'id', 'unknown'))
+                            title = getattr(item, 'title', 'Untitled')
+                            media_type = getattr(item, 'media_type', 'unknown')
+                        
+                        content_data[ContentType.MEDIA].append(
+                            ContentNodeData(
+                                type=ContentType.MEDIA,
+                                id=str(media_id),
+                                title=title,
+                                subtitle=media_type
+                            )
                         )
-                    )
                     
         except Exception as e:
             logger.error(f"Error loading content: {e}")
-            self.wizard.app_instance.notify(f"Error loading content: {str(e)}", severity="error")
+            if hasattr(self, 'wizard') and self.wizard and hasattr(self.wizard, 'app_instance'):
+                self.wizard.app_instance.notify(f"Error loading content: {str(e)}", severity="error")
         
         return content_data
     
@@ -660,6 +663,10 @@ class ProgressStep(WizardStep):
     .completion-actions Button {
         margin: 0 1;
     }
+    
+    .hidden {
+        display: none;
+    }
     """
     
     def __init__(self, wizard: BaseWizard, config: WizardStepConfig, **kwargs):
@@ -692,7 +699,7 @@ class ProgressStep(WizardStep):
                 yield Static("○ Finalizing metadata", id="status-finalize", classes="status-item")
             
             # Completion message (hidden initially)
-            with Container(id="completion-container", classes="completion-message", display=False):
+            with Container(id="completion-container", classes="completion-message hidden"):
                 yield Static("✅ Chatbook Created Successfully!", classes="completion-title")
                 yield Static("", id="completion-details")
                 
@@ -723,6 +730,9 @@ class ProgressStep(WizardStep):
             self._update_progress(5)
             
             # Create chatbook using the creator service
+            if not hasattr(self, 'wizard') or not self.wizard or not hasattr(self.wizard, 'app_instance'):
+                raise ValueError("Wizard not properly initialized")
+                
             db_config = self.wizard.app_instance.config_data.get("database", {})
             db_paths = {
                 "ChaChaNotes": str(Path(db_config.get("chachanotes_db_path", 
@@ -830,7 +840,7 @@ class ProgressStep(WizardStep):
         
         # Show completion container
         completion = self.query_one("#completion-container", Container)
-        completion.display = True
+        completion.remove_class("hidden")
         
         # Update details
         size_mb = export_path.stat().st_size / (1024 * 1024)
@@ -878,7 +888,8 @@ class ProgressStep(WizardStep):
             self.wizard.dismiss("create_another")
             
         elif button_id == "share-chatbook":
-            self.wizard.app_instance.notify("Sharing functionality coming soon!", severity="info")
+            if hasattr(self, 'wizard') and self.wizard and hasattr(self.wizard, 'app_instance'):
+                self.wizard.app_instance.notify("Sharing functionality coming soon!", severity="info")
     
     def get_step_data(self) -> Dict[str, Any]:
         """Get completion data."""

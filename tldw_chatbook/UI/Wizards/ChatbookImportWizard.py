@@ -205,7 +205,6 @@ class PreviewValidationStep(WizardStep):
     
     .info-title {
         text-style: bold;
-        font-size: 110%;
         margin-bottom: 1;
     }
     
@@ -545,7 +544,6 @@ class ConflictResolutionStep(WizardStep):
     .strategy-description {
         margin: 0 0 1 3;
         color: $text-muted;
-        font-size: 90%;
     }
     
     .conflict-preview {
@@ -673,7 +671,6 @@ class ImportOptionsStep(WizardStep):
     .option-description {
         margin: 0 0 1 3;
         color: $text-muted;
-        font-size: 90%;
     }
     """
     

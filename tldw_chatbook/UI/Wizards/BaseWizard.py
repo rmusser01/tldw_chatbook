@@ -255,7 +255,7 @@ class BaseWizard(ModalScreen):
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize wizard."""
         super().__init__(**kwargs)
-        self.app_instance_instance = app_instance
+        self.app_instance = app_instance
         self.steps: List[WizardStep] = []
         self.step_configs: List[WizardStepConfig] = []
         self.wizard_data: Dict[str, Any] = {}
@@ -384,7 +384,7 @@ class BaseWizard(ModalScreen):
         # Validate current step
         is_valid, error_msg = current_step.validate()
         if not is_valid and not current_step.config.can_skip:
-            self.app_instance.notify(error_msg or "Please complete this step before proceeding", severity="warning")
+            self.app.notify(error_msg or "Please complete this step before proceeding", severity="warning")
             return
         
         # Save step data
@@ -410,7 +410,7 @@ class BaseWizard(ModalScreen):
         is_valid, error_msg = final_step.validate()
         
         if not is_valid:
-            self.app_instance.notify(error_msg or "Please complete this step", severity="warning")
+            self.app.notify(error_msg or "Please complete this step", severity="warning")
             return
         
         # Save final step data
@@ -423,7 +423,7 @@ class BaseWizard(ModalScreen):
             self.dismiss(result)
         except Exception as e:
             logger.error(f"Error completing wizard: {e}")
-            self.app_instance.notify(f"Error: {str(e)}", severity="error")
+            self.app.notify(f"Error: {str(e)}", severity="error")
     
     @abstractmethod
     async def on_wizard_complete(self, wizard_data: Dict[str, Any]) -> Any:

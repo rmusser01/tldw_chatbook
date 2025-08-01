@@ -248,6 +248,111 @@ class ToolsSettingsWindow(Container):
         overflow-y: auto;
     }
     
+    /* Enhanced General Settings Styles */
+    .settings-tabbed-content {
+        height: 100%;
+        margin-top: 1;
+    }
+    
+    .settings-tab-content {
+        padding: 1 2;
+        height: 100%;
+    }
+    
+    .settings-group {
+        background: $boost;
+        border: tall $background;
+        margin-bottom: 2;
+        padding: 1;
+    }
+    
+    .settings-group-title {
+        text-style: bold;
+        color: $primary;
+        margin-bottom: 1;
+    }
+    
+    .settings-form-grid {
+        layout: vertical;
+        padding: 0 1;
+    }
+    
+    .settings-indent {
+        margin-left: 2;
+    }
+    
+    .settings-short-input {
+        width: 20;
+        max-width: 30%;
+    }
+    
+    .settings-action-button {
+        margin-right: 1;
+        height: 3;
+    }
+    
+    .settings-quick-actions {
+        height: 3;
+        margin-top: 1;
+    }
+    
+    .settings-warning-box {
+        background: $error-muted;
+        border: tall $error;
+        padding: 1;
+        margin: 1 0;
+    }
+    
+    .warning-title {
+        text-style: bold;
+        color: $error;
+        margin-bottom: 0;
+    }
+    
+    .warning-text {
+        color: $text;
+        margin-top: 0;
+    }
+    
+    .settings-info-box {
+        background: $boost;
+        border: tall $primary;
+        padding: 1;
+        margin-top: 2;
+    }
+    
+    .info-text {
+        color: $text;
+    }
+    
+    .api-key-status {
+        min-height: 5;
+        padding: 1;
+        background: $panel;
+    }
+    
+    #general-settings-tabs {
+        height: 100%;
+    }
+    
+    #general-settings-tabs ContentSwitcher {
+        height: 100%;
+        scrollbar-size: 1 1;
+    }
+    
+    #general-settings-tabs Tabs {
+        height: 3;
+        background: $boost;
+    }
+    
+    #general-settings-tabs Tab {
+        text-style: bold;
+    }
+    
+    #general-settings-tabs Tab.-active {
+        color: $primary;
+    }
+    
     .db-status {
         color: $text-muted;
         margin-bottom: 1;
@@ -332,236 +437,442 @@ class ToolsSettingsWindow(Container):
     }
     """
     
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+    def __init__(self, app_instance: 'TldwCli' = None, **kwargs):
         super().__init__(**kwargs)
-        self.app_instance = app_instance
+        self._app_instance = app_instance
         self.config_data = load_cli_config_and_ensure_existence()
+    
+    @property
+    def app_instance(self):
+        """Get the app instance, falling back to self.app if not set."""
+        if self._app_instance is not None:
+            return self._app_instance
+        try:
+            return self.app
+        except Exception:
+            return None
 
     def _compose_general_settings(self) -> ComposeResult:
-        """Compose the General Settings UI with commonly used settings."""
-        yield Static("General Settings", classes="section-title")
-        yield Static("Configure commonly used application settings", classes="section-description")
+        """Compose the General Settings UI with tabbed organization for better UX."""
+        yield Static("⚙️ General Settings", classes="section-title")
+        yield Static("Configure your application preferences and defaults", classes="section-description")
         
-        with Container(classes="settings-container"):
-            general_config = self.config_data.get("general", {})
+        with TabbedContent(id="general-settings-tabs", classes="settings-tabbed-content"):
+            # General Tab
+            with TabPane("🏠 General", id="tab-general-basic"):
+                yield from self._compose_general_basic_settings()
             
-            yield Label("Default Tab:", classes="settings-label")
-            tab_options = [
-                ("Chat", "chat"),
-                ("Character Chat", "character"),
-                ("Notes", "notes"),
-                ("Media", "media"),
-                ("RAG Search", "rag_search")
-            ]
-            yield Select(
-                options=tab_options,
-                value=general_config.get("default_tab", "chat"),
-                id="general-default-tab",
-                classes="settings-select"
-            )
+            # Chat Defaults Tab
+            with TabPane("💬 Chat Defaults", id="tab-chat-defaults"):
+                yield from self._compose_chat_defaults_settings()
             
-            yield Label("Theme:", classes="settings-label")
+            # Character Defaults Tab
+            with TabPane("🎭 Character Defaults", id="tab-character-defaults"):
+                yield from self._compose_character_defaults_settings()
             
-            # Import themes to get all available options
-            from ..css.Themes.themes import ALL_THEMES
+            # Security Tab
+            with TabPane("🔒 Security", id="tab-security"):
+                yield from self._compose_security_settings()
+    
+    def _compose_general_basic_settings(self) -> ComposeResult:
+        """Compose basic general settings."""
+        general_config = self.config_data.get("general", {})
+        
+        # Application Settings Group
+        with Container(classes="settings-group"):
+            yield Static("🎯 Application Settings", classes="settings-group-title")
             
-            # Build theme options from ALL_THEMES
-            theme_options = [
-                ("Dark Theme", "textual-dark"),
-                ("Light Theme", "textual-light")
-            ]
+            with Container(classes="settings-form-grid"):
+                    yield Label("Default Tab:", classes="settings-label")
+                    tab_options = [
+                        ("💬 Chat", "chat"),
+                        ("🎭 Character Chat", "character"),
+                        ("📝 Notes", "notes"),
+                        ("🎬 Media", "media"),
+                        ("🔍 RAG Search", "rag_search")
+                    ]
+                    yield Select(
+                        options=tab_options,
+                        value=general_config.get("default_tab", "chat"),
+                        id="general-default-tab",
+                        classes="settings-select",
+                        tooltip="The tab that opens when you start the app"
+                    )
+                    
+                    yield Label("User Name:", classes="settings-label")
+                    yield Input(
+                        value=general_config.get("users_name", "default_user"),
+                        id="general-username",
+                        classes="settings-input",
+                        placeholder="Your username",
+                        tooltip="Used for personalization and conversation tracking"
+                    )
             
-            # Add custom themes from ALL_THEMES
-            for theme in ALL_THEMES:
-                theme_name = theme.name
-                # Create a user-friendly label from the theme name
-                label = theme_name.replace('_', ' ').title()
-                theme_options.append((label, theme_name))
+            # Appearance Settings Group
+            with Container(classes="settings-group"):
+                yield Static("🎨 Appearance", classes="settings-group-title")
+                
+                yield Label("Theme:", classes="settings-label")
+                
+                # Import themes to get all available options
+                from ..css.Themes.themes import ALL_THEMES
+                
+                # Build theme options with emoji indicators
+                theme_options = [
+                    ("🌙 Dark Theme", "textual-dark"),
+                    ("☀️ Light Theme", "textual-light")
+                ]
+                
+                # Add custom themes from ALL_THEMES
+                for theme in ALL_THEMES:
+                    theme_name = theme.name
+                    # Create a user-friendly label from the theme name
+                    label = theme_name.replace('_', ' ').title()
+                    theme_options.append((f"🎨 {label}", theme_name))
+                
+                current_theme = general_config.get("default_theme", "textual-dark")
+                
+                # Validate the current theme
+                valid_theme_values = [value for _, value in theme_options]
+                if current_theme not in valid_theme_values:
+                    current_theme = "textual-dark"
+                
+                yield Select(
+                    options=theme_options,
+                    value=current_theme,
+                    id="general-theme",
+                    classes="settings-select",
+                    tooltip="Choose your preferred visual theme"
+                )
+                
+                # Theme Preview Button
+                yield Button(
+                    "Preview Theme",
+                    id="preview-theme-button",
+                    classes="settings-action-button",
+                    variant="default"
+                )
             
-            current_theme = general_config.get("default_theme", "textual-dark")
+            # Splash Screen Settings Group
+            with Container(classes="settings-group"):
+                yield Static("🚀 Startup", classes="settings-group-title")
+                
+                splash_screen_config = self.config_data.get("splash_screen", {})
+                
+                yield Checkbox(
+                    "Enable Splash Screen",
+                    value=splash_screen_config.get("enabled", True),
+                    id="general-splash-enabled",
+                    classes="settings-checkbox",
+                    tooltip="Show animated splash screen on startup"
+                )
+                
+                with Container(classes="settings-indent"):
+                    yield Label("Duration (seconds):", classes="settings-label")
+                    yield Input(
+                        value=str(splash_screen_config.get("duration", 1.5)),
+                        id="general-splash-duration",
+                        classes="settings-input settings-short-input",
+                        placeholder="1.5",
+                        tooltip="How long to show the splash screen"
+                    )
             
-            # Validate the current theme - if it's not in the valid options, use default
-            valid_theme_values = [value for _, value in theme_options]
-            if current_theme not in valid_theme_values:
-                current_theme = "textual-dark"
+            # Developer Settings Group
+            with Container(classes="settings-group"):
+                yield Static("🔧 Developer", classes="settings-group-title")
+                
+                yield Label("Log Level:", classes="settings-label")
+                log_options = [
+                    ("🐛 Debug", "DEBUG"),
+                    ("ℹ️ Info", "INFO"),
+                    ("⚠️ Warning", "WARNING"),
+                    ("❌ Error", "ERROR"),
+                    ("🚨 Critical", "CRITICAL")
+                ]
+                yield Select(
+                    options=log_options,
+                    value=general_config.get("log_level", "INFO"),
+                    id="general-log-level",
+                    classes="settings-select",
+                    tooltip="Control the verbosity of application logs"
+                )
             
-            yield Select(
-                options=theme_options,
-                value=current_theme,
-                id="general-theme",
-                classes="settings-select"
-            )
-            
-            yield Label("User Name:", classes="settings-label")
-            yield Input(
-                value=general_config.get("users_name", "default_user"),
-                id="general-username",
-                classes="settings-input"
-            )
-            
-            yield Label("Log Level:", classes="settings-label")
-            log_options = [
-                ("Debug", "DEBUG"),
-                ("Info", "INFO"),
-                ("Warning", "WARNING"),
-                ("Error", "ERROR"),
-                ("Critical", "CRITICAL")
-            ]
-            yield Select(
-                options=log_options,
-                value=general_config.get("log_level", "INFO"),
-                id="general-log-level",
-                classes="settings-select"
-            )
-            
-            # Splash Screen Setting
-            splash_screen_config = self.config_data.get("splash_screen", {})
-            yield Static("", classes="settings-separator")
-            yield Checkbox(
-                "Enable Splash Screen on Startup",
-                value=splash_screen_config.get("enabled", True),
-                id="general-splash-enabled",
-                classes="settings-checkbox"
-            )
-            
-            yield Label("Splash Screen Duration (seconds):", classes="settings-label")
-            yield Input(
-                value=str(splash_screen_config.get("duration", 1.5)),
-                id="general-splash-duration",
-                classes="settings-input",
-                placeholder="1.5"
-            )
-            yield Static("Shows an animated splash screen with app information when starting tldw-cli", classes="help-text")
-            
-            # Chat Defaults Section
-            yield Static("", classes="settings-separator")
-            yield Static("Chat Defaults", classes="settings-subsection-title")
-            
+            # Action Buttons
+            with Container(classes="settings-button-container"):
+                yield Button(
+                    "💾 Save Settings",
+                    id="save-general-settings",
+                    variant="primary",
+                    tooltip="Save all changes to general settings"
+                )
+                yield Static("", classes="spacer")
+                yield Button(
+                    "↩️ Reset to Defaults",
+                    id="reset-general-settings",
+                    variant="default",
+                    tooltip="Reset all general settings to default values"
+                )
+    
+    def _compose_chat_defaults_settings(self) -> ComposeResult:
+        """Compose chat default settings."""
+        with VerticalScroll(classes="settings-tab-content"):
             chat_config = self.config_data.get("chat_defaults", {})
-            
-            yield Label("Default Chat Provider:", classes="settings-label")
             providers = list(self.config_data.get("providers", {}).keys())
             provider_options = [(p, p) for p in providers]
-            current_chat_provider = chat_config.get("provider", "OpenAI")
-            if current_chat_provider not in providers:
-                current_chat_provider = providers[0] if providers else "OpenAI"
-            yield Select(
-                options=provider_options,
-                value=current_chat_provider,
-                id="general-chat-provider",
-                classes="settings-select"
-            )
             
-            yield Label("Default Chat Model:", classes="settings-label")
-            yield Input(
-                value=chat_config.get("model", "gpt-4o"),
-                id="general-chat-model",
-                classes="settings-input",
-                placeholder="e.g., gpt-4o, claude-3-opus"
-            )
+            # Provider & Model Group
+            with Container(classes="settings-group"):
+                yield Static("🤖 Default Provider & Model", classes="settings-group-title")
+                
+                with Container(classes="settings-form-grid"):
+                    yield Label("Provider:", classes="settings-label")
+                    current_chat_provider = chat_config.get("provider", "OpenAI")
+                    if current_chat_provider not in providers:
+                        current_chat_provider = providers[0] if providers else "OpenAI"
+                    yield Select(
+                        options=provider_options,
+                        value=current_chat_provider,
+                        id="general-chat-provider",
+                        classes="settings-select",
+                        tooltip="Default AI provider for chat conversations"
+                    )
+                    
+                    yield Label("Model:", classes="settings-label")
+                    yield Input(
+                        value=chat_config.get("model", "gpt-4o"),
+                        id="general-chat-model",
+                        classes="settings-input",
+                        placeholder="e.g., gpt-4o, claude-3-opus",
+                        tooltip="Default model to use for chat"
+                    )
+                    
+                    yield Label("Temperature:", classes="settings-label")
+                    yield Input(
+                        value=str(chat_config.get("temperature", 0.6)),
+                        id="general-chat-temperature",
+                        classes="settings-input settings-short-input",
+                        placeholder="0.0 - 2.0",
+                        tooltip="Controls randomness in responses (0=focused, 2=creative)"
+                    )
             
-            yield Label("Chat Temperature:", classes="settings-label")
-            yield Input(
-                value=str(chat_config.get("temperature", 0.6)),
-                id="general-chat-temperature",
-                classes="settings-input",
-                placeholder="0.0 - 2.0"
-            )
+            # Chat Interface Settings Group
+            with Container(classes="settings-group"):
+                yield Static("🖥️ Interface Options", classes="settings-group-title")
+                
+                yield Checkbox(
+                    "Use Enhanced Chat Window",
+                    value=chat_config.get("use_enhanced_window", False),
+                    id="general-enhanced-chat-window",
+                    classes="settings-checkbox",
+                    tooltip="Enable advanced features like image support and rich formatting"
+                )
+                yield Static(
+                    "⚡ Enhanced mode provides image support, better formatting, and advanced features",
+                    classes="help-text settings-indent"
+                )
+                
+                yield Static("", classes="settings-separator")
+                
+                yield Checkbox(
+                    "Enable Chat Tabs",
+                    value=chat_config.get("enable_tabs", False),
+                    id="general-enable-chat-tabs",
+                    classes="settings-checkbox",
+                    tooltip="Allow multiple chat conversations in tabs"
+                )
+                
+                with Container(classes="settings-indent"):
+                    yield Label("Maximum Tabs:", classes="settings-label")
+                    yield Input(
+                        value=str(chat_config.get("max_tabs", 10)),
+                        id="general-max-chat-tabs",
+                        classes="settings-input settings-short-input",
+                        placeholder="10",
+                        tooltip="Maximum number of concurrent chat tabs"
+                    )
+                
+                yield Static(
+                    "🔄 Interface changes require app restart to take effect",
+                    classes="help-text warning-text"
+                )
             
-            yield Static("", classes="settings-separator")
-            yield Checkbox(
-                "Use Enhanced Chat Window",
-                value=chat_config.get("use_enhanced_window", False),
-                id="general-enhanced-chat-window",
-                classes="settings-checkbox"
-            )
-            yield Static("Enable the enhanced chat window with image support and advanced formatting (requires app restart)", classes="help-text")
-            
-            yield Static("", classes="settings-separator")
-            yield Checkbox(
-                "Enable Chat Tabs",
-                value=chat_config.get("enable_tabs", False),
-                id="general-enable-chat-tabs",
-                classes="settings-checkbox"
-            )
-            yield Static("Enable tabbed chat interface for multiple concurrent conversations (requires app restart)", classes="help-text")
-            
-            yield Label("Maximum Chat Tabs:", classes="settings-label")
-            yield Input(
-                value=str(chat_config.get("max_tabs", 10)),
-                id="general-max-chat-tabs",
-                classes="settings-input",
-                placeholder="Maximum number of chat tabs (e.g., 10)"
-            )
-            
-            # Character Defaults Section
-            yield Static("", classes="settings-separator")
-            yield Static("Character Defaults", classes="settings-subsection-title")
-            
+            # Quick Actions
+            with Container(classes="settings-group"):
+                yield Static("⚡ Quick Actions", classes="settings-group-title")
+                
+                with Horizontal(classes="settings-quick-actions"):
+                    yield Button(
+                        "Test Connection",
+                        id="test-chat-connection",
+                        classes="settings-action-button",
+                        variant="default",
+                        tooltip="Test connection to the selected provider"
+                    )
+                    yield Button(
+                        "View Models",
+                        id="view-chat-models",
+                        classes="settings-action-button",
+                        variant="default",
+                        tooltip="View available models for the selected provider"
+                    )
+    
+    def _compose_character_defaults_settings(self) -> ComposeResult:
+        """Compose character default settings."""
+        with VerticalScroll(classes="settings-tab-content"):
             character_config = self.config_data.get("character_defaults", {})
+            providers = list(self.config_data.get("providers", {}).keys())
+            provider_options = [(p, p) for p in providers]
             
-            yield Label("Default Character Provider:", classes="settings-label")
-            current_char_provider = character_config.get("provider", "Anthropic")
-            if current_char_provider not in providers:
-                current_char_provider = providers[0] if providers else "Anthropic"
-            yield Select(
-                options=provider_options,
-                value=current_char_provider,
-                id="general-character-provider",
-                classes="settings-select"
-            )
+            # Provider & Model Group
+            with Container(classes="settings-group"):
+                yield Static("🤖 Default Provider & Model", classes="settings-group-title")
+                
+                with Container(classes="settings-form-grid"):
+                    yield Label("Provider:", classes="settings-label")
+                    current_char_provider = character_config.get("provider", "Anthropic")
+                    if current_char_provider not in providers:
+                        current_char_provider = providers[0] if providers else "Anthropic"
+                    yield Select(
+                        options=provider_options,
+                        value=current_char_provider,
+                        id="general-character-provider",
+                        classes="settings-select",
+                        tooltip="Default AI provider for character conversations"
+                    )
+                    
+                    yield Label("Model:", classes="settings-label")
+                    yield Input(
+                        value=character_config.get("model", "claude-3-haiku-20240307"),
+                        id="general-character-model",
+                        classes="settings-input",
+                        placeholder="e.g., claude-3-haiku, gpt-3.5-turbo",
+                        tooltip="Default model for character chats"
+                    )
+                    
+                    yield Label("Temperature:", classes="settings-label")
+                    yield Input(
+                        value=str(character_config.get("temperature", 0.8)),
+                        id="general-character-temperature",
+                        classes="settings-input settings-short-input",
+                        placeholder="0.0 - 2.0",
+                        tooltip="Higher values make characters more creative/unpredictable"
+                    )
             
-            yield Label("Default Character Model:", classes="settings-label")
-            yield Input(
-                value=character_config.get("model", "claude-3-haiku-20240307"),
-                id="general-character-model",
-                classes="settings-input",
-                placeholder="e.g., claude-3-haiku, gpt-3.5-turbo"
-            )
-            
-            yield Label("Character Temperature:", classes="settings-label")
-            yield Input(
-                value=str(character_config.get("temperature", 0.8)),
-                id="general-character-temperature",
-                classes="settings-input",
-                placeholder="0.0 - 2.0"
-            )
-            
-            # Config Encryption Section
-            yield Static("", classes="settings-separator")
-            yield Static("Config File Encryption", classes="settings-subsection-title")
-            
+            # Character Behavior Group
+            with Container(classes="settings-group"):
+                yield Static("🎭 Character Behavior", classes="settings-group-title")
+                yield Static(
+                    "Character-specific settings override these defaults. You can customize each character's behavior individually.",
+                    classes="help-text"
+                )
+                
+                with Horizontal(classes="settings-quick-actions"):
+                    yield Button(
+                        "Browse Characters",
+                        id="browse-characters",
+                        classes="settings-action-button",
+                        variant="default",
+                        tooltip="View and manage your characters"
+                    )
+                    yield Button(
+                        "Import Character",
+                        id="import-character-quick",
+                        classes="settings-action-button",
+                        variant="default",
+                        tooltip="Import a character from file"
+                    )
+    
+    def _compose_security_settings(self) -> ComposeResult:
+        """Compose security settings."""
+        with VerticalScroll(classes="settings-tab-content"):
             encryption_config = self.config_data.get("encryption", {})
             encryption_enabled = encryption_config.get("enabled", False)
             
-            yield Checkbox(
-                "Enable config file encryption",
-                value=encryption_enabled,
-                id="general-encryption-enabled",
-                classes="settings-checkbox"
-            )
-            
-            yield Static(
-                "When enabled, your API keys and sensitive settings will be encrypted when the app exits. "
-                "You'll need to enter a password each time you start the app.",
-                classes="help-text"
-            )
-            
-            # Show warning if API keys are detected and encryption is not enabled
-            if not encryption_enabled and check_encryption_needed():
-                detected_providers = get_detected_api_providers()
-                yield Static(
-                    f"⚠️ Detected unencrypted API keys for: {', '.join(detected_providers)}",
-                    classes="encryption-warning help-text"
+            # Encryption Settings Group
+            with Container(classes="settings-group"):
+                yield Static("🔐 Config File Encryption", classes="settings-group-title")
+                
+                yield Checkbox(
+                    "Enable config file encryption",
+                    value=encryption_enabled,
+                    id="general-encryption-enabled",
+                    classes="settings-checkbox",
+                    tooltip="Encrypt sensitive data like API keys"
                 )
+                
+                yield Static(
+                    "When enabled, your API keys and sensitive settings will be encrypted when the app exits. "
+                    "You'll need to enter a password each time you start the app.",
+                    classes="help-text settings-indent"
+                )
+                
+                # Show warning if API keys are detected and encryption is not enabled
+                if not encryption_enabled and check_encryption_needed():
+                    detected_providers = get_detected_api_providers()
+                    with Container(classes="settings-warning-box"):
+                        yield Static(
+                            f"⚠️ Security Warning",
+                            classes="warning-title"
+                        )
+                        yield Static(
+                            f"Detected unencrypted API keys for: {', '.join(detected_providers)}",
+                            classes="warning-text"
+                        )
+                        yield Button(
+                            "Enable Encryption Now",
+                            id="enable-encryption-quick",
+                            variant="warning",
+                            classes="settings-action-button"
+                        )
+                
+                # Encryption Actions
+                if encryption_enabled:
+                    yield Static("", classes="settings-separator")
+                    with Horizontal(classes="settings-quick-actions"):
+                        yield Button(
+                            "Change Password",
+                            id="change-encryption-password",
+                            classes="settings-action-button",
+                            variant="default",
+                            tooltip="Change the encryption password"
+                        )
+                        yield Button(
+                            "Disable Encryption",
+                            id="disable-encryption-quick",
+                            classes="settings-action-button",
+                            variant="error",
+                            tooltip="Disable encryption (requires password)"
+                        )
             
-            yield Static("For more detailed chat and character settings, visit the Configuration File Settings section.", 
-                        classes="help-text settings-note")
+            # API Key Status Group
+            with Container(classes="settings-group"):
+                yield Static("🔑 API Key Status", classes="settings-group-title")
+                
+                # This will be populated dynamically
+                yield Container(id="api-key-status-container", classes="api-key-status")
+                
+                with Horizontal(classes="settings-quick-actions"):
+                    yield Button(
+                        "Manage API Keys",
+                        id="manage-api-keys",
+                        classes="settings-action-button",
+                        variant="default",
+                        tooltip="View and edit API keys"
+                    )
+                    yield Button(
+                        "Test All Keys",
+                        id="test-all-api-keys",
+                        classes="settings-action-button",
+                        variant="default",
+                        tooltip="Test all configured API keys"
+                    )
             
-            with Container(classes="settings-button-container"):
-                yield Button("Save General Settings", id="save-general-settings", variant="primary")
-                yield Static("", classes="spacer")
-                yield Button("Reset General Settings", id="reset-general-settings")
+            # Additional Info
+            with Container(classes="settings-info-box"):
+                yield Static(
+                    "💡 For detailed configuration options, visit the Configuration File Settings section.",
+                    classes="info-text"
+                )
     
     def _compose_config_file_settings(self) -> ComposeResult:
         """Compose the Configuration File Settings UI with organized sections."""
@@ -2342,6 +2653,28 @@ Thank you for using tldw-chatbook! 🎉
         elif button_id == "reset-general-settings":
             await self._reset_general_settings()
             
+        # New General Settings Enhancement handlers
+        elif button_id == "preview-theme-button":
+            await self._preview_theme()
+        elif button_id == "test-chat-connection":
+            await self._test_chat_connection()
+        elif button_id == "view-chat-models":
+            await self._view_chat_models()
+        elif button_id == "browse-characters":
+            await self._browse_characters()
+        elif button_id == "import-character-quick":
+            await self._import_character_quick()
+        elif button_id == "enable-encryption-quick":
+            await self._enable_encryption_quick()
+        elif button_id == "change-encryption-password":
+            await self._change_encryption_password()
+        elif button_id == "disable-encryption-quick":
+            await self._disable_encryption_quick()
+        elif button_id == "manage-api-keys":
+            await self._manage_api_keys()
+        elif button_id == "test-all-api-keys":
+            await self._test_all_api_keys()
+            
         # Tool Settings handlers
         elif button_id == "save-tool-settings":
             await self._save_tool_settings()
@@ -2755,6 +3088,173 @@ Thank you for using tldw-chatbook! 🎉
             
         except Exception as e:
             self.app_instance.notify(f"Error resetting General Settings: {e}", severity="error")
+    
+    # New General Settings Enhancement Methods
+    async def _preview_theme(self) -> None:
+        """Preview the selected theme temporarily."""
+        try:
+            theme_select = self.query_one("#general-theme", Select)
+            selected_theme = theme_select.value
+            
+            # Apply theme temporarily
+            self.app_instance.theme = selected_theme
+            self.app_instance.notify(f"Previewing theme: {selected_theme}. Save settings to make permanent.", timeout=5)
+        except Exception as e:
+            self.app_instance.notify(f"Error previewing theme: {e}", severity="error")
+    
+    async def _test_chat_connection(self) -> None:
+        """Test connection to the selected chat provider."""
+        try:
+            provider = self.query_one("#general-chat-provider", Select).value
+            model = self.query_one("#general-chat-model", Input).value
+            
+            self.app_instance.notify(f"Testing connection to {provider}...", timeout=2)
+            
+            # Simple test message
+            from ..LLM_Calls.LLM_API_Calls import chat_with_provider
+            test_response = await self.run_worker(
+                lambda: chat_with_provider(
+                    provider=provider,
+                    model=model,
+                    messages=[{"role": "user", "content": "Test connection. Reply with 'OK'."}],
+                    temperature=0.1,
+                    max_tokens=10
+                ),
+                thread=True,
+                exclusive=True
+            )
+            
+            if test_response and "OK" in str(test_response).upper():
+                self.app_instance.notify(f"✅ Connection to {provider} successful!", severity="information")
+            else:
+                self.app_instance.notify(f"❌ Connection failed. Check your API key and model.", severity="error")
+        except Exception as e:
+            self.app_instance.notify(f"❌ Connection test failed: {str(e)}", severity="error")
+    
+    async def _view_chat_models(self) -> None:
+        """View available models for the selected provider."""
+        try:
+            provider = self.query_one("#general-chat-provider", Select).value
+            models = API_MODELS_BY_PROVIDER.get(provider, [])
+            
+            if models:
+                model_list = "\n".join(f"• {model}" for model in models[:10])
+                if len(models) > 10:
+                    model_list += f"\n... and {len(models) - 10} more"
+                
+                self.app_instance.notify(
+                    f"Available models for {provider}:\n{model_list}",
+                    title=f"{provider} Models",
+                    timeout=10
+                )
+            else:
+                self.app_instance.notify(f"No models found for {provider}", severity="warning")
+        except Exception as e:
+            self.app_instance.notify(f"Error viewing models: {e}", severity="error")
+    
+    async def _browse_characters(self) -> None:
+        """Open the character management screen."""
+        try:
+            # Switch to Character Chat tab
+            self.app_instance.switch_mode("TAB_CHARACTER_CHAT")
+        except Exception as e:
+            self.app_instance.notify(f"Error opening characters: {e}", severity="error")
+    
+    async def _import_character_quick(self) -> None:
+        """Quick import a character from file."""
+        try:
+            # Show file dialog or input for character import
+            self.app_instance.notify(
+                "Character import: Use the Character Chat tab for full import functionality.",
+                severity="information"
+            )
+            self.app_instance.switch_mode("TAB_CHARACTER_CHAT")
+        except Exception as e:
+            self.app_instance.notify(f"Error importing character: {e}", severity="error")
+    
+    async def _enable_encryption_quick(self) -> None:
+        """Quick enable encryption from the security tab."""
+        try:
+            # Set the checkbox to true
+            self.query_one("#general-encryption-enabled", Checkbox).value = True
+            
+            # Trigger the save which will handle the password setup
+            await self._save_general_settings()
+        except Exception as e:
+            self.app_instance.notify(f"Error enabling encryption: {e}", severity="error")
+    
+    async def _disable_encryption_quick(self) -> None:
+        """Quick disable encryption from the security tab."""
+        try:
+            await self._disable_encryption()
+        except Exception as e:
+            self.app_instance.notify(f"Error disabling encryption: {e}", severity="error")
+    
+    async def _manage_api_keys(self) -> None:
+        """Open the API configuration section."""
+        try:
+            # Switch to Config File Settings and API tab
+            await self._show_view("ts-view-config-file-settings")
+            # Try to switch to API tab if it exists
+            try:
+                tabs = self.query_one("#config-tabs", TabbedContent)
+                tabs.active = "tab-api"
+            except:
+                pass
+        except Exception as e:
+            self.app_instance.notify(f"Error opening API settings: {e}", severity="error")
+    
+    async def _test_all_api_keys(self) -> None:
+        """Test all configured API keys."""
+        try:
+            providers = list(self.config_data.get("providers", {}).keys())
+            if not providers:
+                self.app_instance.notify("No API providers configured", severity="warning")
+                return
+            
+            self.app_instance.notify(f"Testing {len(providers)} API keys...", timeout=2)
+            
+            results = []
+            for provider in providers:
+                try:
+                    # Get the first available model for testing
+                    models = API_MODELS_BY_PROVIDER.get(provider, [])
+                    if not models:
+                        results.append(f"❓ {provider}: No models configured")
+                        continue
+                    
+                    model = models[0]
+                    
+                    # Test with a simple message
+                    from ..LLM_Calls.LLM_API_Calls import chat_with_provider
+                    test_response = await self.run_worker(
+                        lambda: chat_with_provider(
+                            provider=provider,
+                            model=model,
+                            messages=[{"role": "user", "content": "Test. Reply OK."}],
+                            temperature=0.1,
+                            max_tokens=10
+                        ),
+                        thread=True,
+                        exclusive=True
+                    )
+                    
+                    if test_response:
+                        results.append(f"✅ {provider}: Working")
+                    else:
+                        results.append(f"❌ {provider}: Failed")
+                except Exception as e:
+                    results.append(f"❌ {provider}: {str(e)[:30]}...")
+            
+            # Show results
+            result_text = "\n".join(results)
+            self.app_instance.notify(
+                f"API Key Test Results:\n{result_text}",
+                title="API Test Complete",
+                timeout=10
+            )
+        except Exception as e:
+            self.app_instance.notify(f"Error testing API keys: {e}", severity="error")
 
     async def _save_tool_settings(self) -> None:
         """Save Tool Settings to the configuration file."""
@@ -4462,13 +4962,21 @@ Thank you for using tldw-chatbook! 🎉
                 severity="error"
             )
     
-    async def on_mount(self) -> None:
-        """Called when the widget is mounted. Set initial view."""
-        # Ensure only the general settings view is active on mount
-        await self._show_view("ts-view-general-settings")
+    def activate_initial_view(self) -> None:
+        """Activate the initial view when the tab is shown."""
+        # The ContentSwitcher already has initial="ts-view-general-settings" set,
+        # so we don't need to explicitly set it unless we want to force it
         
-        # Update database sizes
+        # Update database sizes when the tab is shown
         self._update_database_sizes()
+        
+        # Optionally ensure the general settings view is active
+        try:
+            content_switcher = self.query_one("#tools-settings-content-pane", ContentSwitcher)
+            if not content_switcher.current:
+                content_switcher.current = "ts-view-general-settings"
+        except Exception as e:
+            logger.debug(f"Could not verify initial view: {e}")
     
     async def _setup_encryption(self) -> None:
         """Setup encryption for the config file."""

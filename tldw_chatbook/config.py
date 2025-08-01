@@ -1316,6 +1316,7 @@ CONFIG_TOML_CONTENT = """
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
 default_theme = "textual-dark"  # Default theme on startup ("textual-dark", "textual-light", or any theme name from themes.py)
+use_dropdown_navigation = false  # Use dropdown instead of horizontal tabs (true/false)
 palette_theme_limit = 1  # Maximum number of themes to show in command palette (0 = show all)
 log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 users_name = "default_user" # Default user name for the TUI

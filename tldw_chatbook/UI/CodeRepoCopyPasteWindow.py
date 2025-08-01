@@ -64,111 +64,242 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         max-width: 120;
         max-height: 50;
         background: $surface;
-        border: thick $primary;
+        border: round $background-lighten-1;
         padding: 0;
     }
     
     /* Header styles */
     .repo-header {
         dock: top;
-        height: 7;
-        background: $boost;
-        padding: 1;
-        border-bottom: solid $primary;
+        height: auto;
+        background: $panel;
+        padding: 2;
+        border-bottom: solid $background-lighten-1;
     }
     
-    .repo-header-content {
-        layout: grid;
-        grid-size: 4 2;
-        grid-columns: 3fr 1fr 1fr 1fr;
-        grid-rows: 3 2;
-        grid-gutter: 1 1;
-        width: 100%;
+    .repo-title {
+        text-align: center;
+        text-style: bold;
+        color: $primary;
+        margin-bottom: 1;
+    }
+    
+    .repo-input-container {
+        layout: horizontal;
+        height: 3;
+        margin-bottom: 1;
     }
     
     .repo-url-input {
-        width: 100%;
+        width: 1fr;
+        margin-right: 1;
+    }
+    
+    .load-button {
+        min-width: 12;
+    }
+    
+    .repo-controls {
+        layout: horizontal;
+        height: 3;
+        align: left middle;
+    }
+    
+    .branch-selector {
+        width: 20;
+        margin-right: 1;
     }
     
     .selection-summary {
-        grid-column-span: 4;
-        layout: grid;
-        grid-size: 3 1;
-        grid-columns: 1fr 1fr 1fr;
-        align: left middle;
-        width: 100%;
+        width: 1fr;
+        layout: horizontal;
+        align: right middle;
     }
     
     .summary-stat {
-        text-align: left;
+        text-align: right;
         color: $text-muted;
+        margin-left: 2;
+    }
+    
+    /* Empty state styles */
+    .empty-state-container {
+        height: 100%;
+        align: center middle;
+        padding: 4;
+    }
+    
+    .empty-state-content {
+        align: center middle;
+        max-width: 60;
+        padding: 4;
+    }
+    
+    .empty-state-icon {
+        text-align: center;
+        color: $primary;
+        margin-bottom: 2;
+    }
+    
+    .empty-state-title {
+        text-align: center;
+        text-style: bold;
+        color: $text;
+        margin-bottom: 1;
+    }
+    
+    .empty-state-description {
+        text-align: center;
+        color: $text-muted;
+        margin-bottom: 3;
+    }
+    
+    .empty-state-actions {
+        layout: vertical;
+        align: center middle;
+        width: 100%;
+    }
+    
+    .empty-state-input {
+        width: 50;
+        margin-bottom: 2;
+    }
+    
+    .empty-state-button {
+        min-width: 20;
     }
     
     /* Filter bar styles */
     .filter-bar {
         dock: top;
         height: 3;
-        background: $panel;
-        layout: grid;
-        grid-size: 6 1;
-        grid-columns: 2fr 1fr 3 3 3 1fr;
-        grid-gutter: 0 1;
-        padding: 0 1;
-        border-bottom: solid $primary-darken-1;
+        background: $background;
+        padding: 1 2;
+        border-bottom: solid $background-lighten-1;
+        layout: horizontal;
+        align: left middle;
+    }
+    
+    .filter-bar.hidden {
+        display: none;
+    }
+    
+    .file-search {
+        width: 30;
+        margin-right: 2;
+    }
+    
+    .file-type-filter {
+        width: 20;
+        margin-right: 2;
+    }
+    
+    .filter-buttons {
+        layout: horizontal;
+        width: auto;
     }
     
     .filter-quick-btn {
-        width: 3;
+        width: 5;
         height: 3;
-        min-width: 3;
-        padding: 0;
+        margin-right: 1;
     }
     
     /* Main content styles */
     .main-content {
-        layout: grid;
-        grid-size: 2 1;
-        grid-columns: 2fr 3fr;
         height: 1fr;
         background: $background;
     }
     
-    .tree-container {
-        border-right: solid $primary;
-        overflow: hidden;
+    .main-content.hidden {
+        display: none;
+    }
+    
+    .content-split {
+        layout: horizontal;
+        height: 100%;
+    }
+    
+    .tree-panel {
+        width: 40%;
+        border-right: solid $background-lighten-1;
         padding: 1;
     }
     
-    .preview-container {
+    .tree-header {
+        height: 3;
+        border-bottom: solid $background-lighten-1;
+        margin-bottom: 1;
+        padding: 0 1;
+        align: left middle;
+    }
+    
+    .tree-title {
+        text-style: bold;
+        color: $text;
+    }
+    
+    .tree-container {
+        height: 1fr;
+        overflow: auto;
+    }
+    
+    .preview-panel {
+        width: 60%;
         padding: 1;
-        overflow: hidden;
     }
     
     .preview-header {
         height: 3;
-        border-bottom: dashed $primary-darken-2;
+        border-bottom: solid $background-lighten-1;
         margin-bottom: 1;
+        padding: 0 1;
+        align: left middle;
+    }
+    
+    .preview-title {
+        text-style: bold;
+        color: $text;
     }
     
     .preview-content {
         height: 1fr;
-        border: round $primary-darken-2;
+        border: round $background-lighten-1;
         padding: 1;
-        background: $surface-darken-1;
+        background: $boost;
+    }
+    
+    #file-preview {
+        width: 100%;
+        height: 100%;
     }
     
     /* Action bar styles */
     .action-bar {
         dock: bottom;
-        height: 3;
+        height: auto;
         background: $panel;
-        layout: grid;
-        grid-size: 7 1;
-        grid-columns: 1fr auto auto auto auto auto 1fr;
-        grid-gutter: 0 1;
+        padding: 1 2;
+        border-top: solid $background-lighten-1;
+    }
+    
+    .action-bar.hidden {
+        display: none;
+    }
+    
+    .action-buttons {
+        layout: horizontal;
+        height: 3;
         align: center middle;
-        padding: 0 2;
-        border-top: solid $primary;
+    }
+    
+    .action-spacer {
+        width: 1fr;
+    }
+    
+    .action-button {
+        margin: 0 1;
+        min-width: 15;
     }
     
     /* Loading overlay */
@@ -185,10 +316,15 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         display: none;
     }
     
+    .loading-content {
+        align: center middle;
+    }
+    
     .loading-label {
         text-align: center;
         margin-top: 2;
         text-style: bold;
+        color: $text;
     }
     
     /* Error styles */
@@ -196,7 +332,9 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         color: $error;
         text-align: center;
         padding: 2;
-        text-style: bold;
+        background: $error 20%;
+        border: round $error;
+        margin: 2;
     }
     """
     
@@ -208,87 +346,134 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         self.is_loading = reactive(False)
         self.loading_message = reactive("Loading...")
         self.tree_data: Optional[List[Dict]] = None
+        self.has_loaded_repo = False
+        self.selected_files: set = set()
         
     def compose(self) -> ComposeResult:
         """Compose the UI."""
         with Container(classes="repo-window-container"):
-            # Header with repo input
+            # Header
             with Container(classes="repo-header"):
-                with Container(classes="repo-header-content"):
-                    # First row: input and controls
+                yield Static("📦 Code Repository Browser", classes="repo-title")
+                
+                # Repository input
+                with Container(classes="repo-input-container"):
                     yield Input(
-                        placeholder="https://github.com/user/repo",
+                        placeholder="Enter GitHub URL (e.g., https://github.com/user/repo)",
                         id="repo-url-input",
                         classes="repo-url-input"
                     )
-                    yield Button("Load", id="load-repo-btn", variant="primary")
+                    yield Button("Load Repository", id="load-repo-btn", variant="primary", classes="load-button")
+                
+                # Controls (hidden until repo loaded)
+                with Container(id="repo-controls-container", classes="repo-controls hidden"):
                     yield Select(
                         options=[("main", "main")],
                         id="branch-selector",
-                        value="main"
+                        value="main",
+                        classes="branch-selector"
                     )
-                    yield Button("⚙️", id="repo-settings-btn")
-                    
-                    # Second row: selection summary
                     with Container(classes="selection-summary"):
-                        yield Static("No files selected", id="selection-count", classes="summary-stat")
+                        yield Static("0 files selected", id="selection-count", classes="summary-stat")
                         yield Static("0 KB", id="selection-size", classes="summary-stat")
                         yield Static("~0 tokens", id="selection-tokens", classes="summary-stat")
             
-            # Filter bar
-            with Container(classes="filter-bar"):
-                yield Input(placeholder="Search files...", id="file-search")
-                yield Select(
-                    options=[
-                        ("all", "All Files"),
-                        ("code", "Code Only"),
-                        ("docs", "Documentation"),
-                        ("config", "Config Files"),
-                    ],
-                    id="file-type-filter",
-                    value="all"
-                )
-                yield Button("📝", id="filter-docs", classes="filter-quick-btn")
-                yield Button("💻", id="filter-code", classes="filter-quick-btn")
-                yield Button("⚙️", id="filter-config", classes="filter-quick-btn")
-                yield Static()  # Spacer
-            
-            # Main content
-            with Container(classes="main-content"):
-                # Tree view
-                with Container(classes="tree-container"):
-                    yield TreeView(
-                        id="repo-tree",
-                        on_selection_change=self.handle_selection_change,
-                        on_node_expanded=self.handle_node_expanded
+            # Empty state (shown by default)
+            with Container(id="empty-state", classes="empty-state-container"):
+                with Container(classes="empty-state-content"):
+                    yield Static(
+                        "🗂️\n\nNo Repository Loaded",
+                        classes="empty-state-icon"
                     )
-                
-                # Preview pane
-                with Container(classes="preview-container"):
-                    with Container(classes="preview-header"):
-                        yield Static("Select a file to preview", id="preview-filename")
-                    with ScrollableContainer(classes="preview-content"):
-                        yield TextArea(
-                            "No file selected",
-                            id="file-preview",
-                            read_only=True,
-                            language="python"
+                    yield Static(
+                        "Load a GitHub Repository",
+                        classes="empty-state-title"
+                    )
+                    yield Static(
+                        "Enter a GitHub repository URL above to browse and select files.\n"
+                        "You can then export selected files to ZIP, copy to clipboard,\n"
+                        "or create embeddings for RAG applications.",
+                        classes="empty-state-description"
+                    )
+                    
+                    with Container(classes="empty-state-actions"):
+                        yield Input(
+                            placeholder="https://github.com/user/repo",
+                            id="empty-state-input",
+                            classes="empty-state-input"
+                        )
+                        yield Button(
+                            "Load Repository",
+                            id="empty-load-btn",
+                            variant="primary",
+                            classes="empty-state-button"
                         )
             
-            # Action bar
-            with Container(classes="action-bar"):
-                yield Static()  # Left spacer
-                yield Button("Cancel", id="cancel-btn", variant="error")
-                yield Button("Export ZIP", id="export-zip-btn")
-                yield Button("Copy to Clipboard", id="copy-clipboard-btn")
-                yield Button("Create Embeddings", id="create-embeddings-btn", variant="primary")
-                yield Button("Save Profile", id="save-profile-btn")
-                yield Static()  # Right spacer
+            # Filter bar (hidden until repo loaded)
+            with Container(id="filter-bar", classes="filter-bar hidden"):
+                yield Input(
+                    placeholder="Search files...",
+                    id="file-search",
+                    classes="file-search"
+                )
+                yield Select(
+                    options=[
+                        ("All Files", "all"),
+                        ("Code Only", "code"),
+                        ("Documentation", "docs"),
+                        ("Config Files", "config"),
+                    ],
+                    id="file-type-filter",
+                    value="all",
+                    classes="file-type-filter"
+                )
+                with Container(classes="filter-buttons"):
+                    yield Button("📝 Docs", id="filter-docs", classes="filter-quick-btn")
+                    yield Button("💻 Code", id="filter-code", classes="filter-quick-btn")
+                    yield Button("⚙️ Config", id="filter-config", classes="filter-quick-btn")
+            
+            # Main content (hidden until repo loaded)
+            with Container(id="main-content", classes="main-content hidden"):
+                with Container(classes="content-split"):
+                    # Tree panel
+                    with Container(classes="tree-panel"):
+                        with Container(classes="tree-header"):
+                            yield Static("Repository Files", classes="tree-title")
+                        with Container(classes="tree-container", id="tree-container"):
+                            yield TreeView(
+                                id="repo-tree",
+                                on_selection_change=self.handle_selection_change,
+                                on_node_expanded=self.handle_node_expanded,
+                                on_node_selected=self.handle_node_selected
+                            )
+                    
+                    # Preview panel
+                    with Container(classes="preview-panel"):
+                        with Container(classes="preview-header"):
+                            yield Static("File Preview", id="preview-title", classes="preview-title")
+                        with ScrollableContainer(classes="preview-content"):
+                            yield TextArea(
+                                "Select a file to preview its contents",
+                                id="file-preview",
+                                read_only=True,
+                                language="python"
+                            )
+            
+            # Action bar (hidden until files selected)
+            with Container(id="action-bar", classes="action-bar hidden"):
+                with Container(classes="action-buttons"):
+                    yield Static(classes="action-spacer")
+                    yield Button("Cancel", id="cancel-btn", variant="error", classes="action-button")
+                    yield Button("Export ZIP", id="export-zip-btn", classes="action-button")
+                    yield Button("Copy to Clipboard", id="copy-clipboard-btn", classes="action-button")
+                    yield Button("Create Embeddings", id="create-embeddings-btn", variant="primary", classes="action-button")
+                    yield Static(classes="action-spacer")
             
             # Loading overlay
             with Container(classes="loading-overlay hidden", id="loading-overlay"):
-                yield LoadingIndicator()
-                yield Label("Loading...", classes="loading-label", id="loading-label")
+                with Container(classes="loading-content"):
+                    yield LoadingIndicator()
+                    yield Label("Loading repository...", classes="loading-label", id="loading-label")
     
     def on_mount(self) -> None:
         """Handle mount event."""
@@ -305,6 +490,39 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             label.update(self.loading_message)
         else:
             overlay.add_class("hidden")
+    
+    def _show_loaded_state(self) -> None:
+        """Show the loaded repository state."""
+        # Hide empty state
+        self.query_one("#empty-state").add_class("hidden")
+        
+        # Show repo controls
+        self.query_one("#repo-controls-container").remove_class("hidden")
+        
+        # Show filter bar
+        self.query_one("#filter-bar").remove_class("hidden")
+        
+        # Show main content
+        self.query_one("#main-content").remove_class("hidden")
+        
+        # Show action bar if files are selected
+        if self.selected_files:
+            self.query_one("#action-bar").remove_class("hidden")
+        
+        self.has_loaded_repo = True
+    
+    def _show_empty_state(self) -> None:
+        """Show the empty repository state."""
+        # Show empty state
+        self.query_one("#empty-state").remove_class("hidden")
+        
+        # Hide everything else
+        self.query_one("#repo-controls-container").add_class("hidden")
+        self.query_one("#filter-bar").add_class("hidden")
+        self.query_one("#main-content").add_class("hidden")
+        self.query_one("#action-bar").add_class("hidden")
+        
+        self.has_loaded_repo = False
     
     @on(Button.Pressed, "#load-repo-btn")
     async def load_repository(self, event: Button.Pressed) -> None:
@@ -345,6 +563,24 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         finally:
             self.is_loading = False
     
+    @on(Button.Pressed, "#empty-load-btn")
+    async def load_from_empty_state(self, event: Button.Pressed) -> None:
+        """Load repository from empty state."""
+        # Get URL from empty state input
+        empty_input = self.query_one("#empty-state-input", Input)
+        repo_url = empty_input.value.strip()
+        
+        if not repo_url:
+            self.notify("Please enter a GitHub repository URL", severity="error")
+            return
+        
+        # Copy URL to main input
+        main_input = self.query_one("#repo-url-input", Input)
+        main_input.value = repo_url
+        
+        # Trigger load
+        await self.load_repository(event)
+    
     async def load_tree(self) -> None:
         """Load repository tree structure."""
         if not self.current_repo:
@@ -367,6 +603,9 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             # Load into tree view
             tree_view = self.query_one("#repo-tree", TreeView)
             await tree_view.load_tree(self.tree_data)
+            
+            # Show the loaded state UI
+            self._show_loaded_state()
             
             self.notify(f"Loaded {len(flat_tree)} items", severity="information")
             
@@ -398,6 +637,19 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         # Estimate tokens (rough approximation)
         estimated_tokens = stats['size'] // 4  # ~4 chars per token
         tokens_label.update(f"~{estimated_tokens:,} tokens")
+        
+        # Update selected files set
+        if selected:
+            self.selected_files.add(path)
+        else:
+            self.selected_files.discard(path)
+        
+        # Show/hide action bar based on selection
+        action_bar = self.query_one("#action-bar")
+        if self.selected_files:
+            action_bar.remove_class("hidden")
+        else:
+            action_bar.add_class("hidden")
     
     async def handle_node_expanded(self, path: str, expanded: bool) -> None:
         """Handle node expansion - load children if needed."""
@@ -407,6 +659,99 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         # For now, we load everything at once
         # In a real implementation, we'd load children on demand
         pass
+    
+    async def handle_node_selected(self, path: str) -> None:
+        """Handle node selection - show file preview."""
+        if not self.current_repo:
+            return
+        
+        # Update preview title
+        preview_title = self.query_one("#preview-title", Static)
+        preview_title.update(f"Preview: {path}")
+        
+        # Check if it's a file or directory
+        tree_view = self.query_one("#repo-tree", TreeView)
+        node = tree_view.get_node_by_path(path)
+        
+        if not node or node.get("type") == "tree":
+            # It's a directory, show directory info
+            self.query_one("#file-preview", TextArea).text = "Select a file to preview its contents"
+            return
+        
+        # It's a file, fetch and display content
+        self.loading_message = "Loading file preview..."
+        self.is_loading = True
+        
+        try:
+            branch = self.query_one("#branch-selector", Select).value
+            content = await self.api_client.get_file_content(
+                self.current_repo["owner"],
+                self.current_repo["repo"],
+                path,
+                branch
+            )
+            
+            # Display in preview
+            preview_area = self.query_one("#file-preview", TextArea)
+            preview_area.text = content
+            
+            # Try to set language based on file extension
+            ext = path.split('.')[-1] if '.' in path else ''
+            lang_map = {
+                'py': 'python',
+                'js': 'javascript',
+                'ts': 'typescript',
+                'jsx': 'javascript',
+                'tsx': 'typescript',
+                'java': 'java',
+                'cpp': 'cpp',
+                'c': 'c',
+                'h': 'c',
+                'hpp': 'cpp',
+                'cs': 'csharp',
+                'rb': 'ruby',
+                'go': 'go',
+                'rs': 'rust',
+                'php': 'php',
+                'swift': 'swift',
+                'kt': 'kotlin',
+                'scala': 'scala',
+                'r': 'r',
+                'sql': 'sql',
+                'sh': 'bash',
+                'bash': 'bash',
+                'zsh': 'bash',
+                'yml': 'yaml',
+                'yaml': 'yaml',
+                'json': 'json',
+                'xml': 'xml',
+                'html': 'html',
+                'htm': 'html',
+                'css': 'css',
+                'scss': 'scss',
+                'sass': 'sass',
+                'less': 'less',
+                'md': 'markdown',
+                'markdown': 'markdown',
+                'rst': 'restructuredtext',
+                'tex': 'latex',
+                'dockerfile': 'dockerfile',
+                'makefile': 'makefile',
+                'cmake': 'cmake',
+                'gradle': 'gradle',
+                'maven': 'xml'
+            }
+            
+            if ext in lang_map:
+                preview_area.language = lang_map[ext]
+            else:
+                preview_area.language = None
+                
+        except Exception as e:
+            self.query_one("#file-preview", TextArea).text = f"Error loading file: {str(e)}"
+            logger.error(f"Failed to load file preview: {e}")
+        finally:
+            self.is_loading = False
     
     @on(Button.Pressed, "#filter-docs")
     async def filter_docs(self, event: Button.Pressed) -> None:
@@ -433,6 +778,14 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         """Apply current filters to tree view."""
         # TODO: Implement filtering logic
         pass
+    
+    @on(Input.Changed, "#file-search")
+    async def on_search_changed(self, event: Input.Changed) -> None:
+        """Handle search input changes."""
+        search_term = event.value.lower()
+        tree_view = self.query_one("#repo-tree", TreeView)
+        # Apply search filter to tree
+        await self.apply_filters()
     
     @on(Button.Pressed, "#copy-clipboard-btn")
     async def copy_to_clipboard(self, event: Button.Pressed) -> None:
@@ -482,6 +835,16 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         finally:
             self.is_loading = False
     
+    @on(Button.Pressed, "#export-zip-btn")
+    async def export_to_zip(self, event: Button.Pressed) -> None:
+        """Export selected files to ZIP."""
+        self.notify("ZIP export functionality coming soon!", severity="info")
+    
+    @on(Button.Pressed, "#create-embeddings-btn")
+    async def create_embeddings(self, event: Button.Pressed) -> None:
+        """Create embeddings from selected files."""
+        self.notify("Embeddings creation functionality coming soon!", severity="info")
+    
     @on(Button.Pressed, "#cancel-btn")
     def close_window(self) -> None:
         """Close the window."""
@@ -493,18 +856,25 @@ class CodeRepoCopyPasteWindow(ModalScreen):
     
     def action_select_all(self) -> None:
         """Select all files."""
-        # TODO: Implement select all
-        pass
+        if self.has_loaded_repo:
+            tree_view = self.query_one("#repo-tree", TreeView)
+            tree_view.select_all()
+            self.notify("Selected all files", severity="info")
     
     def action_deselect_all(self) -> None:
         """Deselect all files."""
-        # TODO: Implement deselect all
-        pass
+        if self.has_loaded_repo:
+            tree_view = self.query_one("#repo-tree", TreeView)
+            tree_view.deselect_all()
+            self.selected_files.clear()
+            self.notify("Deselected all files", severity="info")
     
     def action_invert_selection(self) -> None:
         """Invert selection."""
-        # TODO: Implement invert selection
-        pass
+        if self.has_loaded_repo:
+            tree_view = self.query_one("#repo-tree", TreeView)
+            tree_view.invert_selection()
+            self.notify("Inverted selection", severity="info")
     
     def _format_size(self, size: int) -> str:
         """Format file size in human-readable format."""
