@@ -270,7 +270,7 @@ class TestSpacedRepetition:
         
         # Verify review history was created
         with db_instance.transaction() as cursor:
-        cursor.execute("SELECT * FROM review_history WHERE flashcard_id = ?", (card_id,))
+            cursor.execute("SELECT * FROM review_history WHERE flashcard_id = ?", (card_id,))
         history = cursor.fetchone()
         assert history is not None
         assert history["rating"] == 0
