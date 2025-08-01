@@ -2,7 +2,7 @@
 #
 #
 # Imports
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 import os
 import shutil
 import json

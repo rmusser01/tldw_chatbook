@@ -18,6 +18,7 @@ from textual.widgets import (
     Static, Button, Input, Label, Select, TextArea, Checkbox, RadioButton, RadioSet,
     Collapsible, ProgressBar, Rule, ContentSwitcher, TabbedContent, TabPane
 )
+from textual.css.query import QueryError
 
 # Local widget imports
 from ..Widgets.tooltip import HelpIcon
@@ -173,6 +174,23 @@ class EmbeddingsCreationContent(Container):
                     
                     yield Checkbox("Add timestamps to metadata", id="embeddings-add-timestamps", value=True)
                     yield Checkbox("Include source information", id="embeddings-include-source", value=True)
+                
+                # Action Buttons
+                yield Label("Actions", classes="embeddings-section-title")
+                with Container(classes="embeddings-action-container"):
+                    with Horizontal(classes="embeddings-button-row"):
+                        yield Button("Clear Form", id="embeddings-clear", classes="embeddings-action-button")
+                        yield Button("Preview Chunks", id="embeddings-preview", classes="embeddings-action-button", variant="warning")
+                        yield Button("Create Embeddings", id="embeddings-create", classes="embeddings-action-button", variant="primary")
+                
+                # Progress Section (hidden by default)
+                with Container(id="embeddings-progress-container", classes="embeddings-progress-container hidden"):
+                    yield Label("Processing...", id="embeddings-progress-label", classes="embeddings-progress-label")
+                    yield ProgressBar(id="embeddings-progress-bar", total=100)
+                    yield Static("", id="embeddings-progress-status", classes="embeddings-status-output")
+                
+                # Error display
+                yield Static("", id="error-general", classes="error-message error-general hidden")
     
     def _compose_source_model_tab(self) -> ComposeResult:
         """Compose the Source & Model tab content."""
@@ -930,8 +948,14 @@ class EmbeddingsCreationContent(Container):
     
     def watch_is_processing(self, is_processing: bool) -> None:
         """React to processing state changes."""
-        progress_container = self.query_one("#embeddings-progress-container", Container)
-        if is_processing:
-            progress_container.display = True
-        else:
-            progress_container.display = False
+        try:
+            progress_container = self.query_one("#embeddings-progress-container", Container)
+            if is_processing:
+                progress_container.remove_class("hidden")
+                progress_container.display = True
+            else:
+                progress_container.add_class("hidden")
+                progress_container.display = False
+        except QueryError:
+            # Widget not mounted yet, ignore
+            pass

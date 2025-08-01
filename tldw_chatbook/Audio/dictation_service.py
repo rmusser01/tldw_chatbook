@@ -12,8 +12,14 @@ import time
 from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass
 from datetime import datetime
-import numpy as np
 from loguru import logger
+
+# Try to import numpy as optional dependency
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
 
 # Local imports
 from .recording_service import AudioRecordingService, AudioRecordingError
@@ -298,8 +304,13 @@ class LiveDictationService:
                     self._handle_final_transcript(result['final'])
             else:
                 # Fallback to chunked transcription
-                # Convert audio to numpy array
-                audio_array = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+                if NUMPY_AVAILABLE:
+                    # Convert audio to numpy array
+                    audio_array = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+                else:
+                    # Without numpy, pass raw audio data
+                    # The transcription service should handle this
+                    audio_array = audio_data
                 
                 # Transcribe chunk
                 result = self.transcription_service.transcribe_buffer(
