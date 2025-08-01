@@ -199,20 +199,51 @@ class MediaViewerPanel(Container):
     MediaViewerPanel TabbedContent {
         height: 1fr;
         width: 100%;
+        min-height: 0;
     }
     
     MediaViewerPanel TabbedContent > ContentSwitcher {
         height: 1fr;
         width: 100%;
+        min-height: 0;
     }
     
     MediaViewerPanel TabPane {
         padding: 0;
-        height: 100%;
+        height: 1fr;
+        min-height: 0;
     }
     
-    MediaViewerPanel .analysis-scroll-container {
-        height: 100%;
+    /* Specific rule for analysis tab to ensure it fills container */
+    MediaViewerPanel #analysis-tab {
+        height: 1fr;
+        padding: 0;
+        min-height: 0;
+    }
+    
+    /* Force the analysis scroll container to work */
+    MediaViewerPanel #analysis-scroll-fix {
+        height: 1fr;
+        width: 100%;
+        overflow-y: scroll;
+        padding: 1;
+    }
+    
+    /* Ensure collapsible doesn't constrain height */
+    MediaViewerPanel #analysis-api-settings {
+        height: auto;
+        margin-bottom: 1;
+    }
+    
+    /* Ensure all containers inside use auto height */
+    MediaViewerPanel #analysis-scroll-fix > * {
+        height: auto;
+    }
+    
+    /* VerticalScroll wrapper for analysis content */
+    MediaViewerPanel .analysis-content-scroll {
+        height: 1fr;
+        width: 100%;
         padding: 1;
     }
     
@@ -229,12 +260,14 @@ class MediaViewerPanel(Container):
     }
     
     MediaViewerPanel #analysis-display {
-        min-height: 20;
+        min-height: 5;
+        max-height: 30;
         margin: 1;
         height: auto;
         padding: 1;
         border: solid $primary;
         background: $surface;
+        overflow-y: auto;
     }
     
     MediaViewerPanel .provider-row {
@@ -298,7 +331,7 @@ class MediaViewerPanel(Container):
     }
     
     MediaViewerPanel .prompt-textarea {
-        height: 6;
+        height: 4;
         margin-bottom: 1;
         width: 100%;
     }
@@ -313,7 +346,7 @@ class MediaViewerPanel(Container):
         layout: horizontal;
         height: 3;
         margin-top: 1;
-        margin-bottom: 1;
+        margin-bottom: 2;
         padding: 1;
     }
     
@@ -323,8 +356,9 @@ class MediaViewerPanel(Container):
     }
     
     MediaViewerPanel .bottom-spacer {
-        height: 2;
+        height: 10;
         width: 100%;
+        min-height: 10;
     }
     """
     
@@ -420,53 +454,53 @@ class MediaViewerPanel(Container):
             
             # Analysis tab
             with TabPane("Analysis", id="analysis-tab"):
-                # Wrap all content in a VerticalScroll container
-                with VerticalScroll(classes="analysis-scroll-container"):
+                # Wrap everything in a scrollable container
+                with VerticalScroll(id="analysis-scroll-fix"):
                     # API Settings in a Collapsible
                     with Collapsible(title="API Settings", collapsed=False, id="analysis-api-settings", classes="compact-collapsible"):
                         # Provider and Model selection row
                         with Horizontal(classes="provider-row"):
-                            yield Select(
-                                [],  # Will be populated on mount
-                                prompt="Select Provider",
-                                id="analysis-provider-select"
-                            )
-                            yield Select(
-                                [],  # Will be populated based on provider
-                                prompt="Select Model",
-                                id="analysis-model-select"
-                            )
-                        
+                                yield Select(
+                                    [],  # Will be populated on mount
+                                    prompt="Select Provider",
+                                    id="analysis-provider-select"
+                                )
+                                yield Select(
+                                    [],  # Will be populated based on provider
+                                    prompt="Select Model",
+                                    id="analysis-model-select"
+                                )
+                            
                         # Temperature, Top-P, Min-P, Max Tokens settings row
                         with Horizontal(classes="api-params-row"):
-                            with Vertical(classes="param-group"):
-                                yield Label("Temperature")
-                                yield Input(
-                                    placeholder="0.7",
-                                    id="analysis-temperature",
-                                    value="0.7"
-                                )
-                            with Vertical(classes="param-group"):
-                                yield Label("Top P")
-                                yield Input(
-                                    placeholder="0.95",
-                                    id="analysis-top-p",
-                                    value="0.95"
-                                )
-                            with Vertical(classes="param-group"):
-                                yield Label("Min P")
-                                yield Input(
-                                    placeholder="0.05",
-                                    id="analysis-min-p",
-                                    value="0.05"
-                                )
-                            with Vertical(classes="param-group"):
-                                yield Label("Max Tokens")
-                                yield Input(
-                                    placeholder="4096",
-                                    id="analysis-max-tokens",
-                                    value="4096"
-                                )
+                                with Vertical(classes="param-group"):
+                                    yield Label("Temperature")
+                                    yield Input(
+                                        placeholder="0.7",
+                                        id="analysis-temperature",
+                                        value="0.7"
+                                    )
+                                with Vertical(classes="param-group"):
+                                    yield Label("Top P")
+                                    yield Input(
+                                        placeholder="0.95",
+                                        id="analysis-top-p",
+                                        value="0.95"
+                                    )
+                                with Vertical(classes="param-group"):
+                                    yield Label("Min P")
+                                    yield Input(
+                                        placeholder="0.05",
+                                        id="analysis-min-p",
+                                        value="0.05"
+                                    )
+                                with Vertical(classes="param-group"):
+                                    yield Label("Max Tokens")
+                                    yield Input(
+                                        placeholder="4096",
+                                        id="analysis-max-tokens",
+                                        value="4096"
+                                    )
                     
                     # Prompt search and filtering
                     yield Label("Search Prompts:", classes="prompt-label")

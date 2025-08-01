@@ -20,6 +20,7 @@ from .chatbook_models import (
     Chatbook, ChatbookManifest, ChatbookContent, 
     ContentItem, ContentType, ChatbookVersion, Relationship
 )
+from .error_handler import ChatbookErrorHandler, ChatbookErrorType, safe_chatbook_operation
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase

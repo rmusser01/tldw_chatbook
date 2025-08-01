@@ -1049,10 +1049,7 @@ Checkbox:focus {
 }
 
 /* Enhanced hover states */
-Button:hover {
-    background: $primary-lighten-1;
-    transition: background 0.2s;
-}
+/* Button:hover handled in components/_buttons.tcss to fix persistent hover issue */
 
 Select:hover {
     border: solid $primary-lighten-1;

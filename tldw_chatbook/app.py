@@ -73,7 +73,7 @@ from .config import (
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
@@ -140,6 +140,7 @@ from .UI.Evals_Window_v3 import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Study_Window import StudyWindow
+from .UI.Chatbooks_Window import ChatbooksWindow
 from .UI.Tab_Bar import TabBar
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
@@ -833,9 +834,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         *[f"ingest-view-tldw-api-{mt}" for mt in MEDIA_TYPES]
     ]
     ALL_MAIN_WINDOW_IDS = [ # Assuming these are your main content window IDs
-        "chat-window", "conversations_characters_prompts-window",
+        "chat-window", "conversations_characters_prompts-window", "notes-window",
         "ingest-window", "tools_settings-window", "llm_management-window",
-        "media-window", "search-window", "logs-window", "evals-window", "coding-window"
+        "media-window", "search-window", "logs-window", "stats-window", "evals-window", 
+        "coding-window", "stts-window", "study-window", "chatbooks-window"
     ]
 
     # Define reactive at class level with a placeholder default and type hint
@@ -1521,6 +1523,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
             ("study", StudyWindow, "study-window"),
+            ("chatbooks", ChatbooksWindow, "chatbooks-window"),
             # ("subscriptions", SubscriptionWindow, "subscriptions-window"),  # Temporarily disabled
         ]
         
@@ -1595,10 +1598,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
             ("llm_management", LLMManagementWindow, "llm_management-window"),
             ("logs", LogsWindow, "logs-window"),
+            ("coding", CodingWindow, "coding-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
             ("study", StudyWindow, "study-window"),
+            ("chatbooks", ChatbooksWindow, "chatbooks-window"),
         ]
         
         window_widgets = []
@@ -4122,7 +4127,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 TAB_EVALS: "evals-window",
                 TAB_CODING: "coding-window",
                 TAB_STTS: "stts-window",
-                TAB_STUDY: "study-window"
+                TAB_STUDY: "study-window",
+                TAB_CHATBOOKS: "chatbooks-window"
             }
 
             window_id = window_id_map.get(self.current_tab)
@@ -4354,6 +4360,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     await chat_window.toggle_attach_button_visibility(event.value)
                 except Exception as e:
                     loguru_logger.error(f"Error toggling attach button visibility: {e}")
+        elif checkbox_id == "chat-show-dictation-button-checkbox" and current_active_tab == TAB_CHAT:
+            # Handle dictation button visibility toggle
+            from .config import save_setting_to_cli_config
+            save_setting_to_cli_config("chat.voice", "show_mic_button", event.value)
+            
+            # Update the UI dynamically
+            try:
+                mic_button = self.query_one("#mic-button", Button)
+                mic_button.display = event.value
+                self.notify(f"Dictation button {'shown' if event.value else 'hidden'}", timeout=2)
+            except QueryError:
+                # If button doesn't exist, we'll need to refresh the chat window
+                self.notify("Dictation button setting saved. Restart chat to apply changes.", timeout=3)
         elif checkbox_id == "chat-worldbook-enable-checkbox" and current_active_tab == TAB_CHAT:
             await chat_events_worldbooks.handle_worldbook_enable_checkbox(self, event.value)
         elif checkbox_id == "chat-dictionary-enable-checkbox" and current_active_tab == TAB_CHAT:

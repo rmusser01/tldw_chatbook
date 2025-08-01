@@ -22,6 +22,7 @@ from .chatbook_models import (
     ContentItem, ContentType, ChatbookVersion
 )
 from .conflict_resolver import ConflictResolver, ConflictResolution
+from .error_handler import ChatbookErrorHandler, ChatbookErrorType, safe_chatbook_operation
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
@@ -298,9 +299,8 @@ class ChatbookImporter:
                 if prefix_imported:
                     conv_name = f"[Imported] {conv_name}"
                 
-                # TODO: Add get_conversation_by_name method to DB
-                # For now, assume no duplicates
-                existing = None
+                # Check for existing conversation
+                existing = db.get_conversation_by_name(conv_name)
                 
                 if existing:
                     # Handle conflict
@@ -411,9 +411,8 @@ class ChatbookImporter:
                 if prefix_imported:
                     note_title = f"[Imported] {note_title}"
                 
-                # TODO: Add get_note_by_title method to DB
-                # For now, assume no duplicates
-                existing = None
+                # Check for existing note
+                existing = db.get_note_by_title(note_title)
                 
                 if existing:
                     # Handle conflict
@@ -499,9 +498,8 @@ class ChatbookImporter:
                 if prefix_imported:
                     char_name = f"[Imported] {char_name}"
                 
-                # TODO: Add get_character_by_name method to DB
-                # For now, assume no duplicates
-                existing = None
+                # Check for existing character
+                existing = db.get_character_card_by_name(char_name)
                 
                 if existing:
                     # Handle conflict
@@ -660,12 +658,10 @@ class ChatbookImporter:
                 title = media_data.get('title', 'Untitled')
                 url = media_data.get('url')
                 
-                # Check if media already exists (by URL if available, otherwise by title)
+                # Check if media already exists by URL
                 existing = None
                 if url:
-                    # TODO: Add method to check by URL in MediaDatabase
-                    # For now, we'll assume no duplicates
-                    pass
+                    existing = db.get_media_by_url(url)
                 
                 if existing:
                     # Handle conflict
@@ -722,21 +718,17 @@ class ChatbookImporter:
     def _generate_unique_media_title(self, base_title: str, db: MediaDatabase) -> str:
         """Generate a unique media title."""
         counter = 1
-        while True:
-            new_title = f"{base_title} ({counter})"
-            # TODO: Add method to check if title exists in MediaDatabase
-            # For now, just return the new title
-            return new_title
-            counter += 1
+        new_title = f"{base_title} ({counter})"
+        # MediaDatabase doesn't have a get_by_title method, so we'll just append a counter
+        # This is fine since media is primarily identified by URL
+        return new_title
     
     def _generate_unique_name(self, base_name: str, db: CharactersRAGDB) -> str:
         """Generate a unique conversation name."""
         counter = 1
         while True:
             new_name = f"{base_name} ({counter})"
-            # TODO: Add get_conversation_by_name method
-            # For now, just return the new name
-            if True:
+            if not db.get_conversation_by_name(new_name):
                 return new_name
             counter += 1
     
@@ -745,9 +737,7 @@ class ChatbookImporter:
         counter = 1
         while True:
             new_title = f"{base_title} ({counter})"
-            # TODO: Add get_note_by_title method
-            # For now, just return the new title
-            if True:
+            if not db.get_note_by_title(new_title):
                 return new_title
             counter += 1
     
@@ -756,8 +746,6 @@ class ChatbookImporter:
         counter = 1
         while True:
             new_name = f"{base_name} ({counter})"
-            # TODO: Add get_character_by_name method
-            # For now, just return the new name
-            if True:
+            if not db.get_character_card_by_name(new_name):
                 return new_name
             counter += 1

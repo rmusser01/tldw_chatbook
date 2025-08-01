@@ -1315,6 +1315,14 @@ class ToolsSettingsWindow(Container):
             id="config-chat-images-show-button"
         ))
         
+        # Voice settings
+        chat_voice_config = self.config_data.get("chat.voice", {})
+        image_widgets.append(Checkbox(
+            "Show Dictation button",
+            value=chat_voice_config.get("show_mic_button", True),
+            id="config-chat-voice-show-button"
+        ))
+        
         image_widgets.append(Label("Default Render Mode:", classes="form-label"))
         render_options = [("Auto", "auto"), ("Pixels", "pixels"), ("Regular", "regular")]
         image_widgets.append(Select(
@@ -3348,6 +3356,10 @@ Thank you for using tldw-chatbook! 🎉
                 saved_count += 1
             if save_setting_to_cli_config("chat.images", "show_attach_button", self.query_one("#config-chat-images-show-button", Checkbox).value):
                 saved_count += 1
+            
+            # Save chat.voice settings
+            if save_setting_to_cli_config("chat.voice", "show_mic_button", self.query_one("#config-chat-voice-show-button", Checkbox).value):
+                saved_count += 1
             if save_setting_to_cli_config("chat.images", "default_render_mode", self.query_one("#config-chat-images-render-mode", Select).value):
                 saved_count += 1
             if save_setting_to_cli_config("chat.images", "max_size_mb", float(self.query_one("#config-chat-images-max-size", Input).value)):
@@ -3394,6 +3406,9 @@ Thank you for using tldw-chatbook! 🎉
             # Reset image settings
             self.query_one("#config-chat-images-enabled", Checkbox).value = True
             self.query_one("#config-chat-images-show-button", Checkbox).value = True
+            
+            # Reset voice settings
+            self.query_one("#config-chat-voice-show-button", Checkbox).value = True
             self.query_one("#config-chat-images-render-mode", Select).value = "auto"
             self.query_one("#config-chat-images-max-size", Input).value = "10.0"
             self.query_one("#config-chat-images-auto-resize", Checkbox).value = True

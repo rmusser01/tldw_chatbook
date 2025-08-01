@@ -50,6 +50,9 @@ CSS_MODULES = [
     "features/_metrics.tcss",
     "features/_embeddings.tcss",
     "features/_splash.tcss",
+    "features/_wizards.tcss",
+    "features/_chatbooks.tcss",
+    "features/_coding.tcss",
     
     # 5. Utilities - Helpers and Overrides (can override anything)
     "utilities/_helpers.tcss",

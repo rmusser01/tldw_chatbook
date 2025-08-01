@@ -282,5 +282,8 @@ markers = [
     "asyncio: marks tests as async",
     "timeout: marks tests with custom timeout values",
     "optional: marks tests that require optional dependencies",
+    "performance: marks tests as performance tests",
+    "property: marks tests as property-based tests",
+    "slow: marks tests that take a long time to run",
 ]
 

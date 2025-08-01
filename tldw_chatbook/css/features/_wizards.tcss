@@ -1,0 +1,292 @@
+/* _wizards.tcss */
+/* Styles for wizard components */
+
+/* Base Wizard Styles */
+BaseWizard {
+    align: center middle;
+}
+
+BaseWizard > Container {
+    width: 90%;
+    height: 90%;
+    max-width: 120;
+    max-height: 50;
+    background: $surface;
+    border: thick $primary;
+    overflow: hidden;
+}
+
+/* Wizard Header */
+.wizard-header {
+    height: auto;
+    padding: 1 2;
+    background: $boost;
+    border-bottom: solid $background-darken-1;
+}
+
+.wizard-title {
+    text-style: bold;
+    color: $text;
+    text-align: center;
+    margin-bottom: 0;
+}
+
+.wizard-subtitle {
+    text-align: center;
+    color: $text-muted;
+    margin-top: 0;
+}
+
+/* Step Progress Indicator */
+StepProgress {
+    height: 3;
+    padding: 1 2;
+    background: transparent;
+    margin-top: 1;
+}
+
+.step-indicator {
+    layout: horizontal;
+    height: 1;
+    align: center middle;
+}
+
+.step-dot {
+    width: 3;
+    height: 1;
+    text-align: center;
+    margin: 0 1;
+}
+
+.step-dot.completed {
+    color: $success;
+}
+
+.step-dot.current {
+    color: $primary;
+    text-style: bold;
+}
+
+.step-dot.pending {
+    color: $text-disabled;
+}
+
+.step-connector {
+    width: 5;
+    height: 1;
+    text-align: center;
+    color: $text-disabled;
+}
+
+.step-label {
+    text-align: center;
+    color: $text-muted;
+    margin-top: 1;
+}
+
+/* Wizard Content Area */
+.wizard-content {
+    height: 1fr;
+    padding: 2;
+    overflow-y: scroll;
+    background: $background;
+}
+
+/* Wizard Footer */
+.wizard-footer {
+    dock: bottom;
+    height: 5;
+    padding: 1 2;
+    background: $panel;
+    border-top: solid $background-darken-1;
+}
+
+.wizard-buttons {
+    layout: horizontal;
+    height: 3;
+    align: center middle;
+}
+
+.wizard-buttons Button {
+    margin: 0 1;
+    min-width: 16;
+}
+
+.wizard-buttons Button:disabled {
+    opacity: 0.5;
+}
+
+.wizard-buttons .spacer {
+    width: 1fr;
+}
+
+/* Form Styling within Wizards */
+.wizard-content .form-group {
+    margin-bottom: 2;
+}
+
+.wizard-content .form-label {
+    color: $text-muted;
+    margin-bottom: 0;
+}
+
+.wizard-content .form-input {
+    width: 100%;
+    margin-top: 0;
+}
+
+.wizard-content TextArea {
+    background: $boost;
+    border: tall $background-darken-1;
+    padding: 1;
+}
+
+.wizard-content Input {
+    background: $boost;
+    border: tall $background-darken-1;
+}
+
+/* Info/Help Boxes */
+.info-box {
+    padding: 1 2;
+    background: $primary 10%;
+    border: round $primary;
+    margin: 2 0;
+    color: $text;
+}
+
+.warning-box {
+    padding: 1 2;
+    background: $warning 10%;
+    border: round $warning;
+    margin: 2 0;
+    color: $text;
+}
+
+.error-box {
+    padding: 1 2;
+    background: $error 10%;
+    border: round $error;
+    margin: 2 0;
+    color: $text;
+}
+
+/* Option Groups */
+.option-group {
+    margin-bottom: 2;
+    padding: 1 2;
+    background: $boost;
+    border: round $background-darken-1;
+}
+
+.option-title {
+    text-style: bold;
+    margin-bottom: 1;
+    color: $primary;
+}
+
+/* Radio and Checkbox Styling */
+RadioSet {
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+RadioButton {
+    margin: 0 0 1 1;
+    color: $text;
+}
+
+RadioButton:focus {
+    text-style: bold;
+}
+
+.checkbox-option {
+    margin: 0 0 1 1;
+}
+
+/* Progress Elements */
+ProgressBar {
+    background: $background-darken-1;
+    color: $primary;
+}
+
+.progress-container {
+    width: 100%;
+    max-width: 60;
+    padding: 2;
+    background: $boost;
+    border: round $background-darken-1;
+    align: center middle;
+}
+
+.progress-title {
+    text-align: center;
+    text-style: bold;
+    margin-bottom: 2;
+}
+
+.progress-status {
+    margin: 2 0;
+}
+
+.status-item {
+    margin: 0 0 1 2;
+    color: $text-muted;
+}
+
+.status-item.completed {
+    color: $success;
+}
+
+.status-item.active {
+    color: $primary;
+    text-style: bold;
+}
+
+.status-item.error {
+    color: $error;
+    text-style: bold;
+}
+
+/* Completion Messages */
+.completion-message {
+    text-align: center;
+    padding: 2;
+    margin-top: 2;
+    background: $success 20%;
+    border: round $success;
+}
+
+.completion-title {
+    text-style: bold;
+    margin-bottom: 1;
+    color: $success;
+}
+
+.completion-details {
+    color: $text;
+    margin: 1 0;
+}
+
+.completion-actions {
+    layout: horizontal;
+    height: auto;
+    align: center middle;
+    margin-top: 2;
+}
+
+.completion-actions Button {
+    margin: 0 1;
+}
+
+/* Responsive adjustments */
+/* Note: Textual doesn't support @media queries
+   Apply these classes dynamically based on terminal size */
+.wizard-small BaseWizard > Container {
+    width: 95%;
+}
+
+.wizard-small .wizard-buttons Button {
+    min-width: 12;
+}

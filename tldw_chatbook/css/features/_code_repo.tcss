@@ -1,0 +1,378 @@
+/* ========================================
+ * Code Repository Copy/Paste Feature Styles
+ * ======================================== */
+
+/* Modal window container */
+CodeRepoCopyPasteWindow {
+    align: center middle;
+    background: $background 80%;
+}
+
+.repo-window-container {
+    width: 90%;
+    height: 90%;
+    max-width: 120;
+    max-height: 50;
+    background: $surface;
+    border: thick $primary;
+    padding: 0;
+}
+
+/* ========================================
+ * Header Section
+ * ======================================== */
+
+.repo-header {
+    dock: top;
+    height: 7;
+    background: $boost;
+    padding: 1;
+    border-bottom: solid $primary;
+}
+
+.repo-header-content {
+    layout: grid;
+    grid-size: 4 2;
+    grid-columns: 3fr 1fr 1fr 1fr;
+    grid-rows: 3 2;
+    grid-gutter: 1 1;
+    width: 100%;
+}
+
+.repo-url-input {
+    width: 100%;
+}
+
+#repo-url-input {
+    width: 100%;
+}
+
+#load-repo-btn {
+    min-width: 10;
+}
+
+#branch-selector {
+    min-width: 15;
+}
+
+#repo-settings-btn {
+    width: 3;
+    min-width: 3;
+}
+
+/* Selection summary */
+.selection-summary {
+    grid-column-span: 4;
+    layout: grid;
+    grid-size: 3 1;
+    grid-columns: 1fr 1fr 1fr;
+    align: left middle;
+    width: 100%;
+}
+
+.summary-stat {
+    text-align: left;
+    color: $text-muted;
+}
+
+/* ========================================
+ * Filter Bar
+ * ======================================== */
+
+.filter-bar {
+    dock: top;
+    height: 3;
+    background: $panel;
+    layout: grid;
+    grid-size: 6 1;
+    grid-columns: 2fr 1fr 3 3 3 1fr;
+    grid-gutter: 0 1;
+    padding: 0 1;
+    border-bottom: solid $primary-darken-1;
+}
+
+#file-search {
+    width: 100%;
+}
+
+#file-type-filter {
+    width: 100%;
+}
+
+.filter-quick-btn {
+    width: 3;
+    height: 3;
+    min-width: 3;
+    padding: 0;
+    background: $surface;
+    border: solid $primary-darken-2;
+}
+
+.filter-quick-btn:hover {
+    background: $primary 30%;
+    border: solid $primary;
+}
+
+/* ========================================
+ * Main Content Area
+ * ======================================== */
+
+.main-content {
+    layout: grid;
+    grid-size: 2 1;
+    grid-columns: 2fr 3fr;
+    height: 1fr;
+    background: $background;
+}
+
+/* Tree container */
+.tree-container {
+    border-right: solid $primary;
+    overflow: hidden;
+    padding: 1;
+    background: $surface;
+}
+
+#repo-tree {
+    height: 100%;
+    width: 100%;
+    border: none;
+}
+
+/* Preview container */
+.preview-container {
+    padding: 1;
+    overflow: hidden;
+    background: $surface;
+}
+
+.preview-header {
+    height: 3;
+    border-bottom: dashed $primary-darken-2;
+    margin-bottom: 1;
+    padding: 0 1;
+    align: left middle;
+}
+
+#preview-filename {
+    text-style: bold;
+    color: $primary;
+}
+
+.preview-content {
+    height: 1fr;
+    border: round $primary-darken-2;
+    padding: 1;
+    background: $surface-darken-1;
+}
+
+#file-preview {
+    width: 100%;
+    height: 100%;
+    background: $surface-darken-1;
+    padding: 1;
+}
+
+/* ========================================
+ * Tree View Styles
+ * ======================================== */
+
+TreeView {
+    height: 100%;
+    width: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    border: solid $primary-darken-2;
+    padding: 1;
+    background: $surface;
+}
+
+.tree-container {
+    width: 100%;
+    height: auto;
+}
+
+.tree-loading {
+    width: 100%;
+    text-align: center;
+    padding: 2;
+    color: $text-muted;
+}
+
+.tree-empty {
+    width: 100%;
+    text-align: center;
+    padding: 4;
+    color: $text-muted;
+}
+
+/* Tree node styles */
+TreeNode {
+    height: 3;
+    width: 100%;
+}
+
+.tree-node-row {
+    layout: grid;
+    grid-size: 4 1;
+    grid-columns: auto 3 3 1fr;
+    height: 3;
+    align: left middle;
+    width: 100%;
+}
+
+.tree-node-row:hover {
+    background: $panel-lighten-1;
+}
+
+.tree-node-selected {
+    background: $accent 20%;
+    border-left: thick $accent;
+}
+
+.tree-indent {
+    width: auto;
+    content-align: left middle;
+}
+
+.tree-expand-btn {
+    width: 3;
+    height: 3;
+    min-width: 3;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+.tree-expand-btn:hover {
+    background: $primary 20%;
+}
+
+.tree-expand-spacer {
+    width: 3;
+    height: 3;
+}
+
+.tree-checkbox {
+    width: 3;
+    height: 3;
+}
+
+.tree-content {
+    padding-left: 1;
+    width: 100%;
+    content-align: left middle;
+}
+
+/* ========================================
+ * Action Bar
+ * ======================================== */
+
+.action-bar {
+    dock: bottom;
+    height: 3;
+    background: $panel;
+    layout: grid;
+    grid-size: 7 1;
+    grid-columns: 1fr auto auto auto auto auto 1fr;
+    grid-gutter: 0 1;
+    align: center middle;
+    padding: 0 2;
+    border-top: solid $primary;
+}
+
+.action-bar Button {
+    min-width: 15;
+}
+
+#cancel-btn {
+    min-width: 10;
+}
+
+/* ========================================
+ * Loading Overlay
+ * ======================================== */
+
+.loading-overlay {
+    dock: top;
+    width: 100%;
+    height: 100%;
+    background: $background 90%;
+    align: center middle;
+    layer: above;
+}
+
+.loading-overlay.hidden {
+    display: none;
+}
+
+.loading-overlay LoadingIndicator {
+    margin-bottom: 2;
+}
+
+.loading-label {
+    text-align: center;
+    margin-top: 2;
+    text-style: bold;
+    color: $text;
+}
+
+/* ========================================
+ * Error Messages
+ * ======================================== */
+
+.error-message {
+    color: $error;
+    text-align: center;
+    padding: 2;
+    text-style: bold;
+}
+
+/* ========================================
+ * Responsive Adjustments
+ * ======================================== */
+
+/* Note: Textual doesn't support @media queries
+   These styles would need to be applied dynamically
+   based on terminal size detection in Python code */
+
+/* For smaller terminals - apply these classes dynamically */
+.repo-window-small .repo-window-container {
+    width: 95%;
+    height: 95%;
+}
+
+.repo-window-small .main-content {
+    grid-columns: 1fr 1fr;
+}
+
+/* ========================================
+ * Syntax Highlighting Support
+ * ======================================== */
+
+#file-preview {
+    font-family: monospace;
+}
+
+/* Code highlighting classes would be added here */
+.syntax-keyword {
+    color: $primary;
+    text-style: bold;
+}
+
+.syntax-string {
+    color: $success;
+}
+
+.syntax-comment {
+    color: $text-muted;
+    text-style: italic;
+}
+
+.syntax-function {
+    color: $accent;
+}
+
+.syntax-number {
+    color: $warning;
+}
