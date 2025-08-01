@@ -143,7 +143,7 @@ from .UI.Study_Window import StudyWindow
 from .UI.Tab_Bar import TabBar
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
-from .UI.Subscription_Window import SubscriptionWindow
+# from .UI.SubscriptionWindow import SubscriptionWindow  # Temporarily disabled due to FormField imports
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
@@ -1396,13 +1396,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             TAB_CODING: {},  # Empty for now - coding handles its own events
             TAB_STTS: {}, # STTS handles its own events
             TAB_STUDY: {}, # Study handles its own events
-            TAB_SUBSCRIPTIONS: {
-                "subscription-add-button": subscription_events.handle_add_subscription,
-                "subscription-check-all-button": subscription_events.handle_check_all_subscriptions,
-                "subscription-accept-button": subscription_events.handle_subscription_item_action,
-                "subscription-ignore-button": subscription_events.handle_subscription_item_action,
-                "subscription-mark-reviewed-button": subscription_events.handle_subscription_item_action,
-            },
+            # TAB_SUBSCRIPTIONS: {
+            #     "subscription-add-button": subscription_events.handle_add_subscription,
+            #     "subscription-check-all-button": subscription_events.handle_check_all_subscriptions,
+            #     "subscription-accept-button": subscription_events.handle_subscription_item_action,
+            #     "subscription-ignore-button": subscription_events.handle_subscription_item_action,
+            #     "subscription-mark-reviewed-button": subscription_events.handle_subscription_item_action,
+            # },
         }
 
     def _setup_logging(self):
@@ -1521,7 +1521,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
             ("study", StudyWindow, "study-window"),
-            ("subscriptions", SubscriptionWindow, "subscriptions-window"),
+            # ("subscriptions", SubscriptionWindow, "subscriptions-window"),  # Temporarily disabled
         ]
         
         # Create window widgets and compose them into the container properly
@@ -3340,11 +3340,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Populate LLM help texts when the tab is shown
             self.call_after_refresh(llm_management_events.populate_llm_help_texts, self)
         elif new_tab == TAB_EVALS: # Added for Evals tab
-            # Placeholder for any specific actions when Evals tab is selected
-            pass
-            # if not self.evals_active_view: # Assuming an 'evals_active_view' reactive
-            #     self.loguru_logger.debug(f"Switched to Evals tab, activating initial view...")
-            #     self.call_later(setattr, self, 'evals_active_view', self._initial_evals_view) # Example
+            # Activate initial view for EvalsWindow when switching to the tab
+            from .UI.Evals_Window_v3 import EvalsWindow
+            try:
+                evals_window = self.query_one(EvalsWindow)
+                evals_window.activate_initial_view()
+            except QueryError:
+                self.loguru_logger.error("Could not find EvalsWindow to activate its initial view.")
             self.loguru_logger.debug(f"Switched to Evals tab. Initial sidebar state: collapsed={self.evals_sidebar_collapsed}")
 
 

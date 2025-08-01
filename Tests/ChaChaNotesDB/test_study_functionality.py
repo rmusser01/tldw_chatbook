@@ -269,8 +269,7 @@ class TestSpacedRepetition:
         assert card["next_review"] is not None
         
         # Verify review history was created
-        conn = db_instance.get_connection()
-        cursor = conn.cursor()
+        with db_instance.transaction() as cursor:
         cursor.execute("SELECT * FROM review_history WHERE flashcard_id = ?", (card_id,))
         history = cursor.fetchone()
         assert history is not None
@@ -423,8 +422,7 @@ class TestLearningPaths:
         assert child_id is not None
         
         # Verify parent-child relationship
-        conn = db_instance.get_connection()
-        cursor = conn.cursor()
+        with db_instance.transaction() as cursor:
         cursor.execute(
             "SELECT parent_id FROM topics WHERE id = ?",
             (child_id,)
@@ -444,8 +442,7 @@ class TestLearningPaths:
         db_instance.update_topic_progress(topic_id, 0.5)
         
         # Verify update
-        conn = db_instance.get_connection()
-        cursor = conn.cursor()
+        with db_instance.transaction() as cursor:
         cursor.execute(
             "SELECT progress, status FROM topics WHERE id = ?",
             (topic_id,)
@@ -507,8 +504,7 @@ class TestMindmaps:
         assert isinstance(node_id, str)
         
         # Verify node was created
-        conn = db_instance.get_connection()
-        cursor = conn.cursor()
+        with db_instance.transaction() as cursor:
         cursor.execute(
             "SELECT * FROM mindmap_nodes WHERE id = ?",
             (node_id,)
@@ -542,8 +538,7 @@ class TestMindmaps:
         )
         
         # Verify parent-child relationships
-        conn = db_instance.get_connection()
-        cursor = conn.cursor()
+        with db_instance.transaction() as cursor:
         cursor.execute(
             "SELECT COUNT(*) as count FROM mindmap_nodes WHERE parent_id = ?",
             (root_id,)
@@ -828,8 +823,7 @@ class TestStudyProperties:
         mem_db_instance.update_topic_progress(topic_id, progress)
         
         # Verify
-        conn = mem_db_instance.get_connection()
-        cursor = conn.cursor()
+        with mem_db_instance.transaction() as cursor:
         cursor.execute("SELECT progress FROM topics WHERE id = ?", (topic_id,))
         result = cursor.fetchone()
         assert result["progress"] == pytest.approx(progress)
@@ -840,8 +834,7 @@ class TestSchemaMigration:
     
     def test_migration_creates_all_tables(self, db_instance):
         """Test that all study tables are created after migration."""
-        conn = db_instance.get_connection()
-        cursor = conn.cursor()
+        with db_instance.transaction() as cursor:
         
         # Check that all tables exist
         tables = [
@@ -859,8 +852,7 @@ class TestSchemaMigration:
     
     def test_migration_creates_fts_tables(self, db_instance):
         """Test that FTS tables are created."""
-        conn = db_instance.get_connection()
-        cursor = conn.cursor()
+        with db_instance.transaction() as cursor:
         
         fts_tables = ["topics_fts", "flashcards_fts", "mindmap_nodes_fts"]
         
@@ -874,8 +866,7 @@ class TestSchemaMigration:
     
     def test_migration_creates_triggers(self, db_instance):
         """Test that FTS triggers are created."""
-        conn = db_instance.get_connection()
-        cursor = conn.cursor()
+        with db_instance.transaction() as cursor:
         
         # Check for some key triggers
         triggers = [
@@ -893,8 +884,7 @@ class TestSchemaMigration:
     
     def test_schema_version_updated(self, db_instance):
         """Test that schema version is correctly updated to 11."""
-        conn = db_instance.get_connection()
-        cursor = conn.cursor()
+        with db_instance.transaction() as cursor:
         
         cursor.execute(
             "SELECT version FROM db_schema_version WHERE schema_name = 'rag_char_chat_schema'"

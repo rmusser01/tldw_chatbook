@@ -40,6 +40,7 @@ class ScheduledTask:
     subscription_id: int = field(compare=False)
     priority: int = field(compare=False)
     attempt: int = field(compare=False, default=0)
+    task_type: str = field(compare=False, default='check')  # 'check', 'briefing', 'cleanup'
     
     def __lt__(self, other):
         """Compare tasks by next_run time, then priority."""

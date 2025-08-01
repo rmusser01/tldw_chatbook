@@ -1716,41 +1716,188 @@ class ToolsSettingsWindow(Container):
     def _compose_database_tools(self) -> ComposeResult:
         """Compose the Database Tools UI."""
         yield Static("Database Tools", classes="section-title")
-        yield Static("Manage and maintain your application databases", classes="section-description")
+        yield Static("Manage and maintain your application databases individually", classes="section-description")
         
         with Container(classes="settings-container"):
-            # Database Status Section
-            yield Collapsible(
-                Label("ChaChaNotes Database:", classes="settings-label"),
-                Static("Size: Loading...", id="db-size-chachanotes", classes="db-status"),
-                Label("Prompts Database:", classes="settings-label"),
-                Static("Size: Loading...", id="db-size-prompts", classes="db-status"),
-                Label("Media Database:", classes="settings-label"),
-                Static("Size: Loading...", id="db-size-media", classes="db-status"),
-                title="Database Status",
-                collapsed=False
-            )
-            
-            # Database Maintenance Section
+            # Quick Actions - All Databases
             yield Collapsible(
                 Button("Vacuum All Databases", id="db-vacuum-all", variant="primary"),
-                Static("Reclaim unused space and optimize database performance", classes="help-text"),
                 Button("Backup All Databases", id="db-backup-all", variant="success"),
-                Static("Create timestamped backups of all databases", classes="help-text"),
-                Button("Check Database Integrity", id="db-check-integrity", variant="warning"),
-                Static("Verify database structure and data integrity", classes="help-text"),
-                title="Database Maintenance",
+                Button("Check All Database Integrity", id="db-check-integrity", variant="warning"),
+                Static("Perform operations on all databases at once", classes="help-text"),
+                title="Quick Actions - All Databases",
                 collapsed=False
             )
             
-            # Export/Import Section
+            # ChaChaNotes Database Section
             yield Collapsible(
-                Button("Export Conversations", id="db-export-conversations"),
-                Button("Export Notes", id="db-export-notes"),
+                Container(
+                    Label("Status:", classes="settings-label"),
+                    Static("Size: Loading...", id="db-size-chachanotes", classes="db-status"),
+                    Static("Records: Loading...", id="db-records-chachanotes", classes="db-status"),
+                    Static("Last Backup: Loading...", id="db-backup-chachanotes", classes="db-status"),
+                    classes="db-status-container"
+                ),
+                Container(
+                    Button("Vacuum", id="db-vacuum-chachanotes", variant="primary"),
+                    Button("Backup", id="db-backup-chachanotes", variant="success"),
+                    Button("Restore", id="db-restore-chachanotes", variant="warning"),
+                    Button("Check Integrity", id="db-check-chachanotes", variant="default"),
+                    classes="db-action-buttons"
+                ),
+                Container(
+                    Static("Advanced Operations:", classes="settings-label"),
+                    Button("Export Conversations", id="db-export-conversations"),
+                    Button("Export Notes", id="db-export-notes"),
+                    Button("Import Data", id="db-import-chachanotes", variant="primary"),
+                    classes="db-advanced-actions"
+                ),
+                title="📚 ChaChaNotes Database",
+                collapsed=True
+            )
+            
+            # Media Database Section
+            yield Collapsible(
+                Container(
+                    Label("Status:", classes="settings-label"),
+                    Static("Size: Loading...", id="db-size-media", classes="db-status"),
+                    Static("Media Items: Loading...", id="db-items-media", classes="db-status"),
+                    Static("Storage Used: Loading...", id="db-storage-media", classes="db-status"),
+                    Static("Last Backup: Loading...", id="db-backup-media", classes="db-status"),
+                    classes="db-status-container"
+                ),
+                Container(
+                    Button("Vacuum", id="db-vacuum-media", variant="primary"),
+                    Button("Backup", id="db-backup-media", variant="success"),
+                    Button("Restore", id="db-restore-media", variant="warning"),
+                    Button("Check Integrity", id="db-check-media", variant="default"),
+                    classes="db-action-buttons"
+                ),
+                Container(
+                    Static("Advanced Operations:", classes="settings-label"),
+                    Button("Cleanup Orphaned Files", id="db-cleanup-media"),
+                    Button("Rebuild Thumbnails", id="db-rebuild-thumbnails"),
+                    Button("Export Media List", id="db-export-media"),
+                    classes="db-advanced-actions"
+                ),
+                title="🎬 Media Database",
+                collapsed=True
+            )
+            
+            # Prompts Database Section
+            yield Collapsible(
+                Container(
+                    Label("Status:", classes="settings-label"),
+                    Static("Size: Loading...", id="db-size-prompts", classes="db-status"),
+                    Static("Prompts Count: Loading...", id="db-count-prompts", classes="db-status"),
+                    Static("Last Backup: Loading...", id="db-backup-prompts", classes="db-status"),
+                    classes="db-status-container"
+                ),
+                Container(
+                    Button("Vacuum", id="db-vacuum-prompts", variant="primary"),
+                    Button("Backup", id="db-backup-prompts", variant="success"),
+                    Button("Restore", id="db-restore-prompts", variant="warning"),
+                    Button("Check Integrity", id="db-check-prompts", variant="default"),
+                    classes="db-action-buttons"
+                ),
+                Container(
+                    Static("Advanced Operations:", classes="settings-label"),
+                    Button("Export Prompts", id="db-export-prompts"),
+                    Button("Import Prompts", id="db-import-prompts", variant="primary"),
+                    classes="db-advanced-actions"
+                ),
+                title="💬 Prompts Database",
+                collapsed=True
+            )
+            
+            # Evaluations Database Section
+            yield Collapsible(
+                Container(
+                    Label("Status:", classes="settings-label"),
+                    Static("Size: Loading...", id="db-size-evals", classes="db-status"),
+                    Static("Evaluation Runs: Loading...", id="db-runs-evals", classes="db-status"),
+                    Static("Last Backup: Loading...", id="db-backup-evals", classes="db-status"),
+                    classes="db-status-container"
+                ),
+                Container(
+                    Button("Vacuum", id="db-vacuum-evals", variant="primary"),
+                    Button("Backup", id="db-backup-evals", variant="success"),
+                    Button("Restore", id="db-restore-evals", variant="warning"),
+                    Button("Check Integrity", id="db-check-evals", variant="default"),
+                    classes="db-action-buttons"
+                ),
+                Container(
+                    Static("Advanced Operations:", classes="settings-label"),
+                    Button("Clear Old Results", id="db-clear-old-evals"),
+                    Button("Export Reports", id="db-export-evals"),
+                    classes="db-advanced-actions"
+                ),
+                title="📊 Evaluations Database",
+                collapsed=True
+            )
+            
+            # RAG/Embeddings Database Section
+            yield Collapsible(
+                Container(
+                    Label("Status:", classes="settings-label"),
+                    Static("Size: Loading...", id="db-size-rag", classes="db-status"),
+                    Static("Vectors Count: Loading...", id="db-vectors-rag", classes="db-status"),
+                    Static("Index Status: Loading...", id="db-index-rag", classes="db-status"),
+                    Static("Last Backup: Loading...", id="db-backup-rag", classes="db-status"),
+                    classes="db-status-container"
+                ),
+                Container(
+                    Button("Vacuum", id="db-vacuum-rag", variant="primary"),
+                    Button("Backup", id="db-backup-rag", variant="success"),
+                    Button("Restore", id="db-restore-rag", variant="warning"),
+                    Button("Check Integrity", id="db-check-rag", variant="default"),
+                    classes="db-action-buttons"
+                ),
+                Container(
+                    Static("Advanced Operations:", classes="settings-label"),
+                    Button("Rebuild Index", id="db-rebuild-rag-index"),
+                    Button("Clear Embeddings", id="db-clear-embeddings", variant="error"),
+                    Button("Export Embeddings", id="db-export-embeddings"),
+                    classes="db-advanced-actions"
+                ),
+                title="🔍 RAG/Embeddings Database",
+                collapsed=True
+            )
+            
+            # Subscriptions Database Section
+            yield Collapsible(
+                Container(
+                    Label("Status:", classes="settings-label"),
+                    Static("Size: Loading...", id="db-size-subscriptions", classes="db-status"),
+                    Static("Active Subscriptions: Loading...", id="db-active-subscriptions", classes="db-status"),
+                    Static("Last Backup: Loading...", id="db-backup-subscriptions", classes="db-status"),
+                    classes="db-status-container"
+                ),
+                Container(
+                    Button("Vacuum", id="db-vacuum-subscriptions", variant="primary"),
+                    Button("Backup", id="db-backup-subscriptions", variant="success"),
+                    Button("Restore", id="db-restore-subscriptions", variant="warning"),
+                    Button("Check Integrity", id="db-check-subscriptions", variant="default"),
+                    classes="db-action-buttons"
+                ),
+                Container(
+                    Static("Advanced Operations:", classes="settings-label"),
+                    Button("Export Feeds", id="db-export-feeds"),
+                    Button("Cleanup History", id="db-cleanup-subscription-history"),
+                    classes="db-advanced-actions"
+                ),
+                title="📰 Subscriptions Database",
+                collapsed=True
+            )
+            
+            # Export/Import Section - Now for Chatbooks
+            yield Collapsible(
                 Button("Export Characters", id="db-export-characters"),
-                Button("Import Data", id="db-import-data", variant="primary"),
-                Static("Import previously exported data files", classes="help-text"),
-                title="Export & Import",
+                Button("Create Chatbook", id="db-create-chatbook", variant="success"),
+                Static("Package your knowledge into shareable chatbooks", classes="help-text"),
+                Button("Import Chatbook", id="db-import-chatbook", variant="primary"),
+                Static("Import chatbooks from other users", classes="help-text"),
+                title="📦 Chatbooks & Knowledge Packs",
                 collapsed=False
             )
             
@@ -2289,6 +2436,97 @@ Thank you for using tldw-chatbook! 🎉
         elif button_id == "db-reset-all":
             await self._reset_databases()
         
+        # Individual database handlers - ChaChaNotes
+        elif button_id == "db-vacuum-chachanotes":
+            await self._vacuum_single_database("chachanotes")
+        elif button_id == "db-backup-chachanotes":
+            await self._backup_single_database("chachanotes")
+        elif button_id == "db-restore-chachanotes":
+            await self._restore_single_database("chachanotes")
+        elif button_id == "db-check-chachanotes":
+            await self._check_single_database("chachanotes")
+        elif button_id == "db-import-chachanotes":
+            await self._import_chachanotes_data()
+            
+        # Individual database handlers - Media
+        elif button_id == "db-vacuum-media":
+            await self._vacuum_single_database("media")
+        elif button_id == "db-backup-media":
+            await self._backup_single_database("media")
+        elif button_id == "db-restore-media":
+            await self._restore_single_database("media")
+        elif button_id == "db-check-media":
+            await self._check_single_database("media")
+        elif button_id == "db-cleanup-media":
+            await self._cleanup_orphaned_media()
+        elif button_id == "db-rebuild-thumbnails":
+            await self._rebuild_thumbnails()
+        elif button_id == "db-export-media":
+            await self._export_media_list()
+            
+        # Individual database handlers - Prompts
+        elif button_id == "db-vacuum-prompts":
+            await self._vacuum_single_database("prompts")
+        elif button_id == "db-backup-prompts":
+            await self._backup_single_database("prompts")
+        elif button_id == "db-restore-prompts":
+            await self._restore_single_database("prompts")
+        elif button_id == "db-check-prompts":
+            await self._check_single_database("prompts")
+        elif button_id == "db-export-prompts":
+            await self._export_prompts()
+        elif button_id == "db-import-prompts":
+            await self._import_prompts()
+            
+        # Individual database handlers - Evaluations
+        elif button_id == "db-vacuum-evals":
+            await self._vacuum_single_database("evals")
+        elif button_id == "db-backup-evals":
+            await self._backup_single_database("evals")
+        elif button_id == "db-restore-evals":
+            await self._restore_single_database("evals")
+        elif button_id == "db-check-evals":
+            await self._check_single_database("evals")
+        elif button_id == "db-clear-old-evals":
+            await self._clear_old_evaluations()
+        elif button_id == "db-export-evals":
+            await self._export_evaluation_reports()
+            
+        # Individual database handlers - RAG/Embeddings
+        elif button_id == "db-vacuum-rag":
+            await self._vacuum_single_database("rag")
+        elif button_id == "db-backup-rag":
+            await self._backup_single_database("rag")
+        elif button_id == "db-restore-rag":
+            await self._restore_single_database("rag")
+        elif button_id == "db-check-rag":
+            await self._check_single_database("rag")
+        elif button_id == "db-rebuild-rag-index":
+            await self._rebuild_rag_index()
+        elif button_id == "db-clear-embeddings":
+            await self._clear_embeddings()
+        elif button_id == "db-export-embeddings":
+            await self._export_embeddings()
+            
+        # Individual database handlers - Subscriptions
+        elif button_id == "db-vacuum-subscriptions":
+            await self._vacuum_single_database("subscriptions")
+        elif button_id == "db-backup-subscriptions":
+            await self._backup_single_database("subscriptions")
+        elif button_id == "db-restore-subscriptions":
+            await self._restore_single_database("subscriptions")
+        elif button_id == "db-check-subscriptions":
+            await self._check_single_database("subscriptions")
+        elif button_id == "db-export-feeds":
+            await self._export_subscription_feeds()
+        elif button_id == "db-cleanup-subscription-history":
+            await self._cleanup_subscription_history()
+            
+        # Chatbook handlers
+        elif button_id == "db-create-chatbook":
+            await self._create_chatbook()
+        elif button_id == "db-import-chatbook":
+            await self._import_chatbook()
 
     async def _save_general_settings(self) -> None:
         """Save General Settings to the configuration file."""
@@ -3764,6 +4002,333 @@ Thank you for using tldw-chatbook! 🎉
                 return f"{size_bytes:.1f} {unit}"
             size_bytes /= 1024.0
         return f"{size_bytes:.1f} TB"
+    
+    # Individual Database Operation Methods
+    async def _vacuum_single_database(self, db_name: str) -> None:
+        """Vacuum a single database."""
+        try:
+            self.app_instance.notify(f"Starting vacuum operation for {db_name} database...", severity="information")
+            self.run_worker(self._vacuum_single_worker, db_name, name=f"vacuum_{db_name}_worker")
+        except Exception as e:
+            self.app_instance.notify(f"Error vacuuming {db_name} database: {e}", severity="error")
+    
+    @work(thread=True)
+    def _vacuum_single_worker(self, db_name: str) -> None:
+        """Worker to vacuum a single database."""
+        try:
+            db_config = self.config_data.get("database", {})
+            db_path = self._get_database_path(db_name, db_config)
+            
+            if db_path and db_path.exists():
+                conn = sqlite3.connect(str(db_path))
+                try:
+                    original_size = db_path.stat().st_size
+                    conn.execute("VACUUM")
+                    conn.commit()
+                    new_size = db_path.stat().st_size
+                    
+                    saved = original_size - new_size
+                    saved_mb = saved / (1024 * 1024)
+                    
+                    self.call_from_thread(
+                        self.app_instance.notify,
+                        f"{db_name.title()} database vacuumed successfully. Saved {saved_mb:.1f} MB",
+                        severity="success"
+                    )
+                finally:
+                    conn.close()
+                    self.call_from_thread(self._update_database_sizes)
+        except Exception as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Error vacuuming {db_name} database: {e}",
+                severity="error"
+            )
+    
+    async def _backup_single_database(self, db_name: str) -> None:
+        """Backup a single database."""
+        try:
+            self.app_instance.notify(f"Starting backup for {db_name} database...", severity="information")
+            self.run_worker(self._backup_single_worker, db_name, name=f"backup_{db_name}_worker")
+        except Exception as e:
+            self.app_instance.notify(f"Error backing up {db_name} database: {e}", severity="error")
+    
+    @work(thread=True)
+    def _backup_single_worker(self, db_name: str) -> None:
+        """Worker to backup a single database."""
+        try:
+            db_config = self.config_data.get("database", {})
+            db_path = self._get_database_path(db_name, db_config)
+            
+            if db_path and db_path.exists():
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_dir = Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                
+                backup_path = backup_dir / f"{db_name}_backup_{timestamp}.db"
+                
+                import shutil
+                shutil.copy2(db_path, backup_path)
+                
+                # Create metadata file
+                metadata_path = backup_path.with_suffix('.json')
+                metadata = {
+                    "database": db_name,
+                    "original_path": str(db_path),
+                    "backup_time": datetime.now().isoformat(),
+                    "file_size": db_path.stat().st_size,
+                    "schema_version": self._get_schema_version(db_path)
+                }
+                
+                import json
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+                
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    f"{db_name.title()} database backed up to {backup_path.name}",
+                    severity="success"
+                )
+                
+                # Update last backup status
+                self.call_from_thread(self._update_last_backup_status, db_name, timestamp)
+        except Exception as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Error backing up {db_name} database: {e}",
+                severity="error"
+            )
+    
+    async def _restore_single_database(self, db_name: str) -> None:
+        """Restore a single database from backup."""
+        from ..Widgets.file_picker_dialog import FilePickerDialog
+        
+        try:
+            # Show file picker to select backup
+            backup_dir = Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            
+            file_path = await self.app_instance.push_screen(
+                FilePickerDialog(
+                    title=f"Select {db_name} Database Backup",
+                    start_path=str(backup_dir),
+                    file_filter="*.db",
+                    allow_create_new=False
+                ),
+                wait_for_dismiss=True
+            )
+            
+            if file_path:
+                await self._perform_database_restore(db_name, Path(file_path))
+        except Exception as e:
+            self.app_instance.notify(f"Error selecting backup: {e}", severity="error")
+    
+    async def _perform_database_restore(self, db_name: str, backup_path: Path) -> None:
+        """Perform the actual database restore."""
+        try:
+            # Check if backup file exists
+            if not backup_path.exists():
+                self.app_instance.notify("Backup file not found", severity="error")
+                return
+            
+            # Check for metadata file
+            metadata_path = backup_path.with_suffix('.json')
+            if metadata_path.exists():
+                import json
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+                
+                # Verify this is the correct database type
+                if metadata.get("database") != db_name:
+                    self.app_instance.notify(
+                        f"This backup is for {metadata.get('database')} database, not {db_name}",
+                        severity="error"
+                    )
+                    return
+            
+            self.app_instance.notify(f"Restoring {db_name} database...", severity="information")
+            self.run_worker(
+                self._restore_single_worker,
+                db_name,
+                backup_path,
+                name=f"restore_{db_name}_worker"
+            )
+        except Exception as e:
+            self.app_instance.notify(f"Error restoring database: {e}", severity="error")
+    
+    @work(thread=True)
+    def _restore_single_worker(self, db_name: str, backup_path: Path) -> None:
+        """Worker to restore a single database."""
+        try:
+            db_config = self.config_data.get("database", {})
+            db_path = self._get_database_path(db_name, db_config)
+            
+            if db_path:
+                # Create a backup of current database before restoring
+                if db_path.exists():
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    pre_restore_backup = db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
+                    
+                    import shutil
+                    shutil.copy2(db_path, pre_restore_backup)
+                
+                # Restore the backup
+                shutil.copy2(backup_path, db_path)
+                
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    f"{db_name.title()} database restored successfully",
+                    severity="success"
+                )
+                
+                self.call_from_thread(self._update_database_sizes)
+        except Exception as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Error restoring {db_name} database: {e}",
+                severity="error"
+            )
+    
+    async def _check_single_database(self, db_name: str) -> None:
+        """Check integrity of a single database."""
+        try:
+            self.app_instance.notify(f"Checking {db_name} database integrity...", severity="information")
+            self.run_worker(self._check_single_worker, db_name, name=f"check_{db_name}_worker")
+        except Exception as e:
+            self.app_instance.notify(f"Error checking {db_name} database: {e}", severity="error")
+    
+    @work(thread=True)
+    def _check_single_worker(self, db_name: str) -> None:
+        """Worker to check integrity of a single database."""
+        try:
+            db_config = self.config_data.get("database", {})
+            db_path = self._get_database_path(db_name, db_config)
+            
+            if db_path and db_path.exists():
+                conn = sqlite3.connect(str(db_path))
+                try:
+                    cursor = conn.execute("PRAGMA integrity_check")
+                    result = cursor.fetchone()
+                    
+                    if result and result[0] == "ok":
+                        self.call_from_thread(
+                            self.app_instance.notify,
+                            f"{db_name.title()} database integrity check passed ✓",
+                            severity="success"
+                        )
+                    else:
+                        self.call_from_thread(
+                            self.app_instance.notify,
+                            f"{db_name.title()} database has integrity issues!",
+                            severity="error"
+                        )
+                finally:
+                    conn.close()
+        except Exception as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Error checking {db_name} database: {e}",
+                severity="error"
+            )
+    
+    def _get_database_path(self, db_name: str, db_config: dict) -> Optional[Path]:
+        """Get the path for a specific database."""
+        path_map = {
+            "chachanotes": db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"),
+            "media": db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_media_db.db"),
+            "prompts": db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts_db.db"),
+            "evals": db_config.get("evals_db_path", "~/.local/share/tldw_cli/tldw_evals_db.db"),
+            "rag": db_config.get("rag_db_path", "~/.local/share/tldw_cli/tldw_rag_db.db"),
+            "subscriptions": db_config.get("subscriptions_db_path", "~/.local/share/tldw_cli/tldw_subscriptions_db.db")
+        }
+        
+        if db_name in path_map:
+            return Path(path_map[db_name]).expanduser()
+        return None
+    
+    def _get_schema_version(self, db_path: Path) -> Optional[int]:
+        """Get the schema version from a database."""
+        try:
+            conn = sqlite3.connect(str(db_path))
+            try:
+                cursor = conn.execute("PRAGMA user_version")
+                return cursor.fetchone()[0]
+            finally:
+                conn.close()
+        except:
+            return None
+    
+    def _update_last_backup_status(self, db_name: str, timestamp: str) -> None:
+        """Update the last backup status display for a database."""
+        try:
+            widget_id = f"db-backup-{db_name}"
+            widget = self.query_one(f"#{widget_id}", Static)
+            formatted_time = datetime.strptime(timestamp, "%Y%m%d_%H%M%S").strftime("%Y-%m-%d %H:%M")
+            widget.update(f"Last Backup: {formatted_time}")
+        except:
+            pass
+    
+    # Advanced database operations
+    async def _cleanup_orphaned_media(self) -> None:
+        """Clean up orphaned media files."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _rebuild_thumbnails(self) -> None:
+        """Rebuild media thumbnails."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _export_media_list(self) -> None:
+        """Export list of media items."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _export_prompts(self) -> None:
+        """Export prompts to file."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _import_prompts(self) -> None:
+        """Import prompts from file."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _import_chachanotes_data(self) -> None:
+        """Import data into ChaChaNotes database."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _clear_old_evaluations(self) -> None:
+        """Clear old evaluation results."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _export_evaluation_reports(self) -> None:
+        """Export evaluation reports."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _rebuild_rag_index(self) -> None:
+        """Rebuild RAG index."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _clear_embeddings(self) -> None:
+        """Clear all embeddings."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _export_embeddings(self) -> None:
+        """Export embeddings data."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _export_subscription_feeds(self) -> None:
+        """Export subscription feeds."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    async def _cleanup_subscription_history(self) -> None:
+        """Clean up old subscription history."""
+        self.app_instance.notify("This feature is coming soon!", severity="information")
+    
+    # Chatbook methods
+    async def _create_chatbook(self) -> None:
+        """Create a new chatbook."""
+        self.app_instance.notify("Chatbook creation feature coming soon!", severity="information")
+    
+    async def _import_chatbook(self) -> None:
+        """Import a chatbook."""
+        self.app_instance.notify("Chatbook import feature coming soon!", severity="information")
     
     async def on_mount(self) -> None:
         """Called when the widget is mounted. Set initial view."""

@@ -73,8 +73,7 @@ class TestDatabaseImageCompatibility:
     def test_database_schema_supports_images(self, temp_db):
         """Test that database schema includes image columns."""
         # Check table schema using transaction context
-        with temp_db.transaction() as conn:
-            cursor = conn.cursor()
+        with temp_db.transaction() as cursor:
             cursor.execute("PRAGMA table_info(messages)")
             columns = {row[1]: row[2] for row in cursor.fetchall()}
         
@@ -103,8 +102,7 @@ class TestDatabaseImageCompatibility:
         })
         
         # Retrieve message
-        with temp_db.transaction() as conn:
-            cursor = conn.cursor()
+        with temp_db.transaction() as cursor:
             cursor.execute(
                 "SELECT content, image_data, image_mime_type FROM messages WHERE id = ?",
                 (message_id,)
@@ -130,8 +128,7 @@ class TestDatabaseImageCompatibility:
         })
         
         # Retrieve message
-        with temp_db.transaction() as conn:
-            cursor = conn.cursor()
+        with temp_db.transaction() as cursor:
             cursor.execute(
                 "SELECT content, image_data, image_mime_type FROM messages WHERE id = ?",
                 (message_id,)
@@ -315,8 +312,7 @@ class TestDatabaseImageIntegrity:
         })
         
         # Retrieve and verify
-        with temp_db.transaction() as conn:
-            cursor = conn.cursor()
+        with temp_db.transaction() as cursor:
             cursor.execute("SELECT image_data FROM messages WHERE id = ?", (msg_id,))
             retrieved_data = cursor.fetchone()[0]
         
@@ -394,16 +390,14 @@ class TestDatabaseImageIntegrity:
         
         # Explicitly insert NULL values
         msg_id = temp_db._generate_uuid()
-        with temp_db.transaction() as conn:
-            cursor = conn.cursor()
+        with temp_db.transaction() as cursor:
             cursor.execute("""
                 INSERT INTO messages (id, conversation_id, sender, content, image_data, image_mime_type, timestamp, last_modified, deleted, client_id, version)
                 VALUES (?, ?, ?, ?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, ?, 1)
             """, (msg_id, convo_id, "user", "Null image test", temp_db.client_id))
         
         # Retrieve and verify
-        with temp_db.transaction() as conn:
-            cursor = conn.cursor()
+        with temp_db.transaction() as cursor:
             cursor.execute(
                 "SELECT content, image_data, image_mime_type FROM messages WHERE id = ?",
                 (msg_id,)
@@ -429,8 +423,7 @@ class TestDatabaseMigrationCompatibility:
             db = CharactersRAGDB(str(db_path), client_id="test_client")
             
             # Verify image columns exist in the schema
-            with db.transaction() as conn:
-                cursor = conn.cursor()
+            with db.transaction() as cursor:
                 cursor.execute("PRAGMA table_info(messages)")
                 columns = {row[1] for row in cursor.fetchall()}
             
@@ -471,8 +464,7 @@ class TestDatabaseMigrationCompatibility:
         })
         
         # Old-style query (without image columns)
-        with temp_db.transaction() as conn:
-            cursor = conn.cursor()
+        with temp_db.transaction() as cursor:
             cursor.execute("""
                 SELECT id, conversation_id, sender, content, timestamp
                 FROM messages

@@ -32,22 +32,48 @@ class SubscriptionEvent(Message):
     pass
 
 
+class SubscriptionCheckStarted(SubscriptionEvent):
+    """A subscription check has started."""
+    def __init__(self, worker: Optional[Worker] = None, 
+                 subscription_id: Optional[int] = None,
+                 subscription_name: Optional[str] = None) -> None:
+        super().__init__()
+        self.worker = worker
+        self.subscription_id = subscription_id
+        self.subscription_name = subscription_name
+        self.timestamp = datetime.now()
+
+
 class NewSubscriptionItems(SubscriptionEvent):
     """New items available for review from subscriptions."""
-    def __init__(self, items: List[Dict[str, Any]], subscription_name: str = None) -> None:
+    def __init__(self, worker: Optional[Worker] = None, 
+                 items: List[Dict[str, Any]] = None, 
+                 subscription_id: Optional[int] = None,
+                 subscription_name: Optional[str] = None,
+                 count: Optional[int] = None) -> None:
         super().__init__()
-        self.items = items
+        self.worker = worker
+        self.items = items or []
+        self.subscription_id = subscription_id
         self.subscription_name = subscription_name
-        self.count = len(items)
+        self.count = count if count is not None else len(self.items)
 
 
 class SubscriptionCheckComplete(SubscriptionEvent):
     """A subscription check has completed."""
-    def __init__(self, subscription_id: int, new_items: int = 0, 
-                 error: Optional[str] = None, stats: Optional[Dict] = None) -> None:
+    def __init__(self, worker: Optional[Worker] = None,
+                 subscription_id: Optional[int] = None, 
+                 subscription_name: Optional[str] = None,
+                 success: bool = True,
+                 items_found: int = 0,
+                 error: Optional[str] = None,
+                 stats: Optional[Dict] = None) -> None:
         super().__init__()
+        self.worker = worker
         self.subscription_id = subscription_id
-        self.new_items = new_items
+        self.subscription_name = subscription_name
+        self.success = success
+        self.items_found = items_found
         self.error = error
         self.stats = stats or {}
         self.timestamp = datetime.now()
@@ -55,13 +81,31 @@ class SubscriptionCheckComplete(SubscriptionEvent):
 
 class SubscriptionError(SubscriptionEvent):
     """Subscription check failed with error."""
-    def __init__(self, subscription_id: int, subscription_name: str,
-                 error: str, error_type: str = "general") -> None:
+    def __init__(self, worker: Optional[Worker] = None,
+                 subscription_id: Optional[int] = None, 
+                 subscription_name: Optional[str] = None,
+                 error: str = "",
+                 error_type: str = "general") -> None:
         super().__init__()
+        self.worker = worker
         self.subscription_id = subscription_id
         self.subscription_name = subscription_name
         self.error = error
         self.error_type = error_type  # 'auth', 'rate_limit', 'network', 'parse', etc.
+        self.timestamp = datetime.now()
+
+
+class BriefingGenerated(SubscriptionEvent):
+    """A briefing has been generated."""
+    def __init__(self, worker: Optional[Worker] = None,
+                 briefing: Optional[str] = None,
+                 item_count: int = 0,
+                 source_count: int = 0) -> None:
+        super().__init__()
+        self.worker = worker
+        self.briefing = briefing
+        self.item_count = item_count
+        self.source_count = source_count
         self.timestamp = datetime.now()
 
 
