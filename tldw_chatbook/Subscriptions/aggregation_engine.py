@@ -21,6 +21,7 @@ from loguru import logger
 from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Metrics.metrics_logger import log_histogram, log_counter
 from .token_manager import TokenBudgetManager, TokenCounter
+from .recursive_summarizer import RecursiveSummarizer, SummarizationConfig
 #
 ########################################################################################################################
 #
@@ -175,6 +176,16 @@ class AggregationEngine:
         self.config = config or AggregationConfig()
         self.token_manager = TokenBudgetManager(self.config.total_token_budget)
         self.token_counter = TokenCounter()
+        
+        # Initialize recursive summarizer with configuration
+        summarization_config = SummarizationConfig(
+            summary_ratio=self.config.summary_token_ratio,
+            preserve_structure=True,
+            style='balanced',
+            format='prose',
+            use_fallback=True
+        )
+        self.recursive_summarizer = RecursiveSummarizer(summarization_config)
     
     async def aggregate_items(self, items: List[Dict[str, Any]], 
                             subscriptions: Optional[Dict[int, Dict[str, Any]]] = None) -> AggregatedContent:
@@ -453,27 +464,31 @@ class AggregationEngine:
         return section
     
     async def _summarize_content(self, content: str, target_tokens: int) -> str:
-        """Summarize content to fit token budget."""
-        # For now, use simple truncation
-        # In the next module, we'll implement proper recursive summarization
-        
-        current_tokens = self.token_counter.count_tokens(content)
-        if current_tokens <= target_tokens:
-            return content
-        
-        # Estimate characters per token (rough approximation)
-        chars_per_token = len(content) / current_tokens
-        target_chars = int(target_tokens * chars_per_token * 0.9)  # 90% to be safe
-        
-        # Truncate at sentence boundary if possible
-        truncated = content[:target_chars]
-        last_period = truncated.rfind('.')
-        if last_period > target_chars * 0.8:
-            truncated = truncated[:last_period + 1]
-        else:
-            truncated += '...'
-        
-        return truncated
+        """Summarize content to fit token budget using recursive summarization."""
+        try:
+            # Use the recursive summarizer for high-quality summarization
+            result = await self.recursive_summarizer.summarize_content(
+                content=content,
+                target_tokens=target_tokens,
+                context="Content from aggregated items for briefing"
+            )
+            
+            # Log summarization metrics
+            logger.debug(f"Summarized content: {result.original_tokens} -> {result.final_tokens} tokens "
+                        f"(compression ratio: {result.compression_ratio:.2f}, method: {result.method_used})")
+            
+            return result.final_summary
+            
+        except Exception as e:
+            logger.error(f"Recursive summarization failed: {str(e)}. Falling back to truncation.")
+            
+            # Fallback to simple truncation if recursive summarization fails
+            current_tokens = self.token_counter.count_tokens(content)
+            if current_tokens <= target_tokens:
+                return content
+            
+            # Use the token counter's truncate method for proper truncation
+            return self.token_counter.truncate_to_tokens(content, target_tokens)
     
     async def _generate_executive_summary(self, sections: List[ContentSection]) -> Optional[str]:
         """Generate executive summary of all sections."""

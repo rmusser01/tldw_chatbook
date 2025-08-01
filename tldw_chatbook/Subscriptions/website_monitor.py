@@ -6,6 +6,7 @@
 #
 # Imports
 import asyncio
+import hashlib
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
@@ -17,6 +18,8 @@ from loguru import logger
 from .web_scraping_pipelines import ScrapingPipelineFactory, ScrapingConfig
 from .rss_feed_generator import WebsiteToFeedConverter
 from .baseline_manager import BaselineManager
+from .monitoring_engine import FeedMonitor, RateLimiter
+from .security import SecurityValidator
 from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Metrics.metrics_logger import log_histogram, log_counter
 # Try to import existing web scraping functionality
@@ -55,6 +58,7 @@ class WebsiteMonitor:
         """
         self.db = db
         self.baseline_manager = BaselineManager(db)
+        self.feed_monitor = FeedMonitor(RateLimiter(), SecurityValidator())
         self.feed_cache_dir = Path.home() / '.config' / 'tldw_cli' / 'feed_cache'
         self.feed_cache_dir.mkdir(parents=True, exist_ok=True)
     
@@ -365,17 +369,64 @@ class WebsiteMonitor:
         return feed_path
     
     async def _monitor_feed(self, subscription: Dict[str, Any]) -> Dict[str, Any]:
-        """Monitor existing RSS/Atom feed (pass-through to existing system)."""
-        # This would integrate with the existing feed monitoring
-        # For now, just return empty result
-        return {
+        """Monitor existing RSS/Atom feed using FeedMonitor."""
+        start_time = datetime.now(timezone.utc)
+        result = {
             'subscription_id': subscription['id'],
             'url': subscription['source'],
             'items': [],
             'change_report': None,
             'feed_generated': False,
-            'error': 'Feed monitoring should use existing FeedMonitor'
+            'error': None
         }
+        
+        try:
+            # Use FeedMonitor to check the feed
+            items = await self.feed_monitor.check_feed(subscription)
+            
+            # Convert items to standard format if needed
+            formatted_items = []
+            for item in items:
+                # Ensure each item has the expected structure
+                formatted_item = {
+                    'url': item.get('link', item.get('url', '')),
+                    'title': item.get('title', ''),
+                    'content': item.get('description', item.get('content', '')),
+                    'author': item.get('author'),
+                    'published_date': item.get('published_date'),
+                    'categories': item.get('categories', []),
+                    'guid': item.get('guid', item.get('id')),
+                    'metadata': item.get('metadata', {})
+                }
+                formatted_items.append(formatted_item)
+            
+            result['items'] = formatted_items
+            
+            # Log metrics
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+            log_histogram("feed_monitor_duration", duration, labels={
+                "type": subscription['type'],
+                "success": "true"
+            })
+            log_counter("feed_monitor_checks", labels={
+                "type": subscription['type'],
+                "status": "success",
+                "item_count": str(len(formatted_items))
+            })
+            
+            logger.info(f"Successfully monitored {subscription['type']} feed: {subscription['name']} - {len(formatted_items)} items")
+            
+        except Exception as e:
+            logger.error(f"Error monitoring feed {subscription['source']}: {str(e)}")
+            result['error'] = str(e)
+            
+            log_counter("feed_monitor_checks", labels={
+                "type": subscription.get('type', 'unknown'),
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+        
+        return result
     
     def get_cached_feed_path(self, subscription_id: int) -> Optional[Path]:
         """Get path to cached feed for subscription."""

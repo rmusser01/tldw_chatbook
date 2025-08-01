@@ -126,9 +126,12 @@ class CustomScrapingPipeline(BaseScrapingPipeline):
     
     async def _fetch_with_javascript(self, url: str) -> str:
         """Fetch content with JavaScript rendering."""
-        logger.warning("JavaScript rendering requested but not implemented. Falling back to static fetch.")
-        # TODO: Implement Playwright integration when available
-        return await self._fetch_static(url)
+        logger.error("JavaScript rendering requested but not implemented")
+        raise NotImplementedError(
+            "JavaScript rendering is not yet available. "
+            "Please disable javascript_enabled in your scraping configuration "
+            "or wait for Playwright integration to be implemented."
+        )
     
     def parse_content(self, raw_content: str, url: str) -> List[ScrapedItem]:
         """Parse content using custom rules."""

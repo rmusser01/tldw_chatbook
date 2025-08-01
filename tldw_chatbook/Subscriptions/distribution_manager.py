@@ -26,7 +26,7 @@ import httpx
 from loguru import logger
 #
 # Local Imports
-from ..config import get_user_config
+from ..config import get_user_config, save_setting_to_cli_config
 from ..Security.config_encryption import ConfigEncryption
 from ..Metrics.metrics_logger import log_counter, log_histogram
 #
@@ -455,13 +455,15 @@ class DistributionManager:
             }
             
             # Save to config
-            config = get_user_config()
-            config['distribution'] = config.get('distribution', {})
-            config['distribution']['smtp'] = self.smtp_config
+            # Save each SMTP setting individually
+            save_setting_to_cli_config('distribution.smtp', 'host', host)
+            save_setting_to_cli_config('distribution.smtp', 'port', port)
+            save_setting_to_cli_config('distribution.smtp', 'username', username)
+            save_setting_to_cli_config('distribution.smtp', 'password', password)  # Will be encrypted automatically
+            save_setting_to_cli_config('distribution.smtp', 'from_address', from_address or username)
+            save_setting_to_cli_config('distribution.smtp', 'to_addresses', to_addresses or [])
             
-            # Save config file
-            # TODO: Implement config save
-            
+            logger.info("SMTP configuration saved successfully")
             return True
             
         except Exception as e:
@@ -483,12 +485,9 @@ class DistributionManager:
             self.webhook_config[f'{webhook_type}_url'] = url
             
             # Save to config
-            config = get_user_config()
-            config['distribution'] = config.get('distribution', {})
-            config['distribution']['webhooks'] = self.webhook_config
+            save_setting_to_cli_config('distribution.webhooks', f'{webhook_type}_url', url)
             
-            # TODO: Implement config save
-            
+            logger.info(f"{webhook_type} webhook configuration saved successfully")
             return True
             
         except Exception as e:

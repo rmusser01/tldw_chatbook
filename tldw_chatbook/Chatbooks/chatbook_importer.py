@@ -27,6 +27,7 @@ from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
 from ..DB.RAG_Indexing_DB import RAGIndexingDB
 from ..DB.Evals_DB import EvalsDB
+from ..Character_Chat.character_card_formats import detect_and_parse_character_card
 
 
 class ImportStatus:
@@ -125,8 +126,9 @@ class ChatbookImporter:
         conflict_resolution: ConflictResolution = ConflictResolution.ASK,
         prefix_imported: bool = False,
         import_media: bool = True,
-        import_embeddings: bool = False
-    ) -> Tuple[bool, ImportStatus]:
+        import_embeddings: bool = False,
+        import_status: Optional[ImportStatus] = None
+    ) -> Tuple[bool, str]:
         """
         Import a chatbook into the application.
         
@@ -139,9 +141,9 @@ class ChatbookImporter:
             import_embeddings: Whether to import embeddings
             
         Returns:
-            Tuple of (success, import_status)
+            Tuple of (success, message)
         """
-        status = ImportStatus()
+        status = import_status if import_status else ImportStatus()
         
         try:
             # Extract chatbook
@@ -244,16 +246,19 @@ class ChatbookImporter:
             success = status.successful_items > 0
             
             if success:
-                logger.info(f"Successfully imported {status.successful_items}/{status.total_items} items")
+                message = f"Successfully imported {status.successful_items}/{status.total_items} items"
+                logger.info(message)
             else:
-                logger.error(f"Failed to import any items from chatbook")
+                message = f"Failed to import any items from chatbook"
+                logger.error(message)
             
-            return success, status
+            return success, message
             
         except Exception as e:
+            error_msg = f"Fatal error: {str(e)}"
             logger.error(f"Error importing chatbook: {e}")
-            status.add_error(f"Fatal error: {str(e)}")
-            return False, status
+            status.add_error(error_msg)
+            return False, error_msg
     
     def _import_conversations(
         self,
@@ -265,7 +270,7 @@ class ChatbookImporter:
         status: ImportStatus
     ) -> None:
         """Import conversations."""
-        db_path = self.db_paths.get("chachanotes")
+        db_path = self.db_paths.get("ChaChaNotes")
         if not db_path:
             status.add_error("ChaChaNotes database path not configured")
             return
@@ -313,21 +318,25 @@ class ChatbookImporter:
                 
                 # Create conversation
                 character_id = conv_data.get('character_id')
-                new_conv_id = db.add_conversation(
-                    conversation_name=conv_name,
-                    media_id=None,
-                    character_id=character_id
-                )
+                conv_dict = {
+                    'title': conv_name,
+                    'created_at': conv_data.get('created_at', datetime.now().isoformat()),
+                    'updated_at': conv_data.get('updated_at', datetime.now().isoformat()),
+                    'character_id': character_id,
+                    'root_id': f"imported_{conv_data.get('id', 'unknown')}"
+                }
+                new_conv_id = db.add_conversation(conv_dict)
                 
                 if new_conv_id:
                     # Import messages
                     for msg in conv_data.get('messages', []):
-                        db.add_message(
-                            conversation_id=new_conv_id,
-                            sender=msg['role'],
-                            message=msg['content'],
-                            timestamp=msg.get('timestamp')
-                        )
+                        msg_dict = {
+                            'conversation_id': new_conv_id,
+                            'sender': msg['role'],
+                            'content': msg['content'],
+                            'timestamp': msg.get('timestamp', datetime.now().isoformat())
+                        }
+                        db.add_message(msg_dict)
                     
                     status.successful_items += 1
                     logger.info(f"Imported conversation: {conv_name}")
@@ -350,7 +359,7 @@ class ChatbookImporter:
         status: ImportStatus
     ) -> None:
         """Import notes."""
-        db_path = self.db_paths.get("chachanotes")
+        db_path = self.db_paths.get("ChaChaNotes")
         if not db_path:
             status.add_error("ChaChaNotes database path not configured")
             return
@@ -421,11 +430,10 @@ class ChatbookImporter:
                         note_title = self._generate_unique_note_title(note_title, db)
                 
                 # Create note
-                keywords = ','.join(note_item.tags) if note_item.tags else None
+                # Note: keywords/tags are not stored in the notes table
                 new_note_id = db.add_note(
                     title=note_title,
-                    content=note_content,
-                    keywords=keywords
+                    content=note_content
                 )
                 
                 if new_note_id:
@@ -450,7 +458,7 @@ class ChatbookImporter:
         status: ImportStatus
     ) -> None:
         """Import characters."""
-        db_path = self.db_paths.get("chachanotes")
+        db_path = self.db_paths.get("ChaChaNotes")
         if not db_path:
             status.add_error("ChaChaNotes database path not configured")
             return
@@ -471,10 +479,23 @@ class ChatbookImporter:
                 
                 # Load character data
                 with open(char_file, 'r', encoding='utf-8') as f:
-                    char_data = json.load(f)
+                    raw_char_data = json.load(f)
+                
+                # Detect and parse character card format
+                parsed_card, format_name = detect_and_parse_character_card(raw_char_data)
+                if not parsed_card:
+                    status.add_error(f"Failed to parse character card for {char_id} (format: {format_name})")
+                    status.failed_items += 1
+                    continue
+                
+                # Log the detected format
+                logger.info(f"Importing character {char_id} from {format_name} format")
+                
+                # Extract character data from parsed V2 format
+                char_data = parsed_card.get('data', parsed_card)
                 
                 # Check for existing character with same name
-                char_name = char_data['name']
+                char_name = char_data.get('name', 'Unknown')
                 if prefix_imported:
                     char_name = f"[Imported] {char_name}"
                 
@@ -496,16 +517,36 @@ class ChatbookImporter:
                     elif resolution == ConflictResolution.RENAME:
                         char_name = self._generate_unique_character_name(char_name, db)
                 
-                # Create character
-                new_char_id = db.create_character(
-                    name=char_name,
-                    description=char_data.get('description', ''),
-                    personality=char_data.get('personality', ''),
-                    scenario="",
-                    greeting_message="",
-                    example_messages="",
-                    card_data=char_data.get('card')
-                )
+                # Create character with V2 formatted data
+                # Map V2 fields to database fields
+                card_data = {
+                    'name': char_name,
+                    'description': char_data.get('description', ''),
+                    'personality': char_data.get('personality', ''),
+                    'scenario': char_data.get('scenario', ''),
+                    'first_message': char_data.get('first_mes', ''),
+                    'example_messages': char_data.get('mes_example', ''),
+                    'creator_notes': char_data.get('creator_notes', ''),
+                    'system_prompt': char_data.get('system_prompt', ''),
+                    'post_history_instructions': char_data.get('post_history_instructions', ''),
+                    'alternate_greetings': char_data.get('alternate_greetings', []),
+                    'tags': char_data.get('tags', []),
+                    'creator': char_data.get('creator', ''),
+                    'character_version': char_data.get('character_version', ''),
+                    'extensions': char_data.get('extensions', {}),
+                    'character_book': char_data.get('character_book'),
+                    'version': 1,  # DB schema version
+                    'format': format_name  # Store original format for reference
+                }
+                
+                # If the raw data had a 'card' field with additional data, preserve it
+                if 'card' in raw_char_data and isinstance(raw_char_data['card'], dict):
+                    # Merge any additional fields from original card
+                    for key, value in raw_char_data['card'].items():
+                        if key not in card_data and value is not None:
+                            card_data[key] = value
+                
+                new_char_id = db.add_character_card(card_data)
                 
                 if new_char_id:
                     status.successful_items += 1
@@ -529,7 +570,7 @@ class ChatbookImporter:
         status: ImportStatus
     ) -> None:
         """Import prompts."""
-        db_path = self.db_paths.get("prompts")
+        db_path = self.db_paths.get("Prompts")
         if not db_path:
             status.add_error("Prompts database path not configured")
             return
@@ -591,8 +632,102 @@ class ChatbookImporter:
         status: ImportStatus
     ) -> None:
         """Import media items."""
-        # TODO: Implement media import
-        pass
+        db_path = self.db_paths.get("Media")
+        if not db_path:
+            status.add_error("Media database path not configured")
+            return
+            
+        db = MediaDatabase(db_path, "chatbook_importer")
+        media_dir = extract_dir / "content" / "media"
+        metadata_dir = media_dir / "metadata"
+        
+        for media_id in media_ids:
+            status.processed_items += 1
+            
+            try:
+                # Find media metadata file
+                metadata_file = metadata_dir / f"media_{media_id}.json"
+                if not metadata_file.exists():
+                    status.add_warning(f"Media metadata file not found: {metadata_file.name}")
+                    status.failed_items += 1
+                    continue
+                
+                # Load media metadata
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    media_data = json.load(f)
+                
+                # Check for existing media with same title and URL
+                title = media_data.get('title', 'Untitled')
+                url = media_data.get('url')
+                
+                # Check if media already exists (by URL if available, otherwise by title)
+                existing = None
+                if url:
+                    # TODO: Add method to check by URL in MediaDatabase
+                    # For now, we'll assume no duplicates
+                    pass
+                
+                if existing:
+                    # Handle conflict
+                    if conflict_resolution == ConflictResolution.SKIP:
+                        status.skipped_items += 1
+                        logger.info(f"Skipped existing media: {title}")
+                        continue
+                    elif conflict_resolution == ConflictResolution.RENAME:
+                        title = self._generate_unique_media_title(title, db)
+                
+                # Load content if available
+                content = ""
+                content_file = media_dir / f"media_{media_id}.txt"
+                if content_file.exists():
+                    with open(content_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                
+                # Prepare media data for import
+                keywords = media_data.get('metadata', {}).get('media_keywords', '')
+                if isinstance(keywords, list):
+                    keywords = ', '.join(keywords)
+                
+                # Add media to database
+                try:
+                    new_media_id = db.add_media_with_keywords(
+                        url=url,
+                        title=title,
+                        media_type=media_data.get('media_type'),
+                        content=content or media_data.get('content', ''),
+                        media_keywords=keywords,
+                        prompt=media_data.get('metadata', {}).get('prompt'),
+                        summary=media_data.get('metadata', {}).get('summary'),
+                        transcription_model=media_data.get('metadata', {}).get('transcription_model'),
+                        author=media_data.get('author'),
+                        ingestion_date=media_data.get('metadata', {}).get('ingestion_date')
+                    )
+                    
+                    if new_media_id:
+                        status.successful_items += 1
+                        logger.info(f"Imported media: {title}")
+                    else:
+                        status.failed_items += 1
+                        status.add_error(f"Failed to create media: {title}")
+                        
+                except Exception as e:
+                    status.failed_items += 1
+                    status.add_error(f"Database error importing media '{title}': {str(e)}")
+                    
+            except Exception as e:
+                status.failed_items += 1
+                status.add_error(f"Error importing media {media_id}: {str(e)}")
+                logger.error(f"Error importing media {media_id}: {e}")
+    
+    def _generate_unique_media_title(self, base_title: str, db: MediaDatabase) -> str:
+        """Generate a unique media title."""
+        counter = 1
+        while True:
+            new_title = f"{base_title} ({counter})"
+            # TODO: Add method to check if title exists in MediaDatabase
+            # For now, just return the new title
+            return new_title
+            counter += 1
     
     def _generate_unique_name(self, base_name: str, db: CharactersRAGDB) -> str:
         """Generate a unique conversation name."""

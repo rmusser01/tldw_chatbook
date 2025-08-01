@@ -41,6 +41,9 @@ class ChatbookCreator:
         self.db_paths = db_paths
         self.temp_dir = Path.home() / ".local" / "share" / "tldw_cli" / "temp" / "chatbooks"
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.missing_dependencies: Set[int] = set()
+        self.auto_included_characters: Set[int] = set()
+        self._selected_characters: Set[str] = set()  # Track explicitly selected characters
         
     def create_chatbook(
         self,
@@ -53,8 +56,9 @@ class ChatbookCreator:
         media_quality: str = "thumbnail",
         include_embeddings: bool = False,
         tags: List[str] = None,
-        categories: List[str] = None
-    ) -> Tuple[bool, str]:
+        categories: List[str] = None,
+        auto_include_dependencies: bool = True
+    ) -> Tuple[bool, str, Dict[str, Any]]:
         """
         Create a chatbook from selected content.
         
@@ -69,11 +73,20 @@ class ChatbookCreator:
             include_embeddings: Whether to include embeddings
             tags: List of tags for the chatbook
             categories: List of categories for the chatbook
+            auto_include_dependencies: Whether to automatically include missing character dependencies
             
         Returns:
-            Tuple of (success, message)
+            Tuple of (success, message, dependency_info)
+            dependency_info contains:
+                - missing_dependencies: List of character IDs that were referenced but not included
+                - auto_included: List of character IDs that were automatically included
         """
         try:
+            # Reset dependency tracking
+            self.missing_dependencies.clear()
+            self.auto_included_characters.clear()
+            self._selected_characters = set(content_selections.get(ContentType.CHARACTER, []))
+            
             # Create temporary working directory
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             work_dir = self.temp_dir / f"chatbook_{timestamp}"
@@ -104,7 +117,8 @@ class ChatbookCreator:
                     content_selections[ContentType.CONVERSATION],
                     work_dir,
                     manifest,
-                    content
+                    content,
+                    auto_include_dependencies
                 )
             
             # Collect notes
@@ -175,21 +189,39 @@ class ChatbookCreator:
             # Cleanup temp directory
             shutil.rmtree(work_dir)
             
-            return True, f"Chatbook created successfully at {output_path}"
+            # Prepare dependency info
+            dependency_info = {
+                "missing_dependencies": list(self.missing_dependencies),
+                "auto_included": list(self.auto_included_characters)
+            }
+            
+            # Build success message
+            message = f"Chatbook created successfully at {output_path}"
+            if self.auto_included_characters:
+                message += f". Auto-included {len(self.auto_included_characters)} character dependencies"
+            if self.missing_dependencies:
+                message += f". Warning: {len(self.missing_dependencies)} character dependencies are missing"
+            
+            return True, message, dependency_info
             
         except Exception as e:
             logger.error(f"Error creating chatbook: {e}")
-            return False, f"Error creating chatbook: {str(e)}"
+            dependency_info = {
+                "missing_dependencies": list(self.missing_dependencies),
+                "auto_included": list(self.auto_included_characters)
+            }
+            return False, f"Error creating chatbook: {str(e)}", dependency_info
     
     def _collect_conversations(
         self,
         conversation_ids: List[str],
         work_dir: Path,
         manifest: ChatbookManifest,
-        content: ChatbookContent
+        content: ChatbookContent,
+        auto_include_dependencies: bool
     ) -> None:
         """Collect conversations and their messages."""
-        db_path = self.db_paths.get("chachanotes")
+        db_path = self.db_paths.get("ChaChaNotes")
         if not db_path:
             return
             
@@ -208,18 +240,27 @@ class ChatbookCreator:
                 messages = db.get_messages_for_conversation(conv_id)
                 
                 # Create conversation data
+                # Convert datetime to string if needed
+                created_at = conv['created_at']
+                if hasattr(created_at, 'isoformat'):
+                    created_at = created_at.isoformat()
+                    
+                last_modified = conv.get('last_modified', conv['created_at'])
+                if hasattr(last_modified, 'isoformat'):
+                    last_modified = last_modified.isoformat()
+                    
                 conv_data = {
                     "id": conv['id'],
-                    "name": conv['conversation_name'],
-                    "created_at": conv['created_at'],
-                    "updated_at": conv['updated_at'],
+                    "name": conv.get('title', conv.get('conversation_name', 'Untitled')),
+                    "created_at": created_at,
+                    "updated_at": last_modified,
                     "character_id": conv.get('character_id'),
                     "messages": [
                         {
                             "id": msg['id'],
                             "role": msg['sender'],
-                            "content": msg['message'],
-                            "timestamp": msg['timestamp']
+                            "content": msg['message'] if 'message' in msg else msg.get('content', ''),
+                            "timestamp": msg['timestamp'] if isinstance(msg['timestamp'], str) else msg['timestamp'].isoformat()
                         }
                         for msg in messages
                     ]
@@ -237,15 +278,15 @@ class ChatbookCreator:
                 manifest.content_items.append(ContentItem(
                     id=conv_id,
                     type=ContentType.CONVERSATION,
-                    title=conv['conversation_name'],
-                    created_at=datetime.fromisoformat(conv['created_at']),
-                    updated_at=datetime.fromisoformat(conv['updated_at']),
+                    title=conv.get('title', conv.get('conversation_name', 'Untitled')),
+                    created_at=datetime.fromisoformat(conv_data['created_at']),
+                    updated_at=datetime.fromisoformat(conv_data['updated_at']),
                     file_path=f"content/conversations/conversation_{conv_id}.json"
                 ))
                 
                 # Track character dependency if present
                 if conv.get('character_id'):
-                    self._add_character_dependency(conv['character_id'], manifest)
+                    self._add_character_dependency(conv['character_id'], manifest, content, work_dir, auto_include_dependencies)
                     
             except Exception as e:
                 logger.error(f"Error collecting conversation {conv_id}: {e}")
@@ -258,7 +299,7 @@ class ChatbookCreator:
         content: ChatbookContent
     ) -> None:
         """Collect notes and export as markdown."""
-        db_path = self.db_paths.get("chachanotes")
+        db_path = self.db_paths.get("ChaChaNotes")
         if not db_path:
             return
             
@@ -274,12 +315,21 @@ class ChatbookCreator:
                     continue
                 
                 # Create note metadata
+                # Convert datetime to string if needed
+                created_at = note['created_at']
+                if hasattr(created_at, 'isoformat'):
+                    created_at = created_at.isoformat()
+                    
+                last_modified = note.get('last_modified', note['created_at'])
+                if hasattr(last_modified, 'isoformat'):
+                    last_modified = last_modified.isoformat()
+                    
                 note_data = {
                     "id": note['id'],
                     "title": note['title'],
                     "content": note['content'],
-                    "created_at": note['created_at'],
-                    "updated_at": note['updated_at'],
+                    "created_at": created_at,
+                    "updated_at": last_modified,
                     "tags": note.get('keywords', '').split(',') if note.get('keywords') else []
                 }
                 
@@ -290,8 +340,8 @@ class ChatbookCreator:
                     f.write("---\n")
                     f.write(f"id: {note['id']}\n")
                     f.write(f"title: {note['title']}\n")
-                    f.write(f"created_at: {note['created_at']}\n")
-                    f.write(f"updated_at: {note['updated_at']}\n")
+                    f.write(f"created_at: {note_data['created_at']}\n")
+                    f.write(f"updated_at: {note_data['updated_at']}\n")
                     if note_data['tags']:
                         f.write(f"tags: {', '.join(note_data['tags'])}\n")
                     f.write("---\n\n")
@@ -307,8 +357,8 @@ class ChatbookCreator:
                     id=note_id,
                     type=ContentType.NOTE,
                     title=note['title'],
-                    created_at=datetime.fromisoformat(note['created_at']),
-                    updated_at=datetime.fromisoformat(note['updated_at']),
+                    created_at=datetime.fromisoformat(note_data['created_at']),
+                    updated_at=datetime.fromisoformat(note_data['updated_at']),
                     tags=note_data['tags'],
                     file_path=f"content/notes/{note_file.name}"
                 ))
@@ -324,7 +374,7 @@ class ChatbookCreator:
         content: ChatbookContent
     ) -> None:
         """Collect character cards."""
-        db_path = self.db_paths.get("chachanotes")
+        db_path = self.db_paths.get("ChaChaNotes")
         if not db_path:
             return
             
@@ -334,13 +384,10 @@ class ChatbookCreator:
         
         for char_id in character_ids:
             try:
-                # Get character details
-                char = db.get_character_details(char_id)
+                # Get character card (which includes all details)
+                char = db.get_character_card_by_id(int(char_id))
                 if not char:
                     continue
-                
-                # Get character card
-                card = db.get_character_card_details(char_id)
                 
                 # Create character data
                 char_data = {
@@ -348,16 +395,17 @@ class ChatbookCreator:
                     "name": char['name'],
                     "description": char.get('description', ''),
                     "personality": char.get('personality', ''),
-                    "created_at": char['created_at'],
-                    "updated_at": char['updated_at'],
+                    "created_at": datetime.now().isoformat(),  # Characters don't have timestamps in DB
+                    "updated_at": datetime.now().isoformat(),
                     "avatar_path": char.get('avatar_path'),
-                    "card": card
+                    "card": char  # The full character card data
                 }
                 
-                # Write character file
+                # Write character file (remove 'card' field which may have non-serializable objects)
                 char_file = chars_dir / f"character_{char_id}.json"
+                char_data_for_json = {k: v for k, v in char_data.items() if k != 'card'}
                 with open(char_file, 'w', encoding='utf-8') as f:
-                    json.dump(char_data, f, indent=2, ensure_ascii=False)
+                    json.dump(char_data_for_json, f, indent=2, ensure_ascii=False)
                 
                 # Add to content
                 content.characters.append(char_data)
@@ -368,8 +416,8 @@ class ChatbookCreator:
                     type=ContentType.CHARACTER,
                     title=char['name'],
                     description=char.get('description'),
-                    created_at=datetime.fromisoformat(char['created_at']),
-                    updated_at=datetime.fromisoformat(char['updated_at']),
+                    created_at=datetime.fromisoformat(char_data['created_at']),
+                    updated_at=datetime.fromisoformat(char_data['updated_at']),
                     file_path=f"content/characters/character_{char_id}.json"
                 ))
                 
@@ -384,10 +432,86 @@ class ChatbookCreator:
         content: ChatbookContent,
         quality: str
     ) -> None:
-        """Collect media items."""
-        # TODO: Implement media collection
-        # This would involve copying media files and creating metadata
-        pass
+        """Collect media items and their files."""
+        db_path = self.db_paths.get("Media")
+        if not db_path:
+            logger.warning("Media database path not configured")
+            return
+            
+        db = MediaDatabase(db_path, "chatbook_creator")
+        media_dir = work_dir / "content" / "media"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create metadata directory
+        metadata_dir = media_dir / "metadata"
+        metadata_dir.mkdir(exist_ok=True)
+        
+        for media_id in media_ids:
+            try:
+                # Get media details from database
+                media_item = db.get_media_by_id(int(media_id))
+                if not media_item:
+                    logger.warning(f"Media item not found: {media_id}")
+                    continue
+                
+                # Create media data structure
+                media_data = {
+                    "id": media_item['id'],
+                    "title": media_item.get('title', 'Untitled'),
+                    "media_type": media_item.get('media_type'),
+                    "url": media_item.get('url'),
+                    "author": media_item.get('author'),
+                    "content": media_item.get('content', ''),
+                    "created_at": media_item.get('created_at'),
+                    "updated_at": media_item.get('updated_at'),
+                    "metadata": {
+                        "ingestion_date": media_item.get('ingestion_date'),
+                        "media_keywords": media_item.get('media_keywords'),
+                        "prompt": media_item.get('prompt'),
+                        "summary": media_item.get('summary'),
+                        "transcription_model": media_item.get('transcription_model')
+                    }
+                }
+                
+                # Handle media file if it exists
+                # Note: The current MediaDatabase doesn't store actual file paths,
+                # so we'll store the textual content and metadata
+                media_filename = f"media_{media_id}"
+                
+                # Save media metadata
+                metadata_file = metadata_dir / f"{media_filename}.json"
+                with open(metadata_file, 'w', encoding='utf-8') as f:
+                    json.dump(media_data, f, indent=2, ensure_ascii=False)
+                
+                # If media has content (transcription, text, etc.), save it
+                if media_item.get('content'):
+                    content_file = media_dir / f"{media_filename}.txt"
+                    with open(content_file, 'w', encoding='utf-8') as f:
+                        f.write(media_item['content'])
+                
+                # Add to content
+                content.media_items.append(media_data)
+                
+                # Add to manifest
+                manifest.content_items.append(ContentItem(
+                    id=media_id,
+                    type=ContentType.MEDIA,
+                    title=media_item.get('title', 'Untitled'),
+                    description=media_item.get('summary'),
+                    created_at=datetime.fromisoformat(media_item['created_at']) if media_item.get('created_at') else datetime.now(),
+                    updated_at=datetime.fromisoformat(media_item['updated_at']) if media_item.get('updated_at') else datetime.now(),
+                    metadata={
+                        "media_type": media_item.get('media_type'),
+                        "quality": quality,
+                        "has_content": bool(media_item.get('content'))
+                    },
+                    file_path=f"content/media/metadata/{media_filename}.json"
+                ))
+                
+                logger.info(f"Collected media item: {media_item.get('title', 'Untitled')}")
+                
+            except Exception as e:
+                logger.error(f"Error collecting media {media_id}: {e}")
     
     def _collect_prompts(
         self,
@@ -397,7 +521,7 @@ class ChatbookCreator:
         content: ChatbookContent
     ) -> None:
         """Collect prompts."""
-        db_path = self.db_paths.get("prompts")
+        db_path = self.db_paths.get("Prompts")
         if not db_path:
             return
             
@@ -444,16 +568,85 @@ class ChatbookCreator:
             except Exception as e:
                 logger.error(f"Error collecting prompt {prompt_id}: {e}")
     
-    def _add_character_dependency(self, character_id: int, manifest: ChatbookManifest) -> None:
+    def _add_character_dependency(self, character_id: int, manifest: ChatbookManifest, 
+                                  content: ChatbookContent, work_dir: Path, 
+                                  auto_include: bool) -> None:
         """Add a character as a dependency if not already included."""
         # Check if character already in manifest
         for item in manifest.content_items:
             if item.type == ContentType.CHARACTER and item.id == str(character_id):
                 return
         
-        # TODO: Auto-include the character
-        # For now, just log a warning
-        logger.warning(f"Character {character_id} is referenced but not included in chatbook")
+        # Check if character is explicitly selected
+        if str(character_id) in self._selected_characters:
+            return  # Will be collected later in _collect_characters
+        
+        # Track missing dependency
+        self.missing_dependencies.add(character_id)
+        
+        if auto_include:
+            # Auto-include the character
+            db_path = self.db_paths.get("ChaChaNotes")
+            if not db_path:
+                logger.error(f"Cannot auto-include character {character_id}: Database path not configured")
+                return
+                
+            db = CharactersRAGDB(db_path, "chatbook_creator")
+            
+            try:
+                # Get character card (which includes all details)
+                char = db.get_character_card_by_id(character_id)
+                if not char:
+                    logger.error(f"Character {character_id} not found in database")
+                    return
+                
+                # Create character data
+                char_data = {
+                    "id": char['id'],
+                    "name": char['name'],
+                    "description": char.get('description', ''),
+                    "personality": char.get('personality', ''),
+                    "created_at": datetime.now().isoformat(),  # Characters don't have timestamps in DB
+                    "updated_at": datetime.now().isoformat(),
+                    "avatar_path": char.get('avatar_path'),
+                    "card": char  # The full character card data
+                }
+                
+                # Create characters directory if it doesn't exist
+                chars_dir = work_dir / "content" / "characters"
+                chars_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Write character file (remove 'card' field which may have non-serializable objects)
+                char_file = chars_dir / f"character_{character_id}.json"
+                char_data_for_json = {k: v for k, v in char_data.items() if k != 'card'}
+                with open(char_file, 'w', encoding='utf-8') as f:
+                    json.dump(char_data_for_json, f, indent=2, ensure_ascii=False)
+                
+                # Add to content
+                content.characters.append(char_data)
+                
+                # Add to manifest
+                manifest.content_items.append(ContentItem(
+                    id=str(character_id),
+                    type=ContentType.CHARACTER,
+                    title=char['name'],
+                    description=char.get('description'),
+                    created_at=datetime.fromisoformat(char_data['created_at']),
+                    updated_at=datetime.fromisoformat(char_data['updated_at']),
+                    file_path=f"content/characters/character_{character_id}.json",
+                    metadata={"auto_included": True}
+                ))
+                
+                # Track auto-included character
+                self.auto_included_characters.add(character_id)
+                self.missing_dependencies.remove(character_id)
+                
+                logger.info(f"Auto-included character dependency: {char['name']} (ID: {character_id})")
+                
+            except Exception as e:
+                logger.error(f"Error auto-including character {character_id}: {e}")
+        else:
+            logger.warning(f"Character {character_id} is referenced but not included in chatbook")
     
     def _discover_relationships(self, manifest: ChatbookManifest, content: ChatbookContent) -> None:
         """Discover relationships between content items."""
@@ -465,7 +658,7 @@ class ChatbookCreator:
                 for item in manifest.content_items:
                     if item.type == ContentType.CHARACTER and item.id == char_id:
                         manifest.relationships.append(Relationship(
-                            source_id=conv['id'],
+                            source_id=str(conv['id']),
                             target_id=char_id,
                             relationship_type="uses_character"
                         ))
@@ -518,7 +711,8 @@ class ChatbookCreator:
             if manifest.total_characters > 0:
                 f.write("    ├── characters/     # Character cards\n")
             if manifest.total_media_items > 0:
-                f.write("    └── media/          # Media files\n")
+                f.write("    ├── media/          # Media files and content\n")
+                f.write("    │   └── metadata/   # Media metadata JSON files\n")
             f.write("```\n")
             
             f.write("\n## License\n\n")
