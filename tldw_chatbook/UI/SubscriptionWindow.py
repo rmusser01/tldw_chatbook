@@ -393,8 +393,7 @@ class SubscriptionWindow(Container):
             yield Label("Activity (Last 7 Days)")
             yield Sparkline(
                 data=[0] * 7,
-                id="activity-chart",
-                height=5
+                id="activity-chart"
             )
             
             # Recent activity log

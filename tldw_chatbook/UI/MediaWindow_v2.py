@@ -7,7 +7,7 @@ This is a refactored version that uses the new component-based architecture.
 from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal
+from textual.containers import Container
 from textual.css.query import QueryError
 from textual.reactive import reactive
 from textual.widgets import Button, Markdown
@@ -55,20 +55,26 @@ class MediaWindow(Container):
         width: 100%;
     }
     
-    MediaWindow .main-content {
+    #media-search-panel {
+        dock: top;
+        height: auto;
+    }
+    
+    #media-list-panel {
+        dock: left;
+        width: 35%;
+        height: 100%;
+        border: solid red;
+    }
+        
+    #media-list-panel.collapsed {
+        display: none;
+    }
+    
+    #media-viewer-panel {
         width: 1fr;
         height: 100%;
-        layout: vertical;
-    }
-    
-    MediaWindow .content-area {
-        layout: horizontal;
-        height: 1fr;
-        width: 100%;
-    }
-    
-    MediaWindow #media-list-panel.collapsed {
-        display: none;
+        border: solid blue;
     }
     """
     
@@ -91,7 +97,7 @@ class MediaWindow(Container):
     
     def compose(self) -> ComposeResult:
         """Compose the MediaWindow UI."""
-        # Navigation panel
+        # Navigation panel (docked left)
         self.nav_panel = MediaNavigationPanel(
             self.app_instance,
             self.media_types,
@@ -99,30 +105,26 @@ class MediaWindow(Container):
         )
         yield self.nav_panel
         
-        # Main content area
-        with Container(classes="main-content"):
-            # Search panel
-            self.search_panel = MediaSearchPanel(
-                self.app_instance,
-                id="media-search-panel"
-            )
-            yield self.search_panel
-            
-            # Content area with list and viewer
-            with Horizontal(classes="content-area"):
-                # List panel
-                self.list_panel = MediaListPanel(
-                    self.app_instance,
-                    id="media-list-panel"
-                )
-                yield self.list_panel
-                
-                # Viewer panel
-                self.viewer_panel = MediaViewerPanel(
-                    self.app_instance,
-                    id="media-viewer-panel"
-                )
-                yield self.viewer_panel
+        # Search panel
+        self.search_panel = MediaSearchPanel(
+            self.app_instance,
+            id="media-search-panel"
+        )
+        yield self.search_panel
+        
+        # List panel (docked left)
+        self.list_panel = MediaListPanel(
+            self.app_instance,
+            id="media-list-panel"
+        )
+        yield self.list_panel
+        
+        # Viewer panel (takes remaining space)
+        self.viewer_panel = MediaViewerPanel(
+            self.app_instance,
+            id="media-viewer-panel"
+        )
+        yield self.viewer_panel
     
     def on_mount(self) -> None:
         """Called when the MediaWindow is mounted."""

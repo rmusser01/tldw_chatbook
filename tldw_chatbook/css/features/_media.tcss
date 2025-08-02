@@ -11,16 +11,18 @@
 /* Legacy styles for compatibility - will be removed once MediaWindow_v2 is fully integrated */
 
 /* --- Legacy Media Tab Styles --- */
+/* DEPRECATED: MediaWindow_v2 has its own layout
 #media-window {
     layout: horizontal;
-    height: 100%;
     width: 100%;
 }
+*/
 
 .media-nav-pane {
+    dock: left;
+    width: auto;
     min-width: 25;
     max-width: 60;
-    height: 100%;
     background: $boost;
     padding: 1;
     border-right: thick $background-darken-1;
@@ -50,10 +52,14 @@
 }
 
 .media-content-pane {
-    height: 100%;
     padding: 0;
     layout: vertical;
     width: 1fr;
+}
+
+/* Ensure media views fill vertical space when shown */
+.media-content-pane > .media-view-area {
+    height: 1fr;
 }
 
 #media-sidebar-toggle-button {
@@ -69,20 +75,23 @@
 }
 
 /* Grid layout for content area within each media view */
-.media-view-area Grid {
+/* DEPRECATED: MediaWindow_v2 uses Horizontal layout, not Grid
+.media-view-area > Grid {
     layout: grid;
-    grid-size: 2 1;  /* 2 columns, 1 row */
+    grid-size: 2 1;
     grid-columns: 35% 65%;
     grid-gutter: 1;
-    height: 100%;
+    height: 1fr;
     width: 100%;
 }
+*/
 
 /* Target ListItems inside the media list to control their height */
 .media-items-list > ListItem {
+    width: 100%;
     height: auto; /* This prevents a single item from stretching to fill the whole ListView */
-    padding: 1;
-    margin-bottom: 1;
+    padding: 0;
+    margin: 0 0 1 0;
 }
 
 /* Styles for media item components */
@@ -110,11 +119,16 @@
     width: 100%;
 }
 
-.media-content-left-pane {
-    height: 100%;
-    layout: vertical;
-    padding: 0 1 1 1;
+/* Ensure all child elements inside media items take full width */
+.media-items-list > ListItem > Vertical > * {
+    width: 100%;
 }
+
+/* DEPRECATED: MediaWindow_v2 uses different class names
+.media-content-left-pane {
+    width: 35%
+}
+*/
 
 /* Children of .media-content-left-pane */
 .media-content-left-pane > Label.pane-title {
@@ -129,15 +143,31 @@
     margin-bottom: 1;
 }
 
+/* Keyword filter styles */
+.keyword-filter-label {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.keyword-filter-input {
+    height: 3;
+    width: 100%;
+    margin-bottom: 1;
+}
+
 /* ListView for media items */
+/* DEPRECATED: MediaWindow_v2 components have their own styling
 .media-items-list {
+    width: 100%;
     height: 1fr;
     border: round $primary-lighten-2;
     background: $primary-background;
     margin-bottom: 1;
     overflow-y: auto;
     overflow-x: hidden;
+    min-height: 10;
 }
+*/
 
 .media-pagination-bar {
     height: 3;
@@ -148,21 +178,22 @@
     width: auto;
     min-width: 10;
     margin: 0 1;
-    height: 100%;
 }
 .media-pagination-bar .media-page-label {
     width: 1fr;
     text-align: center;
-    height: 100%;
     padding: 0 1;
 }
 
+/* DEPRECATED: MediaWindow_v2 uses MediaViewerPanel with its own styling
 .media-content-right-pane {
-    height: 100%;
+    width: 1fr;
+    height: 1fr;
     padding: 1;
     overflow-y: auto;
     layout: vertical;
 }
+*/
 
 .media-details-theme {
     height: 1fr;
@@ -354,6 +385,7 @@ MediaDetailsWidget {
     width: 100%;
     margin-bottom: 1;
     padding: 0 1;
+    height: auto;
 }
 
 /* Metadata buttons container */
@@ -385,14 +417,12 @@ MediaDetailsWidget {
 /* --- Collections/Tags Window --- */
 .collections-main-container {
     layout: horizontal;
-    height: 100%;
     width: 100%;
 }
 
 .collections-left-pane {
     width: 40%;
     min-width: 30;
-    height: 100%;
     layout: vertical;
     padding: 1;
     border-right: thick $background-darken-1;
@@ -400,7 +430,6 @@ MediaDetailsWidget {
 
 .collections-right-pane {
     width: 1fr;
-    height: 100%;
     padding: 1;
     overflow-y: auto;
 }
@@ -507,7 +536,6 @@ MediaDetailsWidget {
 
 /* --- Multi-Item Review Window --- */
 .multi-review-container {
-    height: 100%;
     width: 100%;
     padding: 1;
 }

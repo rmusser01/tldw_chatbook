@@ -40,6 +40,7 @@ class MediaListPanel(Container):
     DEFAULT_CSS = """
     MediaListPanel {
         height: 100%;
+        min-width: 30;
         border-right: solid $primary;
         layout: vertical;
     }
@@ -60,10 +61,16 @@ class MediaListPanel(Container):
     
     MediaListPanel .media-list {
         height: 1fr;
+        min-height: 0;
         border: round $primary-lighten-2;
         background: $primary-background;
         overflow-y: auto;
         overflow-x: hidden;
+    }
+    
+    MediaListPanel ListView {
+        height: 100%;
+        min-height: 0;
     }
     
     MediaListPanel .media-item {
