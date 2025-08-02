@@ -55,13 +55,30 @@ class MediaWindow(Container):
         width: 100%;
     }
     
+    #media-nav-panel {
+        dock: left;
+        width: 20%;
+        min-width: 20;
+        height: 100%;
+    }
+    
+    #media-main-content {
+        layout: vertical;
+        width: 1fr;
+        height: 100%;
+    }
+    
     #media-search-panel {
-        dock: top;
         height: auto;
     }
     
+    #media-content-container {
+        layout: horizontal;
+        height: 100%;
+        width: 100%;
+    }
+    
     #media-list-panel {
-        dock: left;
         width: 35%;
         height: 100%;
         border: solid red;
@@ -97,7 +114,7 @@ class MediaWindow(Container):
     
     def compose(self) -> ComposeResult:
         """Compose the MediaWindow UI."""
-        # Navigation panel (docked left)
+        # Navigation panel (docked left, full height)
         self.nav_panel = MediaNavigationPanel(
             self.app_instance,
             self.media_types,
@@ -105,26 +122,30 @@ class MediaWindow(Container):
         )
         yield self.nav_panel
         
-        # Search panel
-        self.search_panel = MediaSearchPanel(
-            self.app_instance,
-            id="media-search-panel"
-        )
-        yield self.search_panel
-        
-        # List panel (docked left)
-        self.list_panel = MediaListPanel(
-            self.app_instance,
-            id="media-list-panel"
-        )
-        yield self.list_panel
-        
-        # Viewer panel (takes remaining space)
-        self.viewer_panel = MediaViewerPanel(
-            self.app_instance,
-            id="media-viewer-panel"
-        )
-        yield self.viewer_panel
+        # Main content area (everything to the right of navigation)
+        with Container(id="media-main-content"):
+            # Search panel at top
+            self.search_panel = MediaSearchPanel(
+                self.app_instance,
+                id="media-search-panel"
+            )
+            yield self.search_panel
+            
+            # Content container for list and viewer
+            with Container(id="media-content-container"):
+                # List panel
+                self.list_panel = MediaListPanel(
+                    self.app_instance,
+                    id="media-list-panel"
+                )
+                yield self.list_panel
+                
+                # Viewer panel (takes remaining space)
+                self.viewer_panel = MediaViewerPanel(
+                    self.app_instance,
+                    id="media-viewer-panel"
+                )
+                yield self.viewer_panel
     
     def on_mount(self) -> None:
         """Called when the MediaWindow is mounted."""

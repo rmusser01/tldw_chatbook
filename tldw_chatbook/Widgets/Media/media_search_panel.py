@@ -41,11 +41,11 @@ class MediaSearchPanel(Container):
     
     DEFAULT_CSS = """
     MediaSearchPanel {
-        dock: top;
         height: auto;
         padding: 1;
         background: $boost;
         border-bottom: thick $background-darken-1;
+        width: 100%;
     }
     
     MediaSearchPanel .search-row {
