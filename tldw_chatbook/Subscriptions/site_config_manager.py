@@ -25,6 +25,7 @@ from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..Utils.config_encryption import ConfigEncryption
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..config import CLI_APP_CLIENT_ID, get_subscriptions_db_path
 #
 ########################################################################################################################
 #
@@ -238,7 +239,10 @@ class SiteConfigManager:
         Args:
             db_path: Optional path to database
         """
-        self.db = CharactersRAGDB(db_path)
+        # Use provided db_path or get default from config
+        if db_path is None:
+            db_path = str(get_subscriptions_db_path())
+        self.db = CharactersRAGDB(db_path, CLI_APP_CLIENT_ID)
         self.encryption = ConfigEncryption()
         self.rate_limiter = RateLimiter()
         self._config_cache = {}

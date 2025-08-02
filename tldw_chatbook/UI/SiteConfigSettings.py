@@ -173,47 +173,53 @@ class SiteConfigSettings(Container):
             yield Static("Rate Limiting", classes="section-title")
             
             # Rate limit settings
-            yield self.form_builder.create_number_input(
-                "rate-limit-requests",
+            yield self.form_builder.create_form_field(
                 "Requests per minute",
-                default=60,
-                min_value=1,
-                max_value=1000
+                Input(
+                    value="60",
+                    id="rate-limit-requests",
+                    type="number"
+                )
             )
             
-            yield self.form_builder.create_number_input(
-                "concurrent-requests",
+            yield self.form_builder.create_form_field(
                 "Concurrent requests",
-                default=1,
-                min_value=1,
-                max_value=10
+                Input(
+                    value="1",
+                    id="concurrent-requests",
+                    type="number"
+                )
             )
             
             yield Static("Request Settings", classes="section-title")
             
-            yield self.form_builder.create_number_input(
-                "timeout",
+            yield self.form_builder.create_form_field(
                 "Timeout (seconds)",
-                default=30,
-                min_value=1,
-                max_value=300
+                Input(
+                    value="30",
+                    id="timeout",
+                    type="number"
+                )
             )
             
-            yield self.form_builder.create_number_input(
-                "retry-count",
+            yield self.form_builder.create_form_field(
                 "Retry count",
-                default=3,
-                min_value=0,
-                max_value=10
+                Input(
+                    value="3",
+                    id="retry-count",
+                    type="number"
+                )
             )
             
             # JavaScript rendering
             yield Static("JavaScript Rendering", classes="section-title")
             
-            yield self.form_builder.create_switch(
-                "requires-javascript",
+            yield self.form_builder.create_form_field(
                 "Requires JavaScript",
-                default=False
+                Switch(
+                    value=False,
+                    id="requires-javascript"
+                )
             )
             
             yield Input(
@@ -296,13 +302,13 @@ class SiteConfigSettings(Container):
                 id="ignore-selectors"
             )
             
-            yield self.form_builder.create_number_input(
-                "change-threshold",
+            yield self.form_builder.create_form_field(
                 "Change threshold (0-1)",
-                default=0.1,
-                min_value=0.0,
-                max_value=1.0,
-                step=0.05
+                Input(
+                    value="0.1",
+                    id="change-threshold",
+                    type="number"
+                )
             )
     
     def _compose_advanced_settings(self) -> ComposeResult:
@@ -310,46 +316,56 @@ class SiteConfigSettings(Container):
         with Container(classes="config-section"):
             yield Static("Content Processing", classes="section-title")
             
-            yield self.form_builder.create_switch(
-                "remove-scripts",
+            yield self.form_builder.create_form_field(
                 "Remove scripts",
-                default=True
+                Switch(
+                    value=True,
+                    id="remove-scripts"
+                )
             )
             
-            yield self.form_builder.create_switch(
-                "remove-styles",
+            yield self.form_builder.create_form_field(
                 "Remove styles",
-                default=True
+                Switch(
+                    value=True,
+                    id="remove-styles"
+                )
             )
             
-            yield self.form_builder.create_switch(
-                "preserve-links",
+            yield self.form_builder.create_form_field(
                 "Preserve links",
-                default=True
+                Switch(
+                    value=True,
+                    id="preserve-links"
+                )
             )
             
-            yield self.form_builder.create_switch(
-                "extract-images",
+            yield self.form_builder.create_form_field(
                 "Extract images",
-                default=False
+                Switch(
+                    value=False,
+                    id="extract-images"
+                )
             )
             
             yield Static("Viewport Settings", classes="section-title")
             
-            yield self.form_builder.create_number_input(
-                "viewport-width",
+            yield self.form_builder.create_form_field(
                 "Viewport width",
-                default=1920,
-                min_value=320,
-                max_value=3840
+                Input(
+                    value="1920",
+                    id="viewport-width",
+                    type="number"
+                )
             )
             
-            yield self.form_builder.create_number_input(
-                "viewport-height",
+            yield self.form_builder.create_form_field(
                 "Viewport height",
-                default=1080,
-                min_value=240,
-                max_value=2160
+                Input(
+                    value="1080",
+                    id="viewport-height",
+                    type="number"
+                )
             )
             
             yield Static("Notes", classes="section-title")

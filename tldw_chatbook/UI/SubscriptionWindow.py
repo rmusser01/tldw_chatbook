@@ -162,6 +162,12 @@ class SubscriptionWindow(Container):
         padding: 1;
     }
     
+    /* Activity log */
+    #activity-log {
+        height: 20;
+        border: solid $primary;
+    }
+    
     /* Item preview */
     .item-preview {
         width: 100%;
@@ -400,8 +406,7 @@ class SubscriptionWindow(Container):
             yield Label("Recent Activity")
             yield TextArea(
                 id="activity-log",
-                read_only=True,
-                max_lines=20
+                read_only=True
             )
     
     def _compose_briefings_tab(self) -> ComposeResult:

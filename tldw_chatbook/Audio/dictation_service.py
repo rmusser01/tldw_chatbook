@@ -14,12 +14,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from loguru import logger
 
-# Try to import numpy as optional dependency
+# Import numpy as required dependency
 try:
     import numpy as np
     NUMPY_AVAILABLE = True
 except ImportError:
     NUMPY_AVAILABLE = False
+    raise ImportError(
+        "NumPy is required for audio dictation functionality.\n"
+        "Please install it with: pip install numpy"
+    )
 
 # Local imports
 from .recording_service import AudioRecordingService, AudioRecordingError
@@ -304,25 +308,36 @@ class LiveDictationService:
                     self._handle_final_transcript(result['final'])
             else:
                 # Fallback to chunked transcription
-                if NUMPY_AVAILABLE:
-                    # Convert audio to numpy array
-                    audio_array = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
-                else:
-                    # Without numpy, pass raw audio data
-                    # The transcription service should handle this
-                    audio_array = audio_data
+                # Save audio data to temporary file since TranscriptionService only accepts file paths
+                import tempfile
+                import wave
                 
-                # Transcribe chunk
-                result = self.transcription_service.transcribe_buffer(
-                    audio_array,
-                    sample_rate=self.audio_service.sample_rate,
-                    provider=self.transcription_provider,
-                    model=self.transcription_model,
-                    language=self.language
-                )
-                
-                if result and result.get('text'):
-                    self._handle_partial_transcript(result['text'])
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+                    try:
+                        # Write audio data to WAV file
+                        with wave.open(tmp_file.name, 'wb') as wf:
+                            wf.setnchannels(self.audio_service.channels)
+                            wf.setsampwidth(2)  # 16-bit
+                            wf.setframerate(self.audio_service.sample_rate)
+                            wf.writeframes(audio_data)
+                        
+                        # Transcribe the temporary file
+                        result = self.transcription_service.transcribe(
+                            tmp_file.name,
+                            provider=self.transcription_provider,
+                            model=self.transcription_model,
+                            language=self.language
+                        )
+                        
+                        if result and result.get('text'):
+                            self._handle_partial_transcript(result['text'])
+                    
+                    finally:
+                        # Clean up temporary file
+                        try:
+                            os.unlink(tmp_file.name)
+                        except:
+                            pass
         
         except Exception as e:
             logger.error(f"Transcription error: {e}")

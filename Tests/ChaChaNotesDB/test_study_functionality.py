@@ -271,10 +271,10 @@ class TestSpacedRepetition:
         # Verify review history was created
         with db_instance.transaction() as cursor:
             cursor.execute("SELECT * FROM review_history WHERE flashcard_id = ?", (card_id,))
-        history = cursor.fetchone()
-        assert history is not None
-        assert history["rating"] == 0
-        assert history["interval_after"] == 1
+            history = cursor.fetchone()
+            assert history is not None
+            assert history["rating"] == 0
+            assert history["interval_after"] == 1
     
     def test_update_flashcard_review_rating_3(self, db_instance, sample_flashcard):
         """Test review with rating 3 (correct but difficult)."""
@@ -424,11 +424,11 @@ class TestLearningPaths:
         # Verify parent-child relationship
         with db_instance.transaction() as cursor:
             cursor.execute(
-            "SELECT parent_id FROM topics WHERE id = ?",
-            (child_id,)
-        )
-        result = cursor.fetchone()
-        assert result["parent_id"] == parent_id
+                "SELECT parent_id FROM topics WHERE id = ?",
+                (child_id,)
+            )
+            result = cursor.fetchone()
+            assert result["parent_id"] == parent_id
     
     def test_update_topic_progress(self, db_instance, sample_learning_path):
         """Test updating topic progress."""
@@ -444,23 +444,24 @@ class TestLearningPaths:
         # Verify update
         with db_instance.transaction() as cursor:
             cursor.execute(
-            "SELECT progress, status FROM topics WHERE id = ?",
-            (topic_id,)
-        )
-        result = cursor.fetchone()
-        assert result["progress"] == 0.5
-        assert result["status"] == "not_started"  # Status not changed
+                "SELECT progress, status FROM topics WHERE id = ?",
+                (topic_id,)
+            )
+            result = cursor.fetchone()
+            assert result["progress"] == 0.5
+            assert result["status"] == "not_started"  # Status not changed
         
         # Update progress with status
         db_instance.update_topic_progress(topic_id, 1.0, "completed")
         
-        cursor.execute(
-            "SELECT progress, status FROM topics WHERE id = ?",
-            (topic_id,)
-        )
-        result = cursor.fetchone()
-        assert result["progress"] == 1.0
-        assert result["status"] == "completed"
+        with db_instance.transaction() as cursor:
+            cursor.execute(
+                "SELECT progress, status FROM topics WHERE id = ?",
+                (topic_id,)
+            )
+            result = cursor.fetchone()
+            assert result["progress"] == 1.0
+            assert result["status"] == "completed"
     
     def test_invalid_progress_value(self, db_instance, sample_learning_path):
         """Test that invalid progress values raise an error."""
@@ -506,14 +507,14 @@ class TestMindmaps:
         # Verify node was created
         with db_instance.transaction() as cursor:
             cursor.execute(
-            "SELECT * FROM mindmap_nodes WHERE id = ?",
-            (node_id,)
-        )
-        node = cursor.fetchone()
-        assert node["text"] == "Central Idea"
-        assert node["position_x"] == 0
-        assert node["position_y"] == 0
-        assert node["parent_id"] is None
+                "SELECT * FROM mindmap_nodes WHERE id = ?",
+                (node_id,)
+            )
+            node = cursor.fetchone()
+            assert node["text"] == "Central Idea"
+            assert node["position_x"] == 0
+            assert node["position_y"] == 0
+            assert node["parent_id"] is None
     
     def test_add_mindmap_node_with_parent(self, db_instance, sample_mindmap):
         """Test adding child nodes to a mindmap."""
@@ -540,11 +541,11 @@ class TestMindmaps:
         # Verify parent-child relationships
         with db_instance.transaction() as cursor:
             cursor.execute(
-            "SELECT COUNT(*) as count FROM mindmap_nodes WHERE parent_id = ?",
-            (root_id,)
-        )
-        result = cursor.fetchone()
-        assert result["count"] == 2
+                "SELECT COUNT(*) as count FROM mindmap_nodes WHERE parent_id = ?",
+                (root_id,)
+            )
+            result = cursor.fetchone()
+            assert result["count"] == 2
 
 
 class TestStudyStatistics:
@@ -825,8 +826,8 @@ class TestStudyProperties:
         # Verify
         with mem_db_instance.transaction() as cursor:
             cursor.execute("SELECT progress FROM topics WHERE id = ?", (topic_id,))
-        result = cursor.fetchone()
-        assert result["progress"] == pytest.approx(progress)
+            result = cursor.fetchone()
+            assert result["progress"] == pytest.approx(progress)
 
 
 class TestSchemaMigration:
@@ -835,7 +836,6 @@ class TestSchemaMigration:
     def test_migration_creates_all_tables(self, db_instance):
         """Test that all study tables are created after migration."""
         with db_instance.transaction() as cursor:
-        
             # Check that all tables exist
             tables = [
                 "learning_paths", "topics", "decks", "flashcards",
@@ -853,7 +853,6 @@ class TestSchemaMigration:
     def test_migration_creates_fts_tables(self, db_instance):
         """Test that FTS tables are created."""
         with db_instance.transaction() as cursor:
-        
             fts_tables = ["topics_fts", "flashcards_fts", "mindmap_nodes_fts"]
 
             for table in fts_tables:
@@ -867,7 +866,6 @@ class TestSchemaMigration:
     def test_migration_creates_triggers(self, db_instance):
         """Test that FTS triggers are created."""
         with db_instance.transaction() as cursor:
-        
             # Check for some key triggers
             triggers = [
                 "topics_ai", "topics_ad", "topics_au",
@@ -885,7 +883,6 @@ class TestSchemaMigration:
     def test_schema_version_updated(self, db_instance):
         """Test that schema version is correctly updated to 11."""
         with db_instance.transaction() as cursor:
-        
             cursor.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name = 'rag_char_chat_schema'"
             )
