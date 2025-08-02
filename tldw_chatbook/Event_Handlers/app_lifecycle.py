@@ -27,18 +27,47 @@ async def handle_copy_logs_button_pressed(app: 'TldwCli', event: Button.Pressed)
         # Use the actual RichLog type, not a string
         log_widget = app.query_one("#app-log-display", RichLog)  # <--- FIX HERE
 
+        logger.info(f"RichLog widget found. Number of lines: {len(log_widget.lines)}")
+        logger.info(f"Type of lines: {type(log_widget.lines)}")
+        
+        # Check if the widget has the expected attributes
+        logger.info(f"Widget has .lines: {hasattr(log_widget, 'lines')}")
+        logger.info(f"Widget mounted: {log_widget.is_mounted}")
+        
+        if not log_widget.lines:
+            logger.warning("RichLog widget has no lines!")
+            app.notify("Log is empty, nothing to copy.", title="Clipboard", severity="warning", timeout=4)
+            return
+            
         if log_widget.lines:
-            # Your existing logic for extracting text from log_widget.lines
-            # Make sure this part is robust (e.g. check type of line_item)
+            # Extract plain text from Strip objects
             all_log_text_parts = []
-            for line_item in log_widget.lines:
-                if hasattr(line_item, 'text'):  # Safer check for Strip or similar
-                    all_log_text_parts.append(line_item.text)
+            for i, strip in enumerate(log_widget.lines):
+                # Debug: log the type of the first few items
+                if i < 3:
+                    logger.debug(f"Line {i} type: {type(strip)}, has .text: {hasattr(strip, 'text')}")
+                
+                if hasattr(strip, 'text'):  # Strip objects have a .text attribute
+                    text = strip.text
+                    all_log_text_parts.append(text)
+                    if i < 3:  # Log first few lines for debugging
+                        logger.debug(f"Line {i} text: {text[:50]}...")
                 else:
-                    all_log_text_parts.append(str(line_item))  # Fallback
+                    # Fallback - try to convert to string
+                    text = str(strip)
+                    all_log_text_parts.append(text)
+                    logger.warning(f"Line {i} doesn't have .text attribute, using str(): {text[:50]}...")
 
             all_log_text = "\n".join(all_log_text_parts)
+            logger.info(f"Total text length: {len(all_log_text)} characters")
+            
+            if not all_log_text or all_log_text.isspace():
+                logger.warning("Extracted text is empty or only whitespace!")
+                app.notify("Log appears to be empty.", title="Error", severity="warning", timeout=4)
+                return
 
+            # Try to copy to clipboard
+            logger.info(f"Attempting to copy {len(all_log_text)} characters to clipboard...")
             app.copy_to_clipboard(all_log_text)  # Assuming app has this method
             app.notify(
                 "Logs copied to clipboard!",

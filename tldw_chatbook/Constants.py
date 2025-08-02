@@ -28,8 +28,33 @@ TAB_CODING = "coding"
 TAB_STTS = "stts"
 TAB_STUDY = "study"
 TAB_SUBSCRIPTIONS = "subscriptions"
+TAB_CHATBOOKS = "chatbooks"
 ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,
-            TAB_EVALS, TAB_LLM, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_STATS]
+            TAB_EVALS, TAB_LLM, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_CODING, TAB_STATS]
+
+# Subscription types
+SUBSCRIPTION_TYPES = [
+    "rss",
+    "reddit", 
+    "youtube",
+    "github",
+    "hackernews",
+    "generic",
+    "custom"
+]
+
+# Subscription update frequencies (in seconds)
+SUBSCRIPTION_UPDATE_FREQUENCIES = {
+    "15 minutes": 900,
+    "30 minutes": 1800,
+    "1 hour": 3600,
+    "2 hours": 7200,
+    "4 hours": 14400,
+    "6 hours": 21600,
+    "12 hours": 43200,
+    "Daily": 86400,
+    "Weekly": 604800
+}
 
 # --- TLDW API Form Specific Option Containers (IDs) ---
 TLDW_API_VIDEO_OPTIONS_ID = "tldw-api-video-options"

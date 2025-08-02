@@ -4,7 +4,7 @@ from rich.text import Text
 
 class TitleBar(Static):
     """A one-line decorative title bar with emoji art."""
-    DEFAULT_ART = "✨🤖  [b]tldw_chatbook – LLM Command Station[/b]  📝🚀"
+    DEFAULT_ART = "[b]tldw chatbook[/b]"
 
     def __init__(self) -> None:
         super().__init__(Text.from_markup(self.DEFAULT_ART), id="app-titlebar") # Use Text.from_markup

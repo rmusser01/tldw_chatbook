@@ -30,8 +30,7 @@ class TestDatabaseSmoke:
             assert os.path.exists(db_path)
             
             # Check schema version
-            with db.transaction() as conn:
-                cursor = conn.cursor()
+            with db.transaction() as cursor:
                 cursor.execute("SELECT version FROM db_schema_version")
                 version = cursor.fetchone()[0]
                 assert version > 0

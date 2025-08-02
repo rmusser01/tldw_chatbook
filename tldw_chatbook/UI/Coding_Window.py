@@ -14,6 +14,7 @@ from textual.widgets import Static, Button, Label
 #
 # Local Imports
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
+from .CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -28,10 +29,12 @@ logger = logger.bind(module="CodingWindow")
 CODING_VIEW_CODE_MAP = "coding-view-code-map"
 CODING_VIEW_AGENTIC_CODER = "coding-view-agentic-coder"
 CODING_VIEW_STEP_BY_STEP = "coding-view-step-by-step"
+CODING_VIEW_REPO_COPY_PASTE = "coding-view-repo-copy-paste"
 
 CODING_NAV_CODE_MAP = "coding-nav-code-map"
 CODING_NAV_AGENTIC_CODER = "coding-nav-agentic-coder"
 CODING_NAV_STEP_BY_STEP = "coding-nav-step-by-step"
+CODING_NAV_REPO_COPY_PASTE = "coding-nav-repo-copy-paste"
 
 class CodingWindow(Container):
     """
@@ -86,6 +89,11 @@ class CodingWindow(Container):
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.info(f"CodingWindow on_mount: UI composed")
+        
+        # Hide all views initially
+        for view_area in self.query(".coding-view-area"):
+            view_area.styles.display = "none"
+        
         # Set initial active view
         if not self.coding_active_view:
             self.coding_active_view = CODING_VIEW_CODE_MAP
@@ -97,6 +105,7 @@ class CodingWindow(Container):
             yield Button("Code Map", id=CODING_NAV_CODE_MAP, classes="coding-nav-button")
             yield Button("Agentic Coder", id=CODING_NAV_AGENTIC_CODER, classes="coding-nav-button")
             yield Button("Step-by-Step", id=CODING_NAV_STEP_BY_STEP, classes="coding-nav-button")
+            yield Button("Code Repo Copy/Paste", id=CODING_NAV_REPO_COPY_PASTE, classes="coding-nav-button")
 
         # Main Content Pane
         with Container(classes="coding-content-pane", id="coding-content-pane"):
@@ -122,9 +131,12 @@ class CodingWindow(Container):
                 yield Static("Step-by-Step Content Area", classes="pane-title")
                 yield Label("This is the Step-by-Step view where you can follow guided coding tutorials.")
 
-            # Hide all views by default; on_mount will manage visibility
-            for view_area in self.query(".coding-view-area"):
-                view_area.styles.display = "none"
+            # Create a view for Code Repo Copy/Paste
+            with Container(id=CODING_VIEW_REPO_COPY_PASTE, classes="coding-view-area"):
+                # Embed the repository selector directly instead of using a modal
+                repo_window = CodeRepoCopyPasteWindow(self.app_instance)
+                yield from repo_window.compose()
+
 
 #
 # End of Coding_Window.py

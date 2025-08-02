@@ -20,8 +20,7 @@ from bs4 import BeautifulSoup
 from loguru import logger
 #
 # Local Imports
-from ..LLM_Calls.LLM_API_Calls import chat_with_provider
-from ..Chat.Chat_Functions import get_provider_model_name
+from ..Chat.Chat_Functions import chat_api_call
 from ..Metrics.metrics_logger import log_histogram, log_counter
 #
 ########################################################################################################################
@@ -248,16 +247,14 @@ class ContentProcessor:
         ]
         
         # Call LLM
-        provider_model = get_provider_model_name(self.llm_provider, self.llm_model)
+        # provider_model = get_provider_model_name(self.llm_provider, self.llm_model)
         
         start_time = datetime.now()
         
-        response = await chat_with_provider(
-            messages=messages,
+        response = chat_api_call(
             api_endpoint=self.llm_provider,
-            provider=self.llm_provider,
-            model_name=provider_model,
-            temperature=0.3,
+            messages_payload=messages,
+            temp=0.3,
             max_tokens=1000
         )
         

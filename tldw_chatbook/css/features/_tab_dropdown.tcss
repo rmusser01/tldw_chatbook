@@ -1,0 +1,92 @@
+/* ========================================
+ * FEATURES: Tab Dropdown Navigation
+ * ======================================== 
+ * Dropdown-based tab navigation system
+ * Replaces horizontal tab bar with compact dropdown
+ * ======================================== */
+
+/* Container for the dropdown - positioned at top of window */
+#tab-dropdown-container {
+    dock: top;
+    width: 100%;      /* Full width of window */
+    height: 3;        /* Match the original tab bar height */
+    padding: 0 1;
+    background: $panel;
+    border-bottom: solid $border;
+    margin: 0;
+    align: center middle;  /* Center the dropdown in the container */
+}
+
+/* The Select widget itself */
+#tab-dropdown-select {
+    width: 30;        /* Fixed width for the dropdown selector */
+    height: 100%;
+    background: $panel;
+    color: $text;
+    border: none;
+    padding: 0 1;
+    margin: 0;        /* No margin needed - centering handled by container */
+}
+
+/* Select widget hover state */
+#tab-dropdown-select:hover {
+    background: $panel-lighten-1;
+    color: $text;
+}
+
+/* Select widget focus state */
+#tab-dropdown-select:focus {
+    border: solid $accent;
+    background: $panel-lighten-1;
+}
+
+/* Dropdown overlay container */
+#tab-dropdown-select SelectOverlay {
+    background: $background;
+    border: solid $border;
+    max-height: 20;      /* Limit dropdown height to prevent full-screen coverage */
+    margin-top: 0;       /* No gap - directly below the select */
+    width: auto;         /* Auto width to fit content */
+    min-width: 30;       /* Match the select widget width */
+    /* layer: above; */  /* Ensure dropdown appears above other content if supported */
+}
+
+/* Individual options in the dropdown */
+#tab-dropdown-select SelectOverlay Option {
+    padding: 0 2;
+    background: $panel;
+    color: $text-muted;
+    min-height: 3;       /* Comfortable click target */
+}
+
+/* Option hover state */
+#tab-dropdown-select SelectOverlay Option:hover {
+    background: $accent;
+    color: $text;
+}
+
+/* Currently selected option (when dropdown is open) */
+#tab-dropdown-select SelectOverlay Option.-selected {
+    background: $accent-darken-1;
+    color: $text;
+    text-style: bold;
+}
+
+/* Disabled state (if needed in future) */
+#tab-dropdown-select:disabled {
+    opacity: 0.6;
+    background: $panel-darken-1;
+    color: $text-muted;  /* Using existing variable instead of $text-disabled */
+}
+
+/* Loading state (if needed for async operations) */
+#tab-dropdown-select.-loading {
+    color: $text-muted;
+}
+
+/* Textual CSS doesn't support transition animations */
+
+/* Ensure dropdown doesn't interfere with main content */
+#content {
+    margin-top: 0;   /* No top margin needed - content flows after dropdown */
+}

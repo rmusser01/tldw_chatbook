@@ -15,9 +15,9 @@ EvalsWindow {
 /* --- Navigation Sidebar --- */
 .evals-nav-pane {
     dock: left;
-    width: auto;
-    min-width: 25;
-    max-width: 50;
+    width: 25%;
+    min-width: 20;
+    max-width: 40;
     height: 100%;
     background: $surface;
     padding: 1;
@@ -27,12 +27,9 @@ EvalsWindow {
 }
 
 .evals-nav-pane.collapsed {
-    width: 0 !important;
-    min-width: 0 !important;
-    border-right: none !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    display: none !important;
+    width: 4;
+    min-width: 4;
+    padding: 1 0;
 }
 
 .sidebar-title {
@@ -41,6 +38,15 @@ EvalsWindow {
     text-align: center;
     margin-bottom: 2;
     color: $primary;
+}
+
+.collapsed-hidden {
+    display: none;
+}
+
+/* Hide sidebar title when collapsed */
+.evals-nav-pane.collapsed .sidebar-title {
+    display: none;
 }
 
 /* Navigation Buttons */
@@ -65,6 +71,14 @@ EvalsWindow {
     color: $text;
     text-style: bold;
     border-left: thick $primary;
+}
+
+/* Adjust button appearance when collapsed */
+.evals-nav-pane.collapsed .evals-nav-button {
+    width: 3;
+    padding: 0;
+    /* Show only first letter or icon */
+    overflow: hidden;
 }
 
 /* --- Content Area --- */

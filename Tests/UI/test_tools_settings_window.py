@@ -2,9 +2,13 @@ import pytest
 import pytest_asyncio
 import toml
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch, AsyncMock, call
+import tempfile
+import shutil
+import sqlite3
+from datetime import datetime
 
-from textual.widgets import Button, TextArea
+from textual.widgets import Button, TextArea, Label, Static
 from textual.app import App
 try:
     from textual.app import AppTest
@@ -15,6 +19,13 @@ except ImportError:
 from tldw_chatbook.UI.Tools_Settings_Window import ToolsSettingsWindow
 # Import DEFAULT_CONFIG_PATH to be monkeypatched, and the function that uses it
 import tldw_chatbook.config
+
+# Import test utilities
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+from db_test_utilities import TestDatabaseSchema, DatabasePopulator
+from test_utilities import TestDataFactory
 
 
 # Helper to create a dummy config file for testing
@@ -215,4 +226,258 @@ async def test_save_io_error(settings_window: ToolsSettingsWindow, mock_app_inst
 
     # mock_app_instance.notify.assert_called_with("Error: Could not write to configuration file.", severity="error")
     pass
+
+
+# ===========================================
+# Database Tools Tests
+# ===========================================
+
+@pytest.fixture
+def test_db_dir(tmp_path):
+    """Create a directory with test databases."""
+    db_dir = tmp_path / "databases"
+    db_dir.mkdir()
+    
+    # Create test databases with sample data
+    databases = {
+        'ChaChaNotes.db': TestDatabaseSchema.CONVERSATIONS_SCHEMA + TestDatabaseSchema.MESSAGES_SCHEMA,
+        'Client_Media_DB.db': """
+            CREATE TABLE IF NOT EXISTS media (
+                id INTEGER PRIMARY KEY,
+                title TEXT,
+                content TEXT
+            );
+            INSERT INTO media (title, content) VALUES ('Test Media', 'Content');
+        """,
+        'Prompts_DB.db': """
+            CREATE TABLE IF NOT EXISTS prompts (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                content TEXT
+            );
+            INSERT INTO prompts (name, content) VALUES ('Test Prompt', 'Content');
+        """,
+        'Evals_DB.db': """
+            CREATE TABLE IF NOT EXISTS evaluations (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                score REAL
+            );
+        """,
+        'RAG_Indexing_DB.db': """
+            CREATE TABLE IF NOT EXISTS embeddings (
+                id INTEGER PRIMARY KEY,
+                content TEXT,
+                vector BLOB
+            );
+        """,
+        'Subscriptions_DB.db': """
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                url TEXT
+            );
+        """
+    }
+    
+    db_paths = {}
+    for db_name, schema in databases.items():
+        db_path = db_dir / db_name
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript(schema)
+        # Set a schema version
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+        conn.close()
+        db_paths[db_name.replace('.db', '')] = str(db_path)
+    
+    return db_dir, db_paths
+
+
+@pytest.fixture
+def mock_database_path_lookup(test_db_dir, monkeypatch):
+    """Mock the database path lookup functions."""
+    db_dir, db_paths = test_db_dir
+    
+    def mock_get_db_path(db_name):
+        return db_paths.get(db_name, str(db_dir / f"{db_name}.db"))
+    
+    # Mock the app instance's database path method
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Tools_Settings_Window.ToolsSettingsWindow._get_database_path",
+        mock_get_db_path
+    )
+    
+    return db_paths
+
+
+@pytest.mark.asyncio
+async def test_database_tools_composition(settings_window: ToolsSettingsWindow):
+    """Test that database tools section is properly composed."""
+    # Check that Database Tools tab exists
+    nav_button = settings_window.query_one("#ts-nav-database-tools", Button)
+    assert nav_button is not None
+    assert nav_button.label.plain == "Database Tools"
+    
+    # Check that the content area exists
+    content_area = settings_window.query_one("#ts-view-database-tools")
+    assert content_area is not None
+    
+    # Check for individual database sections
+    database_names = ["ChaChaNotes", "Media", "Prompts", "Evals", "RAG", "Subscriptions"]
+    for db_name in database_names:
+        # Each database should have its own section
+        db_section = content_area.query(f".db-section-{db_name.lower()}")
+        assert len(db_section) > 0, f"Database section for {db_name} not found"
+
+
+@pytest.mark.asyncio
+async def test_individual_database_vacuum(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
+    """Test vacuum operation on individual databases."""
+    # Find the vacuum button for ChaChaNotes
+    vacuum_button = settings_window.query_one("#vacuum-chachanotes", Button)
+    assert vacuum_button is not None
+    
+    # Simulate button press
+    await settings_window.on_button_pressed(Button.Pressed(vacuum_button))
+    
+    # Check that notification was called
+    mock_app_instance.notify.assert_called()
+    # Should notify about starting vacuum
+    calls = mock_app_instance.notify.call_args_list
+    assert any("Starting vacuum" in str(call) for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_individual_database_backup(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup, tmp_path):
+    """Test backup operation on individual databases."""
+    # Mock the backup directory
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        # Find the backup button for Media database
+        backup_button = settings_window.query_one("#backup-media", Button)
+        assert backup_button is not None
+        
+        # Simulate button press
+        await settings_window.on_button_pressed(Button.Pressed(backup_button))
+        
+        # Check that a worker was started
+        mock_app_instance.run_worker.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_database_restore_with_file_picker(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
+    """Test restore operation with file picker dialog."""
+    # Find the restore button for Prompts database
+    restore_button = settings_window.query_one("#restore-prompts", Button)
+    assert restore_button is not None
+    
+    # Mock the file picker dialog
+    with patch("tldw_chatbook.UI.Tools_Settings_Window.ToolsSettingsWindow.push_screen") as mock_push_screen:
+        # Simulate button press
+        await settings_window.on_button_pressed(Button.Pressed(restore_button))
+        
+        # Verify file picker was pushed
+        mock_push_screen.assert_called_once()
+        # The first argument should be the FilePickerDialog instance
+        args = mock_push_screen.call_args[0]
+        assert len(args) > 0
+
+
+@pytest.mark.asyncio
+async def test_database_integrity_check(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
+    """Test database integrity check operation."""
+    # Find the check button for RAG database
+    check_button = settings_window.query_one("#check-rag", Button)
+    assert check_button is not None
+    
+    # Simulate button press
+    await settings_window.on_button_pressed(Button.Pressed(check_button))
+    
+    # Check that notification was called
+    mock_app_instance.notify.assert_called()
+    # Should notify about checking integrity
+    calls = mock_app_instance.notify.call_args_list
+    assert any("Checking" in str(call) for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_all_databases_operations(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
+    """Test operations on all databases at once."""
+    # Find the "All Databases" section
+    all_db_section = settings_window.query_one(".db-section-all")
+    assert all_db_section is not None
+    
+    # Test vacuum all
+    vacuum_all_button = settings_window.query_one("#vacuum-all", Button)
+    assert vacuum_all_button is not None
+    
+    await settings_window.on_button_pressed(Button.Pressed(vacuum_all_button))
+    
+    # Should have multiple notifications (one per database)
+    assert mock_app_instance.notify.call_count >= 6  # At least 6 databases
+
+
+@pytest.mark.asyncio
+async def test_database_status_display(settings_window: ToolsSettingsWindow, mock_database_path_lookup):
+    """Test that database status information is displayed correctly."""
+    # Check each database status container
+    database_names = ["chachanotes", "media", "prompts", "evals", "rag", "subscriptions"]
+    
+    for db_name in database_names:
+        status_container = settings_window.query_one(f"#db-status-{db_name}")
+        assert status_container is not None
+        
+        # Should contain schema version and file size
+        status_text = status_container.query_one(Static)
+        assert "Schema" in status_text.renderable or "Version" in status_text.renderable
+
+
+@pytest.mark.asyncio
+async def test_create_chatbook_button(settings_window: ToolsSettingsWindow, mock_app_instance):
+    """Test that chatbook creation button exists and works."""
+    # Find the create chatbook button
+    create_button = settings_window.query_one("#create-chatbook", Button)
+    assert create_button is not None
+    assert "Create Chatbook" in create_button.label.plain
+    
+    # Mock the chatbook creation window
+    with patch("tldw_chatbook.UI.Tools_Settings_Window.ChatbookCreationWindow") as mock_window:
+        await settings_window.on_button_pressed(Button.Pressed(create_button))
+        
+        # Should push the chatbook creation screen
+        mock_app_instance.push_screen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_import_chatbook_button(settings_window: ToolsSettingsWindow, mock_app_instance):
+    """Test that chatbook import button exists and works."""
+    # Find the import chatbook button
+    import_button = settings_window.query_one("#import-chatbook", Button)
+    assert import_button is not None
+    assert "Import Chatbook" in import_button.label.plain
+    
+    # Mock file picker for import
+    with patch("tldw_chatbook.UI.Tools_Settings_Window.ToolsSettingsWindow.push_screen") as mock_push_screen:
+        await settings_window.on_button_pressed(Button.Pressed(import_button))
+        
+        # Should push the file picker
+        mock_push_screen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_database_error_handling(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
+    """Test error handling for database operations."""
+    # Mock a database operation to fail
+    with patch("sqlite3.connect", side_effect=sqlite3.Error("Database is locked")):
+        # Try to vacuum a database
+        vacuum_button = settings_window.query_one("#vacuum-chachanotes", Button)
+        await settings_window.on_button_pressed(Button.Pressed(vacuum_button))
+        
+        # Should show error notification
+        mock_app_instance.notify.assert_called()
+        calls = mock_app_instance.notify.call_args_list
+        assert any("error" in str(call).lower() for call in calls)
 

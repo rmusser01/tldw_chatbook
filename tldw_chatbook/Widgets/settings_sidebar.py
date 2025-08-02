@@ -163,6 +163,16 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                     classes="attach-button-toggle",
                     tooltip="Show/hide the file attachment button in chat"
                 )
+                
+                # Show dictation button toggle
+                show_mic_button = get_cli_setting("chat.voice", "show_mic_button", True)
+                yield Checkbox(
+                    "Show Dictation button",
+                    id="chat-show-dictation-button-checkbox",
+                    value=show_mic_button,
+                    classes="dictation-button-toggle",
+                    tooltip="Show/hide the dictation/microphone button in chat"
+                )
             
             # User Identifier for personalization
             yield Static("User Identifier", classes="sidebar-label")

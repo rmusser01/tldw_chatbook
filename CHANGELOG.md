@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial features pending documentation
 
+## [0.1.5.1] - 2025-07-27
+### Fixed
+- Stuff
+
+### Added
+- Subscriptions
+- Chatbooks
+
+### Fixed
+- Stuff
+
+### Broken
+- Subscriptions
+- Chatbooks
+- Dictation
+- Study Tab
+- Coding Tab
+- Embeddings windows
+
 ## [0.1.5.0] - 2025-07-27
 ### Fixed
 - Stuff
@@ -23,7 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Model download via huggingface interface
   - Model view + delete of models downloaded via HF
   - Logits + Logprobs in evals
-  - 
 
 
 ## [0.1.4.1] - 2025-07-27

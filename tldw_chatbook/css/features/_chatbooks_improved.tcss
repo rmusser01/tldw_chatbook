@@ -1,0 +1,251 @@
+/* _chatbooks_improved.tcss */
+/* Enhanced styles for improved chatbook functionality */
+
+/* Textual doesn't support @keyframes - using static hover effects instead */
+
+/* Main Window Enhancements */
+ChatbooksWindowImproved {
+    layout: vertical;
+    height: 100%;
+    background: $background;
+}
+
+/* Header with gradient effect */
+ChatbooksWindowImproved .chatbooks-header {
+    height: auto;
+    background: $boost;
+    padding: 2 3;
+    border-bottom: thick $background-darken-1;
+}
+
+ChatbooksWindowImproved .chatbooks-title {
+    text-style: bold;
+    text-align: center;
+    color: $primary;
+    font-size: 140%;
+    margin-bottom: 1;
+}
+
+/* Quick action cards with better hover */
+ChatbooksWindowImproved .action-card {
+    padding: 2;
+    background: $boost;
+    border: round $background-darken-1;
+    align: center middle;
+    height: 8;
+}
+
+ChatbooksWindowImproved .action-card:hover {
+    background: $primary 15%;
+    border: round $primary 50%;
+    offset: 0 -1;
+}
+
+ChatbooksWindowImproved .action-card:hover .action-icon {
+    color: $primary-lighten-1;
+}
+
+/* Search bar styling */
+ChatbooksWindowImproved .search-input {
+    background: $boost;
+    border: round $background-darken-1;
+    padding: 0 1;
+}
+
+ChatbooksWindowImproved .search-input:focus {
+    border: round $primary;
+    background: $boost;
+}
+
+/* Enhanced chatbook cards */
+ChatbookCard {
+    height: 10;
+    background: $boost;
+    border: round $background-darken-1;
+    padding: 1 2;
+    margin: 0 1 1 1;
+}
+
+ChatbookCard:hover {
+    background: $primary 10%;
+    border: round $primary 40%;
+    offset: 0 -1;
+}
+
+ChatbookCard .chatbook-card-title {
+    text-style: bold;
+    color: $text;
+    margin-bottom: 0;
+}
+
+ChatbookCard .chatbook-card-description {
+    color: $text-muted;
+    text-overflow: ellipsis;
+    max-height: 2;
+    margin: 0 0 1 0;
+}
+
+ChatbookCard .chatbook-card-stats {
+    color: $primary;
+    margin: 1 0;
+}
+
+ChatbookCard .chatbook-card-meta {
+    layout: horizontal;
+    height: 1;
+    margin-top: 1;
+}
+
+/* Empty state improvements */
+EmptyStateWidget {
+    align: center middle;
+    height: 100%;
+    padding: 4;
+    max-width: 80;
+    margin: 0 auto;
+}
+
+EmptyStateWidget .empty-state-icon {
+    text-align: center;
+    color: $primary;
+    text-style: bold;
+    margin-bottom: 2;
+}
+
+
+EmptyStateWidget .empty-state-title {
+    text-align: center;
+    text-style: bold;
+    color: $text;
+    margin-bottom: 1;
+}
+
+EmptyStateWidget .empty-state-description {
+    text-align: center;
+    color: $text-muted;
+    margin-bottom: 3;
+    max-width: 60;
+}
+
+/* View toggle buttons */
+ChatbooksWindowImproved .view-toggle {
+    margin-left: 1;
+    min-width: 10;
+    height: 3;
+}
+
+ChatbooksWindowImproved .view-toggle:hover {
+    background: $primary 20%;
+}
+
+/* Grid layout for chatbooks */
+ChatbooksWindowImproved .chatbooks-grid {
+    layout: grid;
+    grid-size: 3;
+    grid-gutter: 1 2;
+    height: auto;
+    padding: 1;
+}
+
+/* Responsive adjustments - apply these classes dynamically based on terminal size */
+.chatbooks-medium ChatbooksWindowImproved .chatbooks-grid {
+    grid-size: 2;
+}
+
+.chatbooks-small ChatbooksWindowImproved .chatbooks-grid {
+    grid-size: 1;
+}
+
+.chatbooks-small ChatbooksWindowImproved .quick-actions-grid {
+    grid-size: 2 2;
+}
+
+/* Stats bar at bottom */
+ChatbooksWindowImproved .stats-bar {
+    dock: bottom;
+    height: 3;
+    background: $panel;
+    border-top: solid $background-darken-1;
+    padding: 1;
+    align: center middle;
+}
+
+ChatbooksWindowImproved .stats-text {
+    text-align: center;
+    color: $text-muted;
+}
+
+/* Section headers */
+ChatbooksWindowImproved .section-header {
+    layout: horizontal;
+    height: 3;
+    margin-bottom: 1;
+    padding: 0 1;
+    align: left middle;
+}
+
+ChatbooksWindowImproved .section-title {
+    text-style: bold;
+    color: $primary;
+    width: 1fr;
+}
+
+/* List view styling */
+ChatbooksWindowImproved .chatbooks-list {
+    height: 100%;
+    padding: 1;
+    background: $background;
+}
+
+ChatbooksWindowImproved .chatbooks-list ListItem {
+    padding: 1;
+    margin: 0 0 1 0;
+    background: $boost;
+    border: round $background-darken-1;
+}
+
+ChatbooksWindowImproved .chatbooks-list ListItem:hover {
+    background: $primary 10%;
+    border: round $primary 40%;
+}
+
+/* Quick actions hover effects */
+#create-action:hover .action-icon {
+    color: $primary-lighten-1;
+}
+
+#import-action:hover .action-icon {
+    color: $primary-lighten-1;
+}
+
+#templates-action:hover .action-icon {
+    color: $primary-lighten-1;
+}
+
+#manage-action:hover .action-icon {
+    color: $primary-lighten-1;
+}
+
+/* Enhanced button styles */
+ChatbooksWindowImproved Button {
+    background: $boost;
+}
+
+ChatbooksWindowImproved Button:hover {
+    offset: 0 -1;
+}
+
+ChatbooksWindowImproved Button.primary {
+    background: $primary;
+    color: $text;
+}
+
+ChatbooksWindowImproved Button.primary:hover {
+    background: $primary-lighten-1;
+}
+
+/* Loading states */
+.loading-spinner {
+    text-align: center;
+    color: $primary;
+}

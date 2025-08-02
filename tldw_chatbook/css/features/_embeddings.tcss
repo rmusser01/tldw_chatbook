@@ -96,11 +96,11 @@ EmbeddingsWindow {
 .embeddings-form-title {
     text-style: bold;
     text-align: center;
-    background: $accent-darken-1;
+    background: $primary-darken-2;
     color: $text;
     padding: 0 1;
     margin-bottom: 1;
-    border: round $accent;
+    border: round $primary-darken-1;
     width: 100%;
     height: 3;
 }
@@ -190,15 +190,25 @@ EmbeddingsWindow {
     margin-bottom: 1;
 }
 
-/* Action buttons container no longer used - buttons yielded directly */
+/* Action buttons container */
+.embeddings-action-container {
+    width: 100%;
+    padding: 1 2;
+    margin-top: 2;
+    margin-bottom: 2;
+}
 
-.embeddings-action-button {
-    margin: 1 2;
-    min-width: 30;
+.embeddings-button-row {
+    layout: horizontal;
+    align: center middle;
     width: 100%;
     height: 3;
-    dock: none;
-    align: center middle;
+}
+
+.embeddings-action-button {
+    margin: 0 1;
+    min-width: 20;
+    height: 3;
 }
 
 .embeddings-status-output {
@@ -219,6 +229,21 @@ EmbeddingsWindow {
 
 #embeddings-progress-container {
     display: none;
+}
+
+.embeddings-progress-container {
+    display: none;
+    width: 100%;
+    padding: 1;
+    background: $surface;
+    border: round $primary;
+    margin-top: 2;
+}
+
+.embeddings-progress-label {
+    text-align: center;
+    margin-bottom: 1;
+    text-style: bold;
 }
 
 /* Mode-specific containers */
@@ -449,6 +474,78 @@ EmbeddingsManagementWindow {
     background: $surface;
 }
 
+/* ========================================
+ * New UI Elements for Enhanced Embeddings
+ * ======================================== */
+
+/* Help text styling */
+.embeddings-help-text {
+    color: $text-muted;
+    text-style: italic;
+    margin: 1 0;
+    padding: 0 2;
+}
+
+/* Warning messages */
+.embeddings-warning {
+    background: $warning-lighten-3;
+    color: $warning-darken-2;
+    padding: 1;
+    margin: 1;
+    border: round $warning;
+    text-align: center;
+}
+
+/* Info messages */
+.embeddings-info {
+    background: $primary-lighten-3;
+    color: $primary-darken-2;
+    padding: 1;
+    margin: 1;
+    border: round $primary;
+    text-align: center;
+}
+
+/* Mode switcher content areas */
+#embeddings-mode-switcher {
+    width: 100%;
+    min-height: 10;
+}
+
+/* Specific mode containers */
+#mode-search, #mode-specific, #mode-all, #mode-keywords {
+    width: 100%;
+    padding: 1;
+}
+
+/* Results textarea for search mode */
+.embeddings-db-results {
+    min-height: 8;
+    max-height: 15;
+    width: 100%;
+    border: round $primary;
+    background: $surface;
+    padding: 1;
+    margin-top: 1;
+}
+
+/* RadioSet for keyword matching */
+#embeddings-keyword-match {
+    layout: vertical;
+    padding: 0 1;
+    width: 100%;
+}
+
+#embeddings-keyword-match RadioButton {
+    margin: 1 0;
+}
+
+/* Collection description textarea height control */
+#embeddings-collection-description {
+    max-height: 5;
+    min-height: 3;
+}
+
 /* Enhanced toggle button with better visibility */
 .embeddings-toggle-button-enhanced {
     width: auto;
@@ -590,10 +687,17 @@ EmbeddingsCreationContent {
 }
 
 /* When used within search view */
-#search-view-embeddings-create EmbeddingsCreationContent {
-    display: block;
+#search-view-embeddings-create {
+    display: none;  /* Hidden by default, shown by button handler */
     height: 100%;
     width: 100%;
+}
+
+#search-view-embeddings-create EmbeddingsCreationContent {
+    display: block !important;
+    height: 100%;
+    width: 100%;
+    background: $surface;  /* Add background to ensure visibility */
 }
 
 /* Tabbed content container */
@@ -606,6 +710,20 @@ EmbeddingsCreationContent {
 #embeddings-tabs TabPane {
     height: 100%;
     overflow-y: auto;
+}
+
+/* Ensure VerticalScroll inside TabPane is visible */
+#embeddings-tabs TabPane VerticalScroll {
+    height: 100%;
+    width: 100%;
+}
+
+/* Explicitly set tab scroll visibility */
+.embeddings-tab-scroll {
+    height: 100%;
+    width: 100%;
+    overflow-y: auto;
+    padding: 1 2;
 }
 
 /* Progress section styling */
@@ -881,6 +999,17 @@ CollectionListItem.-selected {
     margin-top: 1;
 }
 
+/* Debug styles */
+.debug-message {
+    background: $warning;
+    color: $text;
+    padding: 1;
+    margin: 1;
+    border: solid $warning-darken-1;
+    text-align: center;
+    text-style: bold;
+}
+
 /* ========================================
  * Enhanced Visual Design
  * ======================================== */
@@ -920,10 +1049,7 @@ Checkbox:focus {
 }
 
 /* Enhanced hover states */
-Button:hover {
-    background: $primary-lighten-1;
-    transition: background 0.2s;
-}
+/* Button:hover handled in components/_buttons.tcss to fix persistent hover issue */
 
 Select:hover {
     border: solid $primary-lighten-1;

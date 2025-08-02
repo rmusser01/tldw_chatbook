@@ -1202,6 +1202,13 @@ class EvalsWindow(Container):
                 Static(f"Error parsing logprobs: {str(e)}", classes="error-text")
             )
 
+    # --- This method is the key to fixing the crash ---
+    def activate_initial_view(self) -> None:
+        if not self.evals_active_view:
+            initial_view = EVALS_VIEW_SETUP
+            logger.info(f"EvalsWindow: Activating initial view '{initial_view}'.")
+            self.evals_active_view = initial_view  # Triggers watcher
+
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.info(f"EvalsWindow on_mount: UI composed")

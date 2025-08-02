@@ -7,7 +7,7 @@
 #app-titlebar {
     dock: top;
     height: 1;                 /* single line */
-    background: $accent;       /* or any colour */
+    background: $panel;        /* Use panel background color */
     color: $text;
     text-align: center;
     text-style: bold;

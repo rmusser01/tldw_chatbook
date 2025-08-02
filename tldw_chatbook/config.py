@@ -1316,6 +1316,7 @@ CONFIG_TOML_CONTENT = """
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
 default_theme = "textual-dark"  # Default theme on startup ("textual-dark", "textual-light", or any theme name from themes.py)
+use_dropdown_navigation = false  # Use dropdown instead of horizontal tabs (true/false)
 palette_theme_limit = 1  # Maximum number of themes to show in command palette (0 = show all)
 log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 users_name = "default_user" # Default user name for the TUI
@@ -2502,6 +2503,44 @@ check_frequency = 86400  # Daily
 change_threshold = 0.05  # 5% change threshold
 priority = 3
 tags = ["docs", "reference"]
+
+# GitHub configuration for repository browsing
+[github]
+# Personal access token for accessing private repositories
+# Create a token at: https://github.com/settings/tokens
+# Required scopes: repo (for private repos), public_repo (for public only)
+api_token = ""  # Leave empty to only access public repositories
+api_token_env_var = "GITHUB_API_TOKEN"  # Environment variable to check first
+
+# Rate limiting settings
+enable_rate_limit_handling = true  # Automatically handle rate limit responses
+cache_ttl_seconds = 300  # Cache API responses for 5 minutes
+max_retries = 3  # Maximum retries for failed requests
+
+# Default behavior
+default_branch = "main"  # Default branch to use if not specified
+show_hidden_files = false  # Show files starting with . (except .gitignore)
+respect_gitignore = true  # Respect .gitignore rules when displaying files
+
+# Performance settings
+lazy_load_tree = true  # Load repository tree on-demand
+max_tree_depth = 10  # Maximum depth for recursive tree loading
+batch_file_requests = true  # Batch multiple file content requests
+max_concurrent_requests = 5  # Maximum concurrent API requests
+
+# UI preferences
+auto_expand_small_folders = true  # Auto-expand folders with < 5 items
+highlight_binary_files = true  # Visually distinguish binary files
+show_file_sizes = true  # Display file sizes in the tree
+default_preview_language = "auto"  # Language for syntax highlighting
+
+# Export settings
+default_export_format = "compilation"  # Default format: compilation, zip, markdown
+include_file_metadata = false  # Include metadata in exports
+max_export_size_mb = 100  # Maximum size for exports in MB
+
+# Selection profiles directory
+profiles_directory = "~/.config/tldw_cli/github_profiles"  # Where to store selection profiles
 """
 
 try:

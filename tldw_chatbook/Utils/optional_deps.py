@@ -78,6 +78,14 @@ DEPENDENCIES_AVAILABLE = {
     'pillow': False,
     'textual_image': False,
     'rich_pixels': False,
+    # Mindmap
+    'mindmap': False,
+    'anytree': False,
+    # Subscriptions
+    'subscriptions': False,
+    'markdown': False,
+    'schedule': False,
+    'feedparser': False,
 }
 
 # Store actual modules for conditional use
@@ -568,6 +576,48 @@ def check_mcp_deps() -> bool:
     
     return mcp_available
 
+
+def check_mindmap_available() -> bool:
+    """Check if mindmap dependencies are available.
+    
+    Since anytree is in base dependencies, mindmap is always available.
+    This function exists for consistency with other optional features.
+    """
+    # anytree is in base dependencies, so always available
+    anytree_available = check_dependency('anytree', 'mindmap')
+    DEPENDENCIES_AVAILABLE['mindmap'] = anytree_available
+    
+    if anytree_available:
+        logger.info("✅ Mindmap dependencies found.")
+    else:
+        logger.warning("⚠️ Mindmap dependencies missing.")
+    
+    return anytree_available
+
+def check_subscriptions_deps() -> bool:
+    """Check dependencies needed for subscriptions functionality."""
+    markdown_available = check_dependency('markdown')
+    schedule_available = check_dependency('schedule')
+    feedparser_available = check_dependency('feedparser')
+    
+    # All three are needed for subscriptions to work properly
+    subscriptions_available = markdown_available and schedule_available and feedparser_available
+    DEPENDENCIES_AVAILABLE['subscriptions'] = subscriptions_available
+    
+    if subscriptions_available:
+        logger.info("✅ Subscriptions dependencies found.")
+    else:
+        missing = []
+        if not markdown_available:
+            missing.append("markdown")
+        if not schedule_available:
+            missing.append("schedule")
+        if not feedparser_available:
+            missing.append("feedparser")
+        logger.warning(f"⚠️ Subscriptions dependencies missing: {', '.join(missing)}")
+    
+    return subscriptions_available
+
 def create_unavailable_feature_handler(feature_name: str, suggestion: str = "") -> Callable:
     """
     Create a function that raises an informative error when a feature is unavailable.
@@ -661,6 +711,14 @@ def reset_dependency_checks():
         'pillow': False,
         'textual_image': False,
         'rich_pixels': False,
+        # Mindmap
+        'mindmap': False,
+        'anytree': False,
+        # Subscriptions
+        'subscriptions': False,
+        'markdown': False,
+        'schedule': False,
+        'feedparser': False,
     }
     MODULES = {}
     logger.debug("Reset dependency checks")
@@ -696,6 +754,8 @@ def initialize_dependency_checks():
     check_stt_deps()
     check_image_processing_deps()
     check_mcp_deps()
+    check_mindmap_available()
+    check_subscriptions_deps()
     
     # Log summary
     enabled_features = [name for name, available in DEPENDENCIES_AVAILABLE.items() if available]

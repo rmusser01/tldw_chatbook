@@ -1,0 +1,112 @@
+/* ========================================
+ * FEATURES: Coding Window
+ * ======================================== 
+ * Styles for the coding tab and its components
+ * Includes sidebar navigation and content areas
+ * ======================================== */
+
+/* Main container */
+CodingWindow {
+    layout: horizontal;
+    height: 100%;
+    width: 100%;
+}
+
+/* Navigation pane (left sidebar) */
+.coding-nav-pane {
+    dock: left;
+    width: 25%;
+    min-width: 20;
+    max-width: 40;
+    background: $boost;
+    padding: 1 2;
+    border-right: thick $background-darken-1;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.coding-nav-pane.collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    border-right: none !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    display: none;
+}
+
+/* Navigation buttons */
+.coding-nav-button {
+    width: 100%;
+    height: 3;
+    margin: 1 0;
+    padding: 0 2;
+    text-align: left;
+    background: $surface;
+}
+
+.coding-nav-button:hover {
+    background: $primary;
+}
+
+.coding-nav-button:focus {
+    background: $primary-lighten-1;
+}
+
+/* Content pane */
+.coding-content-pane {
+    height: 100%;
+    width: 100%;
+    padding: 2;
+    background: $background;
+}
+
+/* Sidebar toggle button */
+#coding-sidebar-toggle-button {
+    dock: left;
+    width: 3;
+    height: 3;
+    margin: 0 1 0 0;
+    padding: 0;
+    text-align: center;
+    background: $surface;
+}
+
+#coding-sidebar-toggle-button.collapsed {
+    dock: left;
+    margin-left: 0;
+}
+
+/* View areas */
+.coding-view-area {
+    height: 100%;
+    width: 100%;
+    padding: 1;
+}
+
+/* Pane titles */
+.coding-view-area .pane-title {
+    text-style: bold underline;
+    margin-bottom: 1;
+    width: 100%;
+    text-align: center;
+}
+
+/* Code repository specific */
+#coding-view-repo-copy-paste Vertical {
+    height: auto;
+    align: center middle;
+    padding: 2;
+}
+
+#coding-view-repo-copy-paste Label {
+    margin-bottom: 2;
+    text-align: center;
+}
+
+#open-repo-selector {
+    width: auto;
+    min-width: 30;
+    height: 3;
+    margin-top: 2;
+}

@@ -3501,6 +3501,47 @@ UPDATE db_schema_version
             logger.error(f"Database error fetching conversation ID {conversation_id}: {e}")
             raise
 
+    def get_conversation_by_name(self, conversation_name: str) -> List[Dict[str, Any]]:
+        """
+        Retrieves all conversations with the specified name.
+        
+        Only non-deleted conversations are returned.
+        
+        Args:
+            conversation_name: The name of the conversation.
+            
+        Returns:
+            A list of dictionaries containing the conversations' data.
+            Returns an empty list if no matching conversations are found.
+            
+        Raises:
+            CharactersRAGDBError: For database errors during fetching.
+        """
+        start_time = time.time()
+        query = "SELECT * FROM conversations WHERE conversation_name = ? AND deleted = 0 ORDER BY created_at DESC"
+        try:
+            cursor = self.execute_query(query, (conversation_name,))
+            rows = cursor.fetchall()
+            results = [dict(row) for row in rows]
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "get_by_name",
+                "found": "true" if results else "false"
+            })
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "get_by_name",
+                "status": "success",
+                "found": "true" if results else "false",
+                "count": str(len(results))
+            })
+            
+            return results
+        except CharactersRAGDBError as e:
+            logger.error(f"Database error fetching conversations by name {conversation_name}: {e}")
+            raise
+
     def get_conversations_for_character(self, character_id: int, limit: int = 50, offset: int = 0) -> List[
         Dict[str, Any]]:
         """
@@ -5076,6 +5117,24 @@ UPDATE db_schema_version
     def get_note_by_id(self, note_id: str) -> Optional[Dict[str, Any]]:
         query = "SELECT * FROM notes WHERE id = ? AND deleted = 0"
         cursor = self.execute_query(query, (note_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    
+    def get_note_by_title(self, title: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves a specific note by its title.
+        
+        Only non-deleted notes are returned.
+        
+        Args:
+            title: The title of the note.
+            
+        Returns:
+            A dictionary containing the note's data if found and not deleted,
+            otherwise None.
+        """
+        query = "SELECT * FROM notes WHERE title = ? AND deleted = 0"
+        cursor = self.execute_query(query, (title,))
         row = cursor.fetchone()
         return dict(row) if row else None
 

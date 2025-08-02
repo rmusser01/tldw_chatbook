@@ -3,10 +3,12 @@
 Reusable form components for standardized UI layouts.
 """
 
-from typing import Optional, List, Tuple, Any
+from typing import Optional, List, Tuple, Any, Callable
+from enum import Enum
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, Container
 from textual.widgets import Label, Input, TextArea, Select, Checkbox, Button, Collapsible
+from textual.widget import Widget
 
 
 def create_form_field(
@@ -173,3 +175,125 @@ def create_status_area(
     area.styles.max_height = max_height
     area.styles.height = "auto"
     yield area
+
+
+# Additional form components for SubscriptionWindow compatibility
+
+class FormField(Container):
+    """A form field container that yields a label and a widget."""
+    
+    def __init__(
+        self,
+        label: str,
+        widget: Widget,
+        required: bool = False,
+        **kwargs
+    ):
+        """
+        Initialize a form field.
+        
+        Args:
+            label: The field label text
+            widget: The form widget (Input, Select, TextArea, etc.)
+            required: Whether the field is required
+            **kwargs: Additional arguments for the container
+        """
+        super().__init__(**kwargs)
+        self.label = label
+        self.widget = widget
+        self.required = required
+    
+    def compose(self) -> ComposeResult:
+        """Compose the form field."""
+        label_text = f"{self.label}*" if self.required else self.label
+        yield Label(f"{label_text}:", classes="form-field-label")
+        yield self.widget
+
+
+class FormFieldSet(Container):
+    """A collapsible container for grouping form fields."""
+    
+    def __init__(
+        self,
+        title: str,
+        collapsed: bool = False,
+        **kwargs
+    ):
+        """
+        Initialize a form field set.
+        
+        Args:
+            title: The title of the field set
+            collapsed: Whether to start collapsed
+            **kwargs: Additional arguments for the container
+        """
+        super().__init__(**kwargs)
+        self.title = title
+        self.collapsed = collapsed
+        self._content_container = Vertical(classes="form-fieldset-content")
+    
+    def compose(self) -> ComposeResult:
+        """Compose the field set with collapsible behavior."""
+        # For now, just use a simple container with a title
+        # Can be enhanced later to add collapsible behavior
+        yield Label(self.title, classes="form-fieldset-title")
+        yield self._content_container
+    
+    def __enter__(self):
+        """Context manager entry."""
+        return self._content_container
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        pass
+    
+    def add_field(self, field: FormField) -> None:
+        """Add a field to the field set."""
+        self._content_container.mount(field)
+
+
+class FormSubmitButton(Button):
+    """A styled submit button for forms."""
+    
+    def __init__(self, label: str = "Submit", **kwargs):
+        """Initialize a form submit button."""
+        kwargs.setdefault("variant", "primary")
+        kwargs.setdefault("classes", "form-submit-button")
+        super().__init__(label, **kwargs)
+
+
+class ValidationStatus(Enum):
+    """Validation status enum."""
+    VALID = "valid"
+    INVALID = "invalid"
+    PENDING = "pending"
+
+
+def form_validator(func: Callable) -> Callable:
+    """
+    Decorator for form validation functions.
+    Currently a no-op placeholder.
+    """
+    return func
+
+
+class FormBuilder:
+    """Utility class for building forms with consistent layout."""
+    
+    @staticmethod
+    def create_form_field(label: str, widget: Widget, required: bool = False, **kwargs) -> FormField:
+        """Create a form field with label and widget."""
+        return FormField(label, widget, required, **kwargs)
+    
+    @staticmethod
+    def create_field_set(title: str, fields: List[FormField], **kwargs) -> FormFieldSet:
+        """Create a collapsible field set."""
+        field_set = FormFieldSet(title, **kwargs)
+        for field in fields:
+            field_set.add_field(field)
+        return field_set
+    
+    @staticmethod
+    def add_field(container: Container, field: FormField) -> None:
+        """Add a field to a container."""
+        container.mount(field)

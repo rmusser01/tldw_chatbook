@@ -1,0 +1,636 @@
+# test_chatbook_ui_integration.py
+# Description: UI integration tests for chatbook screens and wizards
+#
+"""
+Chatbook UI Integration Tests
+-----------------------------
+
+Tests for Textual UI components including wizards and windows.
+"""
+
+import pytest
+import asyncio
+import json
+import zipfile
+from pathlib import Path
+from datetime import datetime
+from unittest.mock import Mock, MagicMock, patch, AsyncMock
+from typing import Dict, Any, List
+
+from textual.app import App
+from textual.widgets import Button, Input, Tree, Static, Checkbox, RadioSet
+from textual.testing import AppTest
+
+from tldw_chatbook.UI.Chatbooks_Window import ChatbooksWindow
+from tldw_chatbook.UI.Wizards.ChatbookCreationWizard import (
+    ChatbookCreationWizard, SelectionStep, MetadataStep, 
+    OptionsStep, ReviewStep, ProgressStep
+)
+from tldw_chatbook.UI.Wizards.ChatbookImportWizard import (
+    ChatbookImportWizard, FileSelectionStep, PreviewStep,
+    ConflictResolutionStep, ImportOptionsStep, ImportProgressStep
+)
+from tldw_chatbook.UI.Wizards.SmartContentTree import SmartContentTree
+from tldw_chatbook.UI.Wizards.ChatbookExportManagementWindow import (
+    ChatbookExportManagementWindow
+)
+from tldw_chatbook.UI.Wizards.ChatbookTemplatesWindow import (
+    ChatbookTemplatesWindow
+)
+from tldw_chatbook.Chatbooks.chatbook_models import (
+    ContentType, ContentItem, ChatbookManifest, ChatbookVersion
+)
+from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
+from Tests.Chatbooks.conftest import MockWizardApp
+from Tests.Chatbooks.factories import (
+    CharacterFactory, ConversationFactory, NoteFactory,
+    MediaFactory, PromptFactory, ManifestFactory
+)
+
+
+class MockTldwApp(App):
+    """Mock app for testing."""
+    
+    def __init__(self, config_data: Dict[str, Any]):
+        super().__init__()
+        self.config_data = config_data
+        self.notifications = []
+        self.db_paths = {
+            'ChaChaNotes': ':memory:',
+            'Media': ':memory:',
+            'Prompts': ':memory:'
+        }
+    
+    def notify(self, message: str, severity: str = "info") -> None:
+        """Track notifications."""
+        self.notifications.append({
+            'message': message,
+            'severity': severity
+        })
+
+
+@pytest.mark.asyncio
+class TestChatbooksWindow:
+    """Test the main Chatbooks window."""
+    
+    async def test_window_initialization(self):
+        """Test ChatbooksWindow initialization."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            window = ChatbooksWindow(app)
+            await pilot.mount(window)
+            
+            # Check header is present
+            header = window.query_one(".chatbooks-header")
+            assert header is not None
+            
+            # Check title
+            title = window.query_one(".chatbooks-title")
+            assert "Chatbooks" in title.renderable
+            
+            # Check landing page is visible
+            landing = window.query_one(".chatbook-landing")
+            assert landing is not None
+    
+    async def test_create_button_launches_wizard(self):
+        """Test that create button launches creation wizard."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            window = ChatbooksWindow(app)
+            await pilot.mount(window)
+            
+            # Find and click create button
+            create_btn = window.query_one("#create-chatbook-btn", Button)
+            assert create_btn is not None
+            
+            with patch.object(window, 'start_creation_wizard') as mock_start:
+                await pilot.click(create_btn)
+                mock_start.assert_called_once()
+    
+    async def test_import_button_launches_wizard(self):
+        """Test that import button launches import wizard."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            window = ChatbooksWindow(app)
+            await pilot.mount(window)
+            
+            # Find and click import button
+            import_btn = window.query_one("#import-chatbook-btn", Button)
+            assert import_btn is not None
+            
+            with patch.object(window, 'start_import_wizard') as mock_start:
+                await pilot.click(import_btn)
+                mock_start.assert_called_once()
+
+
+@pytest.mark.asyncio
+class TestChatbookCreationWizard:
+    """Test the chatbook creation wizard."""
+    
+    async def test_wizard_initialization(self):
+        """Test wizard initializes with all steps."""
+        app = MockTldwApp({})
+        
+        wizard = ChatbookCreationWizard(app)
+        steps = wizard.create_steps()
+        
+        assert len(steps) == 5
+        assert isinstance(steps[0], SelectionStep)
+        assert isinstance(steps[1], MetadataStep)
+        assert isinstance(steps[2], OptionsStep)
+        assert isinstance(steps[3], ReviewStep)
+        assert isinstance(steps[4], ProgressStep)
+    
+    async def test_selection_step(self):
+        """Test content selection step."""
+        app = MockTldwApp({})
+        
+        # Mock database content
+        mock_conversations = [ConversationFactory.create() for _ in range(3)]
+        mock_notes = [NoteFactory.create() for _ in range(2)]
+        mock_characters = [CharacterFactory.create() for _ in range(2)]
+        
+        with patch('tldw_chatbook.UI.Wizards.ChatbookCreationWizard.CharactersRAGDB') as mock_db:
+            mock_db_instance = MagicMock()
+            mock_db_instance.get_all_conversations.return_value = mock_conversations
+            mock_db_instance.search_notes.return_value = mock_notes
+            mock_db_instance.list_character_cards.return_value = mock_characters
+            mock_db.return_value = mock_db_instance
+            
+            async with AppTest.create_app(app) as pilot:
+                wizard = ChatbookCreationWizard(app)
+                await pilot.mount(wizard)
+                
+                # Get selection step
+                selection_step = wizard.steps[0]
+                assert selection_step.config.title == "Select Content"
+                
+                # Check content tree is present
+                tree = selection_step.query_one(SmartContentTree)
+                assert tree is not None
+                
+                # Simulate selecting items
+                tree.selected_items = {
+                    ContentType.CONVERSATION: {"conv1", "conv2"},
+                    ContentType.NOTE: {"note1"}
+                }
+                
+                # Get step data
+                data = selection_step.get_step_data()
+                assert ContentType.CONVERSATION in data["selections"]
+                assert len(data["selections"][ContentType.CONVERSATION]) == 2
+    
+    async def test_metadata_step(self):
+        """Test metadata input step."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            wizard = ChatbookCreationWizard(app)
+            await pilot.mount(wizard)
+            
+            # Navigate to metadata step
+            wizard.current_step_index = 1
+            metadata_step = wizard.steps[1]
+            metadata_step.display = True
+            
+            # Find input fields
+            name_input = metadata_step.query_one("#chatbook-name", Input)
+            desc_input = metadata_step.query_one("#chatbook-description", Input)
+            tags_input = metadata_step.query_one("#chatbook-tags", Input)
+            
+            # Set values
+            name_input.value = "Test Chatbook"
+            desc_input.value = "A test description"
+            tags_input.value = "test, unit, wizard"
+            
+            # Get step data
+            data = metadata_step.get_step_data()
+            assert data["name"] == "Test Chatbook"
+            assert data["description"] == "A test description"
+            assert data["tags"] == ["test", "unit", "wizard"]
+    
+    async def test_wizard_completion(self):
+        """Test completing the wizard."""
+        app = MockTldwApp({})
+        
+        with patch('tldw_chatbook.UI.Wizards.ChatbookCreationWizard.ChatbookCreator') as mock_creator:
+            mock_creator_instance = MagicMock()
+            mock_creator_instance.create_chatbook.return_value = (
+                True, "Chatbook created successfully", {}
+            )
+            mock_creator.return_value = mock_creator_instance
+            
+            wizard = ChatbookCreationWizard(app)
+            
+            # Simulate wizard data
+            wizard.wizard_data = {
+                "selection": {
+                    "selections": {
+                        ContentType.CONVERSATION: ["conv1"],
+                        ContentType.NOTE: ["note1"]
+                    }
+                },
+                "metadata": {
+                    "name": "Test Export",
+                    "description": "Test",
+                    "tags": ["test"]
+                },
+                "options": {
+                    "include_media": True,
+                    "auto_include_deps": True
+                }
+            }
+            
+            # Complete wizard
+            result = await wizard.on_wizard_complete(wizard.wizard_data)
+            
+            assert result["success"] is True
+            mock_creator_instance.create_chatbook.assert_called_once()
+
+
+@pytest.mark.asyncio
+class TestChatbookImportWizard:
+    """Test the chatbook import wizard."""
+    
+    async def test_file_selection_step(self):
+        """Test file selection step."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            wizard = ChatbookImportWizard(app)
+            await pilot.mount(wizard)
+            
+            # Get file selection step
+            file_step = wizard.steps[0]
+            assert file_step.config.title == "Select Chatbook File"
+            
+            # Find file input
+            file_input = file_step.query_one("#import-file-path", Input)
+            assert file_input is not None
+            
+            # Set file path
+            file_input.value = "/path/to/chatbook.zip"
+            
+            # Get step data
+            data = file_step.get_step_data()
+            assert data["file_path"] == "/path/to/chatbook.zip"
+    
+    async def test_preview_step(self, tmp_path):
+        """Test preview step with valid chatbook."""
+        app = MockTldwApp({})
+        
+        # Create a test chatbook
+        test_chatbook = tmp_path / "test.zip"
+        manifest = ManifestFactory.create(name="Preview Test")
+        
+        with zipfile.ZipFile(test_chatbook, 'w') as zf:
+            zf.writestr('manifest.json', json.dumps(manifest.to_dict()))
+            zf.writestr('README.md', "# Preview Test")
+        
+        with patch('tldw_chatbook.UI.Wizards.ChatbookImportWizard.ChatbookImporter') as mock_importer:
+            mock_importer_instance = MagicMock()
+            mock_importer_instance.preview_chatbook.return_value = (manifest, None)
+            mock_importer.return_value = mock_importer_instance
+            
+            wizard = ChatbookImportWizard(app)
+            wizard.wizard_data["file_selection"] = {"file_path": str(test_chatbook)}
+            
+            # Create preview step
+            preview_step = wizard.steps[1]
+            
+            # Trigger preview loading
+            await preview_step.on_enter()
+            
+            # Check preview was loaded
+            assert hasattr(preview_step, '_manifest')
+            assert preview_step._manifest.name == "Preview Test"
+    
+    async def test_conflict_resolution_step(self):
+        """Test conflict resolution step."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            wizard = ChatbookImportWizard(app)
+            await pilot.mount(wizard)
+            
+            # Navigate to conflict step
+            wizard.current_step_index = 2
+            conflict_step = wizard.steps[2]
+            conflict_step.display = True
+            
+            # Find radio set
+            radio_set = conflict_step.query_one(RadioSet)
+            assert radio_set is not None
+            
+            # Select a resolution
+            radio_set.pressed_index = 1  # RENAME
+            
+            # Get step data
+            data = conflict_step.get_step_data()
+            assert data["resolution"] == ConflictResolution.RENAME
+    
+    async def test_import_completion(self, tmp_path):
+        """Test completing the import wizard."""
+        app = MockTldwApp({})
+        
+        # Create test chatbook
+        test_chatbook = tmp_path / "import.zip"
+        manifest = ManifestFactory.create()
+        
+        with zipfile.ZipFile(test_chatbook, 'w') as zf:
+            zf.writestr('manifest.json', json.dumps(manifest.to_dict()))
+        
+        with patch('tldw_chatbook.UI.Wizards.ChatbookImportWizard.ChatbookImporter') as mock_importer:
+            mock_importer_instance = MagicMock()
+            mock_importer_instance.import_chatbook.return_value = (True, "Import successful")
+            mock_importer.return_value = mock_importer_instance
+            
+            wizard = ChatbookImportWizard(app)
+            
+            # Simulate wizard data
+            wizard.wizard_data = {
+                "file_selection": {"file_path": str(test_chatbook)},
+                "conflict_resolution": {"resolution": ConflictResolution.SKIP},
+                "import_options": {
+                    "import_media": True,
+                    "prefix_imported": False
+                }
+            }
+            
+            # Store manifest
+            wizard._preview_manifest = manifest
+            
+            # Complete wizard
+            result = await wizard.on_wizard_complete(wizard.wizard_data)
+            
+            assert result["success"] is True
+            mock_importer_instance.import_chatbook.assert_called_once()
+
+
+@pytest.mark.asyncio
+class TestSmartContentTree:
+    """Test the SmartContentTree widget."""
+    
+    async def test_tree_initialization(self):
+        """Test tree initializes properly."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            tree = SmartContentTree()
+            await pilot.mount(tree)
+            
+            # Check search input
+            search = tree.query_one("#content-search", Input)
+            assert search is not None
+            
+            # Check filter button
+            filter_btn = tree.query_one("#filter-button", Button)
+            assert filter_btn is not None
+            
+            # Check tree widget
+            tree_widget = tree.query_one(Tree)
+            assert tree_widget is not None
+    
+    async def test_content_loading(self):
+        """Test loading content into tree."""
+        app = MockTldwApp({})
+        
+        # Mock database content
+        mock_content = {
+            ContentType.CONVERSATION: [
+                ContentItem("conv1", ContentType.CONVERSATION, "Conv 1"),
+                ContentItem("conv2", ContentType.CONVERSATION, "Conv 2")
+            ],
+            ContentType.NOTE: [
+                ContentItem("note1", ContentType.NOTE, "Note 1")
+            ]
+        }
+        
+        async with AppTest.create_app(app) as pilot:
+            tree = SmartContentTree()
+            await pilot.mount(tree)
+            
+            # Load content
+            await tree.load_content(mock_content)
+            
+            # Check tree has correct structure
+            tree_widget = tree.query_one(Tree)
+            
+            # Should have category nodes
+            assert len(tree_widget.root.children) >= 2
+    
+    async def test_search_functionality(self):
+        """Test search filters content."""
+        app = MockTldwApp({})
+        
+        mock_content = {
+            ContentType.NOTE: [
+                ContentItem("note1", ContentType.NOTE, "Python Tutorial"),
+                ContentItem("note2", ContentType.NOTE, "Java Guide"),
+                ContentItem("note3", ContentType.NOTE, "Python Reference")
+            ]
+        }
+        
+        async with AppTest.create_app(app) as pilot:
+            tree = SmartContentTree()
+            await pilot.mount(tree)
+            
+            await tree.load_content(mock_content)
+            
+            # Search for "Python"
+            search = tree.query_one("#content-search", Input)
+            search.value = "Python"
+            
+            # Trigger search
+            tree._filter_content()
+            
+            # Check filtered results
+            visible_items = tree._get_visible_items()
+            assert len(visible_items) == 2
+            assert all("Python" in item.title for item in visible_items)
+    
+    async def test_selection_tracking(self):
+        """Test item selection tracking."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            tree = SmartContentTree()
+            await pilot.mount(tree)
+            
+            # Simulate selecting items
+            tree._toggle_item_selection(ContentType.CONVERSATION, "conv1")
+            tree._toggle_item_selection(ContentType.CONVERSATION, "conv2")
+            tree._toggle_item_selection(ContentType.NOTE, "note1")
+            
+            # Check selections
+            assert "conv1" in tree.selected_items[ContentType.CONVERSATION]
+            assert "conv2" in tree.selected_items[ContentType.CONVERSATION]
+            assert "note1" in tree.selected_items[ContentType.NOTE]
+            
+            # Toggle one off
+            tree._toggle_item_selection(ContentType.CONVERSATION, "conv1")
+            assert "conv1" not in tree.selected_items[ContentType.CONVERSATION]
+
+
+@pytest.mark.asyncio
+class TestChatbookManagementWindows:
+    """Test management windows."""
+    
+    async def test_export_management_window(self):
+        """Test export management window."""
+        app = MockTldwApp({})
+        
+        # Mock some exports
+        mock_exports = [
+            {
+                'name': 'Export 1',
+                'path': '/path/to/export1.zip',
+                'created': datetime.now().isoformat(),
+                'size': 1024 * 1024  # 1MB
+            },
+            {
+                'name': 'Export 2',
+                'path': '/path/to/export2.zip',
+                'created': datetime.now().isoformat(),
+                'size': 2 * 1024 * 1024  # 2MB
+            }
+        ]
+        
+        with patch.object(ChatbookExportManagementWindow, '_load_exports', return_value=mock_exports):
+            async with AppTest.create_app(app) as pilot:
+                window = ChatbookExportManagementWindow(app)
+                await pilot.mount(window)
+                
+                # Check exports are displayed
+                export_items = window.query(".export-item")
+                assert len(export_items) == 2
+                
+                # Check action buttons
+                view_btn = window.query_one("#view-export", Button)
+                delete_btn = window.query_one("#delete-export", Button)
+                assert view_btn is not None
+                assert delete_btn is not None
+    
+    async def test_templates_window(self):
+        """Test templates selection window."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            window = ChatbookTemplatesWindow(app)
+            await pilot.mount(window)
+            
+            # Check templates are displayed
+            template_cards = window.query(".template-card")
+            assert len(template_cards) >= 3  # Should have several templates
+            
+            # Check select button
+            select_btn = window.query_one("#select-template", Button)
+            assert select_btn is not None
+            
+            # Simulate selecting a template
+            with patch.object(window, 'dismiss') as mock_dismiss:
+                # Click first template
+                await pilot.click(template_cards[0])
+                
+                # Click select
+                await pilot.click(select_btn)
+                
+                # Should dismiss with template data
+                mock_dismiss.assert_called_once()
+                result = mock_dismiss.call_args[0][0]
+                assert 'template_name' in result
+                assert 'selections' in result
+
+
+@pytest.mark.asyncio
+class TestWizardNavigation:
+    """Test wizard navigation and state management."""
+    
+    async def test_forward_navigation(self):
+        """Test navigating forward through wizard."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            wizard = ChatbookCreationWizard(app)
+            await pilot.mount(wizard)
+            
+            # Start at step 0
+            assert wizard.current_step_index == 0
+            
+            # Click next
+            next_btn = wizard.query_one("#wizard-next", Button)
+            
+            # Mock validation to pass
+            with patch.object(wizard.steps[0], 'validate', return_value=(True, None)):
+                await pilot.click(next_btn)
+            
+            # Should be at step 1
+            assert wizard.current_step_index == 1
+            
+            # First step should be hidden
+            assert wizard.steps[0].display is False
+            assert wizard.steps[1].display is True
+    
+    async def test_backward_navigation(self):
+        """Test navigating backward through wizard."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            wizard = ChatbookCreationWizard(app)
+            await pilot.mount(wizard)
+            
+            # Move to step 2
+            wizard.current_step_index = 2
+            wizard.steps[0].display = False
+            wizard.steps[1].display = False
+            wizard.steps[2].display = True
+            
+            # Click back
+            back_btn = wizard.query_one("#wizard-back", Button)
+            await pilot.click(back_btn)
+            
+            # Should be at step 1
+            assert wizard.current_step_index == 1
+            assert wizard.steps[1].display is True
+            assert wizard.steps[2].display is False
+    
+    async def test_validation_prevents_navigation(self):
+        """Test that validation failure prevents forward navigation."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            wizard = ChatbookCreationWizard(app)
+            await pilot.mount(wizard)
+            
+            # Mock validation to fail
+            with patch.object(
+                wizard.steps[0], 
+                'validate', 
+                return_value=(False, "Please select content")
+            ):
+                next_btn = wizard.query_one("#wizard-next", Button)
+                await pilot.click(next_btn)
+                
+                # Should still be at step 0
+                assert wizard.current_step_index == 0
+                
+                # Should have notification
+                assert len(app.notifications) == 1
+                assert "Please select content" in app.notifications[0]['message']
+    
+    async def test_cancel_dismisses_wizard(self):
+        """Test cancel button dismisses wizard."""
+        app = MockTldwApp({})
+        
+        async with AppTest.create_app(app) as pilot:
+            wizard = ChatbookCreationWizard(app)
+            await pilot.mount(wizard)
+            
+            with patch.object(wizard, 'dismiss') as mock_dismiss:
+                cancel_btn = wizard.query_one("#wizard-cancel", Button)
+                await pilot.click(cancel_btn)
+                
+                mock_dismiss.assert_called_once_with(None)

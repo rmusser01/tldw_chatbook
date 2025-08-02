@@ -23,6 +23,7 @@
     background: $background; /* Or your tab bar background */
     padding: 0 1; /* Padding for the overall bar */
     width: 100%;
+    margin-top: 1; /* Add buffer space above the tab bar */
 }
 
 /* The HorizontalScroll itself, which will contain the buttons */

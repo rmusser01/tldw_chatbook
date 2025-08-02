@@ -4,6 +4,23 @@
  * All button variants and states
  * ======================================== */
 
+/* Generic Button hover state */
+Button:hover {
+    background: $primary-lighten-1;
+}
+
+/* Generic Button focus state - use outline instead of background color change */
+Button:focus {
+    outline: solid $accent;
+    /* Don't change background on focus alone */
+}
+
+/* When both hovering AND focused */
+Button:focus:hover {
+    background: $primary-lighten-1;
+    outline: solid $accent;
+}
+
 /* microphone button – same box as Send but subdued colour */
 .mic-button {
     width: 1;

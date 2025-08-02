@@ -73,7 +73,7 @@ from .config import (
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
@@ -140,10 +140,12 @@ from .UI.Evals_Window_v3 import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Study_Window import StudyWindow
+from .UI.Chatbooks_Window import ChatbooksWindow
+from .UI.SubscriptionWindow import SubscriptionWindow
 from .UI.Tab_Bar import TabBar
+from .UI.Tab_Dropdown import TabDropdown, TabChanged
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
-from .UI.Subscription_Window import SubscriptionWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
@@ -154,6 +156,15 @@ from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_NAV_EMBEDDINGS_MANAGE
 )
 API_IMPORTS_SUCCESSFUL = True
+
+# Try to import SubscriptionWindow if dependencies are available
+SubscriptionWindow = None
+try:
+    from .UI.SubscriptionWindow import SubscriptionWindow
+    SUBSCRIPTIONS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Subscriptions feature unavailable: {e}")
+    SUBSCRIPTIONS_AVAILABLE = False
 #
 #######################################################################################################################
 #
@@ -809,7 +820,7 @@ class PlaceholderWindow(Container):
 class TldwCli(App[None]):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
     #TITLE = "🧠📝🔍  tldw CLI"
-    TITLE = f"{get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}{get_char(EMOJI_TITLE_NOTE, FALLBACK_TITLE_NOTE)}{get_char(EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH)}  tldw CLI"
+    TITLE = "tldw chatbook"
     # CSS file path
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
     BINDINGS = [
@@ -833,9 +844,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         *[f"ingest-view-tldw-api-{mt}" for mt in MEDIA_TYPES]
     ]
     ALL_MAIN_WINDOW_IDS = [ # Assuming these are your main content window IDs
-        "chat-window", "conversations_characters_prompts-window",
+        "chat-window", "conversations_characters_prompts-window", "notes-window",
         "ingest-window", "tools_settings-window", "llm_management-window",
-        "media-window", "search-window", "logs-window", "evals-window", "coding-window"
+        "media-window", "search-window", "logs-window", "stats-window", "evals-window", 
+        "coding-window", "stts-window", "study-window", "chatbooks-window"
     ]
 
     # Define reactive at class level with a placeholder default and type hint
@@ -1475,25 +1487,35 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Create the main UI widgets (called after splash screen or immediately if disabled)."""
         widgets = []
         
-        # Track individual component creation
-        component_start = time.perf_counter()
-        widgets.append(Header())
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-                     labels={"component": "header"}, 
-                     documentation="Time to create UI component")
+        # Header removed - no title/header bar needed
+        # component_start = time.perf_counter()
+        # widgets.append(Header())
+        # log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+        #              labels={"component": "header"}, 
+        #              documentation="Time to create UI component")
         
-        # Set up the main title bar with a static title
+        # Custom title bar with surface color
         component_start = time.perf_counter()
         widgets.append(TitleBar())
         log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
                      labels={"component": "titlebar"}, 
                      documentation="Time to create UI component")
 
-        # Use new TabBar widget
+        # Check config for navigation type
+        use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
         component_start = time.perf_counter()
-        widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
+        
+        if use_dropdown:
+            # Use dropdown navigation
+            widgets.append(TabDropdown(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
+            logger.info("Using dropdown navigation for tabs")
+        else:
+            # Use traditional tab bar
+            widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
+            logger.info("Using traditional tab bar navigation")
+            
         log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-                     labels={"component": "tabbar"}, 
+                     labels={"component": "navigation"}, 
                      documentation="Time to create UI component")
 
         # Content area - all windows
@@ -1517,12 +1539,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
             ("llm_management", LLMManagementWindow, "llm_management-window"),
             ("logs", LogsWindow, "logs-window"),
+            ("coding", CodingWindow, "coding-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
             ("study", StudyWindow, "study-window"),
-            ("subscriptions", SubscriptionWindow, "subscriptions-window"),
+            ("chatbooks", ChatbooksWindow, "chatbooks-window"),
         ]
+        
+        # Add subscriptions tab if available
+        if SUBSCRIPTIONS_AVAILABLE and SubscriptionWindow:
+            windows.append(("subscriptions", SubscriptionWindow, "subscriptions-window"))
         
         # Create window widgets and compose them into the container properly
         initial_tab = self._initial_tab_value
@@ -1595,10 +1622,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
             ("llm_management", LLMManagementWindow, "llm_management-window"),
             ("logs", LogsWindow, "logs-window"),
+            ("coding", CodingWindow, "coding-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
             ("study", StudyWindow, "study-window"),
+            ("chatbooks", ChatbooksWindow, "chatbooks-window"),
         ]
         
         window_widgets = []
@@ -3201,7 +3230,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # Show New Tab UI
         try:
-            self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
+            # Update navigation UI based on type
+            use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
+            if use_dropdown:
+                # Update dropdown selection if it exists and differs
+                try:
+                    dropdown = self.query_one(TabDropdown)
+                    dropdown.update_active_tab(new_tab)
+                except QueryError:
+                    pass
+            else:
+                # Update traditional tab bar button
+                self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
+            
             new_window = self.query_one(f"#{new_tab}-window")
             
             # Initialize placeholder window if needed
@@ -3328,10 +3369,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 # Use call_later to ensure the UI has settled after tab switch before changing sub-view
                 self.call_later(self._activate_initial_ingest_view)
         elif new_tab == TAB_TOOLS_SETTINGS:
-            if not self.tools_settings_active_view:
-                self.loguru_logger.debug(
-                    f"Switched to Tools & Settings tab, activating initial view: {self._initial_tools_settings_view}")
-                self.call_later(setattr, self, 'tools_settings_active_view', self._initial_tools_settings_view)
+            # Handle tools settings tab initialization with proper placeholder check
+            def initialize_tools_settings():
+                try:
+                    # Check if the window is actually initialized
+                    tools_window = self.query_one("#tools_settings-window")
+                    if isinstance(tools_window, PlaceholderWindow):
+                        # Window isn't initialized yet, try again later silently
+                        self.set_timer(0.1, initialize_tools_settings)
+                        return
+                    
+                    # Now it's safe to activate the initial view
+                    from .UI.Tools_Settings_Window import ToolsSettingsWindow
+                    if isinstance(tools_window, ToolsSettingsWindow):
+                        tools_window.activate_initial_view()
+                        if not self.tools_settings_active_view:
+                            self.tools_settings_active_view = self._initial_tools_settings_view
+                            self.loguru_logger.debug(f"Tools & Settings tab initialized with view: {self._initial_tools_settings_view}")
+                except QueryError:
+                    self.loguru_logger.error("Tools settings window not found during initialization")
+            
+            # Use a timer to ensure the window is ready
+            self.set_timer(0.1, initialize_tools_settings)
         elif new_tab == TAB_LLM:  # New elif block for LLM tab
             if not self.llm_active_view:  # If no view is active yet
                 self.loguru_logger.debug(
@@ -3340,11 +3399,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Populate LLM help texts when the tab is shown
             self.call_after_refresh(llm_management_events.populate_llm_help_texts, self)
         elif new_tab == TAB_EVALS: # Added for Evals tab
-            # Placeholder for any specific actions when Evals tab is selected
-            pass
-            # if not self.evals_active_view: # Assuming an 'evals_active_view' reactive
-            #     self.loguru_logger.debug(f"Switched to Evals tab, activating initial view...")
-            #     self.call_later(setattr, self, 'evals_active_view', self._initial_evals_view) # Example
+            # Activate initial view for EvalsWindow when switching to the tab
+            from .UI.Evals_Window_v3 import EvalsWindow
+            try:
+                evals_window = self.query_one(EvalsWindow)
+                evals_window.activate_initial_view()
+            except QueryError:
+                self.loguru_logger.error("Could not find EvalsWindow to activate its initial view.")
             self.loguru_logger.debug(f"Switched to Evals tab. Initial sidebar state: collapsed={self.evals_sidebar_collapsed}")
 
 
@@ -4096,7 +4157,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if not button_id:
             return
 
-        self.loguru_logger.debug(f"Button pressed: ID='{button_id}' on Tab='{self.current_tab}'")
+        self.loguru_logger.info(f"Button pressed: ID='{button_id}' on Tab='{self.current_tab}'")
 
         # 1. Handle global tab switching first
         if button_id.startswith("tab-"):
@@ -4120,21 +4181,30 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 TAB_EVALS: "evals-window",
                 TAB_CODING: "coding-window",
                 TAB_STTS: "stts-window",
-                TAB_STUDY: "study-window"
+                TAB_STUDY: "study-window",
+                TAB_CHATBOOKS: "chatbooks-window"
             }
 
             window_id = window_id_map.get(self.current_tab)
+            self.loguru_logger.info(f"Window ID for tab '{self.current_tab}': {window_id}")
             if window_id:
                 window = self.query_one(f"#{window_id}")
+                self.loguru_logger.info(f"Found window: {type(window).__name__}")
                 # Check if the window has an on_button_pressed method
-                if hasattr(window, "on_button_pressed") and callable(window.on_button_pressed):
+                has_method = hasattr(window, "on_button_pressed") and callable(window.on_button_pressed)
+                self.loguru_logger.info(f"Window has on_button_pressed: {has_method}")
+                if has_method:
                     # Call the window's button handler - it might be async
+                    self.loguru_logger.info(f"Delegating to window's on_button_pressed")
                     result = window.on_button_pressed(event)
                     if inspect.isawaitable(result):
                         await result
                     # Check if event has been stopped (some event types don't have is_stopped)
                     if hasattr(event, 'is_stopped') and event.is_stopped:
+                        self.loguru_logger.info(f"Event was stopped by window handler")
                         return
+                    self.loguru_logger.info(f"Window handler completed, event not stopped")
+                    # Don't return here - let it fall through to the handler map!
 
         except QueryError:
             self.loguru_logger.error(f"Could not find window component for tab '{self.current_tab}'")
@@ -4145,8 +4215,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         current_tab_handlers = self.button_handler_map.get(self.current_tab, {})
         handler = current_tab_handlers.get(button_id)
         
-        self.loguru_logger.debug(f"Looking for handler for button '{button_id}' in tab '{self.current_tab}'")
-        self.loguru_logger.debug(f"Available handlers for this tab: {list(current_tab_handlers.keys())}")
+        self.loguru_logger.info(f"Looking for handler for button '{button_id}' in tab '{self.current_tab}'")
+        self.loguru_logger.info(f"Available handlers for this tab: {list(current_tab_handlers.keys())}")
+        self.loguru_logger.info(f"Handler found: {handler is not None}")
         
         # Special debug logging for save chat button
         if button_id == "chat-save-current-chat-button":
@@ -4352,6 +4423,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     await chat_window.toggle_attach_button_visibility(event.value)
                 except Exception as e:
                     loguru_logger.error(f"Error toggling attach button visibility: {e}")
+        elif checkbox_id == "chat-show-dictation-button-checkbox" and current_active_tab == TAB_CHAT:
+            # Handle dictation button visibility toggle
+            from .config import save_setting_to_cli_config
+            save_setting_to_cli_config("chat.voice", "show_mic_button", event.value)
+            
+            # Update the UI dynamically
+            try:
+                mic_button = self.query_one("#mic-button", Button)
+                mic_button.display = event.value
+                self.notify(f"Dictation button {'shown' if event.value else 'hidden'}", timeout=2)
+            except QueryError:
+                # If button doesn't exist, we'll need to refresh the chat window
+                self.notify("Dictation button setting saved. Restart chat to apply changes.", timeout=3)
         elif checkbox_id == "chat-worldbook-enable-checkbox" and current_active_tab == TAB_CHAT:
             await chat_events_worldbooks.handle_worldbook_enable_checkbox(self, event.value)
         elif checkbox_id == "chat-dictionary-enable-checkbox" and current_active_tab == TAB_CHAT:
@@ -5969,6 +6053,30 @@ def main_cli_runner():
     This function is referenced in pyproject.toml as the entry point for the tldw-chatbook command.
     It initializes logging early and then runs the TldwCli app.
     """
+    # Configure logging to suppress verbose debug messages early
+    import logging
+    import os
+    import warnings
+    
+    # Suppress various verbose loggers
+    logging.getLogger("torio._extension.utils").setLevel(logging.WARNING)
+    logging.getLogger("torio").setLevel(logging.WARNING)
+    logging.getLogger("torch").setLevel(logging.WARNING)
+    logging.getLogger("transformers").setLevel(logging.WARNING)
+    logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+    logging.getLogger("chromadb").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.INFO)
+    logging.getLogger("httpcore").setLevel(logging.INFO)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("filelock").setLevel(logging.WARNING)
+    
+    # Suppress torchaudio and FFmpeg warnings
+    warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
+    warnings.filterwarnings("ignore", message=".*FFmpeg.*")
+    
+    # Set environment variable to suppress FFmpeg output
+    os.environ["TORCHAUDIO_LOG_LEVEL"] = "ERROR"
+    
     # Set up signal handlers for clean exit
     import signal
     import os
