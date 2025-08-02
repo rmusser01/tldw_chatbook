@@ -51,11 +51,6 @@ class MediaNavigationPanel(Container):
     }
     
     MediaNavigationPanel.collapsed {
-        width: 3;
-        min-width: 3;
-    }
-    
-    MediaNavigationPanel.collapsed .nav-content {
         display: none;
     }
     

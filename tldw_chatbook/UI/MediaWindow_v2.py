@@ -56,10 +56,13 @@ class MediaWindow(Container):
     }
     
     #media-nav-panel {
-        dock: left;
         width: 20%;
         min-width: 20;
         height: 100%;
+    }
+    
+    #media-nav-panel.collapsed {
+        display: none;
     }
     
     #media-main-content {
@@ -156,6 +159,11 @@ class MediaWindow(Container):
     def watch_sidebar_collapsed(self, collapsed: bool) -> None:
         """React to sidebar collapse changes."""
         self.nav_panel.collapsed = collapsed
+        # Also add/remove the collapsed class on the nav panel element
+        if collapsed:
+            self.nav_panel.add_class("collapsed")
+        else:
+            self.nav_panel.remove_class("collapsed")
     
     def watch_list_collapsed(self, collapsed: bool) -> None:
         """React to list collapse changes."""
