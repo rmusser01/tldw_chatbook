@@ -811,7 +811,7 @@ class PlaceholderWindow(Container):
 class TldwCli(App[None]):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
     #TITLE = "🧠📝🔍  tldw CLI"
-    TITLE = f"{get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}{get_char(EMOJI_TITLE_NOTE, FALLBACK_TITLE_NOTE)}{get_char(EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH)}  tldw CLI"
+    TITLE = "tldw chatbook"
     # CSS file path
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
     BINDINGS = [
@@ -1485,12 +1485,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                      labels={"component": "header"}, 
                      documentation="Time to create UI component")
         
-        # Set up the main title bar with a static title
-        component_start = time.perf_counter()
-        widgets.append(TitleBar())
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-                     labels={"component": "titlebar"}, 
-                     documentation="Time to create UI component")
+        # Title bar removed - using tab bar for navigation
+        # component_start = time.perf_counter()
+        # widgets.append(TitleBar())
+        # log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+        #              labels={"component": "titlebar"}, 
+        #              documentation="Time to create UI component")
 
         # Check config for navigation type
         use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)

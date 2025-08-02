@@ -5,28 +5,27 @@
  * Replaces horizontal tab bar with compact dropdown
  * ======================================== */
 
-/* Container for the dropdown - positioned in upper left */
+/* Container for the dropdown - positioned at top of window */
 #tab-dropdown-container {
-    dock: left;
-    width: 25;        /* Fixed width instead of auto */
-    min-width: 20;    /* Minimum width to ensure readability */
-    max-width: 35;    /* Maximum width to prevent excessive expansion */
+    dock: top;
+    width: 100%;      /* Full width of window */
     height: 3;        /* Match the original tab bar height */
     padding: 0 1;
     background: $panel;
-    border-right: solid $border;
     border-bottom: solid $border;
     margin: 0;
+    align: center middle;  /* Center the dropdown in the container */
 }
 
 /* The Select widget itself */
 #tab-dropdown-select {
-    width: 100%;
+    width: 30;        /* Fixed width for the dropdown selector */
     height: 100%;
     background: $panel;
     color: $text;
     border: none;
     padding: 0 1;
+    margin: 0;        /* No margin needed - centering handled by container */
 }
 
 /* Select widget hover state */
@@ -46,9 +45,10 @@
     background: $background;
     border: solid $border;
     max-height: 20;      /* Limit dropdown height to prevent full-screen coverage */
-    margin-top: 1;       /* Small gap between select and dropdown */
-    /* box-shadow not supported in Textual CSS */
-    /* z-index: 100; - not supported in Textual CSS */
+    margin-top: 0;       /* No gap - directly below the select */
+    width: auto;         /* Auto width to fit content */
+    min-width: 30;       /* Match the select widget width */
+    /* layer: above; */  /* Ensure dropdown appears above other content if supported */
 }
 
 /* Individual options in the dropdown */
@@ -88,5 +88,5 @@
 
 /* Ensure dropdown doesn't interfere with main content */
 #content {
-    margin-left: 0;  /* Reset any left margin that might conflict */
+    margin-top: 0;   /* No top margin needed - content flows after dropdown */
 }
