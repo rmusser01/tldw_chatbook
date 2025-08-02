@@ -1478,19 +1478,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Create the main UI widgets (called after splash screen or immediately if disabled)."""
         widgets = []
         
-        # Track individual component creation
-        component_start = time.perf_counter()
-        widgets.append(Header())
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-                     labels={"component": "header"}, 
-                     documentation="Time to create UI component")
-        
-        # Title bar removed - using tab bar for navigation
+        # Header removed - no title/header bar needed
         # component_start = time.perf_counter()
-        # widgets.append(TitleBar())
+        # widgets.append(Header())
         # log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-        #              labels={"component": "titlebar"}, 
+        #              labels={"component": "header"}, 
         #              documentation="Time to create UI component")
+        
+        # Custom title bar with surface color
+        component_start = time.perf_counter()
+        widgets.append(TitleBar())
+        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+                     labels={"component": "titlebar"}, 
+                     documentation="Time to create UI component")
 
         # Check config for navigation type
         use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
