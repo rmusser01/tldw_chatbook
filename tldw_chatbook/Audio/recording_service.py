@@ -16,13 +16,14 @@ from pathlib import Path
 from contextlib import contextmanager
 from loguru import logger
 
-# Try to import numpy as optional dependency
+# Try to import numpy as required dependency for audio functionality
 try:
     import numpy as np
     NUMPY_AVAILABLE = True
 except ImportError:
     NUMPY_AVAILABLE = False
-    logger.warning("NumPy not available. Some audio processing features will be limited.")
+    logger.error("NumPy not available. Audio recording functionality is disabled.")
+    logger.error("To enable audio features, install numpy: pip install numpy")
 
 # Try to import audio backends
 PYAUDIO_AVAILABLE = False
@@ -105,6 +106,19 @@ class AudioRecordingService:
             use_vad: Whether to use Voice Activity Detection
             vad_aggressiveness: VAD aggressiveness (0-3, higher is more aggressive)
         """
+        # Check for numpy requirement first
+        if not NUMPY_AVAILABLE:
+            raise AudioRecordingError(
+                "Audio recording functionality requires NumPy for efficient real-time processing.\n"
+                "NumPy is essential for:\n"
+                "  - Real-time audio level calculations\n"
+                "  - Efficient audio format conversions\n"
+                "  - Processing audio streams without performance issues\n\n"
+                "To enable audio features, install NumPy:\n"
+                "  pip install numpy\n\n"
+                "Without NumPy, audio processing would cause high CPU usage and UI stuttering."
+            )
+        
         self.sample_rate = sample_rate
         self.channels = channels
         self.chunk_size = chunk_size
@@ -332,17 +346,8 @@ class AudioRecordingService:
                 logger.warning(f"Sounddevice status: {status}")
             
             if self.is_recording:
-                # Convert float32 to int16
-                if NUMPY_AVAILABLE:
-                    audio_data = (indata * 32767).astype(np.int16).tobytes()
-                else:
-                    # Fallback without numpy - convert manually
-                    import struct
-                    audio_data = b''
-                    for sample in indata.flatten():
-                        # Clamp to int16 range and pack
-                        int_sample = int(max(-32768, min(32767, sample * 32767)))
-                        audio_data += struct.pack('<h', int_sample)
+                # Convert float32 to int16 (numpy is required)
+                audio_data = (indata * 32767).astype(np.int16).tobytes()
                 self._process_audio_chunk(audio_data)
         
         try:
@@ -466,24 +471,9 @@ class AudioRecordingService:
             for chunk in recent_chunks:
                 self.audio_queue.put(chunk)
             
-            # Calculate RMS
-            if NUMPY_AVAILABLE:
-                audio_data = np.frombuffer(b''.join(recent_chunks), dtype=np.int16)
-                rms = np.sqrt(np.mean(audio_data**2))
-            else:
-                # Fallback without numpy - calculate RMS manually
-                import struct
-                audio_bytes = b''.join(recent_chunks)
-                num_samples = len(audio_bytes) // 2
-                if num_samples == 0:
-                    return 0.0
-                
-                sum_squares = 0
-                for i in range(0, len(audio_bytes), 2):
-                    sample = struct.unpack('<h', audio_bytes[i:i+2])[0]
-                    sum_squares += sample * sample
-                
-                rms = (sum_squares / num_samples) ** 0.5
+            # Calculate RMS (numpy is required)
+            audio_data = np.frombuffer(b''.join(recent_chunks), dtype=np.int16)
+            rms = np.sqrt(np.mean(audio_data**2))
             
             # Normalize (16-bit max is 32767)
             level = min(1.0, rms / 32767.0)
