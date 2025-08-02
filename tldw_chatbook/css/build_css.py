@@ -52,6 +52,7 @@ CSS_MODULES = [
     "features/_splash.tcss",
     "features/_wizards.tcss",
     "features/_chatbooks.tcss",
+    "features/_code_repo.tcss",
     "features/_coding.tcss",
     "features/_tab_dropdown.tcss",
     

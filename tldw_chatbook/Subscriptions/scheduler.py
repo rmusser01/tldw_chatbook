@@ -33,7 +33,7 @@ from .security import SecurityValidator
 #
 ########################################################################################################################
 
-@dataclass(order=True)
+@dataclass(order=False)
 class ScheduledTask:
     """Represents a scheduled subscription check."""
     next_run: float  # Unix timestamp

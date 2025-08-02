@@ -133,26 +133,10 @@ class CodingWindow(Container):
 
             # Create a view for Code Repo Copy/Paste
             with Container(id=CODING_VIEW_REPO_COPY_PASTE, classes="coding-view-area"):
-                yield Static("Code Repository Copy/Paste", classes="pane-title")
-                with Vertical():
-                    yield Label("Select and copy files from GitHub repositories without cloning the entire repo.")
-                    yield Button("Open Repository Selector", id="open-repo-selector", variant="primary")
+                # Embed the repository selector directly instead of using a modal
+                repo_window = CodeRepoCopyPasteWindow(self.app_instance)
+                yield from repo_window.compose()
 
-    @on(Button.Pressed, "#open-repo-selector")
-    def open_repo_selector(self, event: Button.Pressed) -> None:
-        """Open the repository selector window."""
-        self.run_worker(self._open_repo_selector_worker(), exclusive=True)
-    
-    async def _open_repo_selector_worker(self) -> None:
-        """Worker to open the repository selector window."""
-        repo_window = CodeRepoCopyPasteWindow(self.app_instance)
-        result = await self.app.push_screen(repo_window, wait_for_dismiss=True)
-        
-        if result:
-            # Handle the selected files
-            files, content = result
-            logger.info(f"Selected {len(files)} files from repository")
-            # You can do something with the content here, like adding it to a chat context
 
 #
 # End of Coding_Window.py

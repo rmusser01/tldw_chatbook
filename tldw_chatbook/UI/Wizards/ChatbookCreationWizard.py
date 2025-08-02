@@ -28,7 +28,7 @@ from textual.worker import Worker, WorkerState
 from textual.reactive import reactive
 from loguru import logger
 
-from .BaseWizard import BaseWizard, WizardStep, WizardStepConfig
+from .BaseWizard import WizardContainer, WizardStep, WizardStepConfig, WizardScreen
 from ..Widgets.SmartContentTree import SmartContentTree, ContentNodeData
 from ...Chatbooks.chatbook_creator import ChatbookCreator
 from ...Chatbooks.chatbook_models import ContentType
@@ -40,37 +40,6 @@ if TYPE_CHECKING:
 class BasicInfoStep(WizardStep):
     """Step 1: Basic Information."""
     
-    DEFAULT_CSS = """
-    BasicInfoStep {
-        layout: vertical;
-        padding: 2;
-    }
-    
-    .form-group {
-        margin-bottom: 2;
-    }
-    
-    .form-label {
-        color: $text-muted;
-        margin-bottom: 0;
-    }
-    
-    .form-input {
-        width: 100%;
-        margin-top: 0;
-    }
-    
-    #chatbook-description {
-        height: 6;
-    }
-    
-    .info-box {
-        padding: 1;
-        background: $boost;
-        border: round $primary;
-        margin-top: 2;
-    }
-    """
     
     def compose(self) -> ComposeResult:
         """Compose the basic info form."""
@@ -134,37 +103,20 @@ class BasicInfoStep(WizardStep):
             "author": self.query_one("#chatbook-author", Input).value
         }
     
-    def validate(self) -> tuple[bool, Optional[str]]:
+    def validate(self) -> tuple[bool, List[str]]:
         """Validate the form."""
+        errors = []
         name = self.query_one("#chatbook-name", Input).value.strip()
         if not name:
-            return False, "Please enter a chatbook name"
-        return True, None
+            errors.append("Please enter a chatbook name")
+        return len(errors) == 0, errors
 
 
 class ContentSelectionStep(WizardStep):
     """Step 2: Content Selection."""
     
-    DEFAULT_CSS = """
-    ContentSelectionStep {
-        layout: vertical;
-        height: 100%;
-    }
     
-    .selection-header {
-        height: 3;
-        padding: 1;
-        background: $boost;
-        border: round $background-darken-1;
-        margin-bottom: 1;
-    }
-    
-    .content-tree-container {
-        height: 1fr;
-    }
-    """
-    
-    def __init__(self, wizard: BaseWizard, config: WizardStepConfig, **kwargs):
+    def __init__(self, wizard: WizardContainer, config: WizardStepConfig, **kwargs):
         super().__init__(wizard, config, **kwargs)
         self.content_tree: Optional[SmartContentTree] = None
         
@@ -286,55 +238,25 @@ class ContentSelectionStep(WizardStep):
             return {"selections": self.content_tree.get_selections()}
         return {"selections": {}}
     
-    def validate(self) -> tuple[bool, Optional[str]]:
+    def validate(self) -> tuple[bool, List[str]]:
         """Validate content selection."""
+        errors = []
         if not self.content_tree:
-            return False, "Content tree not initialized"
+            errors.append("Content tree not initialized")
+            return False, errors
             
         selections = self.content_tree.get_selections()
         total_selected = sum(len(items) for items in selections.values())
         
         if total_selected == 0:
-            return False, "Please select at least one item to include in the chatbook"
+            errors.append("Please select at least one item to include in the chatbook")
             
-        return True, None
+        return len(errors) == 0, errors
 
 
 class ExportOptionsStep(WizardStep):
     """Step 3: Export Options."""
     
-    DEFAULT_CSS = """
-    ExportOptionsStep {
-        layout: vertical;
-        padding: 2;
-    }
-    
-    .option-group {
-        margin-bottom: 2;
-        padding: 1;
-        background: $boost;
-        border: round $background-darken-1;
-    }
-    
-    .option-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    
-    .radio-option {
-        margin: 0 0 1 1;
-    }
-    
-    .checkbox-option {
-        margin: 0 0 1 1;
-    }
-    
-    .compression-level {
-        margin-left: 3;
-        layout: horizontal;
-        height: 3;
-    }
-    """
     
     def compose(self) -> ComposeResult:
         """Compose export options UI."""
@@ -440,58 +362,6 @@ class ExportOptionsStep(WizardStep):
 class PreviewConfirmStep(WizardStep):
     """Step 4: Preview & Confirm."""
     
-    DEFAULT_CSS = """
-    PreviewConfirmStep {
-        layout: vertical;
-        padding: 2;
-    }
-    
-    .preview-header {
-        margin-bottom: 2;
-    }
-    
-    .chatbook-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    
-    .preview-section {
-        margin-bottom: 2;
-        padding: 1;
-        background: $boost;
-        border: round $background-darken-1;
-    }
-    
-    .section-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    
-    .content-list {
-        margin-left: 2;
-        color: $text-muted;
-    }
-    
-    .file-tree {
-        height: 12;
-        border: round $background-darken-1;
-        background: $background;
-        padding: 1;
-        margin: 1 0;
-    }
-    
-    .location-section {
-        margin-top: 2;
-        padding: 1;
-        background: $panel;
-        border: round $primary;
-    }
-    
-    .location-path {
-        color: $primary;
-        margin: 1 0;
-    }
-    """
     
     def compose(self) -> ComposeResult:
         """Compose preview UI."""
@@ -516,9 +386,9 @@ class PreviewConfirmStep(WizardStep):
             yield Static("", id="export-path", classes="location-path")
             yield Button("Change Location", id="change-location", variant="default")
     
-    async def on_enter(self) -> None:
+    def on_show(self) -> None:
         """Update preview when entering step."""
-        await super().on_enter()
+        super().on_show()
         self._update_preview()
     
     def _update_preview(self) -> None:
@@ -598,78 +468,8 @@ class PreviewConfirmStep(WizardStep):
 class ProgressStep(WizardStep):
     """Step 5: Progress & Completion."""
     
-    DEFAULT_CSS = """
-    ProgressStep {
-        layout: vertical;
-        padding: 2;
-        align: center middle;
-    }
     
-    .progress-container {
-        width: 100%;
-        max-width: 60;
-        padding: 2;
-        background: $boost;
-        border: round $background-darken-1;
-    }
-    
-    .progress-title {
-        text-align: center;
-        text-style: bold;
-        margin-bottom: 2;
-    }
-    
-    #export-progress {
-        margin: 2 0;
-    }
-    
-    .progress-status {
-        margin: 2 0;
-    }
-    
-    .status-item {
-        margin: 0 0 1 2;
-        color: $text-muted;
-    }
-    
-    .status-item.completed {
-        color: $success;
-    }
-    
-    .status-item.active {
-        color: $primary;
-        text-style: bold;
-    }
-    
-    .status-item.error {
-        color: $error;
-    }
-    
-    .completion-message {
-        text-align: center;
-        padding: 2;
-        margin-top: 2;
-        background: $success 20%;
-        border: round $success;
-    }
-    
-    .completion-actions {
-        layout: horizontal;
-        height: auto;
-        align: center middle;
-        margin-top: 2;
-    }
-    
-    .completion-actions Button {
-        margin: 0 1;
-    }
-    
-    .hidden {
-        display: none;
-    }
-    """
-    
-    def __init__(self, wizard: BaseWizard, config: WizardStepConfig, **kwargs):
+    def __init__(self, wizard: WizardContainer, config: WizardStepConfig, **kwargs):
         super().__init__(wizard, config, **kwargs)
         self.export_worker: Optional[Worker] = None
         self.progress_value = reactive(0)
@@ -708,9 +508,9 @@ class ProgressStep(WizardStep):
                     yield Button("Share", id="share-chatbook", variant="default")
                     yield Button("Create Another", id="create-another", variant="default")
     
-    async def on_enter(self) -> None:
+    def on_show(self) -> None:
         """Start export when entering step."""
-        await super().on_enter()
+        super().on_show()
         # Hide back button during export
         self.wizard.can_go_back = False
         # Start export process
@@ -903,64 +703,88 @@ class ProgressStep(WizardStep):
         return self.is_complete
 
 
-class ChatbookCreationWizard(BaseWizard):
-    """Main chatbook creation wizard."""
+class ChatbookCreationWizard(WizardScreen):
+    """Chatbook creation wizard screen."""
     
-    def get_wizard_title(self) -> str:
-        """Get wizard title."""
-        return "Create New Chatbook"
+    def compose(self) -> ComposeResult:
+        """Compose the wizard screen."""
+        wizard = ChatbookCreationWizardContainer(
+            self.app_instance,
+            **self.wizard_kwargs
+        )
+        yield wizard
+
+
+class ChatbookCreationWizardContainer(WizardContainer):
+    """The actual chatbook creation wizard implementation."""
     
-    def get_wizard_subtitle(self) -> str:
-        """Get wizard subtitle."""
-        return "Package your conversations, notes, and media into a shareable chatbook"
-    
-    def create_steps(self) -> List[WizardStep]:
-        """Create wizard steps."""
+    def __init__(self, app_instance, template_data=None, **kwargs):
+        # Create steps with proper config
+        steps = self._create_steps()
+        
+        super().__init__(
+            app_instance=app_instance,
+            steps=steps,
+            title="Create New Chatbook",
+            template_data=template_data,
+            on_complete=self.handle_wizard_complete,
+            **kwargs
+        )
+        
+    def _create_steps(self) -> List[WizardStep]:
+        """Create wizard steps with proper configuration."""
         return [
             BasicInfoStep(
-                self,
-                WizardStepConfig(
+                wizard=self,
+                config=WizardStepConfig(
                     id="basic-info",
                     title="Basic Information",
-                    description="Enter chatbook details"
+                    description="Enter chatbook details",
+                    step_number=1
                 )
             ),
             ContentSelectionStep(
-                self,
-                WizardStepConfig(
+                wizard=self,
+                config=WizardStepConfig(
                     id="content-selection",
                     title="Select Content",
-                    description="Choose items to include"
+                    description="Choose items to include",
+                    step_number=2
                 )
             ),
             ExportOptionsStep(
-                self,
-                WizardStepConfig(
+                wizard=self,
+                config=WizardStepConfig(
                     id="export-options",
                     title="Export Options",
-                    description="Configure export settings"
+                    description="Configure export settings",
+                    step_number=3
                 )
             ),
             PreviewConfirmStep(
-                self,
-                WizardStepConfig(
+                wizard=self,
+                config=WizardStepConfig(
                     id="preview-confirm",
                     title="Preview & Confirm",
-                    description="Review your chatbook"
+                    description="Review your chatbook",
+                    step_number=4
                 )
             ),
             ProgressStep(
-                self,
-                WizardStepConfig(
+                wizard=self,
+                config=WizardStepConfig(
                     id="progress",
                     title="Creating Chatbook",
-                    description="Export in progress"
+                    description="Export in progress",
+                    step_number=5
                 )
             )
         ]
     
-    async def on_wizard_complete(self, wizard_data: Dict[str, Any]) -> Any:
+    def handle_wizard_complete(self, wizard_data: Dict[str, Any]) -> None:
         """Handle wizard completion."""
         # The actual export happens in the ProgressStep
         # This is called when the user clicks "Close" after completion
-        return wizard_data.get("progress", {}).get("export_path")
+        result = wizard_data.get("progress", {}).get("export_path")
+        if self.app_instance and hasattr(self.app_instance, 'pop_screen'):
+            self.app_instance.pop_screen(result)

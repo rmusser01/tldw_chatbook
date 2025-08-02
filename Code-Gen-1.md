@@ -7,6 +7,11 @@
 4. [Advanced Features](#advanced-features)
 5. [Use Cases](#use-cases)
 6. [Textual Implementation Plan](#textual-implementation-plan)
+7. [Implementation Status](#implementation-status)
+8. [Implementation Roadmap](#implementation-roadmap)
+9. [Architecture Decision Records](#architecture-decision-records)
+10. [Technical Debt](#technical-debt)
+11. [Implementation Notes](#implementation-notes)
 
 ---
 
@@ -649,3 +654,411 @@ This implementation plan provides a robust foundation for building a GitHub Repo
 - **Seamless integration** with existing tldw_chatbook features
 
 The extensive use of grid layouts throughout the interface ensures consistent spacing, proper alignment, and responsive behavior while working within Textual's constraints. The modular architecture allows for incremental development and testing.
+
+---
+
+## Implementation Status
+
+### Current State (As of August 2025)
+
+The implementation has diverged significantly from the original proposal. Below is a comprehensive comparison of what was proposed versus what was actually implemented.
+
+#### ✅ Implemented Features
+
+1. **Basic Repository Loading**
+   - GitHub URL parsing and validation
+   - Repository tree fetching via GitHub API
+   - Branch selection dropdown
+   - Local Git repository support (added feature)
+
+2. **Tree View**
+   - Basic tree structure with expand/collapse
+   - File/folder icons
+   - Checkbox selection
+   - File size display
+
+3. **Preview Functionality**
+   - Single file preview with syntax highlighting
+   - Language detection based on file extension
+
+4. **Export Features**
+   - Text compilation generation
+   - Copy to clipboard (basic)
+   - Selection statistics
+
+5. **UI Components**
+   - Empty state screen
+   - Loading overlay
+   - Basic filtering UI (non-functional)
+
+#### ❌ Missing Features (From Original Proposal)
+
+1. **Authentication & Access**
+   - No GitHub token support
+   - No private repository access
+   - No authentication UI
+
+2. **Smart Selection**
+   - No cascade selection for folders
+   - No regex pattern matching
+   - No file type filters (UI exists but non-functional)
+   - No size-based filtering
+   - No .gitignore awareness
+
+3. **Advanced Preview**
+   - No metadata display (last modified, commit info)
+   - No binary file handling
+   - No quick preview without selection
+
+4. **Export Options**
+   - ZIP export not implemented (shows "coming soon")
+   - No directory structure preservation
+   - No direct embeddings creation
+   - No markdown export format
+
+5. **Performance Features**
+   - No lazy loading (loads entire tree at once)
+   - No virtual scrolling
+   - No caching of API responses
+   - No batch operations
+
+6. **Advanced Features**
+   - No multi-repository support
+   - No selection profiles
+   - No branch comparison/diff view
+   - No commit pinning
+   - No file history
+   - No template library
+   - No documentation generation
+   - No code analysis integration
+
+#### 🔄 Implementation Differences
+
+1. **Layout Changes**
+   - Simplified 2-column grid instead of 5-column with golden ratio
+   - Preview panel split into compilation and file preview sections
+   - Less sophisticated grid layouts throughout
+
+2. **Tree Widget**
+   - Simpler implementation without the proposed 4-column grid structure
+   - Missing precise alignment controls
+   - No virtual scrolling capability
+
+3. **Added Features (Not in Proposal)**
+   - Local Git repository support
+   - Empty state UI
+   - Compilation view separate from preview
+   - Reset button functionality
+
+---
+
+## Implementation Roadmap
+
+### Phase 1: Core Feature Completion (Priority: Critical)
+
+**Goal**: Complete the basic features that were promised but not delivered.
+
+1. **Authentication Implementation**
+   - Add GitHub token configuration in settings
+   - Update GitHubAPIClient to use authentication
+   - Add UI for token management
+   - Test with private repositories
+
+2. **Complete Filter System**
+   - Wire up existing filter UI to actual functionality
+   - Implement file type filtering (code, docs, config)
+   - Add search functionality for file names
+   - Add regex pattern matching support
+   - Implement file size filtering
+
+3. **Fix ZIP Export**
+   - Implement actual ZIP file creation
+   - Preserve directory structure
+   - Add progress indicator for large exports
+   - Handle binary files appropriately
+
+### Phase 2: Tree View Enhancements (Priority: High)
+
+**Goal**: Upgrade the tree view to match the original specification.
+
+1. **Implement Proper Grid Layout**
+   - Convert to 4-column grid (indent, expand, checkbox, content)
+   - Add precise spacing controls
+   - Implement proper alignment
+
+2. **Add Lazy Loading**
+   - Load tree nodes on-demand when expanded
+   - Implement loading indicators for branches
+   - Cache loaded nodes
+
+3. **Cascade Selection**
+   - Select/deselect all children when parent is toggled
+   - Update selection counts properly
+   - Handle partial selection states
+
+### Phase 3: Performance Optimizations (Priority: Medium)
+
+**Goal**: Make the tool performant with large repositories.
+
+1. **Implement Caching Layer**
+   - Cache GitHub API responses
+   - Add TTL-based cache invalidation
+   - Cache file contents
+   - Persist cache between sessions
+
+2. **Virtual Scrolling**
+   - Implement virtual scrolling for large trees
+   - Render only visible nodes
+   - Maintain scroll position on updates
+
+3. **Batch Operations**
+   - Group API calls when fetching multiple files
+   - Implement parallel file content fetching
+   - Add request queuing to avoid rate limits
+
+### Phase 4: Advanced Features (Priority: Medium)
+
+**Goal**: Add the advanced features from the original proposal.
+
+1. **Selection Profiles**
+   - Save selection patterns to database
+   - Load saved profiles
+   - Share profiles between users
+   - Pre-built templates for common scenarios
+
+2. **Multi-Repository Support**
+   - Browse multiple repositories simultaneously
+   - Merge selections across repos
+   - Compare files between repositories
+
+3. **Version Control Features**
+   - Branch comparison and diff view
+   - Commit-specific file viewing
+   - File history browser
+   - Blame view integration
+
+### Phase 5: UI/UX Refinements (Priority: Low)
+
+**Goal**: Polish the interface to match the original vision.
+
+1. **Layout Improvements**
+   - Implement 5-column grid for main content
+   - Add proper golden ratio split (2fr/3fr)
+   - Improve responsive behavior
+
+2. **Visual Enhancements**
+   - Add syntax highlighting preview
+   - Improve tree node styling
+   - Add smooth transitions
+   - Implement hover states
+
+3. **Additional Export Formats**
+   - Markdown compilation
+   - Direct embeddings creation
+   - Custom format templates
+
+---
+
+## Architecture Decision Records
+
+### ADR-001: Simplified Tree Implementation
+
+**Date**: July 2025  
+**Status**: Accepted  
+**Context**: The original proposal specified a complex tree widget using a 4-column grid layout with precise alignment controls.
+
+**Decision**: Implement a simpler tree structure without the sophisticated grid layout.
+
+**Consequences**:
+- ✅ Faster initial implementation
+- ✅ Fewer layout bugs
+- ❌ Lost precise alignment control
+- ❌ Less visually polished
+- ❌ Harder to add features like virtual scrolling
+
+**Future**: Should be refactored to match original specification in Phase 2.
+
+### ADR-002: Local Repository Support
+
+**Date**: July 2025  
+**Status**: Accepted  
+**Context**: Users requested ability to browse local Git repositories without going through GitHub.
+
+**Decision**: Add support for local file system Git repositories.
+
+**Consequences**:
+- ✅ Better offline experience
+- ✅ Faster for local development
+- ✅ No API rate limits
+- ❌ Additional code complexity
+- ❌ Different code paths to maintain
+
+**Note**: This was not in the original specification but adds significant value.
+
+### ADR-003: Split Preview Panel
+
+**Date**: July 2025  
+**Status**: Accepted  
+**Context**: Original design had a single preview panel. Implementation needed to show both individual file preview and compiled output.
+
+**Decision**: Split the preview panel into two sections - compilation view and file preview.
+
+**Consequences**:
+- ✅ Can see both compilation and individual files
+- ✅ Better supports the compilation workflow
+- ❌ Less space for each view
+- ❌ More complex layout
+
+### ADR-004: Deferred Advanced Features
+
+**Date**: July 2025  
+**Status**: Accepted  
+**Context**: Time constraints required prioritizing core functionality over advanced features.
+
+**Decision**: Defer implementation of:
+- Authentication system
+- Performance optimizations
+- Multi-repository support
+- Selection profiles
+- Version control integration
+
+**Consequences**:
+- ✅ Faster time to initial release
+- ✅ Core functionality available sooner
+- ❌ Missing promised features
+- ❌ Technical debt accumulation
+- ❌ User disappointment
+
+**Future**: Implement in phases as outlined in roadmap.
+
+### ADR-005: No Virtual Scrolling
+
+**Date**: July 2025  
+**Status**: Accepted  
+**Context**: Virtual scrolling is complex to implement correctly in Textual.
+
+**Decision**: Load entire tree structure at once without virtual scrolling.
+
+**Consequences**:
+- ✅ Simpler implementation
+- ✅ No scrolling bugs
+- ❌ Poor performance with large repos
+- ❌ High memory usage
+- ❌ UI freezes during loading
+
+**Future**: Must be addressed in Phase 3 for production use.
+
+---
+
+## Technical Debt
+
+### High Priority Debt
+
+1. **Missing Authentication**
+   - No way to access private repositories
+   - Rate limits hit quickly without auth
+   - Security concerns for token storage
+
+2. **Non-functional ZIP Export**
+   - Button exists but shows "coming soon"
+   - Core feature that users expect
+   - Blocks several use cases
+
+3. **Performance Issues**
+   - Entire tree loaded at once
+   - No caching mechanism
+   - UI freezes on large repos
+
+### Medium Priority Debt
+
+1. **Incomplete Filters**
+   - UI exists but doesn't work
+   - Search doesn't filter tree
+   - File type filters non-functional
+
+2. **No Error Recovery**
+   - API failures crash the UI
+   - No retry mechanisms
+   - Poor error messages
+
+3. **Missing Tests**
+   - No unit tests for tree widget
+   - No integration tests
+   - No performance benchmarks
+
+### Low Priority Debt
+
+1. **Code Organization**
+   - Large monolithic window class
+   - Mixed concerns (UI + business logic)
+   - Needs refactoring into smaller components
+
+2. **Styling Inconsistencies**
+   - Not matching design system
+   - Hardcoded colors and sizes
+   - Missing hover/active states
+
+---
+
+## Implementation Notes
+
+### Development History
+
+This feature was initially developed by an intern who was terminated before completion. The implementation was rushed and many corners were cut to show a "working" demo. The code was then abandoned for several months before being picked up for completion.
+
+### Key Challenges Encountered
+
+1. **Textual Limitations**
+   - Grid layout system less flexible than expected
+   - No native tree widget required custom implementation
+   - Performance issues with large component trees
+
+2. **GitHub API Constraints**
+   - Rate limits hit quickly without authentication
+   - Large repository trees exceed response size limits
+   - No efficient way to fetch multiple files
+
+3. **Time Pressure**
+   - Demo deadline led to shortcuts
+   - Features stubbed out but not implemented
+   - Technical debt accumulated quickly
+
+### Lessons Learned
+
+1. **Start with Authentication**
+   - Should have been first priority
+   - Blocks testing of many features
+   - Critical for real-world usage
+
+2. **Design for Performance Early**
+   - Virtual scrolling should be built-in from start
+   - Lazy loading is not an optional feature
+   - Caching strategy needed upfront
+
+3. **Incremental Delivery**
+   - Should have delivered working features incrementally
+   - "Show everything half-done" approach failed
+   - Better to have fewer complete features
+
+### Maintenance Guidelines
+
+1. **Before Adding Features**
+   - Complete Phase 1 items first
+   - Add tests for existing functionality
+   - Refactor to separate concerns
+
+2. **Performance Testing**
+   - Test with large repos (10k+ files)
+   - Monitor memory usage
+   - Profile API call patterns
+
+3. **User Feedback Integration**
+   - Local repo support was most requested
+   - ZIP export is critical feature
+   - Performance is major concern
+
+### References
+
+- Original mockups: `/design/code-repo-mockups/`
+- API documentation: https://docs.github.com/rest
+- Textual grid examples: https://textual.textualize.io/guide/layout/

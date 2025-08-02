@@ -171,7 +171,7 @@ class SubscriptionWindow(Container):
             app_instance: Reference to the main app
         """
         super().__init__(*args, **kwargs)
-        self.app = app_instance
+        self.app_instance = app_instance  # Changed from self.app to self.app_instance
         self.client_id = "cli"
         self.db: Optional[SubscriptionsDB] = None
         self.scheduler_worker: Optional[SubscriptionSchedulerWorker] = None
@@ -562,7 +562,7 @@ class SubscriptionWindow(Container):
             
             # Initialize scheduler worker
             self.scheduler_worker = SubscriptionSchedulerWorker(
-                self.app,
+                self.app_instance,
                 self.db,
                 max_concurrent=10,
                 check_interval=60
@@ -747,7 +747,7 @@ class SubscriptionWindow(Container):
         url = self.query_one("#sub-url", Input).value.strip()
         
         # Launch scraper builder
-        await self.app.push_screen(ScraperBuilderWindow(url=url))
+        await self.app_instance.push_screen(ScraperBuilderWindow(url=url))
     
     @on(Button.Pressed, "#save-subscription-btn")
     async def handle_save_subscription(self, event: Button.Pressed) -> None:

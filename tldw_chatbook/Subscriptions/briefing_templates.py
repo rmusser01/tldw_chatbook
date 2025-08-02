@@ -18,8 +18,8 @@ from loguru import logger
 import markdown
 #
 # Local Imports
-from .aggregation_engine import AggregatedContent, AggregatedSection
-from ..config import get_user_config_dir
+from .aggregation_engine import AggregatedContent
+from ..config import get_user_data_dir as get_user_config_dir
 #
 ########################################################################################################################
 #

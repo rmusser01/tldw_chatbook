@@ -2,19 +2,11 @@
  * Code Repository Copy/Paste Feature Styles
  * ======================================== */
 
-/* Modal window container */
-CodeRepoCopyPasteWindow {
-    align: center middle;
-    background: $background 80%;
-}
-
+/* Repository browser container - now embedded in tab */
 .repo-window-container {
-    width: 90%;
-    height: 90%;
-    max-width: 120;
-    max-height: 50;
+    width: 100%;
+    height: 100%;
     background: $surface;
-    border: thick $primary;
     padding: 0;
 }
 
@@ -49,6 +41,15 @@ CodeRepoCopyPasteWindow {
 
 #load-repo-btn {
     min-width: 10;
+}
+
+#token-config-btn {
+    min-width: 8;
+}
+
+#token-config-btn.token-configured {
+    background: $success 20%;
+    border: solid $success;
 }
 
 #branch-selector {
@@ -139,11 +140,26 @@ CodeRepoCopyPasteWindow {
     border: none;
 }
 
-/* Preview container */
-.preview-container {
+/* Preview container - now split into two sections */
+.preview-panel {
     padding: 1;
     overflow: hidden;
     background: $surface;
+    layout: vertical;
+    height: 100%;
+}
+
+/* Aggregated text container (top half) */
+.aggregated-text-container {
+    height: 50%;
+    margin-bottom: 1;
+    layout: vertical;
+}
+
+/* File preview container (bottom half) */
+.file-preview-container {
+    height: 50%;
+    layout: vertical;
 }
 
 .preview-header {
@@ -154,7 +170,12 @@ CodeRepoCopyPasteWindow {
     align: left middle;
 }
 
-#preview-filename {
+#preview-title {
+    text-style: bold;
+    color: $primary;
+}
+
+#compilation-title {
     text-style: bold;
     color: $primary;
 }
@@ -164,9 +185,17 @@ CodeRepoCopyPasteWindow {
     border: round $primary-darken-2;
     padding: 1;
     background: $surface-darken-1;
+    overflow-y: auto;
 }
 
 #file-preview {
+    width: 100%;
+    height: 100%;
+    background: $surface-darken-1;
+    padding: 1;
+}
+
+#aggregated-text {
     width: 100%;
     height: 100%;
     background: $surface-darken-1;
@@ -273,8 +302,8 @@ TreeNode {
     height: 3;
     background: $panel;
     layout: grid;
-    grid-size: 7 1;
-    grid-columns: 1fr auto auto auto auto auto 1fr;
+    grid-size: 6 1;
+    grid-columns: 1fr auto auto auto auto 1fr;
     grid-gutter: 0 1;
     align: center middle;
     padding: 0 2;
@@ -285,8 +314,12 @@ TreeNode {
     min-width: 15;
 }
 
-#cancel-btn {
+#reset-btn {
     min-width: 10;
+}
+
+#generate-compilation-btn {
+    min-width: 20;
 }
 
 /* ========================================
@@ -351,7 +384,7 @@ TreeNode {
  * ======================================== */
 
 #file-preview {
-    font-family: monospace;
+    /* monospace font style */
 }
 
 /* Code highlighting classes would be added here */

@@ -22,8 +22,8 @@ from collections import defaultdict
 from loguru import logger
 #
 # Local Imports
-from ..DB.ChaChaNotes_DB import ChaChaNotes_DB
-from ..Security.config_encryption import ConfigEncryption
+from ..DB.ChaChaNotes_DB import CharactersRAGDB
+from ..Utils.config_encryption import ConfigEncryption
 from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 ########################################################################################################################
@@ -238,7 +238,7 @@ class SiteConfigManager:
         Args:
             db_path: Optional path to database
         """
-        self.db = ChaChaNotes_DB(db_path)
+        self.db = CharactersRAGDB(db_path)
         self.encryption = ConfigEncryption()
         self.rate_limiter = RateLimiter()
         self._config_cache = {}

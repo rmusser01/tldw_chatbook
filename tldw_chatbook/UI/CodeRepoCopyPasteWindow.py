@@ -14,6 +14,7 @@ import os
 import subprocess
 from pathlib import Path
 from datetime import datetime
+import aiofiles
 
 from loguru import logger
 from textual import on, work
@@ -24,6 +25,7 @@ from textual.widgets import (
     Button, Input, Label, Select, Static, TextArea,
     LoadingIndicator, Checkbox, DataTable, ProgressBar
 )
+from textual.screen import Screen
 from textual.reactive import reactive
 from textual.message import Message
 
@@ -56,296 +58,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         ("ctrl+i", "invert_selection", "Invert Selection"),
     ]
     
-    DEFAULT_CSS = """
-    CodeRepoCopyPasteWindow {
-        align: center middle;
-    }
-    
-    .repo-window-container {
-        width: 90%;
-        height: 90%;
-        max-width: 120;
-        max-height: 50;
-        background: $surface;
-        border: round $background-lighten-1;
-        padding: 0;
-    }
-    
-    /* Header styles */
-    .repo-header {
-        dock: top;
-        height: auto;
-        background: $panel;
-        padding: 2;
-        border-bottom: solid $background-lighten-1;
-    }
-    
-    .repo-title {
-        text-align: center;
-        text-style: bold;
-        color: $primary;
-        margin-bottom: 1;
-    }
-    
-    .repo-input-container {
-        layout: horizontal;
-        height: 3;
-        margin-bottom: 1;
-    }
-    
-    .repo-url-input {
-        width: 1fr;
-        margin-right: 1;
-    }
-    
-    .load-button {
-        min-width: 12;
-    }
-    
-    .repo-controls {
-        layout: horizontal;
-        height: 3;
-        align: left middle;
-    }
-    
-    .branch-selector {
-        width: 20;
-        margin-right: 1;
-    }
-    
-    .selection-summary {
-        width: 1fr;
-        layout: horizontal;
-        align: right middle;
-    }
-    
-    .summary-stat {
-        text-align: right;
-        color: $text-muted;
-        margin-left: 2;
-    }
-    
-    /* Empty state styles */
-    .empty-state-container {
-        height: 100%;
-        align: center middle;
-        padding: 4;
-    }
-    
-    .empty-state-content {
-        align: center middle;
-        max-width: 60;
-        padding: 4;
-    }
-    
-    .empty-state-icon {
-        text-align: center;
-        color: $primary;
-        margin-bottom: 2;
-    }
-    
-    .empty-state-title {
-        text-align: center;
-        text-style: bold;
-        color: $text;
-        margin-bottom: 1;
-    }
-    
-    .empty-state-description {
-        text-align: center;
-        color: $text-muted;
-        margin-bottom: 3;
-    }
-    
-    .empty-state-actions {
-        layout: vertical;
-        align: center middle;
-        width: 100%;
-    }
-    
-    .empty-state-input {
-        width: 50;
-        margin-bottom: 2;
-    }
-    
-    .empty-state-button {
-        min-width: 20;
-    }
-    
-    /* Filter bar styles */
-    .filter-bar {
-        dock: top;
-        height: 3;
-        background: $background;
-        padding: 1 2;
-        border-bottom: solid $background-lighten-1;
-        layout: horizontal;
-        align: left middle;
-    }
-    
-    .filter-bar.hidden {
-        display: none;
-    }
-    
-    .file-search {
-        width: 30;
-        margin-right: 2;
-    }
-    
-    .file-type-filter {
-        width: 20;
-        margin-right: 2;
-    }
-    
-    .filter-buttons {
-        layout: horizontal;
-        width: auto;
-    }
-    
-    .filter-quick-btn {
-        width: 5;
-        height: 3;
-        margin-right: 1;
-    }
-    
-    /* Main content styles */
-    .main-content {
-        height: 1fr;
-        background: $background;
-    }
-    
-    .main-content.hidden {
-        display: none;
-    }
-    
-    .content-split {
-        layout: horizontal;
-        height: 100%;
-    }
-    
-    .tree-panel {
-        width: 40%;
-        border-right: solid $background-lighten-1;
-        padding: 1;
-    }
-    
-    .tree-header {
-        height: 3;
-        border-bottom: solid $background-lighten-1;
-        margin-bottom: 1;
-        padding: 0 1;
-        align: left middle;
-    }
-    
-    .tree-title {
-        text-style: bold;
-        color: $text;
-    }
-    
-    .tree-container {
-        height: 1fr;
-        overflow: auto;
-    }
-    
-    .preview-panel {
-        width: 60%;
-        padding: 1;
-        layout: vertical;
-    }
-    
-    .aggregated-text-container {
-        height: 50%;
-        margin-bottom: 1;
-    }
-    
-    .file-preview-container {
-        height: 50%;
-    }
-    
-    .preview-header {
-        height: 3;
-        border-bottom: solid $background-lighten-1;
-        margin-bottom: 1;
-        padding: 0 1;
-        align: left middle;
-    }
-    
-    .preview-title {
-        text-style: bold;
-        color: $text;
-    }
-    
-    .preview-content {
-        height: 1fr;
-        border: round $background-lighten-1;
-        padding: 1;
-        background: $boost;
-    }
-    
-    #file-preview {
-        width: 100%;
-        height: 100%;
-    }
-    
-    /* Action bar styles */
-    .action-bar {
-        dock: bottom;
-        height: auto;
-        background: $panel;
-        padding: 1 2;
-        border-top: solid $background-lighten-1;
-    }
-    
-    .action-buttons {
-        layout: horizontal;
-        height: 3;
-        align: center middle;
-    }
-    
-    .action-spacer {
-        width: 1fr;
-    }
-    
-    .action-button {
-        margin: 0 1;
-        min-width: 15;
-    }
-    
-    /* Loading overlay */
-    .loading-overlay {
-        dock: top;
-        width: 100%;
-        height: 100%;
-        background: $background 90%;
-        align: center middle;
-        layer: above;
-    }
-    
-    .loading-overlay.hidden {
-        display: none;
-    }
-    
-    .loading-content {
-        align: center middle;
-    }
-    
-    .loading-label {
-        text-align: center;
-        margin-top: 2;
-        text-style: bold;
-        color: $text;
-    }
-    
-    /* Error styles */
-    .error-message {
-        color: $error;
-        text-align: center;
-        padding: 2;
-        background: $error 20%;
-        border: round $error;
-        margin: 2;
-    }
-    """
+    # CSS is handled by external file: css/features/_code_repo.tcss
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
@@ -359,22 +72,25 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         self.selected_files: set = set()
         self.compiled_text = reactive("")  # Store the compiled text
         self.is_local_repo = False  # Track if it's a local repo
+        self._token_configured = bool(self.api_client.token)
         
     def compose(self) -> ComposeResult:
         """Compose the UI."""
+        logger.info("CodeRepoCopyPasteWindow.compose() called - NEW VERSION WITH COMPILATION")
         with Container(classes="repo-window-container"):
             # Header
             with Container(classes="repo-header"):
                 yield Static("📦 Code Repository Browser", classes="repo-title")
                 
-                # Repository input
-                with Container(classes="repo-input-container"):
+                # Repository input (hidden when showing empty state)
+                with Container(id="repo-input-container", classes="repo-input-container hidden"):
                     yield Input(
                         placeholder="Enter GitHub URL or local Git repo path",
                         id="repo-url-input",
                         classes="repo-url-input"
                     )
                     yield Button("Load Repository", id="load-repo-btn", variant="primary", classes="load-button")
+                    yield Button("🔑 Token", id="token-config-btn", classes="token-button")
                 
                 # Controls (hidden until repo loaded)
                 with Container(id="repo-controls-container", classes="repo-controls hidden"):
@@ -504,6 +220,12 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         """Handle mount event."""
         # Focus on URL input
         self.query_one("#repo-url-input", Input).focus()
+        
+        # Update token button style if token is configured
+        if self._token_configured:
+            token_btn = self.query_one("#token-config-btn", Button)
+            token_btn.label = "🔓 Token"
+            token_btn.add_class("token-configured")
     
     def watch_is_loading(self, is_loading: bool) -> None:
         """Show/hide loading overlay."""
@@ -520,6 +242,9 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         """Show the loaded repository state."""
         # Hide empty state
         self.query_one("#empty-state").add_class("hidden")
+        
+        # Show header input
+        self.query_one("#repo-input-container").remove_class("hidden")
         
         # Show repo controls
         self.query_one("#repo-controls-container").remove_class("hidden")
@@ -724,6 +449,41 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         # Trigger load
         await self.load_repository(event)
     
+    @on(Button.Pressed, "#token-config-btn")
+    async def configure_token(self, event: Button.Pressed) -> None:
+        """Open token configuration dialog."""
+        from ..config import get_cli_setting, save_setting_to_cli_config
+        
+        # Create a simple input dialog using Textual's built-in functionality
+        current_token = get_cli_setting("github", "api_token", "")
+        has_token = bool(current_token and not current_token.startswith("<"))
+        
+        if has_token:
+            # Mask the current token
+            masked_token = current_token[:8] + "*" * (len(current_token) - 12) + current_token[-4:]
+            message = f"Current token: {masked_token}\n\nEnter new GitHub personal access token (or leave empty to keep current):"
+        else:
+            message = "Enter GitHub personal access token:\n\nCreate a token at: https://github.com/settings/tokens\nRequired scopes: repo (private), public_repo (public only)"
+        
+        # Use a simple approach with Textual's Input dialog
+        # For now, we'll use a notification and ask them to add it to the config file
+        # In a real implementation, we'd create a proper modal dialog
+        
+        # Simplified approach: Direct the user to update config
+        config_path = "~/.config/tldw_cli/config.toml"
+        if has_token:
+            self.notify(
+                f"To update your GitHub token, edit:\n{config_path}\n\nLook for [github] section, api_token field",
+                severity="information",
+                timeout=10
+            )
+        else:
+            self.notify(
+                f"To add a GitHub token for private repos:\n1. Create token at: https://github.com/settings/tokens\n2. Edit: {config_path}\n3. Add token to [github] section, api_token field",
+                severity="information", 
+                timeout=15
+            )
+    
     async def load_tree(self) -> None:
         """Load repository tree structure."""
         if not self.current_repo:
@@ -732,13 +492,29 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         branch = self.query_one("#branch-selector", Select).value
         
         try:
+            # Check if lazy loading is enabled
+            from ..config import get_cli_setting
+            lazy_load = get_cli_setting("github", "lazy_load_tree", True)
+            
             # Get repository tree
             self.loading_message = "Loading file structure..."
-            flat_tree = await self.api_client.get_repository_tree(
-                self.current_repo["owner"],
-                self.current_repo["repo"],
-                branch
-            )
+            
+            if lazy_load:
+                # Load only root level initially
+                flat_tree = await self.api_client.get_repository_tree(
+                    self.current_repo["owner"],
+                    self.current_repo["repo"],
+                    branch,
+                    recursive=False  # Only load root level
+                )
+            else:
+                # Load entire tree (old behavior)
+                flat_tree = await self.api_client.get_repository_tree(
+                    self.current_repo["owner"],
+                    self.current_repo["repo"],
+                    branch,
+                    recursive=True
+                )
             
             # Build hierarchical tree
             self.tree_data = self.api_client.build_tree_hierarchy(flat_tree)
@@ -799,9 +575,23 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         if not expanded or not self.current_repo:
             return
         
-        # For now, we load everything at once
-        # In a real implementation, we'd load children on demand
-        pass
+        # Check if lazy loading is enabled
+        from ..config import get_cli_setting
+        lazy_load = get_cli_setting("github", "lazy_load_tree", True)
+        
+        if not lazy_load or self.is_local_repo:
+            # Already loaded everything or using local repo
+            return
+        
+        # Check if we've already loaded children for this path
+        tree_view = self.query_one("#repo-tree", TreeView)
+        node = tree_view.nodes.get(path)
+        
+        if node and node.children_loaded:
+            return
+        
+        # Load children for this directory
+        self.run_worker(self.load_node_children(path), exclusive=False)
     
     async def handle_node_selected(self, path: str) -> None:
         """Handle node selection - show file preview."""
@@ -924,17 +714,26 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         filter_select.value = "config"
         await self.apply_filters()
     
+    @on(Select.Changed, "#file-type-filter")
+    async def on_filter_type_changed(self, event: Select.Changed) -> None:
+        """Handle file type filter changes."""
+        await self.apply_filters()
+    
     async def apply_filters(self) -> None:
         """Apply current filters to tree view."""
-        # TODO: Implement filtering logic
-        pass
+        tree_view = self.query_one("#repo-tree", TreeView)
+        search_input = self.query_one("#file-search", Input)
+        type_filter = self.query_one("#file-type-filter", Select)
+        
+        # Apply search filter
+        tree_view.set_search_filter(search_input.value)
+        
+        # Apply type filter
+        tree_view.set_file_type_filter(type_filter.value)
     
     @on(Input.Changed, "#file-search")
     async def on_search_changed(self, event: Input.Changed) -> None:
         """Handle search input changes."""
-        search_term = event.value.lower()
-        tree_view = self.query_one("#repo-tree", TreeView)
-        # Apply search filter to tree
         await self.apply_filters()
     
     @on(Button.Pressed, "#copy-clipboard-btn")
@@ -959,7 +758,19 @@ class CodeRepoCopyPasteWindow(ModalScreen):
     @on(Button.Pressed, "#export-zip-btn")
     async def export_to_zip(self, event: Button.Pressed) -> None:
         """Export selected files to ZIP."""
-        self.notify("ZIP export functionality coming soon!", severity="info")
+        tree_view = self.query_one("#repo-tree", TreeView)
+        selected_files = tree_view.get_selected_files()
+        
+        if not selected_files:
+            self.notify("No files selected for export", severity="warning")
+            return
+        
+        if not self.current_repo:
+            self.notify("No repository loaded", severity="error")
+            return
+        
+        # Run export in a worker to avoid blocking UI
+        self.run_worker(self._export_to_zip_worker(selected_files), exclusive=True)
     
     @on(Button.Pressed, "#generate-compilation-btn")
     async def generate_compilation(self, event: Button.Pressed) -> None:
@@ -1073,6 +884,170 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             tree_view = self.query_one("#repo-tree", TreeView)
             tree_view.invert_selection()
             self.notify("Inverted selection", severity="info")
+    
+    @work(thread=True)
+    async def _export_to_zip_worker(self, selected_files: List[str]) -> None:
+        """Worker to export selected files to ZIP."""
+        try:
+            # Show loading state
+            self.loading_message = "Preparing ZIP export..."
+            self.is_loading = True
+            
+            # Create a timestamp for the filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            if self.is_local_repo:
+                repo_name = Path(self.current_repo["path"]).name
+            else:
+                repo_name = self.current_repo["repo"]
+            
+            default_filename = f"{repo_name}_{timestamp}.zip"
+            
+            # Get save location from user
+            # For now, save to downloads folder
+            downloads_path = Path.home() / "Downloads"
+            zip_path = downloads_path / default_filename
+            
+            # Ensure downloads directory exists
+            downloads_path.mkdir(exist_ok=True)
+            
+            # Create ZIP file
+            self.loading_message = f"Creating ZIP file with {len(selected_files)} files..."
+            
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                total_files = len(selected_files)
+                
+                if self.is_local_repo:
+                    # Handle local files one by one
+                    for idx, file_path in enumerate(selected_files):
+                        # Update progress
+                        progress = (idx + 1) / total_files
+                        self.loading_message = f"Adding to ZIP: {file_path} ({idx + 1}/{total_files})"
+                        
+                        try:
+                            # Read from local file
+                            full_path = Path(self.current_repo["path"]) / file_path
+                            if full_path.exists() and full_path.is_file():
+                                with open(full_path, 'rb') as f:
+                                    content = f.read()
+                                zip_file.writestr(file_path, content)
+                        except Exception as e:
+                            logger.error(f"Failed to add {file_path} to ZIP: {e}")
+                            # Add error file
+                            error_content = f"Error reading file: {str(e)}"
+                            zip_file.writestr(f"{file_path}.error", error_content)
+                else:
+                    # Batch fetch from GitHub
+                    branch = self.query_one("#branch-selector", Select).value
+                    
+                    def update_progress(completed, total, current_file):
+                        self.loading_message = f"Fetching files: {completed}/{total} - {current_file}"
+                    
+                    # Fetch all files concurrently
+                    self.loading_message = f"Fetching {total_files} files from GitHub..."
+                    file_contents = await self.api_client.get_files_content_batch(
+                        self.current_repo["owner"],
+                        self.current_repo["repo"],
+                        selected_files,
+                        branch,
+                        progress_callback=update_progress
+                    )
+                    
+                    # Add fetched files to ZIP
+                    self.loading_message = "Creating ZIP archive..."
+                    for file_path in selected_files:
+                        if file_path in file_contents:
+                            # Write as UTF-8 encoded bytes
+                            zip_file.writestr(file_path, file_contents[file_path].encode('utf-8'))
+                        else:
+                            # Add error file for failed fetches
+                            error_content = f"Error fetching file from GitHub"
+                            zip_file.writestr(f"{file_path}.error", error_content)
+                
+                # Add a manifest file
+                manifest = {
+                    "repository": repo_name,
+                    "export_date": datetime.now().isoformat(),
+                    "total_files": len(selected_files),
+                    "files": selected_files
+                }
+                if not self.is_local_repo:
+                    manifest["github_url"] = f"https://github.com/{self.current_repo['owner']}/{self.current_repo['repo']}"
+                    manifest["branch"] = self.query_one("#branch-selector", Select).value
+                
+                zip_file.writestr("MANIFEST.json", json.dumps(manifest, indent=2))
+            
+            # Get file size
+            file_size = zip_path.stat().st_size
+            size_mb = file_size / (1024 * 1024)
+            
+            self.call_from_thread(
+                self.notify,
+                f"ZIP exported successfully!\nSaved to: {zip_path}\nSize: {size_mb:.1f} MB",
+                severity="success",
+                timeout=10
+            )
+            
+            # Open the containing folder (platform-specific)
+            if os.name == 'nt':  # Windows
+                subprocess.Popen(['explorer', '/select,', str(zip_path)])
+            elif os.name == 'posix':  # macOS and Linux
+                if os.uname().sysname == 'Darwin':  # macOS
+                    subprocess.Popen(['open', '-R', str(zip_path)])
+                else:  # Linux
+                    subprocess.Popen(['xdg-open', str(downloads_path)])
+            
+        except Exception as e:
+            logger.error(f"Failed to export ZIP: {e}")
+            self.call_from_thread(
+                self.notify,
+                f"Failed to export ZIP: {str(e)}",
+                severity="error"
+            )
+        finally:
+            self.is_loading = False
+    
+    @work(thread=True)
+    async def load_node_children(self, node_path: str) -> None:
+        """Load children for a specific directory node."""
+        try:
+            branch = self.query_one("#branch-selector", Select).value
+            
+            # Fetch directory contents
+            children = await self.api_client.get_directory_contents(
+                self.current_repo["owner"],
+                self.current_repo["repo"],
+                node_path,
+                branch
+            )
+            
+            # Transform children to include full paths
+            tree_view = self.query_one("#repo-tree", TreeView)
+            child_nodes = []
+            
+            for child in children:
+                child_nodes.append({
+                    'path': child['path'],
+                    'name': child['name'],
+                    'type': child['type'],
+                    'size': child.get('size', 0),
+                    'children': [] if child['type'] == 'tree' else None
+                })
+            
+            # Update tree view with new children
+            await self.call_from_thread(
+                tree_view.expand_node,
+                node_path,
+                child_nodes
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to load children for {node_path}: {e}")
+            self.call_from_thread(
+                self.notify,
+                f"Failed to load directory contents: {str(e)}",
+                severity="error"
+            )
     
     def _format_size(self, size: int) -> str:
         """Format file size in human-readable format."""

@@ -27,7 +27,7 @@ from textual.worker import Worker
 from textual.reactive import reactive
 from loguru import logger
 
-from .BaseWizard import BaseWizard, WizardStep, WizardStepConfig
+from .BaseWizard import WizardContainer, WizardStep, WizardStepConfig, WizardScreen
 from ...Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 from ...Chatbooks.chatbook_models import ChatbookManifest, ContentType
 from ...Chatbooks.conflict_resolver import ConflictResolution
@@ -40,71 +40,8 @@ if TYPE_CHECKING:
 class FileSelectionStep(WizardStep):
     """Step 1: File Selection."""
     
-    DEFAULT_CSS = """
-    FileSelectionStep {
-        layout: vertical;
-        padding: 2;
-    }
     
-    .file-selection-container {
-        layout: vertical;
-        height: 100%;
-        align: center middle;
-    }
-    
-    .drop-zone {
-        width: 80%;
-        height: 20;
-        border: dashed $background-darken-2;
-        background: $boost;
-        align: center middle;
-        margin: 2 0;
-    }
-    
-    .drop-zone.hover {
-        border: solid $primary;
-        background: $primary 10%;
-    }
-    
-    .drop-zone-content {
-        text-align: center;
-        padding: 2;
-    }
-    
-    .drop-zone-icon {
-        margin-bottom: 1;
-        color: $text-muted;
-    }
-    
-    .drop-zone-text {
-        color: $text-muted;
-        margin-bottom: 1;
-    }
-    
-    .file-path-display {
-        width: 80%;
-        margin: 2 0;
-        padding: 1;
-        background: $boost;
-        border: round $background-darken-1;
-    }
-    
-    .path-label {
-        color: $text-muted;
-        margin-bottom: 0;
-    }
-    
-    .path-value {
-        color: $primary;
-        margin-top: 0;
-    }
-    
-    .browse-button {
-        margin-top: 2;
-    }
-    """
-    
-    def __init__(self, wizard: BaseWizard, config: WizardStepConfig, **kwargs):
+    def __init__(self, wizard: WizardContainer, config: WizardStepConfig, **kwargs):
         super().__init__(wizard, config, **kwargs)
         self.selected_file: Optional[Path] = None
         
@@ -169,109 +106,24 @@ class FileSelectionStep(WizardStep):
             "file_path": str(self.selected_file) if self.selected_file else None
         }
     
-    def validate(self) -> tuple[bool, Optional[str]]:
+    def validate(self) -> tuple[bool, List[str]]:
         """Validate file selection."""
+        errors = []
         if not self.selected_file:
-            return False, "Please select a chatbook file"
+            errors.append("Please select a chatbook file")
+        elif not self.selected_file.exists():
+            errors.append("Selected file does not exist")
+        elif not self.selected_file.suffix == ".zip":
+            errors.append("Please select a valid chatbook file (.zip)")
         
-        if not self.selected_file.exists():
-            return False, "Selected file does not exist"
-        
-        if not self.selected_file.suffix == ".zip":
-            return False, "Please select a valid chatbook file (.zip)"
-        
-        return True, None
+        return len(errors) == 0, errors
 
 
 class PreviewValidationStep(WizardStep):
     """Step 2: Preview & Validation."""
     
-    DEFAULT_CSS = """
-    PreviewValidationStep {
-        layout: vertical;
-        padding: 2;
-    }
     
-    .preview-header {
-        margin-bottom: 2;
-    }
-    
-    .chatbook-info {
-        padding: 1 2;
-        background: $boost;
-        border: round $background-darken-1;
-        margin-bottom: 2;
-    }
-    
-    .info-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    
-    .info-row {
-        layout: horizontal;
-        height: auto;
-        margin: 0 0 1 1;
-    }
-    
-    .info-label {
-        width: 15;
-        color: $text-muted;
-    }
-    
-    .info-value {
-        width: 1fr;
-    }
-    
-    .content-preview {
-        padding: 1 2;
-        background: $boost;
-        border: round $background-darken-1;
-        margin-bottom: 2;
-    }
-    
-    .preview-title {
-        text-style: bold;
-        margin-bottom: 1;
-        color: $primary;
-    }
-    
-    .content-tree {
-        height: 15;
-        background: $background;
-        border: round $background-darken-1;
-        padding: 1;
-    }
-    
-    .validation-results {
-        padding: 1 2;
-        background: $boost;
-        border: round $background-darken-1;
-    }
-    
-    .validation-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    
-    .validation-item {
-        margin: 0 0 1 1;
-    }
-    
-    .validation-success {
-        color: $success;
-    }
-    
-    .validation-warning {
-        color: $warning;
-    }
-    
-    .validation-error {
-        color: $error;
-    }
-    """
-    
-    def __init__(self, wizard: BaseWizard, config: WizardStepConfig, **kwargs):
+    def __init__(self, wizard: WizardContainer, config: WizardStepConfig, **kwargs):
         super().__init__(wizard, config, **kwargs)
         self.manifest: Optional[ChatbookManifest] = None
         self.validation_passed = False
@@ -311,10 +163,10 @@ class PreviewValidationStep(WizardStep):
             yield Static("Validation Results:", classes="validation-title")
             yield Container(id="validation-list")
     
-    async def on_enter(self) -> None:
+    def on_show(self) -> None:
         """Load and validate chatbook when entering step."""
-        await super().on_enter()
-        await self._load_and_validate_chatbook()
+        super().on_show()
+        self.run_worker(self._load_and_validate_chatbook())
     
     async def _load_and_validate_chatbook(self) -> None:
         """Load chatbook manifest and validate."""
@@ -501,74 +353,17 @@ class PreviewValidationStep(WizardStep):
             "validation_passed": self.validation_passed
         }
     
-    def validate(self) -> tuple[bool, Optional[str]]:
+    def validate(self) -> tuple[bool, List[str]]:
         """Check if validation passed."""
+        errors = []
         if not self.validation_passed:
-            return False, "Chatbook validation failed"
-        return True, None
+            errors.append("Chatbook validation failed")
+        return len(errors) == 0, errors
 
 
 class ConflictResolutionStep(WizardStep):
     """Step 3: Conflict Resolution."""
     
-    DEFAULT_CSS = """
-    ConflictResolutionStep {
-        layout: vertical;
-        padding: 2;
-    }
-    
-    .resolution-header {
-        margin-bottom: 2;
-        padding: 1;
-        background: $boost;
-        border: round $background-darken-1;
-    }
-    
-    .strategy-section {
-        margin-bottom: 2;
-        padding: 1 2;
-        background: $boost;
-        border: round $background-darken-1;
-    }
-    
-    .strategy-title {
-        text-style: bold;
-        margin-bottom: 1;
-        color: $primary;
-    }
-    
-    .radio-option {
-        margin: 0 0 1 1;
-    }
-    
-    .strategy-description {
-        margin: 0 0 1 3;
-        color: $text-muted;
-    }
-    
-    .conflict-preview {
-        padding: 1 2;
-        background: $boost;
-        border: round $warning;
-    }
-    
-    .conflict-title {
-        text-style: bold;
-        color: $warning;
-        margin-bottom: 1;
-    }
-    
-    .conflict-list {
-        margin-left: 2;
-        color: $text-muted;
-    }
-    
-    .no-conflicts {
-        text-align: center;
-        padding: 3;
-        color: $success;
-    }
-    """
     
     def compose(self) -> ComposeResult:
         """Compose conflict resolution UI."""
@@ -645,34 +440,6 @@ class ConflictResolutionStep(WizardStep):
 class ImportOptionsStep(WizardStep):
     """Step 4: Import Options."""
     
-    DEFAULT_CSS = """
-    ImportOptionsStep {
-        layout: vertical;
-        padding: 2;
-    }
-    
-    .options-section {
-        margin-bottom: 2;
-        padding: 1 2;
-        background: $boost;
-        border: round $background-darken-1;
-    }
-    
-    .section-title {
-        text-style: bold;
-        margin-bottom: 1;
-        color: $primary;
-    }
-    
-    .checkbox-option {
-        margin: 0 0 1 1;
-    }
-    
-    .option-description {
-        margin: 0 0 1 3;
-        color: $text-muted;
-    }
-    """
     
     def compose(self) -> ComposeResult:
         """Compose import options UI."""
@@ -765,86 +532,8 @@ class ImportOptionsStep(WizardStep):
 class ImportProgressStep(WizardStep):
     """Step 5: Progress & Completion."""
     
-    DEFAULT_CSS = """
-    ImportProgressStep {
-        layout: vertical;
-        padding: 2;
-        align: center middle;
-    }
     
-    .progress-container {
-        width: 100%;
-        max-width: 60;
-        padding: 2;
-        background: $boost;
-        border: round $background-darken-1;
-    }
-    
-    .progress-title {
-        text-align: center;
-        text-style: bold;
-        margin-bottom: 2;
-    }
-    
-    #import-progress {
-        margin: 2 0;
-    }
-    
-    .progress-status {
-        margin: 2 0;
-    }
-    
-    .status-item {
-        margin: 0 0 1 2;
-        color: $text-muted;
-    }
-    
-    .status-item.completed {
-        color: $success;
-    }
-    
-    .status-item.active {
-        color: $primary;
-        text-style: bold;
-    }
-    
-    .status-item.error {
-        color: $error;
-    }
-    
-    .completion-message {
-        text-align: center;
-        padding: 2;
-        margin-top: 2;
-        background: $success 20%;
-        border: round $success;
-    }
-    
-    .completion-stats {
-        margin-top: 2;
-        padding: 1 2;
-        background: $boost;
-        border: round $background-darken-1;
-    }
-    
-    .stat-row {
-        layout: horizontal;
-        height: auto;
-        margin: 0 0 1 0;
-    }
-    
-    .stat-label {
-        width: 20;
-        color: $text-muted;
-    }
-    
-    .stat-value {
-        width: 1fr;
-        text-align: right;
-    }
-    """
-    
-    def __init__(self, wizard: BaseWizard, config: WizardStepConfig, **kwargs):
+    def __init__(self, wizard: WizardContainer, config: WizardStepConfig, **kwargs):
         super().__init__(wizard, config, **kwargs)
         self.import_worker: Optional[Worker] = None
         self.progress_value = reactive(0)
@@ -899,9 +588,9 @@ class ImportProgressStep(WizardStep):
                         yield Static("Failed:", classes="stat-label")
                         yield Static("0", id="stat-failed", classes="stat-value stat-error")
     
-    async def on_enter(self) -> None:
+    def on_show(self) -> None:
         """Start import when entering step."""
-        await super().on_enter()
+        super().on_show()
         # Hide back button during import
         self.wizard.can_go_back = False
         # Start import process
@@ -1080,63 +769,86 @@ class ImportProgressStep(WizardStep):
         return self.is_complete
 
 
-class ChatbookImportWizard(BaseWizard):
-    """Main chatbook import wizard."""
+class ChatbookImportWizard(WizardScreen):
+    """Chatbook import wizard screen."""
     
-    def get_wizard_title(self) -> str:
-        """Get wizard title."""
-        return "Import Chatbook"
+    def compose(self) -> ComposeResult:
+        """Compose the wizard screen."""
+        wizard = ChatbookImportWizardContainer(
+            self.app_instance,
+            **self.wizard_kwargs
+        )
+        yield wizard
+
+
+class ChatbookImportWizardContainer(WizardContainer):
+    """The actual chatbook import wizard implementation."""
     
-    def get_wizard_subtitle(self) -> str:
-        """Get wizard subtitle."""
-        return "Import conversations, notes, and media from a chatbook file"
-    
-    def create_steps(self) -> List[WizardStep]:
-        """Create wizard steps."""
+    def __init__(self, app_instance, **kwargs):
+        # Create steps with proper config
+        steps = self._create_steps()
+        
+        super().__init__(
+            app_instance=app_instance,
+            steps=steps,
+            title="Import Chatbook",
+            on_complete=self.handle_wizard_complete,
+            **kwargs
+        )
+        
+    def _create_steps(self) -> List[WizardStep]:
+        """Create wizard steps with proper configuration."""
         return [
             FileSelectionStep(
-                self,
-                WizardStepConfig(
+                wizard=self,
+                config=WizardStepConfig(
                     id="file-selection",
                     title="Select File",
-                    description="Choose chatbook to import"
+                    description="Choose chatbook to import",
+                    step_number=1
                 )
             ),
             PreviewValidationStep(
-                self,
-                WizardStepConfig(
+                wizard=self,
+                config=WizardStepConfig(
                     id="preview-validation",
                     title="Preview & Validate",
-                    description="Check chatbook contents"
+                    description="Check chatbook contents",
+                    step_number=2
                 )
             ),
             ConflictResolutionStep(
-                self,
-                WizardStepConfig(
+                wizard=self,
+                config=WizardStepConfig(
                     id="conflict-resolution",
                     title="Conflict Resolution",
-                    description="Handle existing items"
+                    description="Handle existing items",
+                    step_number=3
                 )
             ),
             ImportOptionsStep(
-                self,
-                WizardStepConfig(
+                wizard=self,
+                config=WizardStepConfig(
                     id="import-options",
                     title="Import Options",
-                    description="Configure import settings"
+                    description="Configure import settings",
+                    step_number=4
                 )
             ),
             ImportProgressStep(
-                self,
-                WizardStepConfig(
+                wizard=self,
+                config=WizardStepConfig(
                     id="import-progress",
                     title="Importing",
-                    description="Import in progress"
+                    description="Import in progress",
+                    step_number=5
                 )
             )
         ]
     
-    async def on_wizard_complete(self, wizard_data: Dict[str, Any]) -> Any:
+    def handle_wizard_complete(self, wizard_data: Dict[str, Any]) -> None:
         """Handle wizard completion."""
         # Return import status
-        return wizard_data.get("import-progress", {}).get("import_status")
+        result = wizard_data.get("import-progress", {}).get("import_status")
+        if self.app and hasattr(self.app, 'pop_screen'):
+            self.app.pop_screen(result)

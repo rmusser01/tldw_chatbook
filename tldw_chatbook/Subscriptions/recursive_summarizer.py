@@ -16,8 +16,7 @@ from loguru import logger
 #
 # Local Imports
 from .token_manager import TokenCounter
-from ..LLM_Calls.LLM_API_Calls import chat_with_provider
-from ..Chat.Chat_Functions import get_provider_model_name
+from ..Chat.Chat_Functions import chat_api_call
 from ..Metrics.metrics_logger import log_histogram, log_counter
 #
 ########################################################################################################################
@@ -345,19 +344,14 @@ class RecursiveSummarizer:
         prompt = self._build_chunk_prompt(chunk, target_tokens, context, chunk_index, total_chunks)
         
         try:
-            # Get provider and model info
-            provider_info = get_provider_model_name(self.config.provider)
-            
             # Call LLM
-            response = await chat_with_provider(
-                provider=self.config.provider,
-                api_key=self.config.api_key,
-                model=self.config.model or provider_info['default_model'],
-                messages=[
+            response = await chat_api_call(
+                api_endpoint=self.config.provider,
+                messages_payload=[
                     {"role": "system", "content": self._get_system_prompt()},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=self.config.temperature,
+                temp=self.config.temperature,
                 max_tokens=target_tokens * 2  # Allow some flexibility
             )
             

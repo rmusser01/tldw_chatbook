@@ -116,6 +116,7 @@ class TreeNode(Widget):
         self.expanded = reactive(False)
         self.selected = reactive(False)
         self.children_loaded = False
+        self.is_loading = reactive(False)
         
     def compose(self) -> ComposeResult:
         """Compose the tree node UI."""
@@ -201,12 +202,18 @@ class TreeNode(Widget):
         """Handle expand/collapse button press."""
         self.expanded = not self.expanded
         button = self.query_one(".tree-expand-btn", Button)
-        button.label = "▼" if self.expanded else "▶"
+        
+        if self.expanded and not self.children_loaded:
+            # Show loading indicator
+            button.label = "⟳"  # Loading spinner
+            self.is_loading = True
+        else:
+            button.label = "▼" if self.expanded else "▶"
         
         # Update icon for directories
         content = self.query_one(".tree-content", Static)
         icon = self._get_icon()
-        size_text = f" ({self._format_size(self.size)})" if self.size else ""
+        size_text = f" ({self._format_size(self.file_size)})" if self.file_size else ""
         content.update(f"{icon} {self.node_name}{size_text}")
         
         # Post message for parent to handle
@@ -278,6 +285,8 @@ class TreeView(VerticalScroll):
         self.on_node_expanded = on_node_expanded
         self.on_node_selected = on_node_selected
         self._tree_data: Optional[List[Dict]] = None
+        self._search_term: str = ""
+        self._file_type_filter: str = "all"
         
     def compose(self) -> ComposeResult:
         """Compose the tree view."""
@@ -381,6 +390,14 @@ class TreeView(VerticalScroll):
             await container.mount(child_node, after=node_index + i)
         
         node.children_loaded = True
+        node.is_loading = False
+        
+        # Update expand button to remove loading indicator
+        try:
+            expand_btn = node.query_one(".tree-expand-btn", Button)
+            expand_btn.label = "▼" if node.expanded else "▶"
+        except:
+            pass
     
     async def collapse_node(self, path: str) -> None:
         """Collapse a node and remove its children."""
@@ -413,6 +430,12 @@ class TreeView(VerticalScroll):
         node = self.nodes.get(path)
         if node:
             node.selected = selected
+            # Update checkbox if it exists
+            try:
+                checkbox = node.query_one(f"#select-{path}", Checkbox)
+                checkbox.value = selected
+            except:
+                pass
         
         # If it's a directory, cascade to children
         if node and node.is_directory:
@@ -423,6 +446,27 @@ class TreeView(VerticalScroll):
                         self.selection.add(child_path)
                     else:
                         self.selection.discard(child_path)
+                    # Update child checkbox
+                    try:
+                        child_checkbox = child_node.query_one(f"#select-{child_path}", Checkbox)
+                        child_checkbox.value = selected
+                    except:
+                        pass
+        
+        # Update parent selection state if needed
+        self._update_parent_selection_state(path)
+    
+    def get_node_by_path(self, path: str) -> Optional[Dict[str, Any]]:
+        """Get node data by path."""
+        node = self.nodes.get(path)
+        if node:
+            return {
+                'path': node.path,
+                'name': node.node_name,
+                'type': 'tree' if node.is_directory else 'blob',
+                'size': node.file_size
+            }
+        return None
     
     def get_selected_files(self) -> List[str]:
         """Get list of selected file paths."""
@@ -430,6 +474,37 @@ class TreeView(VerticalScroll):
             path for path in self.selection
             if path in self.nodes and not self.nodes[path].is_directory
         ]
+    
+    def select_all(self) -> None:
+        """Select all visible nodes."""
+        for path, node in self.nodes.items():
+            if node.display:  # Only select visible nodes
+                self.select_node(path, True)
+    
+    def deselect_all(self) -> None:
+        """Deselect all nodes."""
+        # Create a copy of paths to avoid modification during iteration
+        paths_to_deselect = list(self.selection)
+        for path in paths_to_deselect:
+            self.select_node(path, False)
+        self.selection.clear()
+    
+    def invert_selection(self) -> None:
+        """Invert the current selection."""
+        # Get all visible file paths (not directories)
+        all_visible_files = [
+            path for path, node in self.nodes.items()
+            if not node.is_directory and node.display
+        ]
+        
+        # Determine which files to select/deselect
+        currently_selected = set(self.selection)
+        
+        for file_path in all_visible_files:
+            if file_path in currently_selected:
+                self.select_node(file_path, False)
+            else:
+                self.select_node(file_path, True)
     
     def get_selection_stats(self) -> Dict[str, int]:
         """Get statistics about current selection."""
@@ -448,6 +523,53 @@ class TreeView(VerticalScroll):
             'size': total_size
         }
     
+    def _update_parent_selection_state(self, child_path: str) -> None:
+        """Update parent directory selection state based on children."""
+        if '/' not in child_path:
+            return  # No parent
+        
+        parent_path = child_path.rsplit('/', 1)[0]
+        parent_node = self.nodes.get(parent_path)
+        
+        if not parent_node or not parent_node.is_directory:
+            return
+        
+        # Check all children of this parent
+        children_paths = [path for path in self.nodes.keys() 
+                         if path.startswith(parent_path + '/') and 
+                         path.count('/') == parent_path.count('/') + 1]
+        
+        if not children_paths:
+            return
+        
+        # Count selected children
+        selected_children = sum(1 for path in children_paths if path in self.selection)
+        
+        # Update parent state
+        if selected_children == 0:
+            # No children selected
+            parent_node.selected = False
+            self.selection.discard(parent_path)
+        elif selected_children == len(children_paths):
+            # All children selected
+            parent_node.selected = True
+            self.selection.add(parent_path)
+        else:
+            # Partial selection - for now, mark as unselected
+            # In future, could add tri-state checkbox support
+            parent_node.selected = False
+            self.selection.discard(parent_path)
+        
+        # Update parent checkbox
+        try:
+            parent_checkbox = parent_node.query_one(f"#select-{parent_path}", Checkbox)
+            parent_checkbox.value = parent_node.selected
+        except:
+            pass
+        
+        # Recursively update grandparent
+        self._update_parent_selection_state(parent_path)
+    
     @on(TreeNodeSelected)
     def handle_node_selection(self, event: TreeNodeSelected) -> None:
         """Handle node selection events."""
@@ -461,3 +583,76 @@ class TreeView(VerticalScroll):
         """Handle node expansion events."""
         if self.on_node_expanded:
             self.on_node_expanded(event.path, event.expanded)
+    
+    def set_search_filter(self, search_term: str) -> None:
+        """Set the search filter and refresh the tree."""
+        self._search_term = search_term.lower()
+        self._apply_filters()
+    
+    def set_file_type_filter(self, file_type: str) -> None:
+        """Set the file type filter and refresh the tree."""
+        self._file_type_filter = file_type
+        self._apply_filters()
+    
+    def _matches_filters(self, node_path: str, is_directory: bool) -> bool:
+        """Check if a node matches the current filters."""
+        # Always show directories
+        if is_directory:
+            return True
+        
+        # Search filter
+        if self._search_term and self._search_term not in node_path.lower():
+            return False
+        
+        # File type filter
+        if self._file_type_filter != "all":
+            file_ext = os.path.splitext(node_path)[1].lower()
+            
+            # Define file type mappings
+            file_type_mappings = {
+                'code': ['.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', '.h', 
+                         '.cs', '.rb', '.go', '.rs', '.php', '.swift', '.kt', '.scala',
+                         '.r', '.m', '.mm', '.dart', '.lua', '.pl', '.sh', '.bash'],
+                'docs': ['.md', '.txt', '.rst', '.adoc', '.tex', '.doc', '.docx', '.pdf',
+                         '.rtf', '.odt', '.html', '.htm', '.xml'],
+                'config': ['.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
+                           '.properties', '.env', '.gitignore', '.dockerignore', '.editorconfig',
+                           'Dockerfile', 'Makefile', 'package.json', 'tsconfig.json']
+            }
+            
+            # Special handling for files without extensions
+            basename = os.path.basename(node_path)
+            if basename in file_type_mappings.get(self._file_type_filter, []):
+                return True
+            
+            # Check by extension
+            if file_ext not in file_type_mappings.get(self._file_type_filter, []):
+                return False
+        
+        return True
+    
+    def _apply_filters(self) -> None:
+        """Apply filters to the tree nodes."""
+        if not self.nodes:
+            return
+        
+        container = self.query_one("#tree-container", Container)
+        
+        # Show/hide nodes based on filters
+        visible_parents = set()
+        
+        for path, node in self.nodes.items():
+            if self._matches_filters(path, node.is_directory):
+                node.display = True
+                # Mark all parent directories as visible
+                parent_path = path
+                while '/' in parent_path:
+                    parent_path = parent_path.rsplit('/', 1)[0]
+                    visible_parents.add(parent_path)
+            else:
+                node.display = False
+        
+        # Ensure parent directories are visible
+        for path in visible_parents:
+            if path in self.nodes:
+                self.nodes[path].display = True

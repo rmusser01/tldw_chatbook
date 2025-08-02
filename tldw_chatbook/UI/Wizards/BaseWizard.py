@@ -4,7 +4,8 @@
 # Imports
 from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, List, Dict, Any, Callable
-from abc import ABC, abstractmethod
+from dataclasses import dataclass
+# from abc import ABC, abstractmethod  # Removed due to metaclass conflict with Textual
 
 # 3rd-Party Imports
 from loguru import logger
@@ -15,6 +16,7 @@ from textual.reactive import reactive
 from textual.widgets import Static, Button, Label
 from textual.binding import Binding
 from textual.css.query import NoMatches
+from textual.screen import Screen
 
 # Configure logger
 logger = logger.bind(module="BaseWizard")
@@ -24,9 +26,41 @@ if TYPE_CHECKING:
 
 ########################################################################################################################
 #
+# Configuration Classes
+#
+########################################################################################################################
+
+@dataclass
+class WizardStepConfig:
+    """Configuration for a wizard step."""
+    id: str
+    title: str
+    description: str = ""
+    icon: Optional[str] = None
+    can_skip: bool = False
+    step_number: int = 0
+
+########################################################################################################################
+#
 # Base Classes
 #
 ########################################################################################################################
+
+class WizardScreen(Screen):
+    """Base screen class for wizards."""
+    
+    BINDINGS = [
+        ("escape", "cancel", "Cancel wizard"),
+    ]
+    
+    def __init__(self, app_instance, **kwargs):
+        super().__init__()
+        self.app_instance = app_instance
+        self.wizard_kwargs = kwargs
+        
+    def action_cancel(self) -> None:
+        """Handle escape key."""
+        self.dismiss(None)
 
 class WizardStep(Container):
     """Base class for individual wizard steps."""
@@ -46,37 +80,53 @@ class WizardStep(Container):
     
     def __init__(
         self,
-        step_number: int,
-        step_title: str,
+        wizard: Optional['WizardContainer'] = None,  # Make optional for compatibility
+        config: Optional[WizardStepConfig] = None,  # Make optional for compatibility
+        step_number: int = 0,
+        step_title: str = "",
         step_description: str = "",
         *args,
         **kwargs
     ):
         super().__init__(*args, **kwargs)
-        self.step_number = step_number
-        self.step_title = step_title
-        self.step_description = step_description
+        
+        # Handle both old and new initialization patterns
+        if wizard and config:
+            self.wizard = wizard
+            self.config = config
+            self.step_number = config.step_number or step_number
+            self.step_title = config.title
+            self.step_description = config.description
+        else:
+            # Fallback for old pattern
+            self.wizard = None
+            self.config = None
+            self.step_number = step_number
+            self.step_title = step_title
+            self.step_description = step_description
+            
         self.add_class("wizard-step")
         
-    @abstractmethod
     def compose(self) -> ComposeResult:
-        """Compose the step's UI elements."""
-        pass
+        """Compose the step's UI elements. Override in subclasses."""
+        yield Container()  # Default implementation
         
-    @abstractmethod
     def validate(self) -> tuple[bool, List[str]]:
         """
-        Validate the step's data.
+        Validate the step's data. Override in subclasses.
         
         Returns:
             Tuple of (is_valid, error_messages)
         """
-        pass
+        return True, []  # Default implementation
         
-    @abstractmethod
     def get_data(self) -> Dict[str, Any]:
-        """Get the step's collected data."""
-        pass
+        """Get the step's collected data. Override in subclasses."""
+        return {}  # Default implementation
+        
+    def get_step_data(self) -> Dict[str, Any]:
+        """Compatibility method - calls get_data()."""
+        return self.get_data()
         
     def on_show(self) -> None:
         """Called when the step becomes active."""
@@ -221,23 +271,31 @@ class WizardContainer(Container):
     
     def __init__(
         self,
-        steps: List[WizardStep],
+        app_instance,
+        steps: Optional[List[WizardStep]] = None,
         title: str = "Wizard",
+        template_data: Optional[Dict[str, Any]] = None,
         on_complete: Optional[Callable[[Dict[str, Any]], None]] = None,
         on_cancel: Optional[Callable[[], None]] = None,
         *args,
         **kwargs
     ):
+        # Remove steps from kwargs if present to avoid duplicate
+        kwargs.pop('steps', None)
         super().__init__(*args, **kwargs)
-        self.steps = steps
+        
+        self.app_instance = app_instance
+        self.steps = steps or []
         self.title = title
+        self.template_data = template_data or {}
+        self.wizard_data = {}
         self.on_complete = on_complete
         self.on_cancel = on_cancel
-        self.total_steps = len(steps)
+        self.total_steps = len(self.steps)
         self.add_class("wizard-container")
         
         # Initialize step numbers and hide all steps
-        for i, step in enumerate(steps):
+        for i, step in enumerate(self.steps):
             step.step_number = i + 1
             step.add_class("hidden")
             
@@ -248,12 +306,11 @@ class WizardContainer(Container):
         
         # Progress indicator
         step_titles = [step.step_title for step in self.steps]
-        yield WizardProgress(
-            current_step=self.current_step + 1,
-            total_steps=self.total_steps,
-            step_titles=step_titles,
-            classes="wizard-progress"
-        )
+        progress = WizardProgress(classes="wizard-progress")
+        progress.current_step = self.current_step + 1
+        progress.total_steps = self.total_steps
+        progress.step_titles = step_titles
+        yield progress
         
         # Step container
         with Container(classes="wizard-steps-container"):
@@ -261,13 +318,12 @@ class WizardContainer(Container):
                 yield step
                 
         # Navigation
-        yield WizardNavigation(
-            current_step=self.current_step + 1,
-            total_steps=self.total_steps,
-            can_go_back=self.current_step > 0,
-            can_go_forward=self.can_proceed,
-            classes="wizard-navigation"
-        )
+        nav = WizardNavigation(classes="wizard-navigation")
+        nav.current_step = self.current_step + 1
+        nav.total_steps = self.total_steps
+        nav.can_go_back = self.current_step > 0
+        nav.can_go_forward = self.can_proceed
+        yield nav
         
     def on_mount(self) -> None:
         """Initialize wizard on mount."""
@@ -279,6 +335,7 @@ class WizardContainer(Container):
             # Hide current step
             if 0 <= self.current_step < len(self.steps):
                 current = self.steps[self.current_step]
+                current.remove_class("active")
                 current.add_class("hidden")
                 current.on_hide()
                 
@@ -286,13 +343,14 @@ class WizardContainer(Container):
             self.current_step = step_index
             new_step = self.steps[step_index]
             new_step.remove_class("hidden")
+            new_step.add_class("active")
             new_step.on_show()
             
             # Update progress
             self.update_progress()
             
             # Validate step to update navigation
-            self.validate_current_step()
+            self.validate_step()
             
     def update_progress(self) -> None:
         """Update progress indicators."""
@@ -309,7 +367,7 @@ class WizardContainer(Container):
         except NoMatches:
             pass
             
-    def validate_current_step(self) -> None:
+    def validate_step(self) -> None:
         """Validate the current step and update navigation."""
         if 0 <= self.current_step < len(self.steps):
             step = self.steps[self.current_step]
@@ -324,6 +382,10 @@ class WizardContainer(Container):
                 nav.can_go_forward = is_valid
             except NoMatches:
                 pass
+            
+            # Allow proceeding if this is a special step (like ProgressStep)
+            if hasattr(step, 'can_proceed'):
+                self.can_proceed = step.can_proceed()
                 
     @on(Button.Pressed, "#wizard-next")
     def handle_next(self) -> None:
@@ -331,8 +393,13 @@ class WizardContainer(Container):
         if self.current_step < len(self.steps) - 1:
             # Validate current step
             if self.can_proceed:
+                # Save current step data
+                current_step = self.steps[self.current_step]
+                step_id = current_step.config.id if current_step.config else f"step_{self.current_step}"
+                self.wizard_data[step_id] = current_step.get_step_data()
+                
                 # Mark current step as complete
-                self.steps[self.current_step].is_complete = True
+                current_step.is_complete = True
                 
                 # Move to next step
                 self.show_step(self.current_step + 1)
@@ -370,17 +437,14 @@ class WizardContainer(Container):
         self.is_complete = True
         self.steps[self.current_step].is_complete = True
         
-        # Collect all data
-        wizard_data = {}
-        for step in self.steps:
-            step_data = step.get_data()
-            wizard_data.update(step_data)
-            
-        logger.info(f"Wizard completed with data: {wizard_data}")
+        # Collect all data from each step with its ID
+        self.wizard_data[self.steps[self.current_step].config.id if self.steps[self.current_step].config else f"step_{self.current_step}"] = self.steps[self.current_step].get_step_data()
+        
+        logger.info(f"Wizard completed with data: {self.wizard_data}")
         
         # Call completion callback
         if self.on_complete:
-            self.on_complete(wizard_data)
+            self.on_complete(self.wizard_data)
             
     def get_all_data(self) -> Dict[str, Any]:
         """Get data from all completed steps."""

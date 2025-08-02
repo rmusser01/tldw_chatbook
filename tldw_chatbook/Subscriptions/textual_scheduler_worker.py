@@ -11,7 +11,8 @@ from typing import Optional, Dict, Any, List, Callable
 import json
 #
 # Third-Party Imports
-from textual.worker import Worker, work
+from textual.worker import Worker
+from textual import work
 from textual.app import App
 from textual import events
 from loguru import logger

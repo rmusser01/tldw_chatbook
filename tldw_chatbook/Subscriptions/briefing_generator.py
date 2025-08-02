@@ -23,8 +23,7 @@ import markdown
 #
 # Local Imports
 from ..DB.Subscriptions_DB import SubscriptionsDB
-from ..LLM_Calls.LLM_API_Calls import chat_with_provider
-from ..Chat.Chat_Functions import get_provider_model_name
+from ..Chat.Chat_Functions import chat_api_call
 from ..Notes.Notes_Library import NotesInteropService
 from ..Metrics.metrics_logger import log_histogram, log_counter
 from .content_processor import ContentSummarizer
@@ -317,14 +316,10 @@ Format each section clearly with appropriate headers."""
             {"role": "user", "content": prompt}
         ]
         
-        provider_model = get_provider_model_name(self.llm_provider, self.llm_model)
-        
-        response = await chat_with_provider(
-            messages=messages,
+        response = await chat_api_call(
             api_endpoint=self.llm_provider,
-            provider=self.llm_provider,
-            model_name=provider_model,
-            temperature=0.3,
+            messages_payload=messages,
+            temp=0.3,
             max_tokens=2000
         )
         

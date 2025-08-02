@@ -39,8 +39,7 @@ from loguru import logger
 from ..Widgets.form_components import FormBuilder, FormField, FormFieldSet
 from ..Subscriptions.scrapers.custom_scraper import CustomScrapingPipeline
 from ..Subscriptions.web_scraping_pipelines import ScrapingConfig
-from ..Web_Scraping.Article_Extractor_Lib import get_page_content
-from ..Constants import Colors
+from ..Web_Scraping.Article_Extractor_Lib import scrape_article_sync as get_page_content
 #
 ########################################################################################################################
 #

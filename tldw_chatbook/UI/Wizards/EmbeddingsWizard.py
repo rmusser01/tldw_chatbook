@@ -75,6 +75,11 @@ class EmbeddingsCreationWizard(WizardContainer):
             on_cancel=on_cancel or self.handle_cancellation
         )
         
+    def validate_current_step(self, old_value: int) -> None:
+        """Override to handle Textual's reactive system expecting this signature."""
+        # Just call the parent's method without the argument
+        super().validate_current_step()
+        
     def show_step(self, step_index: int) -> None:
         """Override to handle dynamic step creation."""
         # If moving from step 1 to step 2, create content selection step

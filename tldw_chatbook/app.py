@@ -145,7 +145,7 @@ from .UI.Tab_Bar import TabBar
 from .UI.Tab_Dropdown import TabDropdown, TabChanged
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
-# from .UI.SubscriptionWindow import SubscriptionWindow  # Temporarily disabled due to FormField imports
+from .UI.SubscriptionWindow import SubscriptionWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
@@ -1399,13 +1399,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             TAB_CODING: {},  # Empty for now - coding handles its own events
             TAB_STTS: {}, # STTS handles its own events
             TAB_STUDY: {}, # Study handles its own events
-            # TAB_SUBSCRIPTIONS: {
-            #     "subscription-add-button": subscription_events.handle_add_subscription,
-            #     "subscription-check-all-button": subscription_events.handle_check_all_subscriptions,
-            #     "subscription-accept-button": subscription_events.handle_subscription_item_action,
-            #     "subscription-ignore-button": subscription_events.handle_subscription_item_action,
-            #     "subscription-mark-reviewed-button": subscription_events.handle_subscription_item_action,
-            # },
+            TAB_SUBSCRIPTIONS: {
+                "subscription-add-button": subscription_events.handle_add_subscription,
+                "subscription-check-all-button": subscription_events.handle_check_all_subscriptions,
+                "subscription-accept-button": subscription_events.handle_subscription_item_action,
+                "subscription-ignore-button": subscription_events.handle_subscription_item_action,
+                "subscription-mark-reviewed-button": subscription_events.handle_subscription_item_action,
+            },
         }
 
     def _setup_logging(self):
@@ -1536,7 +1536,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("stts", STTSWindow, "stts-window"),
             ("study", StudyWindow, "study-window"),
             ("chatbooks", ChatbooksWindow, "chatbooks-window"),
-            # ("subscriptions", SubscriptionWindow, "subscriptions-window"),  # Temporarily disabled
+            ("subscriptions", SubscriptionWindow, "subscriptions-window"),
         ]
         
         # Create window widgets and compose them into the container properly
@@ -4145,20 +4145,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if not button_id:
             return
 
-        self.loguru_logger.debug(f"Button pressed: ID='{button_id}' on Tab='{self.current_tab}'")
+        self.loguru_logger.info(f"Button pressed: ID='{button_id}' on Tab='{self.current_tab}'")
 
         # 1. Handle global tab switching first
         if button_id.startswith("tab-"):
             await tab_events.handle_tab_button_pressed(self, event)
             return
-    
-    @on(TabChanged)
-    async def on_tab_dropdown_changed(self, event: TabChanged) -> None:
-        """Handle tab changes from the dropdown navigation."""
-        new_tab_id = event.tab_id
-        self.loguru_logger.info(f"Dropdown tab change requested to '{new_tab_id}'")
-        if new_tab_id != self.current_tab:
-            self.current_tab = new_tab_id  # This will trigger the watch_current_tab method
 
         # 2. Try to delegate to the appropriate window component
         try:
@@ -4182,17 +4174,25 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             }
 
             window_id = window_id_map.get(self.current_tab)
+            self.loguru_logger.info(f"Window ID for tab '{self.current_tab}': {window_id}")
             if window_id:
                 window = self.query_one(f"#{window_id}")
+                self.loguru_logger.info(f"Found window: {type(window).__name__}")
                 # Check if the window has an on_button_pressed method
-                if hasattr(window, "on_button_pressed") and callable(window.on_button_pressed):
+                has_method = hasattr(window, "on_button_pressed") and callable(window.on_button_pressed)
+                self.loguru_logger.info(f"Window has on_button_pressed: {has_method}")
+                if has_method:
                     # Call the window's button handler - it might be async
+                    self.loguru_logger.info(f"Delegating to window's on_button_pressed")
                     result = window.on_button_pressed(event)
                     if inspect.isawaitable(result):
                         await result
                     # Check if event has been stopped (some event types don't have is_stopped)
                     if hasattr(event, 'is_stopped') and event.is_stopped:
+                        self.loguru_logger.info(f"Event was stopped by window handler")
                         return
+                    self.loguru_logger.info(f"Window handler completed, event not stopped")
+                    # Don't return here - let it fall through to the handler map!
 
         except QueryError:
             self.loguru_logger.error(f"Could not find window component for tab '{self.current_tab}'")
@@ -4203,8 +4203,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         current_tab_handlers = self.button_handler_map.get(self.current_tab, {})
         handler = current_tab_handlers.get(button_id)
         
-        self.loguru_logger.debug(f"Looking for handler for button '{button_id}' in tab '{self.current_tab}'")
-        self.loguru_logger.debug(f"Available handlers for this tab: {list(current_tab_handlers.keys())}")
+        self.loguru_logger.info(f"Looking for handler for button '{button_id}' in tab '{self.current_tab}'")
+        self.loguru_logger.info(f"Available handlers for this tab: {list(current_tab_handlers.keys())}")
+        self.loguru_logger.info(f"Handler found: {handler is not None}")
         
         # Special debug logging for save chat button
         if button_id == "chat-save-current-chat-button":
