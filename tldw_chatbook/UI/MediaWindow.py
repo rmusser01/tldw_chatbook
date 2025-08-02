@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, List, Optional
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, VerticalScroll, Horizontal, Vertical, Grid
+from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.reactive import reactive
 from textual.widgets import Static, Button, Label, Input, ListView, TextArea, Markdown, Checkbox
@@ -45,8 +45,30 @@ class MediaWindow(Container):
     
     # CSS to ensure views are hidden by default
     DEFAULT_CSS = """
+    MediaWindow {
+        layout: horizontal;
+        width: 100%;
+        height: 100%;
+    }
+    
     .media-view-area {
         display: none;
+        layout: horizontal;
+    }
+    
+    #media-nav-container {
+        width: 30;
+        height: 100%;
+    }
+    
+    #media-nav-container.collapsed {
+        width: 0;
+        display: none;
+    }
+    
+    #media-content-pane {
+        width: 1fr;
+        height: 100%;
     }
     """
     
@@ -68,10 +90,10 @@ class MediaWindow(Container):
             # Add class to self (MediaWindow) for grid column adjustment
             self.set_class(collapsed, "sidebar-collapsed")
             
-            # Keep existing logic for nav pane and toggle button
-            nav_pane = self.query_one("#media-nav-pane")
+            # Target the container for collapsing
+            nav_container = self.query_one("#media-nav-container")
             toggle_button = self.query_one("#media-sidebar-toggle-button")
-            nav_pane.set_class(collapsed, "collapsed")
+            nav_container.set_class(collapsed, "collapsed")
             toggle_button.set_class(collapsed, "collapsed")
         except QueryError as e:
             self.log.warning(f"UI component not found during media sidebar collapse: {e}")
@@ -88,7 +110,7 @@ class MediaWindow(Container):
             # Then show the new active view
             if new_view:
                 view_to_show = self.query_one(f"#{new_view}")
-                view_to_show.styles.display = "block" # Or "flex" if that's its natural display
+                view_to_show.styles.display = "block" # Textual only supports block or none
                 self.log.info(f"MediaWindow: Set display to 'block' for #{new_view}")
 
                 type_slug = new_view.replace("media-view-", "")
@@ -208,29 +230,30 @@ class MediaWindow(Container):
     def compose(self) -> ComposeResult:
         self.log.debug(f"MediaWindow composing. Initial types from __init__: {self.media_types_from_db}")
 
-        # Left Navigation Pane
-        with VerticalScroll(classes="media-nav-pane", id="media-nav-pane"):
-            yield Static("Media Types", classes="sidebar-title")
-            if not self.media_types_from_db or (
-                    len(self.media_types_from_db) == 1 and self.media_types_from_db[0] in ["Error Loading Types",
-                                                                                           "DB Error", "Service Error",
-                                                                                           "DB Error or No Media in DB",
-                                                                                           "No media types loaded."]):
-                error_message = "No media types loaded."
-                if self.media_types_from_db and isinstance(self.media_types_from_db[0], str):
-                    error_message = self.media_types_from_db[0]
-                yield Label(error_message)
-            else:
-                for media_type_display_name in self.media_types_from_db:
-                    type_slug = slugify(media_type_display_name)
-                    yield Button(media_type_display_name, id=f"media-nav-{type_slug}", classes="media-nav-button")
+        # Left Navigation Pane - wrap in Container for proper layout
+        with Container(id="media-nav-container"):
+            with VerticalScroll(classes="media-nav-pane", id="media-nav-pane"):
+                yield Static("Media Types", classes="sidebar-title")
+                if not self.media_types_from_db or (
+                        len(self.media_types_from_db) == 1 and self.media_types_from_db[0] in ["Error Loading Types",
+                                                                                               "DB Error", "Service Error",
+                                                                                               "DB Error or No Media in DB",
+                                                                                               "No media types loaded."]):
+                    error_message = "No media types loaded."
+                    if self.media_types_from_db and isinstance(self.media_types_from_db[0], str):
+                        error_message = self.media_types_from_db[0]
+                    yield Label(error_message)
+                else:
+                    for media_type_display_name in self.media_types_from_db:
+                        type_slug = slugify(media_type_display_name)
+                        yield Button(media_type_display_name, id=f"media-nav-{type_slug}", classes="media-nav-button")
 
-                # Add Analysis Review button explicitly
-                yield Button("Analysis Review", id="media-nav-analysis-review", classes="media-nav-button")
-                
-                # Add Collections/Tags and Multi-Item Review buttons
-                yield Button("Collections/Tags", id="media-nav-collections-tags", classes="media-nav-button")
-                yield Button("Multi-Item Review", id="media-nav-multi-item-review", classes="media-nav-button")
+                    # Add Analysis Review button explicitly
+                    yield Button("Analysis Review", id="media-nav-analysis-review", classes="media-nav-button")
+                    
+                    # Add Collections/Tags and Multi-Item Review buttons
+                    yield Button("Collections/Tags", id="media-nav-collections-tags", classes="media-nav-button")
+                    yield Button("Multi-Item Review", id="media-nav-multi-item-review", classes="media-nav-button")
 
         # Main Content Pane
         with Container(classes="media-content-pane", id="media-content-pane"):
@@ -274,8 +297,8 @@ class MediaWindow(Container):
                     )
                 else:
                     # Standard media view layout
-                    # Each media view is a Grid container for left (list) and right (details) panes
-                    with Grid(id=view_id, classes="media-view-area"):
+                    # Each media view is a Horizontal container for left (list) and right (details) panes
+                    with Horizontal(id=view_id, classes="media-view-area"):
                         # --- LEFT PANE (for list and controls) ---
                         with Container(classes="media-content-left-pane"):
                             yield Label(f"{media_type_display_name} Management", classes="pane-title")

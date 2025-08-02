@@ -42,7 +42,6 @@ class MediaViewerPanel(Container):
     
     DEFAULT_CSS = """
     MediaViewerPanel {
-        width: 2fr;
         height: 100%;
         layout: vertical;
     }

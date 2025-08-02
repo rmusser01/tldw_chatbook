@@ -3501,9 +3501,9 @@ UPDATE db_schema_version
             logger.error(f"Database error fetching conversation ID {conversation_id}: {e}")
             raise
 
-    def get_conversation_by_name(self, conversation_name: str) -> Optional[Dict[str, Any]]:
+    def get_conversation_by_name(self, conversation_name: str) -> List[Dict[str, Any]]:
         """
-        Retrieves a specific conversation by its name.
+        Retrieves all conversations with the specified name.
         
         Only non-deleted conversations are returned.
         
@@ -3511,34 +3511,35 @@ UPDATE db_schema_version
             conversation_name: The name of the conversation.
             
         Returns:
-            A dictionary containing the conversation's data if found and not deleted,
-            otherwise None.
+            A list of dictionaries containing the conversations' data.
+            Returns an empty list if no matching conversations are found.
             
         Raises:
             CharactersRAGDBError: For database errors during fetching.
         """
         start_time = time.time()
-        query = "SELECT * FROM conversations WHERE conversation_name = ? AND deleted = 0"
+        query = "SELECT * FROM conversations WHERE conversation_name = ? AND deleted = 0 ORDER BY created_at DESC"
         try:
             cursor = self.execute_query(query, (conversation_name,))
-            row = cursor.fetchone()
-            result = dict(row) if row else None
+            rows = cursor.fetchall()
+            results = [dict(row) for row in rows]
             
             # Log metrics
             duration = time.time() - start_time
             log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
                 "operation": "get_by_name",
-                "found": "true" if result else "false"
+                "found": "true" if results else "false"
             })
             log_counter("chachanotes_db_conversation_operation_count", labels={
                 "operation": "get_by_name",
                 "status": "success",
-                "found": "true" if result else "false"
+                "found": "true" if results else "false",
+                "count": str(len(results))
             })
             
-            return result
+            return results
         except CharactersRAGDBError as e:
-            logger.error(f"Database error fetching conversation by name {conversation_name}: {e}")
+            logger.error(f"Database error fetching conversations by name {conversation_name}: {e}")
             raise
 
     def get_conversations_for_character(self, character_id: int, limit: int = 50, offset: int = 0) -> List[

@@ -238,6 +238,11 @@ diarization = [
     "scikit-learn",  # For clustering algorithms (already in chunker deps)
     "numpy",  # Numerical operations (already in base deps)
 ]
+subscriptions = [
+    "markdown",  # For HTML generation from markdown
+    "schedule",  # For scheduled tasks
+    "feedparser",  # For RSS feed parsing
+]
 
 
 [project.urls]

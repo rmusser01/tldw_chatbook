@@ -186,7 +186,12 @@ class TestChatbookCreator:
         # These methods are now implemented to use actual DB checks
         # but we can test the fallback behavior
         mock_db = Mock()
-        mock_db.get_conversation_by_name.side_effect = [True, True, False]
+        # Mock returns list of conversations (non-empty list is truthy, empty list is falsy)
+        mock_db.get_conversation_by_name.side_effect = [
+            [{"id": 1, "name": "Test"}],  # First call returns existing conversation
+            [{"id": 2, "name": "Test (1)"}],  # Second call returns existing conversation
+            []  # Third call returns empty list (no conversation found)
+        ]
         
         unique_name = chatbook_importer._generate_unique_name("Test", mock_db)
         assert unique_name == "Test (3)"

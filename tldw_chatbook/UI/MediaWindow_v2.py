@@ -360,7 +360,7 @@ class MediaWindow(Container):
                     # Update display directly
                     try:
                         analysis_display = self.viewer_panel.query_one("#analysis-display", Markdown)
-                        analysis_display.update(response)
+                        await analysis_display.update(response)
                         # Update the viewer panel's current analysis state
                         self.viewer_panel.current_analysis = response
                         self.viewer_panel._update_analysis_button_states()
@@ -373,7 +373,7 @@ class MediaWindow(Container):
                     # Reset analysis display on failure
                     try:
                         analysis_display = self.viewer_panel.query_one("#analysis-display", Markdown)
-                        analysis_display.update("*Analysis generation failed*")
+                        await analysis_display.update("*Analysis generation failed*")
                     except:
                         pass
                     
@@ -408,7 +408,7 @@ class MediaWindow(Container):
             )
             
             if version_info:
-                self.app_instance.notify("Analysis saved successfully", severity="success")
+                self.app_instance.notify("Analysis saved successfully", severity="information")
                 # Update the viewer to show it's now saved
                 self.viewer_panel.has_existing_analysis = True
                 self.viewer_panel._update_analysis_button_states()
@@ -444,7 +444,7 @@ class MediaWindow(Container):
             )
             
             if version_info:
-                self.app_instance.notify("Analysis overwritten successfully", severity="success")
+                self.app_instance.notify("Analysis overwritten successfully", severity="information")
                 # Update the viewer state
                 self.viewer_panel.has_existing_analysis = True
                 self.viewer_panel.current_analysis = event.analysis_content
@@ -589,3 +589,7 @@ class MediaWindow(Container):
         
         # Run the worker
         self.run_worker(perform_search(), exclusive=True)
+
+#
+# End of MediaWindow_v2.py
+##############################A###############A###############A###############A###############A###############A

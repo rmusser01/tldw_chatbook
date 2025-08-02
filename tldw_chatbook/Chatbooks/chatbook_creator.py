@@ -27,6 +27,7 @@ from ..DB.Prompts_DB import PromptsDatabase
 from ..DB.RAG_Indexing_DB import RAGIndexingDB
 from ..DB.Evals_DB import EvalsDB
 from ..DB.Subscriptions_DB import SubscriptionsDB
+from ..Utils.text import sanitize_filename
 
 
 class ChatbookCreator:
@@ -335,7 +336,7 @@ class ChatbookCreator:
                 }
                 
                 # Write markdown file
-                note_file = notes_dir / f"{note['title'].replace('/', '_')}.md"
+                note_file = notes_dir / f"{sanitize_filename(note['title'])}.md"
                 with open(note_file, 'w', encoding='utf-8') as f:
                     # Write frontmatter
                     f.write("---\n")

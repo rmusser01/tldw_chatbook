@@ -299,11 +299,12 @@ class ChatbookImporter:
                 if prefix_imported:
                     conv_name = f"[Imported] {conv_name}"
                 
-                # Check for existing conversation
-                existing = db.get_conversation_by_name(conv_name)
+                # Check for existing conversations with same name
+                existing_conversations = db.get_conversation_by_name(conv_name)
                 
-                if existing:
-                    # Handle conflict
+                if existing_conversations:
+                    # Handle conflict - use the first (most recent) conversation
+                    existing = existing_conversations[0]
                     resolution = self.conflict_resolver.resolve_conversation_conflict(
                         existing,
                         conv_data,
@@ -728,7 +729,8 @@ class ChatbookImporter:
         counter = 1
         while True:
             new_name = f"{base_name} ({counter})"
-            if not db.get_conversation_by_name(new_name):
+            # Check if any conversations exist with this name
+            if not db.get_conversation_by_name(new_name):  # Empty list is falsy
                 return new_name
             counter += 1
     

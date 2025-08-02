@@ -141,11 +141,11 @@ from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Study_Window import StudyWindow
 from .UI.Chatbooks_Window import ChatbooksWindow
+from .UI.SubscriptionWindow import SubscriptionWindow
 from .UI.Tab_Bar import TabBar
 from .UI.Tab_Dropdown import TabDropdown, TabChanged
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
-from .UI.SubscriptionWindow import SubscriptionWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
@@ -156,6 +156,15 @@ from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_NAV_EMBEDDINGS_MANAGE
 )
 API_IMPORTS_SUCCESSFUL = True
+
+# Try to import SubscriptionWindow if dependencies are available
+SubscriptionWindow = None
+try:
+    from .UI.SubscriptionWindow import SubscriptionWindow
+    SUBSCRIPTIONS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Subscriptions feature unavailable: {e}")
+    SUBSCRIPTIONS_AVAILABLE = False
 #
 #######################################################################################################################
 #
@@ -1536,8 +1545,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("stts", STTSWindow, "stts-window"),
             ("study", StudyWindow, "study-window"),
             ("chatbooks", ChatbooksWindow, "chatbooks-window"),
-            ("subscriptions", SubscriptionWindow, "subscriptions-window"),
         ]
+        
+        # Add subscriptions tab if available
+        if SUBSCRIPTIONS_AVAILABLE and SubscriptionWindow:
+            windows.append(("subscriptions", SubscriptionWindow, "subscriptions-window"))
         
         # Create window widgets and compose them into the container properly
         initial_tab = self._initial_tab_value

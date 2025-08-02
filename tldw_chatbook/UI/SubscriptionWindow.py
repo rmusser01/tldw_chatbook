@@ -39,8 +39,17 @@ from ..Event_Handlers.subscription_events import (
 )
 from ..DB.Subscriptions_DB import SubscriptionsDB, SubscriptionError as DBSubscriptionError
 from ..Subscriptions.textual_scheduler_worker import SubscriptionSchedulerWorker
-from ..Subscriptions.briefing_generator import BriefingGenerator
-from ..Subscriptions.briefing_templates import BriefingTemplateManager
+
+# Try importing briefing-related modules (require optional dependencies)
+try:
+    from ..Subscriptions.briefing_generator import BriefingGenerator
+    from ..Subscriptions.briefing_templates import BriefingTemplateManager
+    BRIEFING_AVAILABLE = True
+except ImportError:
+    BriefingGenerator = None
+    BriefingTemplateManager = None
+    BRIEFING_AVAILABLE = False
+    logger.warning("Briefing functionality unavailable - install with: pip install tldw_chatbook[subscriptions]")
 from ..config import get_subscriptions_db_path
 from ..Constants import SUBSCRIPTION_TYPES, SUBSCRIPTION_UPDATE_FREQUENCIES
 from .SiteConfigSettings import SiteConfigSettings
@@ -256,7 +265,7 @@ class SubscriptionWindow(Container):
                 
                 yield FormField(
                     "Description",
-                    TextArea(id="sub-description", max_lines=3)
+                    TextArea(id="sub-description")
                 )
             
             # Organization
@@ -310,9 +319,7 @@ class SubscriptionWindow(Container):
                 yield FormField(
                     "Custom Headers",
                     TextArea(
-                        id="sub-headers",
-                        placeholder='{"User-Agent": "MyApp/1.0"}',
-                        max_lines=5
+                        id="sub-headers"
                     )
                 )
                 

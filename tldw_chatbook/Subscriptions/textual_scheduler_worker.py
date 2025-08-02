@@ -22,7 +22,15 @@ from .scheduler import SubscriptionScheduler, ScheduledTask, UpdatePattern
 from .monitoring_engine import FeedMonitor, URLMonitor
 from .website_monitor import WebsiteMonitor
 from .aggregation_engine import AggregationEngine, AggregationConfig
-from .briefing_generator import BriefingGenerator
+
+# Try importing briefing generator (requires optional dependencies)
+try:
+    from .briefing_generator import BriefingGenerator
+    BRIEFING_AVAILABLE = True
+except ImportError:
+    BriefingGenerator = None
+    BRIEFING_AVAILABLE = False
+
 from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Event_Handlers.subscription_events import (
     SubscriptionCheckStarted,
@@ -74,7 +82,7 @@ class SubscriptionSchedulerWorker(Worker):
         self.scheduler = SubscriptionScheduler(db, max_concurrent)
         self.website_monitor = WebsiteMonitor(db)
         self.aggregation_engine = AggregationEngine(db)
-        self.briefing_generator = BriefingGenerator(db)
+        self.briefing_generator = BriefingGenerator(db) if BRIEFING_AVAILABLE else None
         
         # State tracking
         self.is_running = False
@@ -389,6 +397,15 @@ class SubscriptionSchedulerWorker(Worker):
     @work
     async def generate_briefing_now(self, config: Dict[str, Any]):
         """Generate a briefing immediately."""
+        if not BRIEFING_AVAILABLE or not self.briefing_generator:
+            logger.warning("Briefing generation unavailable - install with: pip install tldw_chatbook[subscriptions]")
+            self.post_message(SubscriptionError(
+                worker=self,
+                error="Briefing functionality not available",
+                subscription_id=None
+            ))
+            return
+            
         try:
             # Get items for briefing
             items = self.db.get_new_items(status='new', limit=1000)
