@@ -7,6 +7,7 @@ import time
 import math
 from typing import List, Optional, Tuple, Any, Dict
 from dataclasses import dataclass
+from rich.color import Color
 from rich.text import Text
 from rich.style import Style
 from rich.console import Console
