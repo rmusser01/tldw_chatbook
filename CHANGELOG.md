@@ -23,9 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wizard walkthrough widget (broken)
 - Extensive mindmap viewer/converter (broken)
 
-### Fixed
-- Stuff
-
 
 ## [0.1.5.0] - 2025-07-27
 ### Fixed

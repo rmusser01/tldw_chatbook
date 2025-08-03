@@ -36,6 +36,7 @@ classifiers = [
 # --- Dependencies ---
 dependencies = [
     "chardet",
+    "cryptography",
     "httpx",
     "loguru",
     "textual>=3.3.0",
