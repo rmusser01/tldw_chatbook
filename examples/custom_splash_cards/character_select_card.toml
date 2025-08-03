@@ -1,0 +1,5 @@
+# Character Select example splash card
+type = "animated"
+effect = "character_select"
+style = "white on blue"
+animation_speed = 0.1

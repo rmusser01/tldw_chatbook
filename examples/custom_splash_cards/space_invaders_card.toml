@@ -1,0 +1,5 @@
+# Space Invaders example splash card
+type = "animated"
+effect = "space_invaders"
+style = "black on black"
+animation_speed = 0.1

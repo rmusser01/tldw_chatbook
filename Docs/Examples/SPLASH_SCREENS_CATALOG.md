@@ -504,3 +504,65 @@ active_cards = ["matrix", "glitch", "starfield", "neural_network"]
 ## Creating Custom Cards
 
 Place custom splash card TOML files in `~/.config/tldw_cli/splash_cards/`. See the examples directory for templates.
+
+## Videogame Effects
+
+### 55. doom_fire
+- **Type**: Animated
+- **Effect**: doom_fire
+- **Description**: A classic "Doom" style fire effect at the bottom of the screen.
+- **Best for**: Intense, retro-themed applications.
+
+### 56. pacman
+- **Type**: Animated
+- **Effect**: pacman
+- **Description**: An animation of Pac-Man moving across the screen, eating dots.
+- **Best for**: Fun, retro-themed applications.
+
+### 57. space_invaders
+- **Type**: Animated
+- **Effect**: space_invaders
+- **Description**: A recreation of the classic Space Invaders game.
+- **Best for**: Retro, arcade-themed applications.
+
+### 58. tetris
+- **Type**: Animated
+- **Effect**: tetris
+- **Description**: Blocks falling and stacking up.
+- **Best for**: Puzzle-themed or constructive applications.
+
+### 59. character_select
+- **Type**: Animated
+- **Effect**: character_select
+- **Description**: A character selection screen.
+- **Best for**: Applications with multiple modes or profiles.
+
+### 60. achievement_unlocked
+- **Type**: Animated
+- **Effect**: achievement_unlocked
+- **Description**: An "Achievement Unlocked" notification.
+- **Best for**: Gamified applications or rewarding user actions.
+
+### 61. versus_screen
+- **Type**: Animated
+- **Effect**: versus_screen
+- **Description**: A "VS" screen from a fighting game.
+- **Best for**: Applications with a competitive or comparative aspect.
+
+### 62. world_map
+- **Type**: Animated
+- **Effect**: world_map
+- **Description**: An ASCII world map with a blinking cursor.
+- **Best for**: Applications with a global or travel-related theme.
+
+### 63. level_up
+- **Type**: Animated
+- **Effect**: level_up
+- **Description**: Text that "levels up" with a flash of light.
+- **Best for**: Gamified applications or showing progress.
+
+### 64. retro_gaming_intro
+- **Type**: Animated
+- **Effect**: retro_gaming_intro
+- **Description**: A tribute to classic 8-bit and 16-bit game intros.
+- **Best for**: Retro-themed applications or a nostalgic feel.

@@ -1,0 +1,5 @@
+# Tetris example splash card
+type = "animated"
+effect = "tetris"
+style = "black on black"
+animation_speed = 0.1

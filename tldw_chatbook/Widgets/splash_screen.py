@@ -93,7 +93,17 @@ from ..Utils.splash_animations import (
     ColorPulseEffect,
     ShroomVisionEffect,
     HypnoSwirlEffect,
-    ElectricSheepEffect
+    ElectricSheepEffect,
+    DoomFireEffect,
+    PacmanEffect,
+    SpaceInvadersEffect,
+    TetrisEffect,
+    CharacterSelectEffect,
+    AchievementUnlockedEffect,
+    VersusScreenEffect,
+    WorldMapEffect,
+    LevelUpEffect,
+    RetroGamingIntroEffect
 )
 
 class SplashScreen(Container):
@@ -196,7 +206,10 @@ class SplashScreen(Container):
                 "spy_vs_spy", "phonebooths", "emoji_face",
                 # Psychedelic effects
                 "psychedelic_mandala", "lava_lamp", "kaleidoscope", "deep_dream", "trippy_tunnel",
-                "melting_screen", "color_pulse", "shroom_vision", "hypno_swirl", "electric_sheep"
+                "melting_screen", "color_pulse", "shroom_vision", "hypno_swirl", "electric_sheep",
+                # Videogame effects
+                "doom_fire", "pacman", "space_invaders", "tetris", "character_select",
+                "achievement_unlocked", "versus_screen", "world_map", "level_up", "retro_gaming_intro"
             ]
         }
 
@@ -846,6 +859,66 @@ class SplashScreen(Container):
                 "effect": "electric_sheep",
                 "style": "black on black",
                 "animation_speed": 0.05
+            },
+            "doom_fire": {
+                "type": "animated",
+                "effect": "doom_fire",
+                "style": "black on black",
+                "animation_speed": 0.05
+            },
+            "pacman": {
+                "type": "animated",
+                "effect": "pacman",
+                "style": "black on black",
+                "animation_speed": 0.1
+            },
+            "space_invaders": {
+                "type": "animated",
+                "effect": "space_invaders",
+                "style": "black on black",
+                "animation_speed": 0.1
+            },
+            "tetris": {
+                "type": "animated",
+                "effect": "tetris",
+                "style": "black on black",
+                "animation_speed": 0.1
+            },
+            "character_select": {
+                "type": "animated",
+                "effect": "character_select",
+                "style": "white on blue",
+                "animation_speed": 0.1
+            },
+            "achievement_unlocked": {
+                "type": "animated",
+                "effect": "achievement_unlocked",
+                "style": "white on black",
+                "animation_speed": 0.05
+            },
+            "versus_screen": {
+                "type": "animated",
+                "effect": "versus_screen",
+                "style": "white on black",
+                "animation_speed": 0.05
+            },
+            "world_map": {
+                "type": "animated",
+                "effect": "world_map",
+                "style": "white on black",
+                "animation_speed": 0.1
+            },
+            "level_up": {
+                "type": "animated",
+                "effect": "level_up",
+                "style": "white on black",
+                "animation_speed": 0.05
+            },
+            "retro_gaming_intro": {
+                "type": "animated",
+                "effect": "retro_gaming_intro",
+                "style": "white on black",
+                "animation_speed": 0.05
             }
         }
 
@@ -955,6 +1028,76 @@ class SplashScreen(Container):
                 height=height,
                 speed=self.card_data.get("animation_speed", 0.05)
             )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "doom_fire":
+            width, height = self._get_terminal_size()
+            self.effect_handler = DoomFireEffect(self, width=width, height=height, **self.card_data)
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "pacman":
+            width, height = self._get_terminal_size()
+            self.effect_handler = PacmanEffect(self, width=width, height=height, **self.card_data)
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "space_invaders":
+            width, height = self._get_terminal_size()
+            self.effect_handler = SpaceInvadersEffect(self, width=width, height=height, **self.card_data)
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "tetris":
+            width, height = self._get_terminal_size()
+            self.effect_handler = TetrisEffect(self, width=width, height=height, **self.card_data)
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "character_select":
+            width, height = self._get_terminal_size()
+            self.effect_handler = CharacterSelectEffect(self, width=width, height=height, **self.card_data)
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "achievement_unlocked":
+            width, height = self._get_terminal_size()
+            self.effect_handler = AchievementUnlockedEffect(self, width=width, height=height, **self.card_data)
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "versus_screen":
+            width, height = self._get_terminal_size()
+            self.effect_handler = VersusScreenEffect(self, width=width, height=height, **self.card_data)
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "world_map":
+            width, height = self._get_terminal_size()
+            self.effect_handler = WorldMapEffect(self, width=width, height=height, **self.card_data)
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "level_up":
+            width, height = self._get_terminal_size()
+            self.effect_handler = LevelUpEffect(self, width=width, height=height, **self.card_data)
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "retro_gaming_intro":
+            width, height = self._get_terminal_size()
+            self.effect_handler = RetroGamingIntroEffect(self, width=width, height=height, **self.card_data)
             self.animation_timer = self.set_interval(
                 self.card_data.get("animation_speed", 0.05),
                 self._update_animation

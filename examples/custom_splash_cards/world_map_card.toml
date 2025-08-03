@@ -1,0 +1,5 @@
+# World Map example splash card
+type = "animated"
+effect = "world_map"
+style = "white on black"
+animation_speed = 0.1

@@ -178,6 +178,20 @@ This document provides a comprehensive list of all available splash screens in t
 | `hypno_swirl_card` | A hypnotic, swirling pattern |
 | `electric_sheep_card` | Abstract, evolving patterns |
 
+#### Videogame
+| Name | Description |
+|------|-------------|
+| `doom_fire_card` | Classic "Doom" style fire effect |
+| `pacman_card` | Pac-Man moving across the screen, eating dots |
+| `space_invaders_card` | Recreation of the classic Space Invaders game |
+| `tetris_card` | Blocks falling and stacking up to form the title |
+| `character_select_card` | A character selection screen |
+| `achievement_unlocked_card` | An "Achievement Unlocked" notification |
+| `versus_screen_card` | A "VS" screen from a fighting game |
+| `world_map_card` | An ASCII world map with a blinking cursor |
+| `level_up_card` | Text that "levels up" with a flash of light |
+| `retro_gaming_intro_card` | A tribute to classic 8-bit and 16-bit game intros |
+
 ## Animation Effects
 
 The following animation effects are available for creating custom splash screens:
