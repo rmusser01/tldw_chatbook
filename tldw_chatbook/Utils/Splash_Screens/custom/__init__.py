@@ -1,0 +1,1 @@
+"""Custom user-contributed splash screen effects."""

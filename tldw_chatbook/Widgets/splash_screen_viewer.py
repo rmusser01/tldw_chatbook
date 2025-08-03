@@ -16,7 +16,8 @@ from textual.worker import Worker, WorkerState
 from loguru import logger
 
 from ..config import get_cli_setting, save_setting_to_cli_config
-from ..Utils.splash_animations import BaseEffect
+from ..Utils.Splash_Screens import load_all_effects, EFFECTS_REGISTRY
+from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
 from .splash_screen import SplashScreen
 
 
@@ -99,35 +100,6 @@ class SplashScreenViewer(Container):
     
     DEFAULT_CLASSES = "splash-viewer"
     
-    # Built-in cards list - matches available cards from splash_screen.py
-    BUILT_IN_CARDS = [
-        # Original cards
-        "default", "matrix", "glitch", "retro",
-        # Batch 1 additions
-        "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score",
-        # Batch 2 additions
-        "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal",
-        # Batch 3 additions
-        "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars",
-        # Batch 4 ("Crazy")
-        "raindrops_pond", "pixel_zoom", "text_explosion", "old_film", "maze_generator",
-        # Batch 5 ("Fantasy")
-        "dwarf_fortress",
-        # New 15 animated effects
-        "neural_network", "quantum_particles", "ascii_wave", "binary_matrix", "constellation_map",
-        "typewriter_news", "dna_sequence", "circuit_trace", "plasma_field", "ascii_fire",
-        "rubiks_cube", "data_stream", "fractal_zoom", "ascii_spinner", "hacker_terminal",
-        # Additional animated effects
-        "cyberpunk_glitch", "ascii_mandala", "holographic_interface", "quantum_tunnel", "chaotic_typewriter",
-        # New custom animations
-        "spy_vs_spy", "phonebooths", "emoji_face",
-        # New 10 animations batch
-        "ascii_aquarium", "bookshelf_browser", "train_journey", "clock_mechanism",
-        "weather_system", "music_visualizer", "origami_folding", "ant_colony",
-        "neon_sign_flicker", "zen_garden"
-        # Note: "custom_image" requires user configuration so not included here
-    ]
-    
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.splash_cards: Dict[str, SplashCardInfo] = {}
@@ -136,16 +108,17 @@ class SplashScreenViewer(Container):
     
     def _load_splash_cards(self) -> None:
         """Load all available splash cards."""
-        # Create a temporary splash screen instance to access card data
-        temp_splash = SplashScreen(duration=0, show_progress=False)
+        # Load all effects first
+        load_all_effects()
         
-        logger.info(f"Loading {len(self.BUILT_IN_CARDS)} built-in splash cards")
+        # Get all card definitions
+        all_cards = get_all_card_definitions()
         
-        for card_name in self.BUILT_IN_CARDS:
+        logger.info(f"Loading {len(all_cards)} splash cards")
+        
+        for card_name, card_data in all_cards.items():
             try:
-                card_data = temp_splash._load_card(card_name)
                 self.splash_cards[card_name] = SplashCardInfo(card_name, card_data)
-                # Removed verbose debug logging for each card
             except Exception as e:
                 logger.error(f"Failed to load card {card_name}: {e}")
         

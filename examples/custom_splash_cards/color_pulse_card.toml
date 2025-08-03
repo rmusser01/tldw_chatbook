@@ -1,6 +1,0 @@
-# Color Pulse example splash card
-type = "animated"
-effect = "color_pulse"
-style = "white on black"
-animation_speed = 0.05
-title = "tldw"
