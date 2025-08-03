@@ -159,16 +159,16 @@ class SplashScreen(Container):
         """Select which splash card to use based on config."""
         card_selection = self.config.get("card_selection", "random")
         
-        if card_selection == "random":
+        # Always use random selection unless a specific card is set
+        if card_selection == "random" or card_selection == "sequential":
             # Pick random from active cards
             active_cards = self.config.get("active_cards", ["default"])
-            return random.choice(active_cards)
-        elif card_selection == "sequential":
-            # TODO: Implement sequential selection with state tracking
-            active_cards = self.config.get("active_cards", ["default"])
-            return active_cards[0]
+            selected_card = random.choice(active_cards)
+            logger.info(f"Randomly selected splash card: {selected_card}")
+            return selected_card
         else:
-            # Specific card name
+            # Specific card name was set
+            logger.info(f"Using specifically configured splash card: {card_selection}")
             return card_selection
     
     def _load_card(self, card_name: str) -> Dict[str, Any]:
