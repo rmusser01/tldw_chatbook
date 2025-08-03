@@ -140,6 +140,7 @@ async def scrape_and_process_urls(
         ...     summarizer=my_summarizer,
         ...     db_logger=my_db_logger
         ... )
+    """
     start_time = time.time()
     url_count = len(urls)
     

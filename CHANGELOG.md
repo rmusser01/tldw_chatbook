@@ -10,24 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial features pending documentation
 
-## [0.1.5.1] - 2025-07-27
+## [0.1.6.0] - 2025-08-2
 ### Fixed
+- Analysis sub-tab UI + saving/reviewing existing analyses
 - Stuff
 
 ### Added
-- Subscriptions
-- Chatbooks
+- Subscriptions (broken)
+- Chatbooks (broken)
+- Coding Tab (broken)
+- New Embeddings creation workflow (broken)
+- Wizard walkthrough widget (broken)
+- Extensive mindmap viewer/converter (broken)
 
 ### Fixed
 - Stuff
 
-### Broken
-- Subscriptions
-- Chatbooks
-- Dictation
-- Study Tab
-- Coding Tab
-- Embeddings windows
 
 ## [0.1.5.0] - 2025-07-27
 ### Fixed

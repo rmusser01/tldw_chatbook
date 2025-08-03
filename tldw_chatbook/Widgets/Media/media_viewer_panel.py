@@ -268,13 +268,13 @@ class MediaViewerPanel(Container):
     MediaViewerPanel #analysis-container {
         height: auto;
         min-height: 10;
-        max-height: 30;
+        max-height: 60;
         margin: 1;
     }
     
     MediaViewerPanel #analysis-display {
         min-height: 5;
-        max-height: 30;
+        max-height: 60;
         height: auto;
         padding: 1;
         border: solid $primary;
