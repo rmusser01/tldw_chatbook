@@ -9338,8 +9338,10 @@ class LevelUpEffect(BaseEffect):
             p['y'] += p['vy']
             p['life'] -= 1
             if p['life'] > 0:
-                grid[int(p['y'])][int(p['x'])] = '*'
-                styles[int(p['y'])][int(p['x'])] = 'yellow'
+                px, py = int(p['x']), int(p['y'])
+                if 0 <= px < self.width and 0 <= py < self.height:
+                    grid[py][px] = '*'
+                    styles[py][px] = 'yellow'
 
         self.particles = [p for p in self.particles if p['life'] > 0]
         return self._grid_to_string(grid, styles)
