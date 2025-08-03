@@ -9695,6 +9695,7 @@ class ColorPulseEffect(BaseEffect):
         self.time = 0
 
     def update(self) -> Optional[str]:
+    def update(self) -> Optional[str]:
         self.time += 0.1
         hue = int(self.time * 50) % 360
         r = int(128 + 127 * math.sin(math.radians(hue)))
@@ -9706,8 +9707,13 @@ class ColorPulseEffect(BaseEffect):
         bg_b = (b + 128) % 256
 
         style = f"bold rgb({r},{g},{b}) on rgb({bg_r},{bg_g},{bg_b})"
-        content = Align.center(Text(self.title, justify="center"), vertical="middle", height=self.height)
-        return f"[{style}]" + str(content) + f"[/{style}]"
+
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        styles = [[style for _ in range(self.width)] for _ in range(self.height)]
+
+        self._add_centered_text(grid, styles, self.title, self.height // 2, style)
+
+        return self._grid_to_string(grid, styles)
 
 class ShroomVisionEffect(BaseEffect):
     """Simulates a 'mushroom vision' effect with distorted, breathing visuals."""
