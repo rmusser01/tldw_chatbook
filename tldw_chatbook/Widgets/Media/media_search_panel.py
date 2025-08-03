@@ -46,21 +46,23 @@ class MediaSearchPanel(Container):
         background: $boost;
         border-bottom: thick $background-darken-1;
         width: 100%;
-    }
-    
-    MediaSearchPanel .search-row {
-        layout: horizontal;
-        height: 3;
-        margin-bottom: 1;
+        layout: vertical;
     }
     
     MediaSearchPanel .media-sidebar-toggle {
         height: 3;
         width: auto;
         min-width: 10;
-        margin-right: 1;
+        margin-bottom: 1;
         background: $boost;
         border: solid $primary;
+        dock: top;
+    }
+    
+    MediaSearchPanel .search-row {
+        layout: horizontal;
+        height: 3;
+        margin-bottom: 1;
     }
     
     MediaSearchPanel .search-input {
@@ -106,7 +108,11 @@ class MediaSearchPanel(Container):
         width: 100%;
     }
     
-    MediaSearchPanel Collapsible {
+    MediaSearchPanel > Collapsible {
+        margin-top: 0;
+    }
+    
+    MediaSearchPanel Collapsible Collapsible {
         margin-top: 1;
     }
     
@@ -136,40 +142,44 @@ class MediaSearchPanel(Container):
         # Import here to avoid circular imports
         from ...Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
         
-        # Search row
-        with Horizontal(classes="search-row"):
-            yield Button(
-                get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
-                id="media-sidebar-toggle",
-                classes="media-sidebar-toggle"
-            )
-            yield Input(
-                placeholder="Search media items...",
-                id="search-input",
-                classes="search-input"
-            )
-            yield Button("Search", id="search-button", classes="search-button", variant="primary")
+        # Sidebar toggle button outside the collapsible
+        yield Button(
+            get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
+            id="media-sidebar-toggle",
+            classes="media-sidebar-toggle"
+        )
         
-        # Additional options in collapsible
-        with Collapsible(title="Additional Options", collapsed=True):
-            # Filter row with grid layout for better control
-            with Container(classes="filter-row"):
-                yield Label("Keywords:", classes="filter-label")
+        # Wrap all search functionality in a collapsible
+        with Collapsible(title="Search & Filters", collapsed=False):
+            # Main search row
+            with Horizontal(classes="search-row"):
                 yield Input(
-                    placeholder="Enter keywords separated by commas",
-                    id="keyword-input",
-                    classes="keyword-input"
+                    placeholder="Search media items...",
+                    id="search-input",
+                    classes="search-input"
                 )
-                with Container(classes="checkbox-container"):
-                    yield Checkbox(
-                        "Show deleted",
-                        id="show-deleted-checkbox",
-                        classes="show-deleted-checkbox",
-                        value=False
-                    )
+                yield Button("Search", id="search-button", classes="search-button", variant="primary")
             
-            # Active filters display on separate line
-            yield Static("", id="active-filters", classes="active-filters")
+            # Additional options in nested collapsible
+            with Collapsible(title="Additional Options", collapsed=True):
+                # Filter row with grid layout for better control
+                with Container(classes="filter-row"):
+                    yield Label("Keywords:", classes="filter-label")
+                    yield Input(
+                        placeholder="Enter keywords separated by commas",
+                        id="keyword-input",
+                        classes="keyword-input"
+                    )
+                    with Container(classes="checkbox-container"):
+                        yield Checkbox(
+                            "Show deleted",
+                            id="show-deleted-checkbox",
+                            classes="show-deleted-checkbox",
+                            value=False
+                        )
+                
+                # Active filters display on separate line
+                yield Static("", id="active-filters", classes="active-filters")
     
     def watch_search_term(self, search_term: str) -> None:
         """Update search input when search term changes."""
