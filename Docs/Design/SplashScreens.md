@@ -164,6 +164,34 @@ This document provides a comprehensive list of all available splash screens in t
 | `tiktok_algorithm_card` | Algorithm recommendation engine |
 | `linkedin_networking_card` | Professional networking connections |
 
+#### Psychedelic
+| Name | Description |
+|------|-------------|
+| `psychedelic_mandala_card` | Rotating, colorful mandala that expands from the center |
+| `lava_lamp_card` | Morphing, colored blobs that rise and fall |
+| `kaleidoscope_card` | Symmetrical, mirrored patterns that shift and rotate |
+| `deep_dream_card` | ASCII art with recursive, dream-like patterns |
+| `trippy_tunnel_card` | A perspective tunnel with shifting colors |
+| `melting_screen_card` | Screen content appears to melt and drip downwards |
+| `color_pulse_card` | Screen pulses through a psychedelic color palette |
+| `shroom_vision_card` | Simulates a "mushroom vision" effect with distorted visuals |
+| `hypno_swirl_card` | A hypnotic, swirling pattern |
+| `electric_sheep_card` | Abstract, evolving patterns |
+
+#### Videogame
+| Name | Description |
+|------|-------------|
+| `doom_fire_card` | Classic "Doom" style fire effect |
+| `pacman_card` | Pac-Man moving across the screen, eating dots |
+| `space_invaders_card` | Recreation of the classic Space Invaders game |
+| `tetris_card` | Blocks falling and stacking up to form the title |
+| `character_select_card` | A character selection screen |
+| `achievement_unlocked_card` | An "Achievement Unlocked" notification |
+| `versus_screen_card` | A "VS" screen from a fighting game |
+| `world_map_card` | An ASCII world map with a blinking cursor |
+| `level_up_card` | Text that "levels up" with a flash of light |
+| `retro_gaming_intro_card` | A tribute to classic 8-bit and 16-bit game intros |
+
 ## Animation Effects
 
 The following animation effects are available for creating custom splash screens:

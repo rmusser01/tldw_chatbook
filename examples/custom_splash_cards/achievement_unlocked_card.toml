@@ -1,0 +1,5 @@
+# Achievement Unlocked example splash card
+type = "animated"
+effect = "achievement_unlocked"
+style = "white on black"
+animation_speed = 0.05

@@ -1,0 +1,5 @@
+# Retro Gaming Intro example splash card
+type = "animated"
+effect = "retro_gaming_intro"
+style = "white on black"
+animation_speed = 0.05
