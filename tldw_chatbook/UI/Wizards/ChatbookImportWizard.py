@@ -58,7 +58,7 @@ class FileSelectionStep(WizardStep):
             yield Button("Browse for Chatbook", id="browse-file", variant="primary", classes="browse-button")
             
             # File path display
-            with Container(id="file-path-container", classes="file-path-display", display=False):
+            with Container(id="file-path-container", classes="file-path-display hidden"):
                 yield Label("Selected file:", classes="path-label")
                 yield Static("", id="selected-path", classes="path-value")
     
@@ -95,7 +95,7 @@ class FileSelectionStep(WizardStep):
         """Update the file path display."""
         if self.selected_file:
             container = self.query_one("#file-path-container", Container)
-            container.display = True
+            container.remove_class("hidden")
             
             path_display = self.query_one("#selected-path", Static)
             path_display.update(str(self.selected_file))
@@ -404,7 +404,7 @@ class ConflictResolutionStep(WizardStep):
             )
         
         # Conflict preview (placeholder for now)
-        with Container(id="conflict-container", classes="conflict-preview", display=False):
+        with Container(id="conflict-container", classes="conflict-preview hidden"):
             yield Static("Potential Conflicts Detected:", classes="conflict-title")
             yield Container(id="conflict-list", classes="conflict-list")
         
@@ -565,7 +565,7 @@ class ImportProgressStep(WizardStep):
                 yield Static("○ Finalizing import", id="status-finalize", classes="status-item")
             
             # Completion message (hidden initially)
-            with Container(id="completion-container", display=False):
+            with Container(id="completion-container", classes="hidden"):
                 yield Static("✅ Import Completed Successfully!", classes="completion-message")
                 
                 # Import statistics

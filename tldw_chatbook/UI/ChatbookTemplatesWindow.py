@@ -197,7 +197,7 @@ class ChatbookTemplatesWindow(ModalScreen):
     
     .template-card:hover {
         background: $primary 10%;
-        border-color: $primary;
+        border: round $primary;
     }
     
     .template-card.selected {

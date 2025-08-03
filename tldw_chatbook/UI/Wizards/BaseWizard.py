@@ -49,6 +49,22 @@ class WizardStepConfig:
 class WizardScreen(Screen):
     """Base screen class for wizards."""
     
+    DEFAULT_CSS = """
+    WizardScreen {
+        align: center middle;
+        background: $background;
+    }
+    
+    WizardScreen > WizardContainer {
+        width: 90%;
+        height: 90%;
+        max-width: 120;
+        background: $surface;
+        border: solid $primary;
+        padding: 2;
+    }
+    """
+    
     BINDINGS = [
         ("escape", "cancel", "Cancel wizard"),
     ]
@@ -157,6 +173,7 @@ class WizardNavigation(Horizontal):
     
     def compose(self) -> ComposeResult:
         """Compose navigation elements."""
+        yield Button("Cancel", id="wizard-cancel", variant="error")
         yield Button("← Back", id="wizard-back", variant="default")
         yield Static("", id="wizard-progress", classes="wizard-progress-text")
         yield Button("Next →", id="wizard-next", variant="primary")
@@ -206,6 +223,60 @@ class WizardNavigation(Horizontal):
 class WizardProgress(Horizontal):
     """Visual progress indicator for wizard steps."""
     
+    DEFAULT_CSS = """
+    WizardProgress {
+        layout: horizontal;
+        align: center middle;
+        height: auto;
+    }
+    
+    WizardProgress .step-indicator-container {
+        layout: horizontal;
+        align: center middle;
+        height: auto;
+        margin: 0 1;
+    }
+    
+    WizardProgress .step-number {
+        width: 4;
+        height: 3;
+        content-align: center middle;
+        text-align: center;
+        background: $surface;
+        border: solid $primary;
+    }
+    
+    WizardProgress .step-number.active {
+        background: $primary;
+        color: $background;
+        text-style: bold;
+    }
+    
+    WizardProgress .step-number.complete {
+        background: $success;
+        color: $background;
+    }
+    
+    WizardProgress .step-title {
+        margin: 0 1;
+    }
+    
+    WizardProgress .step-title.active {
+        text-style: bold;
+        color: $primary;
+    }
+    
+    WizardProgress .step-connector {
+        width: 4;
+        height: 1;
+        background: $primary-lighten-2;
+    }
+    
+    WizardProgress .step-connector.complete {
+        background: $success;
+    }
+    """
+    
     current_step = reactive(1)
     total_steps = reactive(1)
     step_titles: reactive[List[str]] = reactive([])
@@ -252,6 +323,85 @@ class WizardProgress(Horizontal):
 
 class WizardContainer(Container):
     """Main wizard container that manages steps and navigation."""
+    
+    DEFAULT_CSS = """
+    WizardContainer {
+        layout: vertical;
+        height: 100%;
+        width: 100%;
+    }
+    
+    WizardContainer .wizard-title {
+        text-style: bold;
+        text-align: center;
+        margin: 1 0;
+        color: $text;
+    }
+    
+    WizardContainer .wizard-progress {
+        height: auto;
+        margin: 1 0;
+        padding: 1;
+        background: $boost;
+    }
+    
+    WizardContainer .wizard-steps-container {
+        height: 1fr;
+        overflow-y: auto;
+        padding: 1;
+        margin: 1 0;
+    }
+    
+    WizardContainer .wizard-step {
+        width: 100%;
+        height: 100%;
+    }
+    
+    WizardContainer .wizard-step.hidden {
+        display: none;
+    }
+    
+    WizardContainer .wizard-navigation {
+        height: auto;
+        layout: horizontal;
+        align: center middle;
+        padding: 1;
+        margin-top: 1;
+        border-top: solid $primary;
+    }
+    
+    WizardContainer .wizard-navigation Button {
+        margin: 0 1;
+    }
+    
+    WizardContainer .wizard-progress-text {
+        width: 1fr;
+        text-align: center;
+        content-align: center middle;
+    }
+    
+    /* Form styling */
+    WizardContainer .form-group {
+        margin-bottom: 1;
+    }
+    
+    WizardContainer .form-label {
+        margin-bottom: 0;
+        text-style: bold;
+    }
+    
+    WizardContainer .form-input {
+        width: 100%;
+        margin-top: 0;
+    }
+    
+    WizardContainer .info-box {
+        background: $boost;
+        border: solid $primary;
+        padding: 1;
+        margin: 1 0;
+    }
+    """
     
     BINDINGS = [
         Binding("escape", "cancel", "Cancel wizard"),
@@ -413,6 +563,11 @@ class WizardContainer(Container):
         if self.current_step > 0:
             self.show_step(self.current_step - 1)
             
+    @on(Button.Pressed, "#wizard-cancel")
+    def handle_cancel(self) -> None:
+        """Handle cancel button press."""
+        self.action_cancel()
+            
     def action_next(self) -> None:
         """Keyboard shortcut for next."""
         self.handle_next()
@@ -426,6 +581,10 @@ class WizardContainer(Container):
         logger.info("Wizard cancelled")
         if self.on_cancel:
             self.on_cancel()
+        # Find and dismiss the parent screen
+        parent_screen = self.ancestors_with_self[1] if len(self.ancestors_with_self) > 1 else None
+        if parent_screen and isinstance(parent_screen, Screen):
+            parent_screen.dismiss(None)
             
     def complete_wizard(self) -> None:
         """Complete the wizard and collect all data."""

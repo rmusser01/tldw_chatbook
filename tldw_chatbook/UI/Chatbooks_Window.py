@@ -121,6 +121,7 @@ class EmptyStateWidget(Container):
         max-width: 80;
         width: 100%;
         padding: 4;
+        layout: vertical;
     }
     
     .empty-state-icon {
@@ -145,6 +146,7 @@ class EmptyStateWidget(Container):
         margin-bottom: 4;
         width: 100%;
         max-width: 60;
+        align-horizontal: center;
     }
     
     .empty-state-cards {
@@ -152,6 +154,7 @@ class EmptyStateWidget(Container):
         width: 100%;
         max-width: 50;
         align: center middle;
+        align-horizontal: center;
     }
     
     .primary-action-button {
@@ -181,14 +184,14 @@ class EmptyStateWidget(Container):
         with Container(classes="empty-state-container"):
             # Larger ASCII art
             book_art = """
-        📚 Welcome to Chatbooks 📚
-    
-    ╔════════════════════════╗
-    ║                        ║
-    ║     CHATBOOK           ║
-    ║     LIBRARY            ║
-    ║                        ║
-    ╚════════════════════════╝
+📚 Welcome to Chatbooks 📚
+
+╔════════════════════════╗
+║                        ║
+║     CHATBOOK           ║
+║     LIBRARY            ║
+║                        ║
+╚════════════════════════╝
             """
             yield Static(book_art, classes="empty-state-icon")
             yield Static("Start Your Knowledge Collection", classes="empty-state-title")
@@ -264,6 +267,7 @@ class ChatbooksWindow(Container):
     #chatbooks-main-content {
         height: 1fr;
         width: 100%;
+        align: center middle;
     }
     
     /* Styles for when chatbooks exist */
