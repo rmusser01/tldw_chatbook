@@ -47,12 +47,9 @@ def create_server(
     # Import the Server class
     from textual_serve.server import Server
     
-    # Get the path to the main app module
-    app_module_path = Path(__file__).parent.parent / "app.py"
-    
     # Create the command to run the app
-    # We use the module path to ensure proper imports
-    command = [sys.executable, "-m", "tldw_chatbook.app"]
+    # textual-serve expects a command string, not a list
+    command = f"{sys.executable} -m tldw_chatbook.app"
     
     # Configure title
     if title is None:
@@ -64,8 +61,7 @@ def create_server(
         command=command,
         host=host,
         port=port,
-        title=title,
-        debug=debug
+        title=title
     )
     
     return server

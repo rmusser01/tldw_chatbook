@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial features pending documentation
 
+## [0.1.6.1] - 2025-08-3
+### Added
+- Splashscreen modularization
+- Textual-serve - 
+
+
 ## [0.1.6.0] - 2025-08-2
 ### Fixed
 - Analysis sub-tab UI + saving/reviewing existing analyses
