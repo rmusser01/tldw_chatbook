@@ -21,6 +21,8 @@ from difflib import SequenceMatcher
 #
 # Third-Party Imports
 import httpx
+from loguru import logger
+
 try:
     import defusedxml.ElementTree as ET
 except ImportError:
