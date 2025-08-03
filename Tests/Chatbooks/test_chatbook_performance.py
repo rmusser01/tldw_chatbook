@@ -21,9 +21,18 @@ from datetime import datetime, timedelta
 from contextlib import contextmanager
 from typing import Dict, Any, List, Tuple
 from unittest.mock import Mock, patch
-import resource
 import psutil
 import os
+import sys
+
+# resource module is Unix-only
+if sys.platform != 'win32':
+    try:
+        import resource
+    except ImportError:
+        resource = None
+else:
+    resource = None
 
 from tldw_chatbook.Chatbooks import ChatbookCreator, ChatbookImporter
 from tldw_chatbook.Chatbooks.chatbook_models import (

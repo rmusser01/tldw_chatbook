@@ -21,10 +21,17 @@ from base64 import b64encode, b64decode
 # Third-Party Imports
 import defusedxml.ElementTree as ET
 from defusedxml import DefusedXmlException
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.backends import default_backend
 from loguru import logger
+
+# Optional cryptography import
+CRYPTOGRAPHY_AVAILABLE = False
+try:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.backends import default_backend
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    logger.warning("cryptography module not available. Credential encryption will be disabled.")
 #
 ########################################################################################################################
 #
@@ -294,6 +301,12 @@ class CredentialEncryptor:
         Args:
             key: 32-byte encryption key (generates random if not provided)
         """
+        if not CRYPTOGRAPHY_AVAILABLE:
+            logger.warning("CredentialEncryptor: cryptography module not available. Credentials will be stored in plain text.")
+            self.key = None
+            self.backend = None
+            return
+            
         if key is None:
             # Generate a random key
             self.key = secrets.token_bytes(32)
@@ -314,6 +327,12 @@ class CredentialEncryptor:
         Returns:
             Base64-encoded encrypted string
         """
+        if not CRYPTOGRAPHY_AVAILABLE:
+            raise RuntimeError(
+                "Cannot encrypt credentials: cryptography module not installed. "
+                "Please install it with: pip install cryptography"
+            )
+            
         # Generate random IV
         iv = secrets.token_bytes(16)
         
@@ -348,6 +367,12 @@ class CredentialEncryptor:
         Returns:
             Decrypted plaintext
         """
+        if not CRYPTOGRAPHY_AVAILABLE:
+            raise RuntimeError(
+                "Cannot decrypt credentials: cryptography module not installed. "
+                "Please install it with: pip install cryptography"
+            )
+            
         # Decode from base64
         encrypted_bytes = b64decode(encrypted.encode('utf-8'))
         
