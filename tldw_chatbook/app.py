@@ -4797,10 +4797,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 f"No handler found for worker '{worker_name}' (Group: {worker_group})"
             )
             
-        try:
-            self.query_one("#chat-prompt-user-display", TextArea).load_text(new_user_prompt or "")
-        except QueryError:
-            self.loguru_logger.error("Chat sidebar user prompt display area (#chat-prompt-user-display) not found.")
+        # TODO: Fix this - new_user_prompt is not defined
+        # try:
+        #     self.query_one("#chat-prompt-user-display", TextArea).load_text(new_user_prompt or "")
+        # except QueryError:
+        #     self.loguru_logger.error("Chat sidebar user prompt display area (#chat-prompt-user-display) not found.")
 
     def _clear_chat_sidebar_prompt_display(self) -> None:
         """Clears the prompt display TextAreas in the chat sidebar."""

@@ -9,6 +9,7 @@ from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDon
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events, chat_streaming_events
 from textual.worker import Worker, WorkerState
 from textual.css.query import QueryError
+from textual.widgets import TextArea, Button, Input
 from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_STOP, FALLBACK_STOP, EMOJI_SEND, FALLBACK_SEND
 
 from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock

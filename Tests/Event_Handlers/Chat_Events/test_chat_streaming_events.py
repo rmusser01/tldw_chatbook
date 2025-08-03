@@ -34,10 +34,10 @@ def mock_app():
             self.role = "AI"
             self.message_id_internal = None
             self.message_version_internal = 0
-            self._streaming_started = False
             self._editing = False
             self.mark_generation_complete = MagicMock()
             self.id = "test_widget_id"  # Add id for streaming_message_map
+            # Note: _streaming_started is dynamically added by the handler, not preset
             
             # Create the markdown widget for this specific instance
             self._mock_markdown = MagicMock(spec=Markdown)
@@ -51,12 +51,26 @@ def mock_app():
         @message_text.setter
         def message_text(self, value):
             self._message_text = value
+            # Also update the markdown widget when text changes
+            if hasattr(self, '_mock_markdown'):
+                self._mock_markdown.update(value)
             
         def query_one(self, selector, widget_type=None):
             if selector == ".message-text":
                 # Return this instance's markdown widget directly
                 # Make sure we're returning the actual mock, not a coroutine
                 return self._mock_markdown
+            elif selector == "#continue-response-button":
+                # Mock continue button with disabled property
+                mock_button = MagicMock()
+                mock_button.disabled = False
+                mock_button.label = "↪️"
+                return mock_button
+            elif selector in ["#thumb-up", "#thumb-down", "#regenerate"]:
+                # Mock action buttons
+                mock_button = MagicMock()
+                mock_button.disabled = False
+                return mock_button
             return MagicMock()
     
     mock_chat_message_widget = MockChatMessageWidget()
@@ -156,12 +170,10 @@ async def test_handle_stream_done_success_and_save(mock_ccl, mock_app):
     mock_widget = mock_app.get_current_ai_message_widget.return_value
     mock_widget.message_text = "Final message"
     
-    # Override to enable chat input
-    mock_chat_input = MagicMock(spec=TextArea)
+    # Get the existing mock from fixture
+    mock_chat_input = mock_app.query_one("#chat-input", TextArea)
+    # Ensure disabled property is set correctly
     type(mock_chat_input).disabled = PropertyMock(return_value=True)
-    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
-        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
-    )
     
     event = StreamDone(full_text="Final message", error=None)
     
