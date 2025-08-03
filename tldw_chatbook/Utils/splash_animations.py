@@ -17,6 +17,7 @@ from rich.align import Align
 
 from loguru import logger
 
+from tldw_chatbook.Utils.Splash import get_ascii_art
 from tldw_chatbook.Utils.Splash_Strings import splashscreen_message_selection
 
 # Constants for escaping Rich markup
@@ -9515,7 +9516,6 @@ class LavaLampEffect(BaseEffect):
                         # I'll just pick the color of the most influential blob.
                         if influence > total_influence:
                             total_influence = influence
-                            from rich.color import Color
                             c = Color.parse(blob.color).get_truecolor()
                             r,g,b = c[0], c[1], c[2]
 
@@ -9695,7 +9695,6 @@ class ColorPulseEffect(BaseEffect):
         self.title = title
         self.time = 0
 
-    def update(self) -> Optional[str]:
     def update(self) -> Optional[str]:
         self.time += 0.1
         hue = int(self.time * 50) % 360
