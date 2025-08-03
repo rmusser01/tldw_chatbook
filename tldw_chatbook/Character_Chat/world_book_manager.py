@@ -61,8 +61,7 @@ class WorldBookManager:
         """
         
         try:
-            with self.db.transaction() as conn:
-                cursor = conn.cursor()
+            with self.db.transaction() as cursor:
                 cursor.execute(query, (
                     name.strip(), description, scan_depth, token_budget,
                     recursive_scanning, enabled, self.db.client_id
@@ -92,8 +91,7 @@ class WorldBookManager:
         WHERE id = ? AND deleted = 0
         """
         
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
+        with self.db.transaction() as cursor:
             cursor.execute(query, (world_book_id,))
             row = cursor.fetchone()
             
@@ -131,8 +129,7 @@ class WorldBookManager:
         WHERE name = ? AND deleted = 0
         """
         
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
+        with self.db.transaction() as cursor:
             cursor.execute(query, (name,))
             row = cursor.fetchone()
             
@@ -175,8 +172,7 @@ class WorldBookManager:
         
         query += " ORDER BY name"
         
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
+        with self.db.transaction() as cursor:
             cursor.execute(query)
             
             world_books = []
@@ -259,8 +255,7 @@ class WorldBookManager:
             params.append(expected_version)
         
         try:
-            with self.db.transaction() as conn:
-                cursor = conn.cursor()
+            with self.db.transaction() as cursor:
                 cursor.execute(query, params)
                 if cursor.rowcount == 0:
                     if expected_version is not None:
@@ -298,8 +293,7 @@ class WorldBookManager:
             query += " AND version = ?"
             params.append(expected_version)
         
-        with self.db.transaction() as conn:
-            cursor = conn.cursor()
+        with self.db.transaction() as cursor:
             cursor.execute(query, params)
             if cursor.rowcount == 0:
                 if expected_version is not None:
@@ -352,8 +346,7 @@ class WorldBookManager:
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         
-        with self.db.transaction() as conn:
-            cursor = conn.cursor()
+        with self.db.transaction() as cursor:
             cursor.execute(query, (
                 world_book_id,
                 json.dumps(clean_keys),
@@ -393,8 +386,7 @@ class WorldBookManager:
         
         query += " ORDER BY insertion_order, id"
         
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
+        with self.db.transaction() as cursor:
             cursor.execute(query, (world_book_id,))
             
             entries = []
@@ -451,8 +443,7 @@ class WorldBookManager:
         query = f"UPDATE world_book_entries SET {', '.join(updates)} WHERE id = ?"
         params.append(entry_id)
         
-        with self.db.transaction() as conn:
-            cursor = conn.cursor()
+        with self.db.transaction() as cursor:
             cursor.execute(query, params)
             return cursor.rowcount > 0
     
@@ -468,8 +459,7 @@ class WorldBookManager:
         """
         query = "DELETE FROM world_book_entries WHERE id = ?"
         
-        with self.db.transaction() as conn:
-            cursor = conn.cursor()
+        with self.db.transaction() as cursor:
             cursor.execute(query, (entry_id,))
             return cursor.rowcount > 0
     
@@ -493,8 +483,7 @@ class WorldBookManager:
         VALUES (?, ?, ?)
         """
         
-        with self.db.transaction() as conn:
-            cursor = conn.cursor()
+        with self.db.transaction() as cursor:
             cursor.execute(query, (conversation_id, world_book_id, priority))
             return True
     
@@ -514,8 +503,7 @@ class WorldBookManager:
         WHERE conversation_id = ? AND world_book_id = ?
         """
         
-        with self.db.transaction() as conn:
-            cursor = conn.cursor()
+        with self.db.transaction() as cursor:
             cursor.execute(query, (conversation_id, world_book_id))
             return cursor.rowcount > 0
     
@@ -543,8 +531,7 @@ class WorldBookManager:
         
         query += " ORDER BY cwb.priority DESC, wb.name"
         
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
+        with self.db.transaction() as cursor:
             cursor.execute(query, (conversation_id,))
             
             world_books = []

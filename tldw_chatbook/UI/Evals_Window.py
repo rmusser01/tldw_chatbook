@@ -46,7 +46,12 @@ class EvalsWindow(Container):
     Uses grid layout for better organization and responsiveness.
     """
     
-    # CSS is loaded from the main app's modular CSS file
+    # CSS to ensure views are hidden by default
+    DEFAULT_CSS = """
+    .evals-view-area {
+        display: none;
+    }
+    """
     
     # --- STATE LIVES HERE NOW ---
     evals_sidebar_collapsed: reactive[bool] = reactive(False)
@@ -95,37 +100,48 @@ class EvalsWindow(Container):
     def watch_evals_sidebar_collapsed(self, collapsed: bool) -> None:
         """Dynamically adjusts the evals browser panes when the sidebar is collapsed or expanded."""
         try:
-            # Toggle the nav pane collapsed state
-            nav_pane = self.query_one("#evals-nav-pane")
-            nav_pane.set_class(collapsed, "collapsed")
+            # Add class to self (EvalsWindow) for grid column adjustment
+            self.set_class(collapsed, "sidebar-collapsed")
             
-            # Update button visual state
+            # Keep existing logic for nav pane and toggle button
+            nav_pane = self.query_one("#evals-nav-pane")
             toggle_button = self.query_one("#evals-sidebar-toggle-button")
+            nav_pane.set_class(collapsed, "collapsed")
             toggle_button.set_class(collapsed, "collapsed")
         except QueryError as e:
             logger.warning(f"UI component not found during evals sidebar collapse: {e}")
 
     def watch_evals_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
         """Shows/hides the relevant content view when the active view slug changes."""
-        if old_view:
-            try:
-                self.query_one(f"#{old_view}").styles.display = "none"
-                # Remove active class from old nav button
-                old_nav_button = self.query_one(f"#{old_view.replace('view', 'nav')}")
-                old_nav_button.remove_class("active")
-            except QueryError: pass
-        if new_view:
-            try:
+        logger.debug(f"EvalsWindow.watch_evals_active_view: old='{old_view}', new='{new_view}'")
+        try:
+            # Hide all evals views first to ensure only one is active
+            for view_container in self.query(".evals-view-area"):
+                if view_container.id:  # Make sure it has an ID
+                    view_container.styles.display = "none"
+
+            # Then show the new active view
+            if new_view:
                 view_to_show = self.query_one(f"#{new_view}")
-                view_to_show.styles.display = "block"
-                # Add active class to new nav button
+                view_to_show.styles.display = "block"  # Or "flex" if that's its natural display
+                logger.info(f"EvalsWindow: Set display to 'block' for #{new_view}")
+                
+                # Update active class on nav buttons
+                for nav_button in self.query(".evals-nav-button"):
+                    nav_button.remove_class("active")
+                
                 new_nav_button = self.query_one(f"#{new_view.replace('view', 'nav')}")
                 new_nav_button.add_class("active")
                 
                 # Update view-specific content when switching
                 self._refresh_current_view(new_view)
-            except QueryError:
-                logger.error(f"Could not find new evals view to display: #{new_view}")
+            else:
+                logger.info("EvalsWindow.watch_evals_active_view: new_view is None, all .evals-view-area views remain hidden.")
+                
+        except QueryError as e:
+            logger.error(f"EvalsWindow.watch_evals_active_view: QueryError - {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"EvalsWindow.watch_evals_active_view: Unexpected error - {e}", exc_info=True)
     
     def watch_current_run_status(self, status: str) -> None:
         """Update UI based on evaluation run status."""
@@ -538,12 +554,22 @@ class EvalsWindow(Container):
         except Exception as e:
             logger.warning(f"Error refreshing datasets list: {e}")
 
+    # --- This method is the key to fixing the crash ---
+    def activate_initial_view(self) -> None:
+        if not self.evals_active_view:
+            initial_view = EVALS_VIEW_SETUP
+            logger.info(f"EvalsWindow: Activating initial view '{initial_view}'.")
+            self.evals_active_view = initial_view  # Triggers watcher
+
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.info(f"EvalsWindow on_mount: UI composed")
-        # Set initial active view
-        if not self.evals_active_view:
-            self.evals_active_view = EVALS_VIEW_SETUP
+        # Call activate_initial_view here AFTER the window and its children are mounted
+        # and queryable, ensuring the watcher can find the views.
+        # However, app.py's watch_current_tab is probably a better place if this EvalsWindow
+        # itself is mounted as part of a tab switch.
+        # If EvalsWindow is always present, on_mount here is fine for its internal setup.
+        # For now, let's rely on app.py's watch_current_tab calling activate_initial_view.
         
         # Initialize evaluation system
         try:
@@ -598,16 +624,17 @@ class EvalsWindow(Container):
                 tooltip="Toggle sidebar"
             )
 
+            # Create views for all sections
             # Create a view for Evaluation Setup
             with Container(id=EVALS_VIEW_SETUP, classes="evals-view-area"):
                 yield Static("Evaluation Setup", classes="pane-title")
                 
                 # Task Upload Section
                 with Container(classes="section-container"):
-                        yield Static("Task Configuration", classes="section-title")
-                        yield Button("Upload Task File", id="upload-task-btn", classes="action-button")
-                        yield Button("Create New Task", id="create-task-btn", classes="action-button")
-                        yield Static("", id="task-status", classes="status-text")
+                    yield Static("Task Configuration", classes="section-title")
+                    yield Button("Upload Task File", id="upload-task-btn", classes="action-button")
+                    yield Button("Create New Task", id="create-task-btn", classes="action-button")
+                    yield Static("", id="task-status", classes="status-text")
                     
                     # Model Configuration Section
                     with Container(classes="section-container"):
@@ -641,23 +668,23 @@ class EvalsWindow(Container):
                             yield Label("Task:", classes="config-label")
                             yield Select([("Select Task", "")], id="task-select", classes="config-select")
                     
-                    # Cost Estimation Section
-                    with Container(classes="section-container"):
-                        yield Static("Cost Estimation", classes="section-title")
-                        from ..Widgets.cost_estimation_widget import CostEstimationWidget
-                        yield CostEstimationWidget(id="cost-estimator")
-                    
-                    # Workflow Progress Section
-                    with Container(classes="section-container"):
-                        yield Static("Workflow Progress", classes="section-title")
-                        from ..Widgets.loading_states import WorkflowProgress
-                        yield WorkflowProgress(
-                            ["Load Task", "Configure Model", "Run Evaluation", "Save Results"],
-                            id="workflow-progress"
-                        )
+                # Cost Estimation Section
+                with Container(classes="section-container"):
+                    yield Static("Cost Estimation", classes="section-title")
+                    from ..Widgets.cost_estimation_widget import CostEstimationWidget
+                    yield CostEstimationWidget(id="cost-estimator")
+                
+                # Workflow Progress Section
+                with Container(classes="section-container"):
+                    yield Static("Workflow Progress", classes="section-title")
+                    from ..Widgets.loading_states import WorkflowProgress
+                    yield WorkflowProgress(
+                        ["Load Task", "Configure Model", "Run Evaluation", "Save Results"],
+                        id="workflow-progress"
+                    )
 
-                # Create a view for Results Dashboard
-                with Container(id=EVALS_VIEW_RESULTS, classes="evals-view-area"):
+            # Create a view for Results Dashboard
+            with Container(id=EVALS_VIEW_RESULTS, classes="evals-view-area"):
                     yield Static("Results Dashboard", classes="pane-title")
                     
                     # Results Overview Section
@@ -704,103 +731,103 @@ class EvalsWindow(Container):
                         from ..Widgets.cost_estimation_widget import CostSummaryWidget, CostEstimator
                         yield CostSummaryWidget(CostEstimator(), id="cost-summary")
 
-                # Create a view for Model Management
-                with Container(id=EVALS_VIEW_MODELS, classes="evals-view-area"):
-                    yield Static("Model Management", classes="pane-title")
-                    
-                    # Model List Section
-                    with Container(classes="section-container"):
-                        yield Static("Available Models", classes="section-title")
-                        
-                        with Horizontal(classes="button-row"):
-                            yield Button("Add Model Configuration", id="add-new-model-btn", classes="action-button primary")
-                            yield Button("Test Connection", id="test-connection-btn", classes="action-button")
-                            yield Button("Import from Templates", id="import-templates-btn", classes="action-button")
-                    
-                        yield Static("Loading models...", id="models-list", classes="models-container")
-                        yield Static("", id="model-test-status", classes="status-text")
-                    
-                    # Provider Templates Section
-                    with Container(classes="section-container"):
-                        yield Static("Quick Setup", classes="section-title")
-                        yield Static("Click a provider to set up with default settings", classes="help-text")
-                        
-                        with Container(classes="provider-grid"):
-                            yield Button("🤖 OpenAI", id="setup-openai-btn", classes="provider-button")
-                            yield Button("🧠 Anthropic", id="setup-anthropic-btn", classes="provider-button")
-                            yield Button("🚀 Cohere", id="setup-cohere-btn", classes="provider-button")
-                            yield Button("⚡ Groq", id="setup-groq-btn", classes="provider-button")
-                    
-                        yield Static("", id="provider-setup-status", classes="status-text")
-
-                # Create a view for Dataset Management
-                with Container(id=EVALS_VIEW_DATASETS, classes="evals-view-area"):
-                    yield Static("Dataset Management", classes="pane-title")
-                    
-                    # Dataset Upload Section
-                    with Container(classes="section-container"):
-                        yield Static("Upload Dataset", classes="section-title")
-                        yield Button("Upload CSV/TSV", id="upload-csv-btn", classes="action-button")
-                        yield Button("Upload JSON", id="upload-json-btn", classes="action-button")
-                        yield Button("Add HuggingFace Dataset", id="add-hf-dataset-btn", classes="action-button")
-                        yield Static("", id="dataset-upload-status", classes="status-text")
-                    
-                    # Available Datasets Section
-                    with Container(classes="section-container"):
-                        yield Static("Available Datasets", classes="section-title")
-                        
-                        with Horizontal(classes="button-row"):
-                            yield Button("Refresh List", id="refresh-datasets-btn", classes="action-button")
-                            yield Button("Validate Datasets", id="validate-datasets-btn", classes="action-button")
-                            yield Button("Browse Samples", id="browse-samples-btn", classes="action-button")
-                    
-                        yield Static("Loading datasets...", id="datasets-list", classes="datasets-container")
-                        yield Static("", id="dataset-validation-status", classes="status-text")
+            # Create a view for Model Management
+            with Container(id=EVALS_VIEW_MODELS, classes="evals-view-area"):
+                yield Static("Model Management", classes="pane-title")
                 
-                    # Evaluation Templates Section
-                    with Container(classes="section-container"):
-                        yield Static("Evaluation Templates", classes="section-title")
-                        
-                        # Reasoning & Math
-                        yield Static("Reasoning & Mathematics", classes="subsection-title")
-                        with Container(classes="template-grid"):
-                            yield Button("GSM8K Math", id="template-gsm8k-btn", classes="template-button")
-                            yield Button("Logical Reasoning", id="template-logic-btn", classes="template-button")
-                            yield Button("Chain of Thought", id="template-cot-btn", classes="template-button")
+                # Model List Section
+                with Container(classes="section-container"):
+                    yield Static("Available Models", classes="section-title")
                     
-                        # Safety & Alignment
-                        yield Static("Safety & Alignment", classes="subsection-title")
-                        with Container(classes="template-grid"):
-                            yield Button("Harmfulness Detection", id="template-harm-btn", classes="template-button")
-                            yield Button("Bias Evaluation", id="template-bias-btn", classes="template-button")
-                            yield Button("Truthfulness QA", id="template-truth-btn", classes="template-button")
+                    with Horizontal(classes="button-row"):
+                        yield Button("Add Model Configuration", id="add-new-model-btn", classes="action-button primary")
+                        yield Button("Test Connection", id="test-connection-btn", classes="action-button")
+                        yield Button("Import from Templates", id="import-templates-btn", classes="action-button")
+                
+                    yield Static("Loading models...", id="models-list", classes="models-container")
+                    yield Static("", id="model-test-status", classes="status-text")
                     
-                        # Code & Programming
-                        yield Static("Code & Programming", classes="subsection-title")
-                        with Container(classes="template-grid"):
-                            yield Button("HumanEval Coding", id="template-humaneval-btn", classes="template-button")
-                            yield Button("Bug Detection", id="template-bugs-btn", classes="template-button")
-                            yield Button("SQL Generation", id="template-sql-btn", classes="template-button")
+                # Provider Templates Section
+                with Container(classes="section-container"):
+                    yield Static("Quick Setup", classes="section-title")
+                    yield Static("Click a provider to set up with default settings", classes="help-text")
                     
-                        # Domain Knowledge
-                        yield Static("Domain Knowledge", classes="subsection-title")
-                        with Container(classes="template-grid"):
-                            yield Button("Medical QA", id="template-medical-btn", classes="template-button")
-                            yield Button("Legal Reasoning", id="template-legal-btn", classes="template-button")
-                            yield Button("Scientific Reasoning", id="template-science-btn", classes="template-button")
-                    
-                        # Creative & Open-ended
-                        yield Static("Creative & Open-ended", classes="subsection-title")
-                        with Container(classes="template-grid"):
-                            yield Button("Creative Writing", id="template-creative-btn", classes="template-button")
-                            yield Button("Story Completion", id="template-story-btn", classes="template-button")
-                            yield Button("Summarization", id="template-summary-btn", classes="template-button")
+                    with Container(classes="provider-grid"):
+                        yield Button("🤖 OpenAI", id="setup-openai-btn", classes="provider-button")
+                        yield Button("🧠 Anthropic", id="setup-anthropic-btn", classes="provider-button")
+                        yield Button("🚀 Cohere", id="setup-cohere-btn", classes="provider-button")
+                        yield Button("⚡ Groq", id="setup-groq-btn", classes="provider-button")
+                
+                    yield Static("", id="provider-setup-status", classes="status-text")
 
-                # Add footer with helpful information
-                with Container(classes="footer-container"):
-                    yield Static("💡 Tip: Use templates to quickly set up common evaluation tasks", classes="tip-text")
-                    yield Static("📊 View real-time progress in the Setup tab while evaluations run", classes="tip-text")
-                    yield Static("🔄 Results auto-refresh every 30 seconds when evaluations are active", classes="tip-text")
+            # Create a view for Dataset Management
+            with Container(id=EVALS_VIEW_DATASETS, classes="evals-view-area"):
+                yield Static("Dataset Management", classes="pane-title")
+                
+                # Dataset Upload Section
+                with Container(classes="section-container"):
+                    yield Static("Upload Dataset", classes="section-title")
+                    yield Button("Upload CSV/TSV", id="upload-csv-btn", classes="action-button")
+                    yield Button("Upload JSON", id="upload-json-btn", classes="action-button")
+                    yield Button("Add HuggingFace Dataset", id="add-hf-dataset-btn", classes="action-button")
+                    yield Static("", id="dataset-upload-status", classes="status-text")
+                    
+                # Available Datasets Section
+                with Container(classes="section-container"):
+                    yield Static("Available Datasets", classes="section-title")
+                    
+                    with Horizontal(classes="button-row"):
+                        yield Button("Refresh List", id="refresh-datasets-btn", classes="action-button")
+                        yield Button("Validate Datasets", id="validate-datasets-btn", classes="action-button")
+                        yield Button("Browse Samples", id="browse-samples-btn", classes="action-button")
+                
+                    yield Static("Loading datasets...", id="datasets-list", classes="datasets-container")
+                    yield Static("", id="dataset-validation-status", classes="status-text")
+                
+                # Evaluation Templates Section
+                with Container(classes="section-container"):
+                    yield Static("Evaluation Templates", classes="section-title")
+                    
+                    # Reasoning & Math
+                    yield Static("Reasoning & Mathematics", classes="subsection-title")
+                    with Container(classes="template-grid"):
+                        yield Button("GSM8K Math", id="template-gsm8k-btn", classes="template-button")
+                        yield Button("Logical Reasoning", id="template-logic-btn", classes="template-button")
+                        yield Button("Chain of Thought", id="template-cot-btn", classes="template-button")
+                
+                    # Safety & Alignment
+                    yield Static("Safety & Alignment", classes="subsection-title")
+                    with Container(classes="template-grid"):
+                        yield Button("Harmfulness Detection", id="template-harm-btn", classes="template-button")
+                        yield Button("Bias Evaluation", id="template-bias-btn", classes="template-button")
+                        yield Button("Truthfulness QA", id="template-truth-btn", classes="template-button")
+                
+                    # Code & Programming
+                    yield Static("Code & Programming", classes="subsection-title")
+                    with Container(classes="template-grid"):
+                        yield Button("HumanEval Coding", id="template-humaneval-btn", classes="template-button")
+                        yield Button("Bug Detection", id="template-bugs-btn", classes="template-button")
+                        yield Button("SQL Generation", id="template-sql-btn", classes="template-button")
+                
+                    # Domain Knowledge
+                    yield Static("Domain Knowledge", classes="subsection-title")
+                    with Container(classes="template-grid"):
+                        yield Button("Medical QA", id="template-medical-btn", classes="template-button")
+                        yield Button("Legal Reasoning", id="template-legal-btn", classes="template-button")
+                        yield Button("Scientific Reasoning", id="template-science-btn", classes="template-button")
+                
+                    # Creative & Open-ended
+                    yield Static("Creative & Open-ended", classes="subsection-title")
+                    with Container(classes="template-grid"):
+                        yield Button("Creative Writing", id="template-creative-btn", classes="template-button")
+                        yield Button("Story Completion", id="template-story-btn", classes="template-button")
+                        yield Button("Summarization", id="template-summary-btn", classes="template-button")
+
+            # Add footer with helpful information (All views are already hidden by default during creation; watcher will manage visibility)
+            with Container(classes="footer-container"):
+                yield Static("💡 Tip: Use templates to quickly set up common evaluation tasks", classes="tip-text")
+                yield Static("📊 View real-time progress in the Setup tab while evaluations run", classes="tip-text")
+                yield Static("🔄 Results auto-refresh every 30 seconds when evaluations are active", classes="tip-text")
 
 #
 # End of Evals_Window.py

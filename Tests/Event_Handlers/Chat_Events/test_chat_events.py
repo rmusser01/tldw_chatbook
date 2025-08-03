@@ -161,6 +161,9 @@ async def test_handle_save_current_chat_button_pressed(mock_display_conv, mock_c
     mock_msg2.generation_complete = True
     mock_msg2.image_data = None
     mock_msg2.image_mime_type = None
+    # Create a mock chat log widget
+    mock_chat_log = MagicMock(spec=VerticalScroll)
+    
     # Mock the query method to handle both ChatMessage and ChatMessageEnhanced queries
     def mock_query(widget_type):
         if widget_type == ChatMessage:
@@ -169,7 +172,33 @@ async def test_handle_save_current_chat_button_pressed(mock_display_conv, mock_c
             return []  # No enhanced messages in this test
         return []
     
-    mock_app.query_one("#chat-log").query.side_effect = mock_query
+    mock_chat_log.query = MagicMock(side_effect=mock_query)
+    
+    # Mock the children attribute for sorting
+    mock_chat_log.children = [mock_msg1, mock_msg2]
+    
+    # Mock the title input widget
+    mock_title_input = MagicMock(spec=Input)
+    mock_title_input.value = ""
+    
+    # Mock the keywords textarea widget
+    mock_keywords_textarea = MagicMock(spec=TextArea)
+    mock_keywords_textarea.text = ""
+    
+    # Update query_one to return appropriate widgets
+    def mock_query_one(selector, widget_type=None):
+        if selector == "#chat-log":
+            return mock_chat_log
+        elif selector == "#chat-conversation-title-input":
+            return mock_title_input
+        elif selector == "#chat-conversation-keywords-input":
+            return mock_keywords_textarea
+        raise QueryError(f"No widget found for selector: {selector}")
+    
+    mock_app.query_one.side_effect = mock_query_one
+    
+    # Set DEFAULT_CHARACTER_ID on the mock
+    mock_ccl.DEFAULT_CHARACTER_ID = "default_char_id"
 
     mock_ccl.create_conversation.return_value = "new_conv_id"
 

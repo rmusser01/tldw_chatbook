@@ -189,6 +189,17 @@ class LazyLiveDictationService:
                         "3. Restart this application\n"
                         "\nNote: You must restart after granting permissions."
                     )
+                elif "numpy" in str(e).lower():
+                    raise AudioInitializationError(
+                        "Audio recording requires NumPy for real-time processing.\n\n"
+                        "To enable voice input features, install NumPy:\n"
+                        "  pip install numpy\n\n"
+                        "NumPy is required for:\n"
+                        "• Real-time audio level monitoring\n"
+                        "• Efficient audio format conversions\n"
+                        "• Voice activity detection\n\n"
+                        "Without NumPy, audio processing would cause high CPU usage and UI freezing."
+                    )
                 else:
                     raise AudioInitializationError(
                         "Unable to access microphone. Please check:\n"

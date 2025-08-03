@@ -21,7 +21,13 @@ from difflib import SequenceMatcher
 #
 # Third-Party Imports
 import httpx
-import defusedxml.ElementTree as ET
+from loguru import logger
+
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:
+    import xml.etree.ElementTree as ET
+    logger.warning("defusedxml not available, using standard xml.etree. Install defusedxml for better security.")
 from bs4 import BeautifulSoup
 from loguru import logger
 #
@@ -378,7 +384,7 @@ class FeedMonitor:
             List of parsed items
         """
         try:
-            # Parse with defusedxml for XXE protection
+            # Parse XML (with defusedxml if available for XXE protection)
             root = ET.fromstring(content)
             
             items = []
@@ -401,7 +407,7 @@ class FeedMonitor:
             
             return items
             
-        except ET.ParseError as e:
+        except (ET.ParseError, Exception) as e:
             logger.error(f"XML parse error: {e}")
             raise
         except Exception as e:

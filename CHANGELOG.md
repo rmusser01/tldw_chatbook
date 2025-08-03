@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial features pending documentation
 
+## [0.1.6.0] - 2025-08-2
+### Fixed
+- Analysis sub-tab UI + saving/reviewing existing analyses
+- Some tests
+- Stuff
+
+### Added
+- Subscriptions (broken)
+- Chatbooks (broken)
+- Coding Tab (broken)
+- New Embeddings creation workflow (broken)
+- Wizard walkthrough widget (broken)
+- Extensive mindmap viewer/converter (broken)
+
+
 ## [0.1.5.0] - 2025-07-27
 ### Fixed
 - Stuff
@@ -23,7 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Model download via huggingface interface
   - Model view + delete of models downloaded via HF
   - Logits + Logprobs in evals
-  - 
 
 
 ## [0.1.4.1] - 2025-07-27

@@ -58,13 +58,16 @@ def chat_window(mock_app_instance):
 @pytest.fixture
 def temp_test_image():
     """Create a temporary test image."""
+    import os
+    # Create test image using tempfile with delete=False to control cleanup
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+        temp_path = Path(f.name)
         img = PILImage.new('RGB', (500, 500), color='purple')
         img.save(f, format='PNG')
-        temp_path = Path(f.name)
     
     yield temp_path
     
+    # Clean up the file after test
     if temp_path.exists():
         temp_path.unlink()
 
@@ -98,6 +101,7 @@ class TestChatImageIntegration:
         """Test successful image path submission."""
         # Mock UI elements
         attach_button = Mock(spec=Button)
+        # Mock label as a simple attribute that can be set/get
         attach_button.label = "📎"
         
         indicator = Mock()
@@ -112,53 +116,60 @@ class TestChatImageIntegration:
         event.value = str(temp_test_image)
         event.input = file_input
         
-        def query_one_side_effect(selector):
+        def query_one_side_effect(selector, widget_type=None):
             if selector == "#attach-image":
                 return attach_button
             elif selector == "#image-attachment-indicator":
                 return indicator
             return Mock()
         
-        with patch.object(chat_window, 'query_one', side_effect=query_one_side_effect):
-            await chat_window.handle_image_path_submitted(event)
-            
-            # Check that image was processed
-            assert chat_window.pending_image is not None
-            assert 'data' in chat_window.pending_image
-            assert 'mime_type' in chat_window.pending_image
-            assert chat_window.pending_image['path'] == str(temp_test_image)
-            
-            # Check UI updates
-            assert attach_button.label == "📎✓"
-            indicator.update.assert_called_once()
-            indicator.remove_class.assert_called_with("hidden")
-            file_input.add_class.assert_called_with("hidden")
-            
-            # Check notification
-            chat_window.app_instance.notify.assert_called()
+        # Mock the path validation to always return True for temp files
+        with patch('tldw_chatbook.Utils.path_validation.is_safe_path', return_value=True):
+            with patch.object(chat_window, 'query_one', side_effect=query_one_side_effect):
+                await chat_window.handle_image_path_submitted(event)
+                
+                # Check that image was processed
+                assert chat_window.pending_image is not None
+                assert 'data' in chat_window.pending_image
+                assert 'mime_type' in chat_window.pending_image
+                assert chat_window.pending_image['path'] == str(temp_test_image)
+                
+                # Check UI updates
+                assert attach_button.label == "📎✓"
+                indicator.update.assert_called_once()
+                indicator.remove_class.assert_called_with("hidden")
+                file_input.add_class.assert_called_with("hidden")
+                
+                # Check notification
+                chat_window.app_instance.notify.assert_called()
     
     @pytest.mark.asyncio
     async def test_image_path_submission_invalid_file(self, chat_window):
         """Test image path submission with invalid file."""
+        # Create a path that doesn't exist
+        nonexistent_path = "/tmp/nonexistent_test_image_12345678.png"
+        
         # Mock UI elements
         file_input = Mock(spec=Input)
-        file_input.value = "/path/to/nonexistent.png"
+        file_input.value = nonexistent_path
         file_input.add_class = Mock()
         
         event = Mock()
-        event.value = "/path/to/nonexistent.png"
+        event.value = nonexistent_path
         event.input = file_input
         
-        await chat_window.handle_image_path_submitted(event)
-        
-        # Check error notification
-        chat_window.app_instance.notify.assert_called_with(
-            "Error attaching image: Image file not found: /path/to/nonexistent.png",
-            severity="error"
-        )
-        
-        # Pending image should remain None
-        assert chat_window.pending_image is None
+        # Mock the path validation to return True (so we test file existence check)
+        with patch('tldw_chatbook.Utils.path_validation.is_safe_path', return_value=True):
+            await chat_window.handle_image_path_submitted(event)
+            
+            # Check error notification for file not found
+            chat_window.app_instance.notify.assert_called_with(
+                f"Error attaching image: Image file not found: {nonexistent_path}",
+                severity="error"
+            )
+            
+            # Pending image should remain None
+            assert chat_window.pending_image is None
     
     @pytest.mark.asyncio
     async def test_clear_image_attachment(self, chat_window):
@@ -187,7 +198,7 @@ class TestChatImageIntegration:
             assert chat_window.pending_image is None
             assert attach_button.label == "📎"
             indicator.add_class.assert_called_with("hidden")
-            chat_window.app_instance.notify.assert_called_with("Image attachment cleared")
+            chat_window.app_instance.notify.assert_called_with("File attachment cleared")
     
     @pytest.mark.asyncio
     async def test_send_with_image_clears_attachment(self, chat_window):
@@ -413,7 +424,9 @@ class TestImageAttachmentErrorHandling:
             event.input = Mock()
             event.input.add_class = Mock()
             
-            await chat_window.handle_image_path_submitted(event)
+            # Mock the path validation to return True for test files
+            with patch('tldw_chatbook.Utils.path_validation.is_safe_path', return_value=True):
+                await chat_window.handle_image_path_submitted(event)
             
             # The current implementation is forgiving - it processes corrupted images
             # with a warning rather than failing. This is actually a better UX as 
@@ -456,7 +469,9 @@ class TestImageAttachmentErrorHandling:
             event.input = Mock()
             event.input.add_class = Mock()
             
-            await chat_window.handle_image_path_submitted(event)
+            # Mock the path validation to return True for test files
+            with patch('tldw_chatbook.Utils.path_validation.is_safe_path', return_value=True):
+                await chat_window.handle_image_path_submitted(event)
             
             # Should handle gracefully
             chat_window.app_instance.notify.assert_called()

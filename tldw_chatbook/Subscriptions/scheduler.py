@@ -33,13 +33,14 @@ from .security import SecurityValidator
 #
 ########################################################################################################################
 
-@dataclass(order=True)
+@dataclass(order=False)
 class ScheduledTask:
     """Represents a scheduled subscription check."""
     next_run: float  # Unix timestamp
     subscription_id: int = field(compare=False)
     priority: int = field(compare=False)
     attempt: int = field(compare=False, default=0)
+    task_type: str = field(compare=False, default='check')  # 'check', 'briefing', 'cleanup'
     
     def __lt__(self, other):
         """Compare tasks by next_run time, then priority."""

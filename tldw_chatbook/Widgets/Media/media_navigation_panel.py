@@ -41,7 +41,6 @@ class MediaNavigationPanel(Container):
     
     DEFAULT_CSS = """
     MediaNavigationPanel {
-        dock: left;
         width: 20%;
         min-width: 20;
         max-width: 40;
@@ -52,11 +51,6 @@ class MediaNavigationPanel(Container):
     }
     
     MediaNavigationPanel.collapsed {
-        width: 3;
-        min-width: 3;
-    }
-    
-    MediaNavigationPanel.collapsed .nav-content {
         display: none;
     }
     

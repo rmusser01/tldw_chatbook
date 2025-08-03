@@ -14,8 +14,16 @@ import tempfile
 from typing import Optional, Callable, List, Dict, Any, Tuple
 from pathlib import Path
 from contextlib import contextmanager
-import numpy as np
 from loguru import logger
+
+# Try to import numpy as required dependency for audio functionality
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    logger.error("NumPy not available. Audio recording functionality is disabled.")
+    logger.error("To enable audio features, install numpy: pip install numpy")
 
 # Try to import audio backends
 PYAUDIO_AVAILABLE = False
@@ -98,6 +106,19 @@ class AudioRecordingService:
             use_vad: Whether to use Voice Activity Detection
             vad_aggressiveness: VAD aggressiveness (0-3, higher is more aggressive)
         """
+        # Check for numpy requirement first
+        if not NUMPY_AVAILABLE:
+            raise AudioRecordingError(
+                "Audio recording functionality requires NumPy for efficient real-time processing.\n"
+                "NumPy is essential for:\n"
+                "  - Real-time audio level calculations\n"
+                "  - Efficient audio format conversions\n"
+                "  - Processing audio streams without performance issues\n\n"
+                "To enable audio features, install NumPy:\n"
+                "  pip install numpy\n\n"
+                "Without NumPy, audio processing would cause high CPU usage and UI stuttering."
+            )
+        
         self.sample_rate = sample_rate
         self.channels = channels
         self.chunk_size = chunk_size
@@ -325,7 +346,7 @@ class AudioRecordingService:
                 logger.warning(f"Sounddevice status: {status}")
             
             if self.is_recording:
-                # Convert float32 to int16
+                # Convert float32 to int16 (numpy is required)
                 audio_data = (indata * 32767).astype(np.int16).tobytes()
                 self._process_audio_chunk(audio_data)
         
@@ -450,7 +471,7 @@ class AudioRecordingService:
             for chunk in recent_chunks:
                 self.audio_queue.put(chunk)
             
-            # Calculate RMS
+            # Calculate RMS (numpy is required)
             audio_data = np.frombuffer(b''.join(recent_chunks), dtype=np.int16)
             rms = np.sqrt(np.mean(audio_data**2))
             

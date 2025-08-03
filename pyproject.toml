@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tldw_chatbook"
-version = "0.1.5.0"
+version = "0.1.6.0"
 authors = [
   { name="Robert Musser", email="contact@rmusser.net" },
 ]
@@ -56,6 +56,7 @@ dependencies = [
     "markdownify",
     "aiofiles",
     "textual-image",
+    "anytree",
 ]
 
 # --- Optional Dependencies ---
@@ -155,6 +156,10 @@ chatterbox = [
     "torch",
     "faster-whisper",  # For validation of generated audio
 ]
+mindmap = [
+    # anytree is already in base dependencies
+    # No additional dependencies needed for basic functionality
+]
 local_tts = [
     "kokoro-onnx",
     "scipy",
@@ -233,6 +238,12 @@ diarization = [
     "scikit-learn",  # For clustering algorithms (already in chunker deps)
     "numpy",  # Numerical operations (already in base deps)
 ]
+subscriptions = [
+    "markdown",  # For HTML generation from markdown
+    "schedule",  # For scheduled tasks
+    "feedparser",  # For RSS feed parsing
+    "cryptography", # Security.py
+]
 
 
 [project.urls]
@@ -282,5 +293,8 @@ markers = [
     "asyncio: marks tests as async",
     "timeout: marks tests with custom timeout values",
     "optional: marks tests that require optional dependencies",
+    "performance: marks tests as performance tests",
+    "property: marks tests as property-based tests",
+    "slow: marks tests that take a long time to run",
 ]
 

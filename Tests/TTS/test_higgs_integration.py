@@ -27,9 +27,18 @@ from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.backends.higgs import HiggsAudioTTSBackend
 from tldw_chatbook.TTS.backends.higgs_voice_manager import HiggsVoiceProfileManager
 
+# Check if boson-multimodal is available
+try:
+    import boson_multimodal
+    HIGGS_AVAILABLE = True
+except ImportError:
+    HIGGS_AVAILABLE = False
 
-# Mark all tests in this module as integration tests
-pytestmark = pytest.mark.integration
+# Mark all tests in this module as integration tests and skip if Higgs not available
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(not HIGGS_AVAILABLE, reason="Higgs Audio (boson-multimodal) not installed")
+]
 
 
 class TestHiggsIntegration:

@@ -6,6 +6,7 @@ default_theme = "textual-dark"  # Default theme on startup ("textual-dark", "tex
 palette_theme_limit = 1  # Maximum number of themes to show in command palette (0 = show all)
 log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 users_name = "default_user" # Default user name for the TUI
+use_dropdown_navigation = false  # Use dropdown navigation instead of tab bar
 
 [tldw_api]
 base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint

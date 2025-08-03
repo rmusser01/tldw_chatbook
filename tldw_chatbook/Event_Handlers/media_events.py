@@ -5,13 +5,16 @@
 import math
 from datetime import datetime
 from typing import TYPE_CHECKING, Dict, Any
+from loguru import logger
 #
 # 3rd-party Libraries
 from textual import on
-from textual.containers import Vertical
+from textual.app import App, ComposeResult
+from textual.containers import Vertical, Horizontal
 from textual.widgets import ListView, Input, TextArea, Label, ListItem, Button, Markdown, Static  # Added ListItem
 from textual.css.query import QueryError
 from textual.message import Message
+from textual.screen import ModalScreen
 from rich.text import Text  # For formatting details
 #
 # Local Imports
@@ -116,6 +119,16 @@ class MediaAnalysisOverwriteEvent(Message):
         super().__init__()
         self.media_id = media_id
         self.analysis_content = analysis_content
+        self.type_slug = type_slug
+
+
+class MediaAnalysisDeleteEvent(Message):
+    """Event fired when deleting an analysis version."""
+    
+    def __init__(self, media_id: int, version_uuid: str, type_slug: str) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.version_uuid = version_uuid
         self.type_slug = type_slug
 
 #
@@ -686,28 +699,7 @@ async def handle_media_delete_confirmation(app: 'TldwCli', event: MediaDeleteCon
                 success = self.app.media_db.soft_delete_media(self.media_id)
                 if success:
                     self.app.notify(f"'{self.media_title}' has been deleted", severity="information")
-                    # Refresh the current view
-                    # Get current search term and keyword filter
-                    search_term = ""
-                    keyword_filter = ""
-                    try:
-                        search_input = self.app.query_one(f"#media-search-input-{self.type_slug}", Input)
-                        search_term = search_input.value
-                        keyword_input = self.app.query_one(f"#media-keyword-filter-{self.type_slug}", Input)
-                        keyword_filter = keyword_input.value
-                    except QueryError:
-                        pass
-                    await perform_media_search_and_display(self.app, self.type_slug, search_term, keyword_filter)
-                    # Update the details widget if the deleted item was selected
-                    if self.app.current_loaded_media_item and self.app.current_loaded_media_item.get('id') == self.media_id:
-                        updated_media = self.app.media_db.get_media_by_id(self.media_id)
-                        if updated_media:
-                            try:
-                                from ..Widgets.media_details_widget import MediaDetailsWidget
-                                details_widget = self.app.query_one(f"#media-details-widget-{self.type_slug}", MediaDetailsWidget)
-                                details_widget.update_media_data(updated_media)
-                            except QueryError:
-                                pass
+                    # MediaWindow_v2 will handle the refresh when it receives the event
                 else:
                     self.app.notify(f"Failed to delete '{self.media_title}'", severity="error")
             self.dismiss()
@@ -742,35 +734,134 @@ async def handle_media_undelete(app: 'TldwCli', event: MediaUndeleteEvent) -> No
         
         if success:
             app.notify(f"'{media_item.get('title', 'Untitled')}' has been restored", severity="information")
-            
-            # Refresh the current view
-            # Get current search term and keyword filter
-            search_term = ""
-            keyword_filter = ""
-            try:
-                search_input = app.query_one(f"#media-search-input-{event.type_slug}", Input)
-                search_term = search_input.value
-                keyword_input = app.query_one(f"#media-keyword-filter-{event.type_slug}", Input)
-                keyword_filter = keyword_input.value
-            except QueryError:
-                pass
-            await perform_media_search_and_display(app, event.type_slug, search_term, keyword_filter)
-            
-            # Update the details widget
-            updated_media = app.media_db.get_media_by_id(event.media_id)
-            if updated_media:
-                try:
-                    from ..Widgets.media_details_widget import MediaDetailsWidget
-                    details_widget = app.query_one(f"#media-details-widget-{event.type_slug}", MediaDetailsWidget)
-                    details_widget.update_media_data(updated_media)
-                except QueryError:
-                    logger.warning(f"Could not find MediaDetailsWidget for type_slug: {event.type_slug}")
+            # MediaWindow_v2 will handle the refresh when it receives the event
         else:
             app.notify(f"Failed to restore '{media_item.get('title', 'Untitled')}'", severity="error")
             
     except Exception as e:
         logger.error(f"Error undeleting media: {e}", exc_info=True)
         app.notify(f"Error restoring media: {str(e)[:100]}", severity="error")
+
+
+async def handle_media_generate_analysis(app: App, event: Button.Pressed) -> None:
+    """Handle media generate analysis button press."""
+    try:
+        # Get the MediaWindow and find the MediaViewerPanel
+        media_window = app.query_one("#media-window")
+        if hasattr(media_window, '_actual_window') and media_window._actual_window:
+            # It's a PlaceholderWindow, get the actual window
+            media_window = media_window._actual_window
+        
+        # Find the MediaViewerPanel
+        from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
+        viewer_panel = media_window.query_one(MediaViewerPanel)
+        
+        # Trigger the analysis
+        viewer_panel.handle_generate_analysis()
+        
+    except Exception as e:
+        logger.error(f"Error generating media analysis: {e}", exc_info=True)
+        app.notify(f"Error generating analysis: {str(e)[:100]}", severity="error")
+
+
+async def handle_media_save_analysis(app: App, event: Button.Pressed) -> None:
+    """Handle media save analysis button press."""
+    try:
+        media_window = app.query_one("#media-window")
+        if hasattr(media_window, '_actual_window') and media_window._actual_window:
+            media_window = media_window._actual_window
+            
+        from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
+        viewer_panel = media_window.query_one(MediaViewerPanel)
+        viewer_panel.handle_save_analysis()
+        
+    except Exception as e:
+        logger.error(f"Error saving media analysis: {e}", exc_info=True)
+        app.notify(f"Error saving analysis: {str(e)[:100]}", severity="error")
+
+
+async def handle_media_edit_analysis(app: App, event: Button.Pressed) -> None:
+    """Handle media edit analysis button press."""
+    try:
+        media_window = app.query_one("#media-window")
+        if hasattr(media_window, '_actual_window') and media_window._actual_window:
+            media_window = media_window._actual_window
+            
+        from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
+        viewer_panel = media_window.query_one(MediaViewerPanel)
+        viewer_panel.handle_edit_analysis()
+        
+    except Exception as e:
+        logger.error(f"Error editing media analysis: {e}", exc_info=True)
+        app.notify(f"Error editing analysis: {str(e)[:100]}", severity="error")
+
+
+async def handle_media_overwrite_analysis(app: App, event: Button.Pressed) -> None:
+    """Handle media overwrite analysis button press."""
+    try:
+        media_window = app.query_one("#media-window")
+        if hasattr(media_window, '_actual_window') and media_window._actual_window:
+            media_window = media_window._actual_window
+            
+        from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
+        viewer_panel = media_window.query_one(MediaViewerPanel)
+        viewer_panel.handle_overwrite_analysis()
+        
+    except Exception as e:
+        logger.error(f"Error overwriting media analysis: {e}", exc_info=True)
+        app.notify(f"Error overwriting analysis: {str(e)[:100]}", severity="error")
+
+
+async def handle_media_sidebar_toggle(app: App, event: Button.Pressed) -> None:
+    """Handle media sidebar toggle button press."""
+    try:
+        # Toggle the media sidebar collapsed state
+        if hasattr(app, 'media_sidebar_collapsed'):
+            app.media_sidebar_collapsed = not app.media_sidebar_collapsed
+        else:
+            app.notify("Media sidebar state not available", severity="warning")
+            
+    except Exception as e:
+        logger.error(f"Error toggling media sidebar: {e}", exc_info=True)
+
+
+async def handle_media_list_collapse(app: App, event: Button.Pressed) -> None:
+    """Handle media list collapse button press."""
+    try:
+        # Toggle the media list collapsed state
+        media_window = app.query_one("#media-window")
+        if hasattr(media_window, '_actual_window') and media_window._actual_window:
+            media_window = media_window._actual_window
+            
+        # Toggle the collapsible state
+        from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
+        if isinstance(media_window, MediaWindow):
+            if hasattr(media_window, 'toggle_media_list'):
+                media_window.toggle_media_list()
+            else:
+                app.notify("Media list toggle not available", severity="warning")
+                
+    except Exception as e:
+        logger.error(f"Error collapsing media list: {e}", exc_info=True)
+
+
+async def handle_media_refresh_button_pressed(app: App, event: Button.Pressed) -> None:
+    """Handle media refresh button press."""
+    try:
+        media_window = app.query_one("#media-window")
+        if hasattr(media_window, '_actual_window') and media_window._actual_window:
+            media_window = media_window._actual_window
+            
+        # Trigger refresh on the media window
+        if hasattr(media_window, 'refresh_current_view'):
+            await media_window.refresh_current_view()
+        else:
+            app.notify("Media refresh not available", severity="warning")
+            
+    except Exception as e:
+        logger.error(f"Error refreshing media view: {e}", exc_info=True)
+        app.notify(f"Error refreshing media: {str(e)[:100]}", severity="error")
+
 
 # --- Button Handler Map ---
 # This map will be dynamically generated in app.py's _build_handler_map based on _media_types_for_ui.
@@ -797,6 +888,24 @@ MEDIA_BUTTON_HANDLERS = {
     # "media-prev-page-button-all-media": handle_media_page_change_button_pressed,
     # "media-next-page-button-all-media": handle_media_page_change_button_pressed,
     # ... etc for all slugs ...
+    
+    # Media control buttons
+    "media-refresh": handle_media_refresh_button_pressed,
+    
+    # Media panel buttons
+    "generate-analysis-btn": handle_media_generate_analysis,
+    "save-analysis-btn": handle_media_save_analysis,
+    "edit-analysis-btn": handle_media_edit_analysis,
+    "overwrite-analysis-btn": handle_media_overwrite_analysis,
+    
+    # Analysis navigation buttons
+    "prev-analysis-btn": lambda app, event: None,  # Handled by widget itself
+    "next-analysis-btn": lambda app, event: None,  # Handled by widget itself
+    "delete-analysis-btn": lambda app, event: None,  # Handled by widget itself
+    
+    # Media sidebar toggle
+    "media-sidebar-toggle": handle_media_sidebar_toggle,
+    "collapse-media-list": handle_media_list_collapse,
 }
 # Note: The actual assignment of handlers to specific button IDs now happens more dynamically
 # in app.py's _build_handler_map, based on `self._media_types_for_ui`.

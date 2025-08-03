@@ -73,7 +73,7 @@ from .config import (
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
@@ -81,6 +81,13 @@ from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
 from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, EMOJI_TITLE_NOTE, \
     FALLBACK_TITLE_NOTE, EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH, supports_emoji, \
     EMOJI_SEND, FALLBACK_SEND, EMOJI_STOP, FALLBACK_STOP
+from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
+from tldw_chatbook.Utils.ui_helpers import UIHelpers
+from tldw_chatbook.Utils.db_status_manager import DBStatusManager
+from tldw_chatbook.Event_Handlers.worker_handlers import (
+    WorkerHandlerRegistry, ChatWorkerHandler, ServerWorkerHandler,
+    AIGenerationHandler, MiscWorkerHandler
+)
 from .config import (
     CONFIG_TOML_CONTENT,
     DEFAULT_CONFIG_PATH,
@@ -140,10 +147,12 @@ from .UI.Evals_Window_v3 import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Study_Window import StudyWindow
+from .UI.Chatbooks_Window import ChatbooksWindow
+from .UI.SubscriptionWindow import SubscriptionWindow
 from .UI.Tab_Bar import TabBar
+from .UI.Tab_Dropdown import TabDropdown, TabChanged
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
-from .UI.Subscription_Window import SubscriptionWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
@@ -154,6 +163,15 @@ from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_NAV_EMBEDDINGS_MANAGE
 )
 API_IMPORTS_SUCCESSFUL = True
+
+# Try to import SubscriptionWindow if dependencies are available
+SubscriptionWindow = None
+try:
+    from .UI.SubscriptionWindow import SubscriptionWindow
+    SUBSCRIPTIONS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Subscriptions feature unavailable: {e}")
+    SUBSCRIPTIONS_AVAILABLE = False
 #
 #######################################################################################################################
 #
@@ -809,7 +827,7 @@ class PlaceholderWindow(Container):
 class TldwCli(App[None]):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
     #TITLE = "🧠📝🔍  tldw CLI"
-    TITLE = f"{get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}{get_char(EMOJI_TITLE_NOTE, FALLBACK_TITLE_NOTE)}{get_char(EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH)}  tldw CLI"
+    TITLE = "tldw chatbook"
     # CSS file path
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
     BINDINGS = [
@@ -833,9 +851,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         *[f"ingest-view-tldw-api-{mt}" for mt in MEDIA_TYPES]
     ]
     ALL_MAIN_WINDOW_IDS = [ # Assuming these are your main content window IDs
-        "chat-window", "conversations_characters_prompts-window",
+        "chat-window", "conversations_characters_prompts-window", "notes-window",
         "ingest-window", "tools_settings-window", "llm_management-window",
-        "media-window", "search-window", "logs-window", "evals-window", "coding-window"
+        "media-window", "search-window", "logs-window", "stats-window", "evals-window", 
+        "coding-window", "stts-window", "study-window", "chatbooks-window"
     ]
 
     # Define reactive at class level with a placeholder default and type hint
@@ -872,7 +891,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     # DB Size checker - now using AppFooterStatus
     _db_size_status_widget: Optional[AppFooterStatus] = None
-    _db_size_update_timer: Optional[Timer] = None
+    # DB size update timer moved to DBStatusManager
     _token_count_update_timer: Optional[Timer] = None
 
     # Reactives for sidebar
@@ -1046,6 +1065,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.loguru_logger = loguru_logger
         self.loguru_logger.info(f"Loaded app_config - strip_thinking_tags: {self.app_config.get('chat_defaults', {}).get('strip_thinking_tags', 'NOT SET')}") # Make loguru_logger an instance variable for handlers
         self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
+        self.db_status_manager = DBStatusManager(self)  # Initialize database status manager
         self._startup_phases["basic_init"] = time.perf_counter() - phase_start
         log_histogram("app_startup_phase_duration_seconds", self._startup_phases["basic_init"], 
                      labels={"phase": "basic_init"}, 
@@ -1184,6 +1204,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # This one-time setup makes the dispatcher clean and fast.
         self.button_handler_map = self._build_handler_map()
         
+        # --- Initialize worker handler registry ---
+        self._init_worker_handlers()
+        
         # Log total initialization time
         total_init_time = time.perf_counter() - self._startup_start_time
         self._startup_phases["total_init"] = total_init_time
@@ -1270,6 +1293,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             logger.error(f"Failed to initialize media DB: {e}", exc_info=True)
             self.media_db = None
             self._media_types_for_ui = ["Error: Exception fetching media types"]
+    
+    def _init_worker_handlers(self) -> None:
+        """Initialize the worker handler registry and register all handlers."""
+        self.worker_handler_registry = WorkerHandlerRegistry(self)
+        
+        # Register all worker handlers
+        self.worker_handler_registry.register(ChatWorkerHandler(self))
+        self.worker_handler_registry.register(ServerWorkerHandler(self))
+        self.worker_handler_registry.register(AIGenerationHandler(self))
+        self.worker_handler_registry.register(MiscWorkerHandler(self))
+        
+        self.loguru_logger.info("Worker handler registry initialized with all handlers")
 
     def _build_handler_map(self) -> dict:
         """Constructs the master button handler map from all event modules."""
@@ -1475,25 +1510,35 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Create the main UI widgets (called after splash screen or immediately if disabled)."""
         widgets = []
         
-        # Track individual component creation
-        component_start = time.perf_counter()
-        widgets.append(Header())
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-                     labels={"component": "header"}, 
-                     documentation="Time to create UI component")
+        # Header removed - no title/header bar needed
+        # component_start = time.perf_counter()
+        # widgets.append(Header())
+        # log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+        #              labels={"component": "header"}, 
+        #              documentation="Time to create UI component")
         
-        # Set up the main title bar with a static title
+        # Custom title bar with surface color
         component_start = time.perf_counter()
         widgets.append(TitleBar())
         log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
                      labels={"component": "titlebar"}, 
                      documentation="Time to create UI component")
 
-        # Use new TabBar widget
+        # Check config for navigation type
+        use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
         component_start = time.perf_counter()
-        widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
+        
+        if use_dropdown:
+            # Use dropdown navigation
+            widgets.append(TabDropdown(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
+            logger.info("Using dropdown navigation for tabs")
+        else:
+            # Use traditional tab bar
+            widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
+            logger.info("Using traditional tab bar navigation")
+            
         log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-                     labels={"component": "tabbar"}, 
+                     labels={"component": "navigation"}, 
                      documentation="Time to create UI component")
 
         # Content area - all windows
@@ -1517,12 +1562,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
             ("llm_management", LLMManagementWindow, "llm_management-window"),
             ("logs", LogsWindow, "logs-window"),
+            ("coding", CodingWindow, "coding-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
             ("study", StudyWindow, "study-window"),
-            ("subscriptions", SubscriptionWindow, "subscriptions-window"),
+            ("chatbooks", ChatbooksWindow, "chatbooks-window"),
         ]
+        
+        # Add subscriptions tab if available
+        if SUBSCRIPTIONS_AVAILABLE and SubscriptionWindow:
+            windows.append(("subscriptions", SubscriptionWindow, "subscriptions-window"))
         
         # Create window widgets and compose them into the container properly
         initial_tab = self._initial_tab_value
@@ -1595,10 +1645,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
             ("llm_management", LLMManagementWindow, "llm_management-window"),
             ("logs", LogsWindow, "logs-window"),
+            ("coding", CodingWindow, "coding-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
             ("study", StudyWindow, "study-window"),
+            ("chatbooks", ChatbooksWindow, "chatbooks-window"),
         ]
         
         window_widgets = []
@@ -2024,44 +2076,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # ###################################################################
     def _update_llamacpp_log(self, message: str) -> None:
         """Helper to write messages to the Llama.cpp log widget."""
-        try:
-            log_widget = self.query_one("#llamacpp-log-output", RichLog)
-            log_widget.write(message)
-        except QueryError:
-            self.loguru_logger.error("Failed to query #llamacpp-log-output to write message.")
-        except Exception as e:  # pylint: disable=broad-except
-            self.loguru_logger.error(f"Error writing to Llama.cpp log: {e}", exc_info=True)
+        LogWidgetManager.update_llamacpp_log(self, message)
 
     def _update_transformers_log(self, message: str) -> None:
         """Helper to write messages to the Transformers log widget."""
-        try:
-            # Assuming the Transformers view is active when this is called,
-            # or the log widget is always part of the composed layout.
-            log_widget = self.query_one("#transformers-log-output", RichLog)
-            log_widget.write(message)
-        except QueryError:
-            self.loguru_logger.error("Failed to query #transformers-log-output to write message.")
-        except Exception as e: # pylint: disable=broad-except
-            self.loguru_logger.error(f"Error writing to Transformers log: {e}", exc_info=True)
+        LogWidgetManager.update_transformers_log(self, message)
 
     def _update_llamafile_log(self, message: str) -> None:
         """Helper to write messages to the Llamafile log widget."""
-        try:
-            log_widget = self.query_one("#llamafile-log-output", RichLog)
-            log_widget.write(message)
-        except QueryError:
-            self.loguru_logger.error("Failed to query #llamafile-log-output to write message.")
-        except Exception as e:
-            self.loguru_logger.error(f"Error writing to Llamafile log: {e}", exc_info=True)
+        LogWidgetManager.update_llamafile_log(self, message)
 
     def _update_vllm_log(self, message: str) -> None:
-        try:
-            log_widget = self.query_one("#vllm-log-output", RichLog)
-            log_widget.write(message)
-        except QueryError:
-            self.loguru_logger.error("Failed to query #vllm-log-output to write message.")
-        except Exception as e:
-            self.loguru_logger.error(f"Error writing to vLLM log: {e}", exc_info=True)
+        """Helper to write messages to the vLLM log widget."""
+        LogWidgetManager.update_vllm_log(self, message)
     # ###################################################################
     # --- End of Helper methods for Local LLM Inference logging ---
     # ###################################################################
@@ -2069,16 +2096,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # --- Modify _clear_prompt_fields and _load_prompt_for_editing ---
     def _clear_prompt_fields(self) -> None:
         """Clears prompt input fields in the CENTER PANE editor."""
-        try:
-            self.query_one("#ccp-editor-prompt-name-input", Input).value = ""
-            self.query_one("#ccp-editor-prompt-author-input", Input).value = ""
-            self.query_one("#ccp-editor-prompt-description-textarea", TextArea).text = ""
-            self.query_one("#ccp-editor-prompt-system-textarea", TextArea).text = ""
-            self.query_one("#ccp-editor-prompt-user-textarea", TextArea).text = ""
-            self.query_one("#ccp-editor-prompt-keywords-textarea", TextArea).text = ""
-            loguru_logger.debug("Cleared prompt editor fields in center pane.")
-        except QueryError as e:
-            loguru_logger.error(f"Error clearing prompt editor fields in center pane: {e}")
+        UIHelpers.clear_prompt_editor_fields(self)
 
     # --- Thread-safe chat state helpers ---
     
@@ -2786,8 +2804,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Or use ID: self._db_size_status_widget = self.query_one("#app-footer-status", AppFooterStatus)
             self.loguru_logger.info("AppFooterStatus widget instance acquired.")
 
-            await self.update_db_sizes()  # Initial population
-            self._db_size_update_timer = self.set_interval(120, self.update_db_sizes) # Update every 2 minutes
+            await self.db_status_manager.update_db_sizes()  # Initial population
+            self.db_status_manager.start_periodic_updates(120)  # Update every 2 minutes
             self.loguru_logger.info("DB size update timer started for AppFooterStatus (interval: 2 minutes).")
             
             # Start token count updates
@@ -2866,57 +2884,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def update_db_sizes(self) -> None:
         """Updates the database size information in the AppFooterStatus widget."""
-        self.loguru_logger.debug("Attempting to update DB sizes in AppFooterStatus.")
-        if not self._db_size_status_widget:
-            self.loguru_logger.warning("_db_size_status_widget (AppFooterStatus) is None, cannot update DB sizes.")
-            return
-
-        try:
-            # Prompts DB
-            prompts_db_file = get_prompts_db_path()
-            prompts_size_str = Utils.get_formatted_file_size(prompts_db_file)
-            if prompts_size_str is None:
-                prompts_size_str = "N/A"
-
-            # ChaChaNotes DB
-            chachanotes_db_file = get_chachanotes_db_path()
-            chachanotes_size_str = Utils.get_formatted_file_size(chachanotes_db_file)
-            if chachanotes_size_str is None:
-                chachanotes_size_str = "N/A"
-
-            # Media DB
-            media_db_file = get_media_db_path()
-            media_size_str = Utils.get_formatted_file_size(media_db_file)
-            if media_size_str is None:
-                media_size_str = "N/A"
-
-            status_string = f"P: {prompts_size_str} | C/N: {chachanotes_size_str} | M: {media_size_str}"
-            self.loguru_logger.debug(f"DB size status string to display in AppFooterStatus: '{status_string}'")
-            # Call the custom update method on the AppFooterStatus widget
-            self._db_size_status_widget.update_db_sizes_display(status_string)
-            self.loguru_logger.info(f"Successfully updated DB sizes in AppFooterStatus: {status_string}")
-        except Exception as e:
-            self.loguru_logger.error(f"Error updating DB sizes in AppFooterStatus: {e}", exc_info=True)
-            if self._db_size_status_widget: # Check again in case it became None somehow
-                self._db_size_status_widget.update_db_sizes_display("Error loading DB sizes")
+        await self.db_status_manager.update_db_sizes()
     
     async def update_token_count_display(self) -> None:
         """Updates the token count in the footer when on Chat tab."""
-        if self.current_tab != TAB_CHAT:
-            # Clear token count when not on chat tab
-            if self._db_size_status_widget:
-                self._db_size_status_widget.update_token_count("")
-            return
-            
-        try:
-            if self._db_size_status_widget:
-                # Do the real update
-                from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
-                await update_chat_token_counter(self)
-        except Exception as e:
-            self.loguru_logger.error(f"Error updating token count: {e}", exc_info=True)
-            if self._db_size_status_widget:
-                self._db_size_status_widget.update_token_count("Token count error")
+        await self.db_status_manager.update_token_count_display()
 
 
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
@@ -2942,9 +2914,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             logging.info("RichLogHandler processor stopped.")
 
         # --- Stop DB Size Update Timer ---
-        if self._db_size_update_timer:
-            self._db_size_update_timer.stop()
-            self.loguru_logger.info("DB size update timer stopped.")
+        self.db_status_manager.stop_periodic_updates()
+        self.loguru_logger.info("DB size update timer stopped.")
         # --- End Stop DB Size Update Timer ---
 
     async def on_unmount(self) -> None:
@@ -3050,9 +3021,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             logging.info("RichLogHandler removed.")
 
         # Stop DB size update timer on unmount as well, if not already handled by shutdown_request
-        if self._db_size_update_timer: # Removed .is_running check
-            self._db_size_update_timer.stop()
-            self.loguru_logger.info("DB size update timer stopped during unmount.")
+        self.db_status_manager.stop_periodic_updates()
+        self.loguru_logger.info("DB size update timer stopped during unmount.")
 
         # Find and remove file handler (more robustly)
         root_logger = logging.getLogger()
@@ -3201,7 +3171,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # Show New Tab UI
         try:
-            self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
+            # Update navigation UI based on type
+            use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
+            if use_dropdown:
+                # Update dropdown selection if it exists and differs
+                try:
+                    dropdown = self.query_one(TabDropdown)
+                    dropdown.update_active_tab(new_tab)
+                except QueryError:
+                    pass
+            else:
+                # Update traditional tab bar button
+                self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
+            
             new_window = self.query_one(f"#{new_tab}-window")
             
             # Initialize placeholder window if needed
@@ -3328,10 +3310,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 # Use call_later to ensure the UI has settled after tab switch before changing sub-view
                 self.call_later(self._activate_initial_ingest_view)
         elif new_tab == TAB_TOOLS_SETTINGS:
-            if not self.tools_settings_active_view:
-                self.loguru_logger.debug(
-                    f"Switched to Tools & Settings tab, activating initial view: {self._initial_tools_settings_view}")
-                self.call_later(setattr, self, 'tools_settings_active_view', self._initial_tools_settings_view)
+            # Handle tools settings tab initialization with proper placeholder check
+            def initialize_tools_settings():
+                try:
+                    # Check if the window is actually initialized
+                    tools_window = self.query_one("#tools_settings-window")
+                    if isinstance(tools_window, PlaceholderWindow):
+                        # Window isn't initialized yet, try again later silently
+                        self.set_timer(0.1, initialize_tools_settings)
+                        return
+                    
+                    # Now it's safe to activate the initial view
+                    from .UI.Tools_Settings_Window import ToolsSettingsWindow
+                    if isinstance(tools_window, ToolsSettingsWindow):
+                        tools_window.activate_initial_view()
+                        if not self.tools_settings_active_view:
+                            self.tools_settings_active_view = self._initial_tools_settings_view
+                            self.loguru_logger.debug(f"Tools & Settings tab initialized with view: {self._initial_tools_settings_view}")
+                except QueryError:
+                    self.loguru_logger.error("Tools settings window not found during initialization")
+            
+            # Use a timer to ensure the window is ready
+            self.set_timer(0.1, initialize_tools_settings)
         elif new_tab == TAB_LLM:  # New elif block for LLM tab
             if not self.llm_active_view:  # If no view is active yet
                 self.loguru_logger.debug(
@@ -3340,11 +3340,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Populate LLM help texts when the tab is shown
             self.call_after_refresh(llm_management_events.populate_llm_help_texts, self)
         elif new_tab == TAB_EVALS: # Added for Evals tab
-            # Placeholder for any specific actions when Evals tab is selected
-            pass
-            # if not self.evals_active_view: # Assuming an 'evals_active_view' reactive
-            #     self.loguru_logger.debug(f"Switched to Evals tab, activating initial view...")
-            #     self.call_later(setattr, self, 'evals_active_view', self._initial_evals_view) # Example
+            # Activate initial view for EvalsWindow when switching to the tab
+            from .UI.Evals_Window_v3 import EvalsWindow
+            try:
+                evals_window = self.query_one(EvalsWindow)
+                evals_window.activate_initial_view()
+            except QueryError:
+                self.loguru_logger.error("Could not find EvalsWindow to activate its initial view.")
             self.loguru_logger.debug(f"Switched to Evals tab. Initial sidebar state: collapsed={self.evals_sidebar_collapsed}")
 
 
@@ -4096,7 +4098,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if not button_id:
             return
 
-        self.loguru_logger.debug(f"Button pressed: ID='{button_id}' on Tab='{self.current_tab}'")
+        self.loguru_logger.info(f"Button pressed: ID='{button_id}' on Tab='{self.current_tab}'")
 
         # 1. Handle global tab switching first
         if button_id.startswith("tab-"):
@@ -4120,21 +4122,30 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 TAB_EVALS: "evals-window",
                 TAB_CODING: "coding-window",
                 TAB_STTS: "stts-window",
-                TAB_STUDY: "study-window"
+                TAB_STUDY: "study-window",
+                TAB_CHATBOOKS: "chatbooks-window"
             }
 
             window_id = window_id_map.get(self.current_tab)
+            self.loguru_logger.info(f"Window ID for tab '{self.current_tab}': {window_id}")
             if window_id:
                 window = self.query_one(f"#{window_id}")
+                self.loguru_logger.info(f"Found window: {type(window).__name__}")
                 # Check if the window has an on_button_pressed method
-                if hasattr(window, "on_button_pressed") and callable(window.on_button_pressed):
+                has_method = hasattr(window, "on_button_pressed") and callable(window.on_button_pressed)
+                self.loguru_logger.info(f"Window has on_button_pressed: {has_method}")
+                if has_method:
                     # Call the window's button handler - it might be async
+                    self.loguru_logger.info(f"Delegating to window's on_button_pressed")
                     result = window.on_button_pressed(event)
                     if inspect.isawaitable(result):
                         await result
                     # Check if event has been stopped (some event types don't have is_stopped)
                     if hasattr(event, 'is_stopped') and event.is_stopped:
+                        self.loguru_logger.info(f"Event was stopped by window handler")
                         return
+                    self.loguru_logger.info(f"Window handler completed, event not stopped")
+                    # Don't return here - let it fall through to the handler map!
 
         except QueryError:
             self.loguru_logger.error(f"Could not find window component for tab '{self.current_tab}'")
@@ -4145,8 +4156,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         current_tab_handlers = self.button_handler_map.get(self.current_tab, {})
         handler = current_tab_handlers.get(button_id)
         
-        self.loguru_logger.debug(f"Looking for handler for button '{button_id}' in tab '{self.current_tab}'")
-        self.loguru_logger.debug(f"Available handlers for this tab: {list(current_tab_handlers.keys())}")
+        self.loguru_logger.info(f"Looking for handler for button '{button_id}' in tab '{self.current_tab}'")
+        self.loguru_logger.info(f"Available handlers for this tab: {list(current_tab_handlers.keys())}")
+        self.loguru_logger.info(f"Handler found: {handler is not None}")
         
         # Special debug logging for save chat button
         if button_id == "chat-save-current-chat-button":
@@ -4198,24 +4210,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     def _update_model_download_log(self, message: str) -> None:
         """Helper to write messages to the model download log widget."""
-        try:
-            # This ID must match the RichLog widget in your "Download Models" view
-            log_widget = self.query_one("#model-download-log-output", RichLog)
-            log_widget.write(message)
-        except QueryError:
-            self.loguru_logger.error("Failed to query #model-download-log-output to write message.")
-        except Exception as e:
-            self.loguru_logger.error(f"Error writing to model download log: {e}", exc_info=True)
+        LogWidgetManager.update_model_download_log(self, message)
 
     def _update_mlx_log(self, message: str) -> None:
         """Helper to write messages to the MLX-LM log widget."""
-        try:
-            log_widget = self.query_one("#mlx-log-output", RichLog)
-            log_widget.write(message)
-        except QueryError:
-            self.loguru_logger.error("Failed to query #mlx-log-output to write message.")
-        except Exception as e:
-            self.loguru_logger.error(f"Error writing to MLX-LM log: {e}", exc_info=True)
+        LogWidgetManager.update_mlx_log(self, message)
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         input_id = event.input.id
@@ -4352,6 +4351,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     await chat_window.toggle_attach_button_visibility(event.value)
                 except Exception as e:
                     loguru_logger.error(f"Error toggling attach button visibility: {e}")
+        elif checkbox_id == "chat-show-dictation-button-checkbox" and current_active_tab == TAB_CHAT:
+            # Handle dictation button visibility toggle
+            from .config import save_setting_to_cli_config
+            save_setting_to_cli_config("chat.voice", "show_mic_button", event.value)
+            
+            # Update the UI dynamically
+            try:
+                mic_button = self.query_one("#mic-button", Button)
+                mic_button.display = event.value
+                self.notify(f"Dictation button {'shown' if event.value else 'hidden'}", timeout=2)
+            except QueryError:
+                # If button doesn't exist, we'll need to refresh the chat window
+                self.notify("Dictation button setting saved. Restart chat to apply changes.", timeout=3)
         elif checkbox_id == "chat-worldbook-enable-checkbox" and current_active_tab == TAB_CHAT:
             await chat_events_worldbooks.handle_worldbook_enable_checkbox(self, event.value)
         elif checkbox_id == "chat-dictionary-enable-checkbox" and current_active_tab == TAB_CHAT:
@@ -4761,676 +4773,39 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # --- Event Handlers for Worker State Changes ---
     #####################################################################
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        worker_name_attr = event.worker.name
+        """
+        Handle worker state changes by delegating to the appropriate handler.
+        
+        This method has been refactored to use a handler registry pattern,
+        significantly reducing complexity and improving maintainability.
+        """
+        worker_name = event.worker.name
         worker_group = event.worker.group
-        worker_state = event.state
-        worker_description = event.worker.description  # For more informative logging
-
+        
+        # Log the state change
         self.loguru_logger.debug(
-            f"on_worker_state_changed: Worker NameAttr='{worker_name_attr}' (Type: {type(worker_name_attr)}), "
-            f"Group='{worker_group}', State='{worker_state}', Desc='{worker_description}'"
+            f"on_worker_state_changed: Worker '{worker_name}' "
+            f"(Group: {worker_group}, State: {event.state})"
         )
-
-        #######################################################################
-        # --- Handle Chat-related API Calls ---
-        #######################################################################
-        if isinstance(worker_name_attr, str) and \
-                (worker_name_attr.startswith("API_Call_chat") or
-                 worker_name_attr.startswith("API_Call_ccp") or
-                 worker_name_attr == "respond_for_me_worker"):
-
-            self.loguru_logger.debug(f"Chat-related worker '{worker_name_attr}' detected. State: {worker_state}.")
+        
+        # Delegate to the handler registry
+        handled = await self.worker_handler_registry.handle_event(event)
+        
+        if not handled:
+            # Log unhandled workers for debugging
+            self.loguru_logger.warning(
+                f"No handler found for worker '{worker_name}' (Group: {worker_group})"
+            )
             
-            # Determine which button selector to use based on which chat window is active
-            use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
-            send_button_id_selector = "#send-stop-chat" if use_enhanced_chat else "#send-chat"
-
-            if worker_state == WorkerState.RUNNING:
-                self.loguru_logger.info(f"Chat-related worker '{worker_name_attr}' is RUNNING.")
-                try:
-                    # Change send button to stop button
-                    send_button_widget = self.query_one(send_button_id_selector, Button)
-                    send_button_widget.label = get_char(EMOJI_STOP, FALLBACK_STOP)
-                    self.loguru_logger.info(f"Button '{send_button_id_selector}' changed to STOP state.")
-                except QueryError:
-                    self.loguru_logger.error(f"Could not find button '{send_button_id_selector}' to change it to stop state.")
-                # Note: The original code delegated SUCCESS/ERROR states.
-                # RUNNING state for chat workers was not explicitly handled here for the stop button.
-
-            elif worker_state in [WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED]:
-                self.loguru_logger.info(f"Chat-related worker '{worker_name_attr}' finished with state {worker_state}.")
-                try:
-                    # Change stop button back to send button
-                    send_button_widget = self.query_one(send_button_id_selector, Button)
-                    send_button_widget.label = get_char(EMOJI_SEND, FALLBACK_SEND)
-                    self.loguru_logger.info(f"Button '{send_button_id_selector}' changed back to SEND state.")
-                except QueryError:
-                    self.loguru_logger.error(f"Could not find button '{send_button_id_selector}' to change it back to send state.")
-
-                # Existing delegation for SUCCESS/ERROR, which might update UI based on worker result.
-                # The worker_handlers.handle_api_call_worker_state_changed should focus on
-                # processing the worker's result/error, not managing the stop button's disabled state,
-                # as we are now handling it directly here.
-                if worker_state == WorkerState.SUCCESS or worker_state == WorkerState.ERROR:
-                    self.loguru_logger.debug(
-                        f"Delegating state {worker_state} for chat-related worker '{worker_name_attr}' to worker_handlers for result processing."
-                    )
-                    # This handler is responsible for updating the ChatMessage widget with the final response or error.
-                    await worker_handlers.handle_api_call_worker_state_changed(self, event)
-
-                elif worker_state == WorkerState.CANCELLED:
-                    self.loguru_logger.info(f"Worker '{worker_name_attr}' was cancelled.")
-                    # The StreamDone event (if streaming) or the handle_stop_chat_generation_pressed
-                    # (if non-streaming) should handle updating the AI message widget UI.
-                    # We've already disabled the stop button above.
-                    # If the StreamDone event doesn't appropriately update the current_ai_message_widget display
-                    # for cancellations, some finalization logic might be needed here too.
-                    # For now, assuming StreamDone or the stop handler manage the message UI.
-                    if self.current_ai_message_widget and not self.current_ai_message_widget.generation_complete:
-                        self.loguru_logger.debug("Finalizing AI message widget UI due to worker CANCELLED state.")
-                        # Attempt to update the message UI to reflect cancellation if not already handled by StreamDone
-                        try:
-                            markdown_widget = self.current_ai_message_widget.query_one(".message-text", Markdown)
-                            # Check if already updated by handle_stop_chat_generation_pressed for non-streaming
-                            if "Chat generation cancelled by user." not in self.current_ai_message_widget.message_text:
-                                self.current_ai_message_widget.message_text += "\n_(Stream Cancelled)_"
-                                markdown_widget.update(self.current_ai_message_widget.message_text)
-
-                            self.current_ai_message_widget.mark_generation_complete()
-                            self.current_ai_message_widget = None  # Clear ref
-                        except QueryError as qe_cancel_ui:
-                            self.loguru_logger.error(f"Error updating AI message UI on CANCELLED state: {qe_cancel_ui}")
-                
-                # Clear the current chat worker reference and streaming state when any chat worker finishes
-                if worker_name_attr.startswith("API_Call_chat") or worker_name_attr == "respond_for_me_worker":
-                    self.set_current_chat_worker(None)
-                    # Reset streaming state for chat workers (not for respond_for_me)
-                    if worker_name_attr.startswith("API_Call_chat"):
-                        self.set_current_chat_is_streaming(False)
-                        self.loguru_logger.debug(f"Reset current_chat_is_streaming to False after {worker_name_attr} finished")
-                    self.loguru_logger.debug(f"Cleared current_chat_worker after {worker_name_attr} finished with state {worker_state}")
-            else:
-                self.loguru_logger.debug(f"Chat-related worker '{worker_name_attr}' in other state: {worker_state}")
-
-        #######################################################################
-        # --- Handle tldw server API Calls Worker (tldw API Ingestion) ---
-        #######################################################################
-        elif worker_group == "api_calls":
-            self.loguru_logger.info(f"TLDW API worker '{event.worker.name}' finished with state {event.state}.")
-            if worker_state == WorkerState.SUCCESS:
-                await ingest_events.handle_tldw_api_worker_success(self, event)
-            elif worker_state == WorkerState.ERROR:
-                await ingest_events.handle_tldw_api_worker_failure(self, event)
-
-        #######################################################################
-        # --- Handle Ollama API Worker ---
-        #######################################################################
-        elif worker_group == "ollama_api":
-            self.loguru_logger.info(f"Ollama API worker '{event.worker.name}' finished with state {event.state}.")
-            # Ollama operations now use asyncio.to_thread instead of workers
-            # await llm_management_events_ollama.handle_ollama_worker_completion(self, event)
-
-        #######################################################################
-        # --- Handle AI Generation Workers (for character generation) ---
-        #######################################################################
-        elif worker_group == "ai_generation":
-            self.loguru_logger.info(f"AI generation worker '{event.worker.name}' state changed to {worker_state}.")
-            
-            if worker_state == WorkerState.SUCCESS:
-                self.loguru_logger.info(f"AI generation worker '{event.worker.name}' completed successfully.")
-                result = event.worker.result
-                
-                # Handle the response
-                if result and isinstance(result, dict) and 'choices' in result:
-                    try:
-                        content = result['choices'][0]['message']['content']
-                        
-                        # Determine which field to update based on worker name
-                        if event.worker.name == "ai_generate_description":
-                            text_area = self.query_one("#ccp-editor-char-description-textarea", TextArea)
-                            text_area.text = content
-                            button = self.query_one("#ccp-generate-description-button", Button)
-                            button.disabled = False
-                            
-                        elif event.worker.name == "ai_generate_personality":
-                            text_area = self.query_one("#ccp-editor-char-personality-textarea", TextArea)
-                            text_area.text = content
-                            button = self.query_one("#ccp-generate-personality-button", Button)
-                            button.disabled = False
-                            
-                        elif event.worker.name == "ai_generate_scenario":
-                            text_area = self.query_one("#ccp-editor-char-scenario-textarea", TextArea)
-                            text_area.text = content
-                            button = self.query_one("#ccp-generate-scenario-button", Button)
-                            button.disabled = False
-                            
-                        elif event.worker.name == "ai_generate_first_message":
-                            text_area = self.query_one("#ccp-editor-char-first-message-textarea", TextArea)
-                            text_area.text = content
-                            button = self.query_one("#ccp-generate-first-message-button", Button)
-                            button.disabled = False
-                            
-                        elif event.worker.name == "ai_generate_system_prompt":
-                            text_area = self.query_one("#ccp-editor-char-system-prompt-textarea", TextArea)
-                            text_area.text = content
-                            button = self.query_one("#ccp-generate-system-prompt-button", Button)
-                            button.disabled = False
-                            
-                        elif event.worker.name == "ai_generate_all":
-                            # Parse the comprehensive response
-                            sections = {
-                                'description': '',
-                                'personality': '',
-                                'scenario': '',
-                                'first_message': '',
-                                'system_prompt': ''
-                            }
-                            
-                            current_section = None
-                            current_content = []
-                            
-                            for line in content.split('\n'):
-                                line_stripped = line.strip()
-                                line_lower = line_stripped.lower()
-                                
-                                # Remove markdown formatting from potential headers
-                                line_clean = line_stripped.replace('**', '').replace('##', '').strip()
-                                line_clean_lower = line_clean.lower()
-                                
-                                # Check for section headers (handle both plain and markdown formatted)
-                                if 'description' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
-                                    if current_section and current_content:
-                                        sections[current_section] = '\n'.join(current_content).strip()
-                                    current_section = 'description'
-                                    current_content = []
-                                elif 'personality' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
-                                    if current_section and current_content:
-                                        sections[current_section] = '\n'.join(current_content).strip()
-                                    current_section = 'personality'
-                                    current_content = []
-                                elif 'scenario' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
-                                    if current_section and current_content:
-                                        sections[current_section] = '\n'.join(current_content).strip()
-                                    current_section = 'scenario'
-                                    current_content = []
-                                elif 'first message' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
-                                    if current_section and current_content:
-                                        sections[current_section] = '\n'.join(current_content).strip()
-                                    current_section = 'first_message'
-                                    current_content = []
-                                elif 'system prompt' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
-                                    if current_section and current_content:
-                                        sections[current_section] = '\n'.join(current_content).strip()
-                                    current_section = 'system_prompt'
-                                    current_content = []
-                                elif current_section and line_stripped and not (line_stripped.startswith('#') and len(line_stripped) < 50):
-                                    # Skip pure header lines but keep content
-                                    current_content.append(line)
-                            
-                            # Add the last section
-                            if current_section and current_content:
-                                sections[current_section] = '\n'.join(current_content).strip()
-                            
-                            # Update all fields
-                            if sections['description']:
-                                self.query_one("#ccp-editor-char-description-textarea", TextArea).text = sections['description']
-                            if sections['personality']:
-                                self.query_one("#ccp-editor-char-personality-textarea", TextArea).text = sections['personality']
-                            if sections['scenario']:
-                                self.query_one("#ccp-editor-char-scenario-textarea", TextArea).text = sections['scenario']
-                            if sections['first_message']:
-                                self.query_one("#ccp-editor-char-first-message-textarea", TextArea).text = sections['first_message']
-                            if sections['system_prompt']:
-                                self.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = sections['system_prompt']
-                            
-                            # Re-enable the generate all button
-                            button = self.query_one("#ccp-generate-all-button", Button)
-                            button.disabled = False
-                            self.notify("Character profile generated successfully!", severity="success")
-                            
-                    except (KeyError, IndexError) as e:
-                        self.loguru_logger.error(f"Failed to extract content from AI response: {e}")
-                        self.notify("Failed to parse AI response", severity="error")
-                    except QueryError as e:
-                        self.loguru_logger.error(f"Could not find UI element to update: {e}")
-                        self.notify("UI error updating fields", severity="error")
-                else:
-                    self.notify("Failed to generate content", severity="error")
-                    
-            elif worker_state == WorkerState.ERROR:
-                self.loguru_logger.error(f"AI generation worker '{event.worker.name}' failed: {event.worker.error}")
-                self.notify(f"Generation failed: {str(event.worker.error)[:100]}", severity="error")
-                
-                # Re-enable the appropriate button on error
-                button_mapping = {
-                    "ai_generate_description": "#ccp-generate-description-button",
-                    "ai_generate_personality": "#ccp-generate-personality-button",
-                    "ai_generate_scenario": "#ccp-generate-scenario-button",
-                    "ai_generate_first_message": "#ccp-generate-first-message-button",
-                    "ai_generate_system_prompt": "#ccp-generate-system-prompt-button",
-                    "ai_generate_all": "#ccp-generate-all-button"
-                }
-                
-                button_id = button_mapping.get(event.worker.name)
-                if button_id:
-                    try:
-                        button = self.query_one(button_id, Button)
-                        button.disabled = False
-                    except QueryError:
-                        self.loguru_logger.warning(f"Could not find button {button_id} to re-enable")
-
-        #######################################################################
-        # --- Handle Llama.cpp Server Worker (identified by group) ---
-        #######################################################################
-        # This handles the case where worker_name_attr was a list.
-        elif worker_group == "llamacpp_server":
-            self.loguru_logger.info(
-                f"Llama.cpp server worker (Group: '{worker_group}') state changed to {worker_state}."
-            )
-            actual_start_button_id = "#llamacpp-start-server-button"
-            actual_stop_button_id = "#llamacpp-stop-server-button"
-
-            if worker_state == WorkerState.PENDING:
-                self.loguru_logger.debug("Llama.cpp server worker is PENDING.")
-                # You might disable the start button here as well, or show a "starting..." status
-                try:
-                    self.query_one(actual_start_button_id, Button).disabled = True
-                    self.query_one(actual_stop_button_id, Button).disabled = True  # Disable stop until fully running
-                except QueryError:
-                    self.loguru_logger.warning("Could not find Llama.cpp server buttons to update for PENDING state.")
-
-            elif worker_state == WorkerState.RUNNING:
-                self.loguru_logger.info("Llama.cpp server worker is RUNNING (subprocess launched).")
-                try:
-                    self.query_one(actual_start_button_id, Button).disabled = True
-                    self.query_one(actual_stop_button_id, Button).disabled = False  # Enable stop when running
-                    self.notify("Llama.cpp server process starting...", title="Server Status")
-                except QueryError:
-                    self.loguru_logger.warning("Could not find Llama.cpp server buttons to update for RUNNING state.")
-
-            elif worker_state == WorkerState.SUCCESS:
-                self.loguru_logger.info(f"Llama.cpp server worker finished successfully (Textual worker perspective).")
-                # Define result_message and is_actual_server_error *inside* this block
-                result_message = str(
-                    event.worker.result).strip() if event.worker.result else "Worker completed with no specific result message."
-                self.loguru_logger.info(f"Llama.cpp worker result message: '{result_message}'")
-
-                is_actual_server_error = "exited quickly with error code" in result_message.lower() or \
-                                         "exited with non-zero code" in result_message.lower() or \
-                                         "error:" in result_message.lower()  # Broader check
-
-                if is_actual_server_error:
-                    self.notify(f"Llama.cpp server process reported an error. Check logs.", title="Server Status",
-                                severity="error", timeout=10)
-                elif "exited quickly with code: 0" in result_message.lower():
-                    self.notify(
-                        f"Llama.cpp server exited quickly (but successfully). Check logs if this was unexpected.",
-                        title="Server Status", severity="warning", timeout=10)
-                else:
-                    self.notify("Llama.cpp server process finished.", title="Server Status")
-
-                # Worker has finished, so the process it was managing should be gone or is now orphaned.
-                # The worker's 'finally' block should have cleared self.llamacpp_server_process.
-                # We double-check here.
-                if self.llamacpp_server_process is not None:
-                    self.loguru_logger.warning(f"Llama.cpp worker SUCCEEDED, but app.llamacpp_server_process was not None. Clearing it now.")
-                    self.llamacpp_server_process = None
-
-                try:
-                    self.query_one(actual_start_button_id, Button).disabled = False
-                    self.query_one(actual_stop_button_id, Button).disabled = True
-                except QueryError:
-                    self.loguru_logger.warning("Could not find Llama.cpp server buttons to update for SUCCESS state.")
-
-            elif worker_state == WorkerState.ERROR:
-                self.loguru_logger.error(f"Llama.cpp server worker itself failed with an exception: {event.worker.error}")
-                self.notify(f"Llama.cpp worker error: {str(event.worker.error)[:100]}", title="Server Worker Error", severity="error")
-
-                # Worker failed, so the process it was managing might be in an indeterminate state or already gone.
-                # The worker's 'finally' block should attempt cleanup and clear self.llamacpp_server_process.
-                if self.llamacpp_server_process is not None:
-                    self.loguru_logger.warning(f"Llama.cpp worker ERRORED, but app.llamacpp_server_process was not None. Clearing it now.")
-                    self.llamacpp_server_process = None
-
-                try:
-                    self.query_one(actual_start_button_id, Button).disabled = False
-                    self.query_one(actual_stop_button_id, Button).disabled = True
-                except QueryError:
-                    self.loguru_logger.warning("Could not find Llama.cpp server buttons to update for ERROR state.")
-
-
-        #######################################################################
-        # --- Handle Llamafile Server Worker (identified by group) ---
-        #######################################################################
-        elif worker_group == "llamafile_server":  # Add this new elif block
-            self.loguru_logger.info(
-                f"Llamafile server worker (Group: '{worker_group}') state changed to {worker_state}."
-            )
-            actual_start_button_id = "#llamafile-start-server-button"
-            actual_stop_button_id = "#llamafile-stop-server-button"  # Assuming you have one
-
-            if worker_state == WorkerState.PENDING:
-                self.loguru_logger.debug("Llamafile server worker is PENDING.")
-                try:
-                    self.query_one(actual_start_button_id, Button).disabled = True
-                    if self.query_one(actual_stop_button_id, Button):  # Check if stop button exists
-                        self.query_one(actual_stop_button_id, Button).disabled = True
-                except QueryError:
-                    self.loguru_logger.warning("Could not find Llamafile server buttons for PENDING state.")
-
-            elif worker_state == WorkerState.RUNNING:
-                self.loguru_logger.info("Llamafile server worker is RUNNING.")
-                try:
-                    self.query_one(actual_start_button_id, Button).disabled = True
-                    if self.query_one(actual_stop_button_id, Button):
-                        self.query_one(actual_stop_button_id, Button).disabled = False
-                    self.notify("Llamafile server process is running.", title="Server Status")
-                except QueryError:
-                    self.loguru_logger.warning("Could not find Llamafile server buttons for RUNNING state.")
-
-            elif worker_state == WorkerState.SUCCESS:
-                self.loguru_logger.info(f"Llamafile server worker finished successfully.")
-                result_message = str(event.worker.result).strip() if event.worker.result else "Worker completed."
-                self.loguru_logger.info(f"Llamafile worker result: '{result_message}'")
-
-                is_server_error = "non-zero code" in result_message.lower() or "error" in result_message.lower()
-                if is_server_error:
-                    self.notify(f"Llamafile server process ended with an issue. Check logs.", title="Server Status",
-                                severity="error")
-                else:
-                    self.notify("Llamafile server process finished.", title="Server Status")
-
-                # if self.llamafile_server_process is not None: # If managing process
-                #     self.llamafile_server_process = None
-
-                try:
-                    self.query_one(actual_start_button_id, Button).disabled = False
-                    if self.query_one(actual_stop_button_id, Button):
-                        self.query_one(actual_stop_button_id, Button).disabled = True
-                except QueryError:
-                    self.loguru_logger.warning("Could not find Llamafile server buttons for SUCCESS state.")
-
-            elif worker_state == WorkerState.ERROR:
-                self.loguru_logger.error(f"Llamafile server worker failed: {event.worker.error}")
-                self.notify(f"Llamafile worker error: {str(event.worker.error)[:100]}", title="Server Worker Error",
-                            severity="error")
-                # if self.llamafile_server_process is not None: # If managing process
-                #     self.llamafile_server_process = None
-                try:
-                    self.query_one(actual_start_button_id, Button).disabled = False
-                    if self.query_one(actual_stop_button_id, Button):
-                        self.query_one(actual_stop_button_id, Button).disabled = True
-                except QueryError:
-                    self.loguru_logger.warning("Could not find Llamafile server buttons for ERROR state.")
-
-
-        #######################################################################
-        # --- Handle vLLM Server Worker (identified by group) ---
-        #######################################################################
-        elif worker_group == "vllm_server":
-            self.loguru_logger.info(
-                f"vLLM server worker (Group: '{worker_group}', NameAttr: '{worker_name_attr}') state changed to {worker_state}."
-            )
-            if worker_state == WorkerState.RUNNING:
-                self.loguru_logger.info("vLLM server is RUNNING.")
-                try:
-                    self.query_one("#vllm-start-server-button", Button).disabled = True
-                    self.query_one("#vllm-stop-server-button", Button).disabled = False
-                    self.vllm_server_process = event.worker._worker_thread._target_args[
-                        1]  # Accessing underlying process if needed, BE CAREFUL
-                    self.notify("vLLM server started.", title="Server Status")
-                except QueryError:
-                    self.loguru_logger.warning("Could not find vLLM server buttons to update state for RUNNING.")
-                except (AttributeError, IndexError):
-                    self.loguru_logger.warning("Could not retrieve vLLM process object from worker.")
-
-            elif worker_state == WorkerState.SUCCESS or worker_state == WorkerState.ERROR:
-                status_message = "successfully" if worker_state == WorkerState.SUCCESS else "with an error"
-                self.loguru_logger.info(
-                    f"vLLM server process finished {status_message}. Final output handled by 'done' callback.")
-                try:
-                    self.query_one("#vllm-start-server-button", Button).disabled = False
-                    self.query_one("#vllm-stop-server-button", Button).disabled = True
-                    self.vllm_server_process = None  # Clear process reference
-                    self.notify(f"vLLM server stopped {status_message}.", title="Server Status",
-                                severity="information" if worker_state == WorkerState.SUCCESS else "error")
-                except QueryError:
-                    self.loguru_logger.warning("Could not find vLLM server buttons to update state for STOPPED/ERROR.")
-
-            #######################################################################
-            # --- Handle MLX-LM Server Worker ---
-            #######################################################################
-            elif worker_group == "mlx_lm_server":
-                self.loguru_logger.info(f"MLX-LM server worker state changed to {worker_state}.")
-                start_button_id = "#mlx-start-server-button"
-                stop_button_id = "#mlx-stop-server-button"
-
-                if worker_state == WorkerState.RUNNING:
-                    self.loguru_logger.info("MLX-LM server worker is RUNNING.")
-                    try:
-                        self.query_one(start_button_id, Button).disabled = True
-                        self.query_one(stop_button_id, Button).disabled = False
-                        self.notify("MLX-LM server process is running.", title="Server Status")
-                    except QueryError:
-                        self.loguru_logger.warning("Could not find MLX-LM server buttons for RUNNING state.")
-
-                elif worker_state in [WorkerState.SUCCESS, WorkerState.ERROR]:
-                    result_message = str(event.worker.result).strip() if event.worker.result else "Worker finished."
-                    self.loguru_logger.info(f"MLX-LM worker finished. Result: '{result_message}'")
-
-                    severity = "error" if "error" in result_message.lower() or "non-zero code" in result_message.lower() else "information"
-                    self.notify(f"MLX-LM server process finished.", title="Server Status", severity=severity)
-
-                    try:
-                        self.query_one(start_button_id, Button).disabled = False
-                        self.query_one(stop_button_id, Button).disabled = True
-                    except QueryError:
-                        self.loguru_logger.warning("Could not find MLX-LM server buttons to reset state.")
-
-                    if self.mlx_server_process is not None:
-                        self.mlx_server_process = None
-
-                #######################################################################
-                # --- Handle ONNX Server Worker ---
-                #######################################################################
-            elif worker_group == "onnx_server":
-                self.loguru_logger.info(f"ONNX server worker state changed to {worker_state}.")
-                start_button_id = "#onnx-start-server-button"
-                stop_button_id = "#onnx-stop-server-button"
-
-                if worker_state == WorkerState.RUNNING:
-                    self.loguru_logger.info("ONNX server worker is RUNNING.")
-                    try:
-                        self.query_one(start_button_id, Button).disabled = True
-                        self.query_one(stop_button_id, Button).disabled = False
-                        self.notify("ONNX server process is running.", title="Server Status")
-                    except QueryError:
-                        self.loguru_logger.warning("Could not find ONNX server buttons for RUNNING state.")
-
-                elif worker_state in [WorkerState.SUCCESS, WorkerState.ERROR]:
-                    result_message = str(event.worker.result).strip() if event.worker.result else "Worker finished."
-                    severity = "error" if "error" in result_message.lower() or "non-zero code" in result_message.lower() else "information"
-                    self.notify(f"ONNX server process finished.", title="Server Status", severity=severity)
-
-                    try:
-                        self.query_one(start_button_id, Button).disabled = False
-                        self.query_one(stop_button_id, Button).disabled = True
-                    except QueryError:
-                        self.loguru_logger.warning("Could not find ONNX server buttons to reset state.")
-
-        #######################################################################
-        # --- Handle Transformers Server Worker (identified by group) ---
-        #######################################################################
-        elif worker_group == "transformers_download":
-            self.loguru_logger.info(
-                f"Transformers Download worker (Group: '{worker_group}') state changed to {worker_state}."
-            )
-            download_button_id = "#transformers-download-model-button"
-
-            if worker_state == WorkerState.RUNNING:
-                self.loguru_logger.info("Transformers model download worker is RUNNING.")
-                try:
-                    self.query_one(download_button_id, Button).disabled = True
-                except QueryError:
-                    self.loguru_logger.warning(
-                        f"Could not find button {download_button_id} to disable for RUNNING state.")
-
-            elif worker_state == WorkerState.SUCCESS:
-                result_message = str(event.worker.result).strip() if event.worker.result else "Download completed."
-                self.loguru_logger.info(f"Transformers Download worker SUCCESS. Result: {result_message}")
-                if "failed" in result_message.lower() or "error" in result_message.lower() or "non-zero code" in result_message.lower():
-                    self.notify(f"Model Download: {result_message}", title="Download Issue", severity="error",
-                                timeout=10)
-                else:
-                    self.notify(f"Model Download: {result_message}", title="Download Complete", severity="information",
-                                timeout=7)
-                try:
-                    self.query_one(download_button_id, Button).disabled = False
-                except QueryError:
-                    self.loguru_logger.warning(
-                        f"Could not find button {download_button_id} to enable for SUCCESS state.")
-
-            elif worker_state == WorkerState.ERROR:
-                error_details = str(event.worker.error) if event.worker.error else "Unknown worker error."
-                self.loguru_logger.error(f"Transformers Download worker FAILED. Error: {error_details}")
-                self.notify(f"Model Download Failed: {error_details[:100]}...", title="Download Error",
-                            severity="error", timeout=10)
-                try:
-                    self.query_one(download_button_id, Button).disabled = False
-                except QueryError:
-                    self.loguru_logger.warning(f"Could not find button {download_button_id} to enable for ERROR state.")
-
-
-
-        #######################################################################
-        # --- Handle Llamafile Server Worker (identified by group) ---
-        #######################################################################
-        elif worker_group == "llamafile_server":
-            self.loguru_logger.info(
-                f"Llamafile server worker (Group: '{worker_group}', NameAttr: '{worker_name_attr}') state changed to {worker_state}."
-            )
-            if worker_state == WorkerState.RUNNING:
-                self.loguru_logger.info("Llamafile server is RUNNING.")
-                try:
-                    self.query_one("#llamafile-start-server-button", Button).disabled = True
-                    # Assuming you have a stop button:
-                    # self.query_one("#llamafile-stop-server-button", Button).disabled = False
-                    self.notify("Llamafile server started.", title="Server Status")
-                except QueryError:
-                    self.loguru_logger.warning("Could not find Llamafile server buttons to update state for RUNNING.")
-
-            elif worker_state == WorkerState.SUCCESS or worker_state == WorkerState.ERROR:
-                status_message = "successfully" if worker_state == WorkerState.SUCCESS else "with an error"
-                self.loguru_logger.info(
-                    f"Llamafile server process finished {status_message}. Final output handled by 'done' callback.")
-                try:
-                    self.query_one("#llamafile-start-server-button", Button).disabled = False
-                    # self.query_one("#llamafile-stop-server-button", Button).disabled = True
-                    self.notify(f"Llamafile server stopped {status_message}.", title="Server Status",
-                                severity="information" if worker_state == WorkerState.SUCCESS else "error")
-                except QueryError:
-                    self.loguru_logger.warning(
-                        "Could not find Llamafile server buttons to update state for STOPPED/ERROR.")
-
-
-        #######################################################################
-        # --- Handle Model Download Worker (identified by group) ---
-        #######################################################################
-        elif worker_group == "model_download":
-            self.loguru_logger.info(
-                f"Model Download worker (Group: '{worker_group}', NameAttr: '{worker_name_attr}') state changed to {worker_state}."
-            )
-            # The 'done' callback (stream_worker_output_to_log) handles the detailed log output.
-            if worker_state == WorkerState.SUCCESS:
-                self.notify("Model download completed successfully.", title="Download Status")
-            elif worker_state == WorkerState.ERROR:
-                self.notify("Model download failed. Check logs for details.", title="Download Status", severity="error")
-
-            # Re-enable the download button regardless of success or failure
-            try:
-                # Ensure this ID matches your actual "Start Download" button in LLM_Management_Window.py
-                # The provided LLM_Management_Window.py doesn't show a model download section yet.
-                # If it's added, ensure the button ID is correct here.
-                # For now, this is a placeholder ID.
-                download_button = self.query_one("#model-download-start-button", Button)  # Placeholder ID
-                download_button.disabled = False
-            except QueryError:
-                self.loguru_logger.warning(
-                    "Could not find model download button to re-enable (ID might be incorrect or view not present).")
-
-
-        #######################################################################
-        # --- Fallback for any other workers not explicitly handled above ---
-        #######################################################################
-        else:
-            # This branch handles workers that are not chat-related and not one of the explicitly grouped servers.
-            # It also catches the case where worker_name_attr was a list but not for a known group.
-            name_for_log = worker_name_attr if isinstance(worker_name_attr,
-                                                          str) else f"[List Name for Group: {worker_group}]"
-            self.loguru_logger.debug(
-                f"Unhandled worker type or state in on_worker_state_changed: "
-                f"Name='{name_for_log}', Group='{worker_group}', State='{worker_state}', Desc='{worker_description}'"
-            )
-
-            # Generic handling for workers that might have output but no specific 'done' callback
-            # or if their 'done' callback isn't comprehensive for all states.
-            if worker_state == WorkerState.SUCCESS or worker_state == WorkerState.ERROR:
-                final_message_parts = []
-                try:
-                    # Check if worker.output is available and is an async iterable
-                    if hasattr(event.worker, 'output') and event.worker.output is not None:
-                        async for item in event.worker.output:  # type: ignore
-                            final_message_parts.append(str(item))
-
-                    final_message = "".join(final_message_parts)
-                    if final_message.strip():
-                        self.loguru_logger.info(
-                            f"Final output from unhandled worker '{name_for_log}' (Group: {worker_group}): {final_message.strip()}")
-                        # self.notify(f"Worker '{name_for_log}' finished: {final_message.strip()[:70]}...", title="Worker Update") # Optional notification
-                    elif worker_state == WorkerState.SUCCESS:
-                        self.loguru_logger.info(
-                            f"Unhandled worker '{name_for_log}' (Group: {worker_group}) completed successfully with no final message.")
-                        # self.notify(f"Worker '{name_for_log}' completed.", title="Worker Update") # Optional
-                    elif worker_state == WorkerState.ERROR:
-                        self.loguru_logger.error(
-                            f"Unhandled worker '{name_for_log}' (Group: {worker_group}) failed with no specific final message. Error: {event.worker.error}")
-                        # self.notify(f"Worker '{name_for_log}' failed. Error: {str(event.worker.error)[:70]}...", title="Worker Error", severity="error") # Optional
-
-                except Exception as e_output:
-                    self.loguru_logger.error(
-                        f"Error reading output from unhandled worker '{name_for_log}' (Group: {worker_group}): {e_output}",
-                        exc_info=True)
-    ######################################################
-    # --- End of Worker State Change Handlers ---
-    ######################################################
-
-
-    ######################################################
-    # --- Watchers for chat sidebar prompt display ---
-    ######################################################
-    def watch_chat_sidebar_selected_prompt_system(self, new_system_prompt: Optional[str]) -> None:
-        try:
-            self.query_one("#chat-prompt-system-display", TextArea).load_text(new_system_prompt or "")
-        except QueryError:
-            self.loguru_logger.error("Chat sidebar system prompt display area (#chat-prompt-system-display) not found.")
-
-    def watch_chat_sidebar_selected_prompt_user(self, new_user_prompt: Optional[str]) -> None:
-        try:
-            self.query_one("#chat-prompt-user-display", TextArea).load_text(new_user_prompt or "")
-        except QueryError:
-            self.loguru_logger.error("Chat sidebar user prompt display area (#chat-prompt-user-display) not found.")
+        # TODO: Fix this - new_user_prompt is not defined
+        # try:
+        #     self.query_one("#chat-prompt-user-display", TextArea).load_text(new_user_prompt or "")
+        # except QueryError:
+        #     self.loguru_logger.error("Chat sidebar user prompt display area (#chat-prompt-user-display) not found.")
 
     def _clear_chat_sidebar_prompt_display(self) -> None:
         """Clears the prompt display TextAreas in the chat sidebar."""
-        self.loguru_logger.debug("Clearing chat sidebar prompt display areas.")
-        self.chat_sidebar_selected_prompt_id = None
-        self.chat_sidebar_selected_prompt_system = None # Triggers watcher to clear TextArea
-        self.chat_sidebar_selected_prompt_user = None   # Triggers watcher to clear TextArea
-        # Also clear the list and search inputs if desired when clearing display
-        try:
-            self.query_one("#chat-sidebar-prompts-listview", ListView).clear()
-        except QueryError:
-            pass # If not found, it's fine
+        UIHelpers.clear_chat_sidebar_prompt_display(self)
 
     def watch_chat_api_provider_value(self, new_value: Optional[str]) -> None:
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
@@ -5473,50 +4848,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _update_model_select(self, id_prefix: str, models: list[str]) -> None:
         if not self._ui_ready:  # Add guard
             return
-        model_select_id = f"#{id_prefix}-api-model"
-        try:
-            model_select = self.query_one(model_select_id, Select)
-            new_model_options = [(model, model) for model in models]
-            # Store current value if it's valid for new options, otherwise try default
-            current_value = model_select.value
-            model_select.set_options(new_model_options) # This might clear the value
-
-            if current_value in models:
-                model_select.value = current_value
-            elif models:
-                model_select.value = models[0] # Default to first if old value invalid
-            else:
-                model_select.value = Select.BLANK # No models, ensure blank
-
-            model_select.prompt = "Select Model..." if models else "No models available"
-        except QueryError:
-            logging.error(f"Helper ERROR: Cannot find model select '{model_select_id}'")
-        except Exception as e_set_options:
-             logging.error(f"Helper ERROR setting options/value for {model_select_id}: {e_set_options}")
+        UIHelpers.update_model_select(self, id_prefix, models)
 
     def _update_rag_expansion_model_select(self, models: list[str]) -> None:
         """Update the RAG expansion model select options."""
         if not self._ui_ready:
             return
-        model_select_id = "#chat-rag-expansion-llm-model"
-        try:
-            model_select = self.query_one(model_select_id, Select)
-            new_model_options = [(model, model) for model in models]
-            current_value = model_select.value
-            model_select.set_options(new_model_options)
-
-            if current_value in models:
-                model_select.value = current_value
-            elif models:
-                model_select.value = models[0]
-            else:
-                model_select.value = Select.BLANK
-
-            model_select.prompt = "Select Model..." if models else "No models available"
-        except QueryError:
-            self.loguru_logger.error(f"Cannot find RAG expansion model select '{model_select_id}'")
-        except Exception as e:
-            self.loguru_logger.error(f"Error setting RAG expansion model options: {e}")
+        UIHelpers.update_rag_expansion_model_select(self, models)
 
     def chat_wrapper(self, strip_thinking_tags: bool = True, **kwargs: Any) -> Any:
         """
@@ -5969,6 +5307,30 @@ def main_cli_runner():
     This function is referenced in pyproject.toml as the entry point for the tldw-chatbook command.
     It initializes logging early and then runs the TldwCli app.
     """
+    # Configure logging to suppress verbose debug messages early
+    import logging
+    import os
+    import warnings
+    
+    # Suppress various verbose loggers
+    logging.getLogger("torio._extension.utils").setLevel(logging.WARNING)
+    logging.getLogger("torio").setLevel(logging.WARNING)
+    logging.getLogger("torch").setLevel(logging.WARNING)
+    logging.getLogger("transformers").setLevel(logging.WARNING)
+    logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+    logging.getLogger("chromadb").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.INFO)
+    logging.getLogger("httpcore").setLevel(logging.INFO)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("filelock").setLevel(logging.WARNING)
+    
+    # Suppress torchaudio and FFmpeg warnings
+    warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
+    warnings.filterwarnings("ignore", message=".*FFmpeg.*")
+    
+    # Set environment variable to suppress FFmpeg output
+    os.environ["TORCHAUDIO_LOG_LEVEL"] = "ERROR"
+    
     # Set up signal handlers for clean exit
     import signal
     import os

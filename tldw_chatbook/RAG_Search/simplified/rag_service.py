@@ -215,7 +215,9 @@ class RAGService:
         if not doc_id or not isinstance(doc_id, str):
             raise ValueError("doc_id must be a non-empty string")
         
-        if not content or not isinstance(content, str):
+        if not isinstance(content, str):
+            raise TypeError("content must be a string")
+        if not content:
             raise ValueError("content must be a non-empty string")
         
         # Document size limit (configurable)

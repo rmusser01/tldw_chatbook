@@ -12,8 +12,15 @@ import time
 from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass
 from datetime import datetime
-import numpy as np
 from loguru import logger
+
+# Import numpy as optional dependency
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None  # Set to None for type checking
 
 # Local imports
 from .recording_service import AudioRecordingService, AudioRecordingError
@@ -82,6 +89,13 @@ class LiveDictationService:
             enable_commands: Whether to detect voice commands
             audio_backend: Audio backend to use (None for auto)
         """
+        # Check for numpy availability
+        if not NUMPY_AVAILABLE:
+            raise ImportError(
+                "NumPy is required for audio dictation functionality.\n"
+                "Please install it with: pip install 'tldw_chatbook[audio]' or pip install numpy"
+            )
+        
         self.transcription_provider = transcription_provider
         self.transcription_model = transcription_model
         self.language = language
@@ -297,21 +311,25 @@ class LiveDictationService:
                 if result and result.get('final'):
                     self._handle_final_transcript(result['final'])
             else:
-                # Fallback to chunked transcription
-                # Convert audio to numpy array
-                audio_array = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+                # Fallback to chunked transcription using buffer method
+                try:
+                    # Use the new transcribe_buffer method that avoids disk I/O
+                    result = self.transcription_service.transcribe_buffer(
+                        audio_data=audio_data,
+                        sample_rate=self.audio_service.sample_rate,
+                        channels=self.audio_service.channels,
+                        sample_width=2,  # 16-bit
+                        provider=self.transcription_provider,
+                        model=self.transcription_model,
+                        language=self.language
+                    )
+                    
+                    if result and result.get('text'):
+                        self._handle_partial_transcript(result['text'])
                 
-                # Transcribe chunk
-                result = self.transcription_service.transcribe_buffer(
-                    audio_array,
-                    sample_rate=self.audio_service.sample_rate,
-                    provider=self.transcription_provider,
-                    model=self.transcription_model,
-                    language=self.language
-                )
-                
-                if result and result.get('text'):
-                    self._handle_partial_transcript(result['text'])
+                except Exception as e:
+                    logger.error(f"Buffer transcription failed: {e}")
+                    # Optionally fall back to file-based transcription here if needed
         
         except Exception as e:
             logger.error(f"Transcription error: {e}")

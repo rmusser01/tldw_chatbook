@@ -124,6 +124,8 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             self.notify(f"Stream error (display widget missing): {event.error}", severity="error", timeout=10)
         # Clear current widget using thread-safe method
         self.set_current_ai_message_widget(None)
+        # Reset streaming state even when there's no widget
+        self.set_current_chat_is_streaming(False)
         # Attempt to focus input if possible as a fallback
         try:
             if self.current_tab == TAB_CHAT:

@@ -165,12 +165,13 @@ class TestBackwardCompatibility:
         service = create_rag_service_from_config(config=test_rag_config)
         
         # Old behavior: empty content should raise ValueError
-        with pytest.raises(ValueError, match="content must be a non-empty string"):
+        with pytest.raises(ValueError) as exc_info:
             await service.index_document(
                 doc_id="empty_doc",
                 content="",
                 title="Empty"
             )
+        assert "content must be a non-empty string" in str(exc_info.value)
             
         # Old behavior: None values should raise appropriate errors
         with pytest.raises(TypeError):
