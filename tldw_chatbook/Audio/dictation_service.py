@@ -14,16 +14,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from loguru import logger
 
-# Import numpy as required dependency
+# Import numpy as optional dependency
 try:
     import numpy as np
     NUMPY_AVAILABLE = True
 except ImportError:
     NUMPY_AVAILABLE = False
-    raise ImportError(
-        "NumPy is required for audio dictation functionality.\n"
-        "Please install it with: pip install numpy"
-    )
+    np = None  # Set to None for type checking
 
 # Local imports
 from .recording_service import AudioRecordingService, AudioRecordingError
@@ -92,6 +89,13 @@ class LiveDictationService:
             enable_commands: Whether to detect voice commands
             audio_backend: Audio backend to use (None for auto)
         """
+        # Check for numpy availability
+        if not NUMPY_AVAILABLE:
+            raise ImportError(
+                "NumPy is required for audio dictation functionality.\n"
+                "Please install it with: pip install 'tldw_chatbook[audio]' or pip install numpy"
+            )
+        
         self.transcription_provider = transcription_provider
         self.transcription_model = transcription_model
         self.language = language

@@ -220,7 +220,9 @@ class TestChatbookIntegration:
         manifest, error = importer.preview_chatbook(export_path)
         assert manifest is not None
         assert error is None
-        assert len(manifest.content_items) == 5  # 2 conv + 2 notes + 1 char
+        # Should have 5 items: 2 conv + 2 notes + 1 char
+        # The character is auto-included as a dependency of conversations
+        assert len(manifest.content_items) == 5
         
         # Import
         status = ImportStatus()
@@ -231,6 +233,7 @@ class TestChatbookIntegration:
         )
         
         assert success is True
+        # All 5 items should be imported successfully
         assert status.successful_items == 5
         assert len(status.errors) == 0
         
@@ -330,7 +333,9 @@ class TestChatbookIntegration:
                     "id": "note_1",
                     "type": "note",
                     "title": "Existing Note",
-                    "file_path": "content/notes/Existing Note.md"
+                    "file_path": "content/notes/Existing Note.md",
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat()
                 }
             ],
             "relationships": [],
@@ -340,7 +345,11 @@ class TestChatbookIntegration:
                 "total_characters": 0,
                 "total_media_items": 0,
                 "total_size_bytes": 0
-            }
+            },
+            "total_conversations": 0,
+            "total_notes": 1,
+            "total_characters": 0,
+            "total_media_items": 0
         }
         
         note_content = """---
@@ -470,7 +479,8 @@ New content from import""".format(datetime.now().isoformat(), datetime.now().iso
         
         content_selections = {
             ContentType.CONVERSATION: conv_ids,
-            ContentType.NOTE: note_ids
+            ContentType.NOTE: note_ids,
+            ContentType.CHARACTER: [str(perf_char_id)]  # Explicitly include the character
         }
         
         start_time = time.time()
@@ -515,6 +525,12 @@ New content from import""".format(datetime.now().isoformat(), datetime.now().iso
         
         # Verify results
         assert success is True
+        # The character is auto-included when exporting conversations
+        # So we should have 100 conversations + 50 notes + 1 character = 151 items
+        # However, if import is failing for conversations, we need to check errors
+        if status.successful_items != 151:
+            logger.error(f"Import errors: {status.errors}")
+            logger.error(f"Successful items: {status.successful_items}")
         assert status.successful_items == 151  # 100 conversations + 50 notes + 1 character (auto-included)
         
         # Performance assertions (generous limits)

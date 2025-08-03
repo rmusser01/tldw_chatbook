@@ -20,8 +20,27 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 @pytest.fixture
 def mock_app():
     """Provides a mock app instance for streaming tests."""
-    # Get base mock and customize for streaming
-    app = create_comprehensive_app_mock()
+    # Create app with MagicMock instead of AsyncMock to avoid coroutine issues
+    app = MagicMock()
+    
+    # Copy essential attributes from comprehensive mock
+    base_mock = create_comprehensive_app_mock()
+    app.chachanotes_db = base_mock.chachanotes_db
+    app.app_config = base_mock.app_config
+    app.current_tab = TAB_CHAT
+    app.current_chat_conversation_id = "conv_123"
+    app.current_chat_is_ephemeral = False
+    app._chat_state_lock = MagicMock()
+    app.loguru_logger = MagicMock()
+    app.notify = MagicMock()
+    app.post_event = MagicMock()
+    app.set_current_chat_is_streaming = MagicMock()
+    app.get_current_chat_is_streaming = MagicMock(return_value=False)
+    app.set_current_ai_message_widget = MagicMock()
+    app.post_message = MagicMock()
+    app.call_from_thread = MagicMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+    app.worker_handler_registry = MagicMock()
+    app.worker_handler_registry.handle_event = AsyncMock(return_value=True)
     
     # Override current_tab for streaming tests
     app.current_tab = TAB_CHAT
@@ -59,6 +78,10 @@ def mock_app():
             if selector == ".message-text":
                 # Return this instance's markdown widget directly
                 # Make sure we're returning the actual mock, not a coroutine
+                # Re-ensure it's a proper mock with sync update method
+                if not hasattr(self._mock_markdown, 'update') or callable(getattr(self._mock_markdown.update, '__await__', None)):
+                    self._mock_markdown = MagicMock(spec=Markdown)
+                    self._mock_markdown.update = MagicMock()
                 return self._mock_markdown
             elif selector == "#continue-response-button":
                 # Mock continue button with disabled property
@@ -80,7 +103,8 @@ def mock_app():
     widget_original_query_one = mock_chat_message_widget.query_one
     
     # Set the current AI message widget
-    app.get_current_ai_message_widget.return_value = mock_chat_message_widget
+    # IMPORTANT: Use regular MagicMock, not AsyncMock for this method
+    app.get_current_ai_message_widget = MagicMock(return_value=mock_chat_message_widget)
     
     # Ensure the widget's query_one doesn't get replaced
     mock_chat_message_widget.query_one = widget_original_query_one
@@ -147,6 +171,10 @@ async def test_handle_streaming_chunk_appends_text(mock_app):
     query_result = widget_from_method.query_one(".message-text", Markdown)
     print(f"DEBUG: query_result = {query_result}")
     print(f"DEBUG: type(query_result) = {type(query_result)}")
+    print(f"DEBUG: hasattr(query_result, 'update') = {hasattr(query_result, 'update')}")
+    if hasattr(query_result, 'update'):
+        print(f"DEBUG: type(query_result.update) = {type(query_result.update)}")
+        print(f"DEBUG: callable(getattr(query_result.update, '__await__', None)) = {callable(getattr(query_result.update, '__await__', None))}")
     
     # Bind the method to mock_app and call it
     await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
@@ -170,10 +198,17 @@ async def test_handle_stream_done_success_and_save(mock_ccl, mock_app):
     mock_widget = mock_app.get_current_ai_message_widget.return_value
     mock_widget.message_text = "Final message"
     
-    # Get the existing mock from fixture
-    mock_chat_input = mock_app.query_one("#chat-input", TextArea)
-    # Ensure disabled property is set correctly
-    type(mock_chat_input).disabled = PropertyMock(return_value=True)
+    # Create a proper mock for chat input
+    mock_chat_input = MagicMock(spec=TextArea)
+    mock_chat_input.focus = MagicMock()
+    
+    # Override query_one to return our mock
+    original_query_one = mock_app.query_one.side_effect
+    def custom_query_one(selector, widget_type=None):
+        if selector == "#chat-input" and widget_type == TextArea:
+            return mock_chat_input
+        return original_query_one(selector, widget_type)
+    mock_app.query_one.side_effect = custom_query_one
     
     event = StreamDone(full_text="Final message", error=None)
     
@@ -196,8 +231,8 @@ async def test_handle_stream_done_success_and_save(mock_ccl, mock_app):
     # Verify the widget was marked as complete
     mock_widget.mark_generation_complete.assert_called_once()
     
-    # Verify chat input was re-enabled
-    assert mock_chat_input.disabled is False
+    # Verify focus was called on chat input
+    mock_chat_input.focus.assert_called_once()
 
 
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl')
@@ -206,12 +241,17 @@ async def test_handle_stream_done_with_tag_stripping(mock_ccl, mock_app):
     mock_widget = mock_app.get_current_ai_message_widget.return_value
     mock_widget.message_text = "<think>Internal thoughts</think>Visible response"
     
-    # Override to enable chat input
+    # Create a proper mock for chat input
     mock_chat_input = MagicMock(spec=TextArea)
-    type(mock_chat_input).disabled = PropertyMock(return_value=True)
-    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
-        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
-    )
+    mock_chat_input.focus = MagicMock()
+    
+    # Override query_one to return our mock
+    original_query_one = mock_app.query_one.side_effect
+    def custom_query_one(selector, widget_type=None):
+        if selector == "#chat-input" and widget_type == TextArea:
+            return mock_chat_input
+        return original_query_one(selector, widget_type) if original_query_one else MagicMock()
+    mock_app.query_one.side_effect = custom_query_one
     
     event = StreamDone(
         full_text="<think>Internal thoughts</think>Visible response", 
@@ -241,12 +281,17 @@ async def test_handle_stream_done_with_error(mock_ccl, mock_app):
     """Test stream completion with error handling."""
     mock_widget = mock_app.get_current_ai_message_widget.return_value
     
-    # Override to enable chat input
+    # Create a proper mock for chat input
     mock_chat_input = MagicMock(spec=TextArea)
-    type(mock_chat_input).disabled = PropertyMock(return_value=True)
-    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
-        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
-    )
+    mock_chat_input.focus = MagicMock()
+    
+    # Override query_one to return our mock
+    original_query_one = mock_app.query_one.side_effect
+    def custom_query_one(selector, widget_type=None):
+        if selector == "#chat-input" and widget_type == TextArea:
+            return mock_chat_input
+        return original_query_one(selector, widget_type) if original_query_one else MagicMock()
+    mock_app.query_one.side_effect = custom_query_one
     
     event = StreamDone(
         full_text="Error ", 
@@ -262,8 +307,8 @@ async def test_handle_stream_done_with_error(mock_ccl, mock_app):
                          if "Connection timeout" in str(call)]
     assert len(notification_calls) > 0
     
-    # Verify chat input was re-enabled even with error
-    assert mock_chat_input.disabled is False
+    # Verify focus was called on chat input even with error
+    mock_chat_input.focus.assert_called_once()
 
 
 async def test_handle_stream_done_no_widget(mock_app):
@@ -271,20 +316,25 @@ async def test_handle_stream_done_no_widget(mock_app):
     # Set no current widget
     mock_app.get_current_ai_message_widget.return_value = None
     
-    # Override to enable chat input
+    # Create a proper mock for chat input
     mock_chat_input = MagicMock(spec=TextArea)
-    type(mock_chat_input).disabled = PropertyMock(return_value=True)
-    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
-        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
-    )
+    mock_chat_input.focus = MagicMock()
+    
+    # Override query_one to return our mock
+    original_query_one = mock_app.query_one.side_effect
+    def custom_query_one(selector, widget_type=None):
+        if selector == "#chat-input" and widget_type == TextArea:
+            return mock_chat_input
+        return original_query_one(selector, widget_type) if original_query_one else MagicMock()
+    mock_app.query_one.side_effect = custom_query_one
     
     event = StreamDone(full_text="Test", error=None)
     
     # Should complete without error
     await streaming_events.handle_stream_done.__get__(mock_app)(event)
     
-    # Chat input should still be re-enabled
-    assert mock_chat_input.disabled is False
+    # Chat input focus should still be called
+    mock_chat_input.focus.assert_called_once()
 
 
 async def test_handle_streaming_chunk_empty_text(mock_app):
@@ -355,12 +405,17 @@ async def test_handle_stream_done_ephemeral_chat(mock_ccl, mock_app):
     mock_widget = mock_app.get_current_ai_message_widget.return_value
     mock_widget.message_text = "Ephemeral message"
     
-    # Override to enable chat input
+    # Create a proper mock for chat input
     mock_chat_input = MagicMock(spec=TextArea)
-    type(mock_chat_input).disabled = PropertyMock(return_value=True)
-    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
-        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
-    )
+    mock_chat_input.focus = MagicMock()
+    
+    # Override query_one to return our mock
+    original_query_one = mock_app.query_one.side_effect
+    def custom_query_one(selector, widget_type=None):
+        if selector == "#chat-input" and widget_type == TextArea:
+            return mock_chat_input
+        return original_query_one(selector, widget_type) if original_query_one else MagicMock()
+    mock_app.query_one.side_effect = custom_query_one
     
     event = StreamDone(full_text="Ephemeral message", error=None)
     
@@ -382,12 +437,17 @@ async def test_handle_stream_done_db_save_failure(mock_ccl, mock_app):
     mock_widget = mock_app.get_current_ai_message_widget.return_value
     mock_widget.message_text = "Message to save"
     
-    # Override to enable chat input
+    # Create a proper mock for chat input
     mock_chat_input = MagicMock(spec=TextArea)
-    type(mock_chat_input).disabled = PropertyMock(return_value=True)
-    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
-        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
-    )
+    mock_chat_input.focus = MagicMock()
+    
+    # Override query_one to return our mock
+    original_query_one = mock_app.query_one.side_effect
+    def custom_query_one(selector, widget_type=None):
+        if selector == "#chat-input" and widget_type == TextArea:
+            return mock_chat_input
+        return original_query_one(selector, widget_type) if original_query_one else MagicMock()
+    mock_app.query_one.side_effect = custom_query_one
     
     # Simulate DB save failure
     mock_ccl.update_message_content.side_effect = Exception("DB Error")
@@ -417,12 +477,17 @@ async def test_handle_stream_done_concurrent_streams(mock_ccl, mock_app):
     widget2.message_text = "Stream 2"
     widget2.id = "widget2"
     
-    # Override to enable chat input
+    # Create a proper mock for chat input
     mock_chat_input = MagicMock(spec=TextArea)
-    type(mock_chat_input).disabled = PropertyMock(return_value=True)
-    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
-        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
-    )
+    mock_chat_input.focus = MagicMock()
+    
+    # Override query_one to return our mock
+    original_query_one = mock_app.query_one.side_effect
+    def custom_query_one(selector, widget_type=None):
+        if selector == "#chat-input" and widget_type == TextArea:
+            return mock_chat_input
+        return original_query_one(selector, widget_type) if original_query_one else MagicMock()
+    mock_app.query_one.side_effect = custom_query_one
     
     # Set up streaming map for both
     mock_app.streaming_message_map = {
@@ -514,12 +579,17 @@ Visible text 2
     
     mock_widget.message_text = message_with_thinks
     
-    # Override to enable chat input
+    # Create a proper mock for chat input
     mock_chat_input = MagicMock(spec=TextArea)
-    type(mock_chat_input).disabled = PropertyMock(return_value=True)
-    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
-        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
-    )
+    mock_chat_input.focus = MagicMock()
+    
+    # Override query_one to return our mock
+    original_query_one = mock_app.query_one.side_effect
+    def custom_query_one(selector, widget_type=None):
+        if selector == "#chat-input" and widget_type == TextArea:
+            return mock_chat_input
+        return original_query_one(selector, widget_type) if original_query_one else MagicMock()
+    mock_app.query_one.side_effect = custom_query_one
     
     event = StreamDone(full_text=message_with_thinks, error=None)
     

@@ -101,6 +101,7 @@ class TestChatImageIntegration:
         """Test successful image path submission."""
         # Mock UI elements
         attach_button = Mock(spec=Button)
+        # Mock label as a simple attribute that can be set/get
         attach_button.label = "📎"
         
         indicator = Mock()
@@ -115,7 +116,7 @@ class TestChatImageIntegration:
         event.value = str(temp_test_image)
         event.input = file_input
         
-        def query_one_side_effect(selector):
+        def query_one_side_effect(selector, widget_type=None):
             if selector == "#attach-image":
                 return attach_button
             elif selector == "#image-attachment-indicator":
@@ -197,7 +198,7 @@ class TestChatImageIntegration:
             assert chat_window.pending_image is None
             assert attach_button.label == "📎"
             indicator.add_class.assert_called_with("hidden")
-            chat_window.app_instance.notify.assert_called_with("Image attachment cleared")
+            chat_window.app_instance.notify.assert_called_with("File attachment cleared")
     
     @pytest.mark.asyncio
     async def test_send_with_image_clears_attachment(self, chat_window):
