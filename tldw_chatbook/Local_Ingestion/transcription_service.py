@@ -10,6 +10,8 @@ import tempfile
 import time
 import sys
 import threading
+import io
+import wave
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union, Callable
 import json
@@ -480,6 +482,99 @@ class TranscriptionService:
                     logger.debug(f"Cleaned up temporary WAV file: {wav_path}")
                 except Exception as e:
                     logger.warning(f"Failed to clean up temporary WAV file {wav_path}: {e}")
+    
+    def transcribe_buffer(
+        self,
+        audio_data: bytes,
+        sample_rate: int,
+        channels: int = 1,
+        sample_width: int = 2,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Transcribe audio from an in-memory buffer without writing to disk when possible.
+        
+        Args:
+            audio_data: Raw audio data as bytes
+            sample_rate: Sample rate of the audio (e.g., 16000)
+            channels: Number of channels (default: 1 for mono)
+            sample_width: Sample width in bytes (default: 2 for 16-bit)
+            provider: Transcription provider to use
+            model: Model name to use
+            language: Language code (e.g., 'en', 'es')
+            **kwargs: Additional provider-specific parameters
+            
+        Returns:
+            Dict with transcription results
+        """
+        # Select provider
+        provider = provider or self.config['default_provider']
+        
+        # Try direct buffer transcription for supported providers
+        if provider == 'faster-whisper' and FASTER_WHISPER_AVAILABLE:
+            return self._transcribe_buffer_with_faster_whisper(
+                audio_data, sample_rate, channels, sample_width,
+                model, language, **kwargs
+            )
+        # Skip qwen2audio for now - it loads a large model
+        # elif provider == 'qwen2audio' and QWEN2AUDIO_AVAILABLE:
+        #     return self._transcribe_buffer_with_qwen2audio(
+        #         audio_data, sample_rate, channels, sample_width,
+        #         language, **kwargs
+        #     )
+        elif provider == 'parakeet-mlx' and PARAKEET_MLX_AVAILABLE:
+            return self._transcribe_buffer_with_parakeet_mlx(
+                audio_data, sample_rate, channels, sample_width,
+                model, language, **kwargs
+            )
+        
+        # Fallback to file-based transcription for other providers
+        logger.debug(f"Provider {provider} requires file-based transcription, using temporary file")
+        
+        # Create an in-memory WAV file
+        wav_buffer = io.BytesIO()
+        
+        try:
+            # Write WAV header and data
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(channels)
+                wav_file.setsampwidth(sample_width)
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(audio_data)
+            
+            # Reset buffer position to beginning
+            wav_buffer.seek(0)
+            
+            # Create a temporary file
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+                tmp_file.write(wav_buffer.getvalue())
+                tmp_file.flush()
+                tmp_path = tmp_file.name
+            
+            # Use the regular transcribe method with the temp file
+            result = self.transcribe(
+                audio_path=tmp_path,
+                provider=provider,
+                model=model,
+                language=language,
+                **kwargs
+            )
+            
+            return result
+            
+        finally:
+            # Clean up the temporary file
+            if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temporary file {tmp_path}: {e}")
+            
+            # Close the buffer
+            wav_buffer.close()
     
     def _ensure_wav_format(self, audio_path: str) -> str:
         """
@@ -2027,6 +2122,360 @@ class TranscriptionService:
         total_models = sum(len(m) for m in models.values())
         logger.info(f"Total available models across all providers: {total_models}")
         return models
+    
+    def _transcribe_buffer_with_faster_whisper(
+        self,
+        audio_data: bytes,
+        sample_rate: int,
+        channels: int,
+        sample_width: int,
+        model: Optional[str],
+        language: Optional[str],
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Transcribe audio buffer directly with faster-whisper."""
+        logger.info("Using faster-whisper for direct buffer transcription")
+        
+        if not NUMPY_AVAILABLE:
+            raise TranscriptionError("NumPy is required for buffer transcription")
+        
+        # Convert bytes to numpy array
+        if sample_width == 2:  # 16-bit
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        elif sample_width == 1:  # 8-bit
+            audio_array = np.frombuffer(audio_data, dtype=np.int8)
+        else:
+            raise ValueError(f"Unsupported sample width: {sample_width}")
+        
+        # Convert to float32 and normalize
+        audio_array = audio_array.astype(np.float32)
+        if sample_width == 2:
+            audio_array = audio_array / 32768.0
+        else:  # 8-bit
+            audio_array = audio_array / 128.0
+        
+        # Handle multi-channel audio
+        if channels > 1:
+            # Reshape and average channels for mono
+            audio_array = audio_array.reshape(-1, channels).mean(axis=1)
+        
+        # Resample to 16kHz if needed (faster-whisper expects 16kHz)
+        if sample_rate != 16000:
+            # Simple resampling - for production use a proper resampling library
+            logger.warning(f"Resampling from {sample_rate}Hz to 16000Hz using simple interpolation")
+            # This is a basic resampling that may not be high quality
+            # Consider using scipy.signal.resample or librosa.resample for better quality
+            ratio = 16000 / sample_rate
+            new_length = int(len(audio_array) * ratio)
+            x_old = np.linspace(0, len(audio_array) - 1, len(audio_array))
+            x_new = np.linspace(0, len(audio_array) - 1, new_length)
+            audio_array = np.interp(x_new, x_old, audio_array)
+        
+        # Get model configuration
+        model = model or self.config.get('default_model', 'base')
+        language = language or self.config.get('default_language', 'en')
+        
+        # Load model - use the same logic as in _transcribe_with_faster_whisper
+        cache_key = f"faster-whisper-{model}"
+        
+        # Ensure thread safety when accessing model cache
+        with self._model_cache_lock:
+            if cache_key not in self._model_cache:
+                logger.info(f"Loading Whisper model: {model}")
+                model_load_start = time.time()
+                try:
+                    with protect_file_descriptors():
+                        self._model_cache[cache_key] = WhisperModel(
+                            model,
+                            device=self.config['device'],
+                            compute_type=self.config['compute_type'],
+                            download_root=None,
+                            local_files_only=False
+                        )
+                    model_load_time = time.time() - model_load_start
+                    logger.info(f"Whisper model loaded successfully in {model_load_time:.2f} seconds")
+                except Exception as e:
+                    logger.error(f"Failed to load Whisper model: {e}")
+                    raise TranscriptionError(f"Failed to load model: {str(e)}") from e
+            
+            whisper_model = self._model_cache[cache_key]
+        
+        # Transcribe
+        try:
+            segments_generator, info = whisper_model.transcribe(
+                audio_array,
+                language=language,
+                task=kwargs.get('task', 'transcribe'),
+                beam_size=kwargs.get('beam_size', 5),
+                best_of=kwargs.get('best_of', 5),
+                patience=kwargs.get('patience', 1.0),
+                temperature=kwargs.get('temperature', [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]),
+                compression_ratio_threshold=kwargs.get('compression_ratio_threshold', 2.4),
+                log_prob_threshold=kwargs.get('log_prob_threshold', -1.0),
+                no_speech_threshold=kwargs.get('no_speech_threshold', 0.6),
+                condition_on_previous_text=kwargs.get('condition_on_previous_text', True),
+                vad_filter=kwargs.get('vad_filter', True),
+                vad_parameters=kwargs.get('vad_parameters', None)
+            )
+            
+            # Process segments
+            segments = []
+            full_text = []
+            
+            for segment in segments_generator:
+                seg_dict = {
+                    "start": segment.start,
+                    "end": segment.end,
+                    "text": segment.text,
+                    "Time_Start": segment.start,
+                    "Time_End": segment.end,
+                    "Text": segment.text
+                }
+                segments.append(seg_dict)
+                full_text.append(segment.text)
+            
+            text = ' '.join(full_text)
+            
+            logger.info(f"Buffer transcription complete: {len(segments)} segments, {len(text)} characters")
+            
+            return {
+                "text": text,
+                "segments": segments,
+                "language": info.language if hasattr(info, 'language') else language,
+                "provider": "faster-whisper",
+                "model": model,
+                "buffer_transcription": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Faster-whisper buffer transcription failed: {e}")
+            raise TranscriptionError(f"Buffer transcription failed: {str(e)}") from e
+    
+    def _transcribe_buffer_with_qwen2audio(
+        self,
+        audio_data: bytes,
+        sample_rate: int,
+        channels: int,
+        sample_width: int,
+        language: Optional[str],
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Transcribe audio buffer directly with Qwen2Audio."""
+        logger.info("Using Qwen2Audio for direct buffer transcription")
+        
+        if not NUMPY_AVAILABLE:
+            raise TranscriptionError("NumPy is required for buffer transcription")
+        
+        # Convert bytes to numpy array
+        if sample_width == 2:  # 16-bit
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        elif sample_width == 1:  # 8-bit
+            audio_array = np.frombuffer(audio_data, dtype=np.int8)
+        else:
+            raise ValueError(f"Unsupported sample width: {sample_width}")
+        
+        # Convert to float32 and normalize
+        audio_array = audio_array.astype(np.float32)
+        if sample_width == 2:
+            audio_array = audio_array / 32768.0
+        else:  # 8-bit
+            audio_array = audio_array / 128.0
+        
+        # Handle multi-channel audio
+        if channels > 1:
+            # Reshape and average channels for mono
+            audio_array = audio_array.reshape(-1, channels).mean(axis=1)
+        
+        # Lazy load Qwen2Audio models
+        if self._qwen_processor is None or self._qwen_model is None:
+            try:
+                with protect_file_descriptors():
+                    model_id = "Qwen/Qwen2-Audio-7B-Instruct"
+                    self._qwen_processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+                    self._qwen_model = Qwen2AudioForConditionalGeneration.from_pretrained(
+                        model_id,
+                        device_map="auto",
+                        torch_dtype="auto",
+                        trust_remote_code=True
+                    )
+                    logger.info(f"Loaded Qwen2Audio model: {model_id}")
+            except Exception as e:
+                logger.error(f"Failed to load Qwen2Audio model: {e}")
+                raise TranscriptionError(f"Failed to load Qwen2Audio model: {str(e)}") from e
+        
+        # Prepare prompt for transcription
+        prompt_text = (
+            "System: You are a transcription model.\n"
+            "User: <|audio_bos|><|AUDIO|><|audio_eos|>\n"
+            "Please transcribe the speech in the audio.\n"
+            "Assistant: I'll transcribe the speech for you.\n\n"
+        )
+        
+        # Process audio with the processor
+        inputs = self._qwen_processor(
+            text=prompt_text,
+            audios=audio_array,
+            return_tensors="pt",
+            sampling_rate=sample_rate
+        )
+        
+        # Move inputs to device
+        if hasattr(self._qwen_model, 'device'):
+            inputs = {k: v.to(self._qwen_model.device) if hasattr(v, 'to') else v 
+                     for k, v in inputs.items()}
+        
+        # Generate transcription
+        with torch.no_grad():
+            generate_ids = self._qwen_model.generate(**inputs, max_length=512)
+        
+        # Decode the output
+        output_text = self._qwen_processor.batch_decode(
+            generate_ids, 
+            skip_special_tokens=True, 
+            clean_up_tokenization_spaces=False
+        )[0]
+        
+        # Extract transcription from the assistant's response
+        if "Assistant:" in output_text:
+            text = output_text.split("Assistant:")[-1].strip()
+        else:
+            text = output_text.strip()
+        
+        # Create segments
+        segments = [{
+            "start": 0.0,
+            "end": len(audio_array) / sample_rate,
+            "text": text,
+            "Time_Start": 0.0,
+            "Time_End": len(audio_array) / sample_rate,
+            "Text": text
+        }]
+        
+        logger.info(f"Qwen2Audio buffer transcription complete: {len(text)} characters")
+        
+        return {
+            "text": text,
+            "segments": segments,
+            "language": language or "unknown",
+            "provider": "qwen2audio",
+            "model": "Qwen2-Audio-7B-Instruct",
+            "buffer_transcription": True
+        }
+    
+    def _transcribe_buffer_with_parakeet_mlx(
+        self,
+        audio_data: bytes,
+        sample_rate: int,
+        channels: int,
+        sample_width: int,
+        model: Optional[str],
+        language: Optional[str],
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Transcribe audio buffer directly with Parakeet MLX."""
+        logger.info("Using Parakeet MLX for direct buffer transcription")
+        
+        if not NUMPY_AVAILABLE:
+            raise TranscriptionError("NumPy is required for buffer transcription")
+        
+        # Convert bytes to numpy array
+        if sample_width == 2:  # 16-bit
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        elif sample_width == 1:  # 8-bit
+            audio_array = np.frombuffer(audio_data, dtype=np.int8)
+        else:
+            raise ValueError(f"Unsupported sample width: {sample_width}")
+        
+        # Convert to float32 and normalize
+        audio_array = audio_array.astype(np.float32)
+        if sample_width == 2:
+            audio_array = audio_array / 32768.0
+        else:  # 8-bit
+            audio_array = audio_array / 128.0
+        
+        # Handle multi-channel audio
+        if channels > 1:
+            # Reshape and average channels for mono
+            audio_array = audio_array.reshape(-1, channels).mean(axis=1)
+        
+        # Resample to 16kHz if needed (Parakeet expects 16kHz)
+        if sample_rate != 16000:
+            logger.warning(f"Resampling from {sample_rate}Hz to 16000Hz using simple interpolation")
+            ratio = 16000 / sample_rate
+            new_length = int(len(audio_array) * ratio)
+            x_old = np.linspace(0, len(audio_array) - 1, len(audio_array))
+            x_new = np.linspace(0, len(audio_array) - 1, new_length)
+            audio_array = np.interp(x_new, x_old, audio_array)
+        
+        # Get model
+        model_name = model or self._parakeet_mlx_config['model']
+        
+        # Load model if needed
+        with self._parakeet_mlx_model_lock:
+            if self._parakeet_mlx_model is None or \
+               getattr(self._parakeet_mlx_model, '_model_name', None) != model_name:
+                
+                logger.info(f"Loading Parakeet MLX model: {model_name}")
+                
+                try:
+                    import mlx.core as mx
+                    
+                    # Map precision to MLX dtype
+                    dtype_map = {
+                        'fp32': mx.float32,
+                        'fp16': mx.float16,
+                        'bf16': mx.bfloat16,
+                        'bfloat16': mx.bfloat16,
+                        'float32': mx.float32,
+                        'float16': mx.float16
+                    }
+                    
+                    precision = self._parakeet_mlx_config['precision']
+                    dtype = dtype_map.get(precision, mx.bfloat16)
+                    
+                    self._parakeet_mlx_model = parakeet_from_pretrained(
+                        model_name,
+                        dtype=dtype
+                    )
+                    self._parakeet_mlx_model._model_name = model_name
+                    logger.info(f"Loaded Parakeet MLX model: {model_name}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to load Parakeet MLX model: {e}")
+                    raise TranscriptionError(f"Failed to load model: {str(e)}") from e
+        
+        # Transcribe
+        try:
+            # Parakeet MLX can transcribe numpy arrays directly
+            result = self._parakeet_mlx_model.transcribe(audio_array)
+            
+            # Extract text
+            text = result.text if hasattr(result, 'text') else str(result)
+            
+            # Create segments
+            segments = [{
+                "start": 0.0,
+                "end": len(audio_array) / 16000,  # Using 16kHz
+                "text": text,
+                "Time_Start": 0.0,
+                "Time_End": len(audio_array) / 16000,
+                "Text": text
+            }]
+            
+            logger.info(f"Parakeet MLX buffer transcription complete: {len(text)} characters")
+            
+            return {
+                "text": text,
+                "segments": segments,
+                "language": language or "en",
+                "provider": "parakeet-mlx",
+                "model": model_name,
+                "buffer_transcription": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Parakeet MLX buffer transcription failed: {e}")
+            raise TranscriptionError(f"Buffer transcription failed: {str(e)}") from e
     
     def get_device_info(self) -> Dict[str, Any]:
         """Get information about available compute devices."""

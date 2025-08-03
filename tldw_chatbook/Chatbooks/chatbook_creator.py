@@ -28,6 +28,7 @@ from ..DB.RAG_Indexing_DB import RAGIndexingDB
 from ..DB.Evals_DB import EvalsDB
 from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Utils.text import sanitize_filename
+from ..Utils.paths import get_user_data_dir
 
 
 class ChatbookCreator:
@@ -41,7 +42,9 @@ class ChatbookCreator:
             db_paths: Dictionary mapping database names to their paths
         """
         self.db_paths = db_paths
-        self.temp_dir = Path.home() / ".local" / "share" / "tldw_cli" / "temp" / "chatbooks"
+        # Use cross-platform user data directory
+        user_data_dir = get_user_data_dir()
+        self.temp_dir = user_data_dir / "temp" / "chatbooks"
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.missing_dependencies: Set[int] = set()
         self.auto_included_characters: Set[int] = set()

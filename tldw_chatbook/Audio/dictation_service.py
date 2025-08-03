@@ -311,37 +311,25 @@ class LiveDictationService:
                 if result and result.get('final'):
                     self._handle_final_transcript(result['final'])
             else:
-                # Fallback to chunked transcription
-                # Save audio data to temporary file since TranscriptionService only accepts file paths
-                import tempfile
-                import wave
-                
-                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-                    try:
-                        # Write audio data to WAV file
-                        with wave.open(tmp_file.name, 'wb') as wf:
-                            wf.setnchannels(self.audio_service.channels)
-                            wf.setsampwidth(2)  # 16-bit
-                            wf.setframerate(self.audio_service.sample_rate)
-                            wf.writeframes(audio_data)
-                        
-                        # Transcribe the temporary file
-                        result = self.transcription_service.transcribe(
-                            tmp_file.name,
-                            provider=self.transcription_provider,
-                            model=self.transcription_model,
-                            language=self.language
-                        )
-                        
-                        if result and result.get('text'):
-                            self._handle_partial_transcript(result['text'])
+                # Fallback to chunked transcription using buffer method
+                try:
+                    # Use the new transcribe_buffer method that avoids disk I/O
+                    result = self.transcription_service.transcribe_buffer(
+                        audio_data=audio_data,
+                        sample_rate=self.audio_service.sample_rate,
+                        channels=self.audio_service.channels,
+                        sample_width=2,  # 16-bit
+                        provider=self.transcription_provider,
+                        model=self.transcription_model,
+                        language=self.language
+                    )
                     
-                    finally:
-                        # Clean up temporary file
-                        try:
-                            os.unlink(tmp_file.name)
-                        except:
-                            pass
+                    if result and result.get('text'):
+                        self._handle_partial_transcript(result['text'])
+                
+                except Exception as e:
+                    logger.error(f"Buffer transcription failed: {e}")
+                    # Optionally fall back to file-based transcription here if needed
         
         except Exception as e:
             logger.error(f"Transcription error: {e}")
