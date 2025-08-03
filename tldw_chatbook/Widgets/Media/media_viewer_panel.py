@@ -44,6 +44,7 @@ class MediaViewerPanel(Container):
     MediaViewerPanel {
         height: 100%;
         layout: vertical;
+        overflow: hidden;
     }
     
     MediaViewerPanel .viewer-header {
@@ -187,6 +188,7 @@ class MediaViewerPanel(Container):
         height: 1fr;
         padding: 1;
         overflow-y: auto;
+        min-height: 0;
     }
     
     MediaViewerPanel .no-selection {
@@ -199,18 +201,21 @@ class MediaViewerPanel(Container):
         height: 1fr;
         width: 100%;
         min-height: 0;
+        overflow: hidden;
     }
     
     MediaViewerPanel TabbedContent > ContentSwitcher {
         height: 1fr;
         width: 100%;
         min-height: 0;
+        overflow: hidden;
     }
     
     MediaViewerPanel TabPane {
         padding: 0;
         height: 1fr;
         min-height: 0;
+        overflow: hidden;
     }
     
     /* Specific rule for analysis tab to ensure it fills container */
@@ -218,14 +223,16 @@ class MediaViewerPanel(Container):
         height: 1fr;
         padding: 0;
         min-height: 0;
+        overflow: hidden;
     }
     
     /* Force the analysis scroll container to work */
     MediaViewerPanel #analysis-scroll-fix {
         height: 1fr;
         width: 100%;
-        overflow-y: scroll;
+        overflow-y: auto;
         padding: 1;
+        min-height: 0;
     }
     
     /* Ensure collapsible doesn't constrain height */
@@ -400,32 +407,33 @@ class MediaViewerPanel(Container):
         with TabbedContent():
             # Metadata tab
             with TabPane("Metadata", id="metadata-tab"):
-                # View mode
-                with Container(id="metadata-view", classes="metadata-section"):
-                    yield Static("", id="metadata-display", classes="metadata-display")
-                    with Collapsible(title="Actions", collapsed=True):
-                        with Horizontal(classes="metadata-buttons"):
-                            yield Button("Edit", id="edit-button", variant="primary")
-                            yield Button("Delete", id="delete-button", variant="error")
-                
-                # Edit mode (hidden by default)
-                with Container(id="metadata-edit", classes="edit-section hidden"):
-                    with Vertical(classes="edit-fields"):
-                        yield Label("Title:", classes="edit-label")
-                        yield Input(id="edit-title", classes="edit-input")
-                        
-                        yield Label("Author:", classes="edit-label")
-                        yield Input(id="edit-author", classes="edit-input")
-                        
-                        yield Label("URL:", classes="edit-label")
-                        yield Input(id="edit-url", classes="edit-input")
-                        
-                        yield Label("Keywords (comma-separated):", classes="edit-label")
-                        yield Input(id="edit-keywords", classes="edit-input")
+                with VerticalScroll():
+                    # View mode
+                    with Container(id="metadata-view", classes="metadata-section"):
+                        yield Static("", id="metadata-display", classes="metadata-display")
+                        with Collapsible(title="Actions", collapsed=True):
+                            with Horizontal(classes="metadata-buttons"):
+                                yield Button("Edit", id="edit-button", variant="primary")
+                                yield Button("Delete", id="delete-button", variant="error")
                     
-                    with Horizontal(classes="edit-actions"):
-                        yield Button("Save", id="save-button", variant="success")
-                        yield Button("Cancel", id="cancel-button", variant="default")
+                    # Edit mode (hidden by default)
+                    with Container(id="metadata-edit", classes="edit-section hidden"):
+                        with Vertical(classes="edit-fields"):
+                            yield Label("Title:", classes="edit-label")
+                            yield Input(id="edit-title", classes="edit-input")
+                            
+                            yield Label("Author:", classes="edit-label")
+                            yield Input(id="edit-author", classes="edit-input")
+                            
+                            yield Label("URL:", classes="edit-label")
+                            yield Input(id="edit-url", classes="edit-input")
+                            
+                            yield Label("Keywords (comma-separated):", classes="edit-label")
+                            yield Input(id="edit-keywords", classes="edit-input")
+                        
+                        with Horizontal(classes="edit-actions"):
+                            yield Button("Save", id="save-button", variant="success")
+                            yield Button("Cancel", id="cancel-button", variant="default")
             
             # Content tab
             with TabPane("Content", id="content-tab"):

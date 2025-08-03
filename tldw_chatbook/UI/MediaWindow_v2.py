@@ -69,6 +69,7 @@ class MediaWindow(Container):
         layout: vertical;
         width: 1fr;
         height: 100%;
+        overflow: hidden;
     }
     
     #media-search-panel {
@@ -77,8 +78,9 @@ class MediaWindow(Container):
     
     #media-content-container {
         layout: horizontal;
-        height: 100%;
+        height: 1fr;
         width: 100%;
+        overflow: hidden;
     }
     
     #media-list-panel {
@@ -95,6 +97,7 @@ class MediaWindow(Container):
         width: 1fr;
         height: 100%;
         border: solid blue;
+        overflow: hidden;
     }
     """
     
