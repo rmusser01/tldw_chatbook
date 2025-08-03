@@ -1,0 +1,6 @@
+# Shroom Vision example splash card
+type = "animated"
+effect = "shroom_vision"
+style = "white on black"
+animation_speed = 0.05
+title = "tldw chatbook"

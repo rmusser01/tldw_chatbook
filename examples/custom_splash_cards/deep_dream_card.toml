@@ -1,0 +1,8 @@
+# Deep Dream example splash card
+type = "animated"
+effect = "deep_dream"
+style = "white on black"
+animation_speed = 0.1
+content = """
+Your base ASCII art here. The effect will overlay patterns on it.
+"""

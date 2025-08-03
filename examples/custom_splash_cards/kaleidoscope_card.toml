@@ -1,0 +1,7 @@
+# Kaleidoscope example splash card
+type = "animated"
+effect = "kaleidoscope"
+style = "black on black"
+animation_speed = 0.05
+title = "tldw"
+subtitle = "Reflecting..."

@@ -8974,3 +8974,454 @@ class ZenGardenEffect(BaseEffect):
 #
 # End of splash_animations.py
 #########################################################################################################################
+class PsychedelicMandalaEffect(BaseEffect):
+    """A rotating, colorful mandala that expands from the center."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "tldw chatbook",
+        subtitle: str = "Expanding consciousness...",
+        width: int = 80,
+        height: int = 24,
+        rotation_speed: float = 0.4,
+        num_segments: int = 8,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.subtitle = subtitle
+        self.display_width = width
+        self.display_height = height
+        self.rotation_speed = rotation_speed
+        self.num_segments = num_segments
+        self.time = 0
+        self.center_x = self.display_width / 2
+        self.center_y = self.display_height / 2
+        self.max_radius = min(self.center_x, self.center_y)
+        self.pattern_chars = "◆◇◈○●◐◑◒◓"
+
+    def update(self) -> Optional[str]:
+        self.time += 0.05
+        grid = [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
+        styles = [[None for _ in range(self.display_width)] for _ in range(self.display_height)]
+
+        for y in range(self.display_height):
+            for x in range(self.display_width):
+                dx = x - self.center_x
+                dy = (y - self.center_y) * 2  # Correct for aspect ratio
+                radius = math.sqrt(dx**2 + dy**2)
+                angle = math.atan2(dy, dx)
+
+                if radius < self.max_radius:
+                    # Psychedelic pattern generation
+                    v1 = math.sin(radius * 0.5 - self.time * 2)
+                    v2 = math.sin(angle * self.num_segments + self.time * self.rotation_speed)
+                    v3 = math.sin((angle + radius * 0.1) * 4 + self.time)
+                    combined_value = v1 + v2 + v3
+
+                    if combined_value > 1.5:
+                        char_index = int(abs(combined_value * 5)) % len(self.pattern_chars)
+                        grid[y][x] = self.pattern_chars[char_index]
+
+                        # Psychedelic color calculation
+                        hue = int((angle * 180 / math.pi + self.time * 50)) % 360
+                        r = int(128 + 127 * math.sin(math.radians(hue)))
+                        g = int(128 + 127 * math.sin(math.radians(hue + 120)))
+                        b = int(128 + 127 * math.sin(math.radians(hue + 240)))
+                        styles[y][x] = f"rgb({r},{g},{b})"
+
+        self._add_centered_text(grid, styles, self.title, self.height // 2 - 1, 'bold white on black')
+        self._add_centered_text(grid, styles, self.subtitle, self.height // 2 + 1, 'bold white on black')
+
+        return self._grid_to_string(grid, styles)
+
+
+class LavaLampEffect(BaseEffect):
+    """Morphing, colored blobs that rise and fall, mimicking a lava lamp."""
+
+    @dataclass
+    class Blob:
+        x: float
+        y: float
+        vx: float
+        vy: float
+        radius: float
+        color: str
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "tldw chatbook",
+        subtitle: str = "Go with the flow...",
+        width: int = 80,
+        height: int = 24,
+        num_blobs: int = 5,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.subtitle = subtitle
+        self.display_width = width
+        self.display_height = height
+        self.num_blobs = num_blobs
+        self.blobs: List[LavaLampEffect.Blob] = []
+        self.chars = ".:-=+*#%@"
+        self.colors = ["magenta", "cyan", "yellow", "green", "red"]
+
+        for i in range(self.num_blobs):
+            self.blobs.append(self.Blob(
+                x=random.uniform(self.display_width * 0.2, self.display_width * 0.8),
+                y=random.uniform(0, self.display_height),
+                vx=random.uniform(-0.5, 0.5),
+                vy=random.uniform(-0.3, 0.3),
+                radius=random.uniform(4, 8),
+                color=self.colors[i % len(self.colors)]
+            ))
+
+    def update(self) -> Optional[str]:
+        grid = [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
+        styles = [[None for _ in range(self.display_width)] for _ in range(self.display_height)]
+
+        for blob in self.blobs:
+            blob.x += blob.vx
+            blob.y += blob.vy
+            blob.vx += random.uniform(-0.1, 0.1)
+            blob.vy += random.uniform(-0.05, 0.05) - (blob.y - self.display_height/2) * 0.001
+
+            if blob.x < blob.radius or blob.x > self.display_width - blob.radius: blob.vx *= -1
+            if blob.y < blob.radius or blob.y > self.display_height - blob.radius: blob.vy *= -1
+
+            blob.vx = max(-1, min(1, blob.vx))
+            blob.vy = max(-0.5, min(0.5, blob.vy))
+
+        for y in range(self.display_height):
+            for x in range(self.display_width):
+                energy = 0.0
+                for blob in self.blobs:
+                    dist_sq = (x - blob.x)**2 + ((y - blob.y)*2)**2
+                    energy += blob.radius**2 / (dist_sq + 1e-6)
+
+                if energy > 0.5:
+                    char_index = min(len(self.chars) - 1, int(energy * 2))
+                    grid[y][x] = self.chars[char_index]
+
+                    # Mix colors of nearby blobs
+                    r, g, b = 0, 0, 0
+                    total_influence = 0
+                    for blob in self.blobs:
+                        dist_sq = (x - blob.x)**2 + ((y - blob.y)*2)**2
+                        influence = 1 / (dist_sq + 1)
+                        # This is a simplification; rich colors are named, not RGB.
+                        # I'll just pick the color of the most influential blob.
+                        if influence > total_influence:
+                            total_influence = influence
+                            from rich.color import Color
+                            c = Color.parse(blob.color).get_truecolor()
+                            r,g,b = c[0], c[1], c[2]
+
+                    styles[y][x] = f"rgb({r},{g},{b})"
+
+        self._add_centered_text(grid, styles, self.title, 4, 'bold white on black')
+        self._add_centered_text(grid, styles, self.subtitle, self.height - 4, 'bold white on black')
+        return self._grid_to_string(grid, styles)
+
+
+class KaleidoscopeEffect(BaseEffect):
+    """Symmetrical, mirrored patterns that shift and rotate."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "tldw chatbook",
+        subtitle: str = "Reflecting reality...",
+        width: int = 80,
+        height: int = 24,
+        num_segments: int = 6,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.subtitle = subtitle
+        self.display_width = width
+        self.display_height = height
+        self.num_segments = num_segments
+        self.time = 0
+        self.center_x = self.display_width / 2
+        self.center_y = self.display_height / 2
+        self.pattern_chars = "▚▞▙▟▛▜▝▘"
+        self.particles = []
+
+        for _ in range(20):
+            self.particles.append({
+                'x': random.uniform(0, self.display_width / self.num_segments),
+                'y': random.uniform(0, self.display_height / 2),
+                'vx': random.uniform(-1, 1),
+                'vy': random.uniform(-1, 1),
+                'char': random.choice(self.pattern_chars),
+                'color': f"rgb({random.randint(50,255)},{random.randint(50,255)},{random.randint(50,255)})"
+            })
+
+    def update(self) -> Optional[str]:
+        self.time += 0.05
+        grid = [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
+        styles = [[None for _ in range(self.display_width)] for _ in range(self.display_height)]
+
+        for p in self.particles:
+            p['x'] += p['vx'] * 0.1
+            p['y'] += p['vy'] * 0.1
+            if p['x'] < 0 or p['x'] > self.display_width: p['vx'] *= -1
+            if p['y'] < 0 or p['y'] > self.display_height: p['vy'] *= -1
+
+            for i in range(self.num_segments):
+                angle = (2 * math.pi / self.num_segments) * i + self.time * 0.2
+
+                # Original point
+                rotated_x = p['x'] * math.cos(angle) - p['y'] * math.sin(angle)
+                rotated_y = p['x'] * math.sin(angle) + p['y'] * math.cos(angle)
+
+                draw_x, draw_y = int(self.center_x + rotated_x), int(self.center_y + rotated_y * 0.5)
+                if 0 <= draw_x < self.display_width and 0 <= draw_y < self.display_height:
+                    grid[draw_y][draw_x] = p['char']
+                    styles[draw_y][draw_x] = p['color']
+
+                # Mirrored point
+                rotated_x_m = p['x'] * math.cos(angle) + p['y'] * math.sin(angle)
+                rotated_y_m = p['x'] * math.sin(angle) - p['y'] * math.cos(angle)
+
+                draw_x_m, draw_y_m = int(self.center_x + rotated_x_m), int(self.center_y + rotated_y_m * 0.5)
+                if 0 <= draw_x_m < self.display_width and 0 <= draw_y_m < self.display_height:
+                    grid[draw_y_m][draw_x_m] = p['char']
+                    styles[draw_y_m][draw_x_m] = p['color']
+
+        self._add_centered_text(grid, styles, self.title, self.height // 2, 'bold white on black')
+        return self._grid_to_string(grid, styles)
+
+class DeepDreamEffect(BaseEffect):
+    """Simulates a 'deep dream' effect with recursive, layered patterns."""
+    def __init__(self, parent_widget: Any, content: str = "", **kwargs):
+        super().__init__(parent_widget, **kwargs)
+        self.base_content = get_ascii_art("default")
+        self.lines = self.base_content.splitlines()
+        self.height = len(self.lines)
+        self.width = max(len(line) for line in self.lines) if self.lines else 0
+        self.time = 0
+        self.overlay_chars = "()∙○●◎"
+        self.overlay_colors = ["rgb(255,0,255)", "rgb(0,255,0)", "rgb(255,255,0)"]
+
+    def update(self) -> Optional[str]:
+        self.time += 0.1
+        grid = [list(line.ljust(self.width)) for line in self.lines]
+        styles = [[None for _ in range(self.width)] for _ in range(self.height)]
+
+        for y in range(self.height):
+            for x in range(self.width):
+                if grid[y][x] != ' ':
+                    # Add recursive patterns based on time and position
+                    v = math.sin(x * 0.2 + self.time) + math.cos(y * 0.2 + self.time)
+                    if v > 1.2:
+                        grid[y][x] = random.choice(self.overlay_chars)
+                        styles[y][x] = random.choice(self.overlay_colors)
+        return self._grid_to_string(grid, styles)
+
+class TrippyTunnelEffect(BaseEffect):
+    """A perspective tunnel effect with shifting, vibrant colors."""
+    def __init__(self, parent_widget: Any, **kwargs):
+        super().__init__(parent_widget, **kwargs)
+        self.width = kwargs.get('width', 80)
+        self.height = kwargs.get('height', 24)
+        self.center_x = self.width / 2
+        self.center_y = self.height / 2
+        self.time = 0
+        self.chars = ".:*#@"
+
+    def update(self) -> Optional[str]:
+        self.time += 0.1
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        styles = [[None for _ in range(self.width)] for _ in range(self.height)]
+
+        for y in range(self.height):
+            for x in range(self.width):
+                dx = x - self.center_x
+                dy = (y - self.center_y) * 2
+                dist = math.sqrt(dx**2 + dy**2)
+                angle = math.atan2(dy, dx)
+
+                if dist > 0:
+                    radius = 50 / (dist + 1)
+                    v = math.sin(radius - self.time * 2) + math.sin(angle * 3 + self.time)
+                    if v > 0.5:
+                        char_index = min(len(self.chars) - 1, int((v - 0.5) * 5))
+                        grid[y][x] = self.chars[char_index]
+                        hue = int((angle * 180 / math.pi + self.time * 100)) % 360
+                        r = int(128 + 127 * math.sin(math.radians(hue)))
+                        g = int(128 + 127 * math.sin(math.radians(hue + 120)))
+                        b = int(128 + 127 * math.sin(math.radians(hue + 240)))
+                        styles[y][x] = f"rgb({r},{g},{b})"
+        return self._grid_to_string(grid, styles)
+
+class MeltingScreenEffect(BaseEffect):
+    """An effect where the screen content appears to melt and drip downwards."""
+    def __init__(self, parent_widget: Any, content: str = "TLDW MELTDOWN", **kwargs):
+        super().__init__(parent_widget, **kwargs)
+        self.width = kwargs.get('width', 80)
+        self.height = kwargs.get('height', 24)
+        self.grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        self.styles = [[None for _ in range(self.width)] for _ in range(self.height)]
+
+        # Place initial content
+        x_start = (self.width - len(content)) // 2
+        y_start = self.height // 4
+        for i, char in enumerate(content):
+            self.grid[y_start][x_start + i] = char
+            self.styles[y_start][x_start+i] = f"rgb({random.randint(100,255)},{random.randint(100,255)},{random.randint(100,255)})"
+
+    def update(self) -> Optional[str]:
+        for y in range(self.height - 2, -1, -1):
+            for x in range(self.width):
+                if self.grid[y][x] != ' ' and self.grid[y+1][x] == ' ':
+                    if random.random() < 0.2:
+                        self.grid[y+1][x] = self.grid[y][x]
+                        self.styles[y+1][x] = self.styles[y][x]
+                        self.grid[y][x] = ' '
+                        self.styles[y][x] = None
+        return self._grid_to_string(self.grid, self.styles)
+
+class ColorPulseEffect(BaseEffect):
+    """The screen pulses through a psychedelic color palette."""
+    def __init__(self, parent_widget: Any, title: str = "tldw chatbook", **kwargs):
+        super().__init__(parent_widget, **kwargs)
+        self.width = kwargs.get('width', 80)
+        self.height = kwargs.get('height', 24)
+        self.title = title
+        self.time = 0
+
+    def update(self) -> Optional[str]:
+        self.time += 0.1
+        hue = int(self.time * 50) % 360
+        r = int(128 + 127 * math.sin(math.radians(hue)))
+        g = int(128 + 127 * math.sin(math.radians(hue + 120)))
+        b = int(128 + 127 * math.sin(math.radians(hue + 240)))
+
+        bg_r = (r + 128) % 256
+        bg_g = (g + 128) % 256
+        bg_b = (b + 128) % 256
+
+        style = f"bold rgb({r},{g},{b}) on rgb({bg_r},{bg_g},{bg_b})"
+        content = Align.center(Text(self.title, justify="center"), vertical="middle", height=self.height)
+        return f"[{style}]" + str(content) + f"[/{style}]"
+
+class ShroomVisionEffect(BaseEffect):
+    """Simulates a 'mushroom vision' effect with distorted, breathing visuals."""
+    def __init__(self, parent_widget: Any, title: str = "tldw chatbook", **kwargs):
+        super().__init__(parent_widget, **kwargs)
+        self.width = kwargs.get('width', 80)
+        self.height = kwargs.get('height', 24)
+        self.title = title
+        self.time = 0
+
+    def update(self) -> Optional[str]:
+        self.time += 0.05
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        styles = [[None for _ in range(self.width)] for _ in range(self.height)]
+        center_x, center_y = self.width / 2, self.height / 2
+
+        for y in range(self.height):
+            for x in range(self.width):
+                dx, dy = x - center_x, y - center_y
+                dist = math.sqrt(dx**2 + dy**2)
+                angle = math.atan2(dy, dx)
+
+                # Breathing effect
+                dist_factor = math.sin(dist * 0.5 - self.time * 2) * 2
+
+                new_x = int(center_x + (dx + dist_factor * math.cos(angle)))
+                new_y = int(center_y + (dy + dist_factor * math.sin(angle)) * 0.5)
+
+                if 0 <= new_x < self.width and 0 <= new_y < self.height:
+                    title_x_start = (self.width - len(self.title)) // 2
+                    if new_y == self.height // 2 and title_x_start <= new_x < title_x_start + len(self.title):
+                         char_index = new_x - title_x_start
+                         grid[y][x] = self.title[char_index]
+                         hue = int((dist * 10 + self.time * 50)) % 360
+                         r = int(128 + 127 * math.sin(math.radians(hue)))
+                         g = int(128 + 127 * math.sin(math.radians(hue + 120)))
+                         b = int(128 + 127 * math.sin(math.radians(hue + 240)))
+                         styles[y][x] = f"bold rgb({r},{g},{b})"
+        return self._grid_to_string(grid, styles)
+
+class HypnoSwirlEffect(BaseEffect):
+    """A hypnotic, swirling pattern."""
+    def __init__(self, parent_widget: Any, title: str = "tldw", **kwargs):
+        super().__init__(parent_widget, **kwargs)
+        self.width = kwargs.get('width', 80)
+        self.height = kwargs.get('height', 24)
+        self.title = title
+        self.time = 0
+        self.chars = ".:*#@"
+
+    def update(self) -> Optional[str]:
+        self.time += 0.1
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        styles = [[None for _ in range(self.width)] for _ in range(self.height)]
+        center_x, center_y = self.width / 2, self.height / 2
+
+        for y in range(self.height):
+            for x in range(self.width):
+                dx, dy = x - center_x, (y - center_y) * 2
+                angle = math.atan2(dy, dx)
+                dist = math.sqrt(dx**2 + dy**2)
+
+                v = math.sin(angle * 5 + dist * 0.5 - self.time * 3)
+                if v > 0.5:
+                    char_index = min(len(self.chars) - 1, int((v - 0.5) * 5))
+                    grid[y][x] = self.chars[char_index]
+                    hue = int((angle * 180 / math.pi)) % 360
+                    styles[y][x] = f"hsv({hue},1,1)"
+
+        self._add_centered_text(grid, styles, self.title, self.height // 2, 'bold black')
+        return self._grid_to_string(grid, styles)
+
+class ElectricSheepEffect(BaseEffect):
+    """Abstract, evolving patterns reminiscent of the 'Electric Sheep' screensaver."""
+    def __init__(self, parent_widget: Any, **kwargs):
+        super().__init__(parent_widget, **kwargs)
+        self.width = kwargs.get('width', 80)
+        self.height = kwargs.get('height', 24)
+        self.time = 0
+        self.particles = []
+        for _ in range(30):
+            self.particles.append({
+                'x': random.uniform(0, self.width),
+                'y': random.uniform(0, self.height),
+                'vx': random.uniform(-1, 1),
+                'vy': random.uniform(-1, 1),
+                'life': random.uniform(20, 50),
+                'color': f"rgb({random.randint(50,255)},{random.randint(50,255)},{random.randint(50,255)})"
+            })
+
+    def update(self) -> Optional[str]:
+        self.time += 0.05
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        styles = [[None for _ in range(self.width)] for _ in range(self.height)]
+
+        for p in self.particles:
+            p['x'] += p['vx']
+            p['y'] += p['vy']
+            p['vx'] += math.sin(p['y'] * 0.1 + self.time) * 0.1
+            p['vy'] += math.cos(p['x'] * 0.1 + self.time) * 0.1
+            p['life'] -= 1
+
+            if p['life'] <= 0 or not (0 < p['x'] < self.width and 0 < p['y'] < self.height):
+                p['x'] = random.uniform(0, self.width)
+                p['y'] = random.uniform(0, self.height)
+                p['vx'] = random.uniform(-1, 1)
+                p['vy'] = random.uniform(-1, 1)
+                p['life'] = random.uniform(20, 50)
+
+            x, y = int(p['x']), int(p['y'])
+            if 0 <= x < self.width and 0 <= y < self.height:
+                grid[y][x] = '•'
+                styles[y][x] = p['color']
+
+        return self._grid_to_string(grid, styles)

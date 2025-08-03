@@ -164,6 +164,20 @@ This document provides a comprehensive list of all available splash screens in t
 | `tiktok_algorithm_card` | Algorithm recommendation engine |
 | `linkedin_networking_card` | Professional networking connections |
 
+#### Psychedelic
+| Name | Description |
+|------|-------------|
+| `psychedelic_mandala_card` | Rotating, colorful mandala that expands from the center |
+| `lava_lamp_card` | Morphing, colored blobs that rise and fall |
+| `kaleidoscope_card` | Symmetrical, mirrored patterns that shift and rotate |
+| `deep_dream_card` | ASCII art with recursive, dream-like patterns |
+| `trippy_tunnel_card` | A perspective tunnel with shifting colors |
+| `melting_screen_card` | Screen content appears to melt and drip downwards |
+| `color_pulse_card` | Screen pulses through a psychedelic color palette |
+| `shroom_vision_card` | Simulates a "mushroom vision" effect with distorted visuals |
+| `hypno_swirl_card` | A hypnotic, swirling pattern |
+| `electric_sheep_card` | Abstract, evolving patterns |
+
 ## Animation Effects
 
 The following animation effects are available for creating custom splash screens:

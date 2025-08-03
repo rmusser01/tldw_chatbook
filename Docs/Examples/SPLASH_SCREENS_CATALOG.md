@@ -439,6 +439,68 @@ active_cards = ["matrix", "glitch", "starfield", "neural_network"]
 4. **Duration**: Adjust based on typical load time - longer for heavy initialization
 5. **Colors**: Most effects support custom color schemes via style parameters
 
+## Psychedelic Effects
+
+### 45. psychedelic_mandala
+- **Type**: Animated
+- **Effect**: psychedelic_mandala
+- **Description**: A rotating, colorful mandala that expands from the center.
+- **Best for**: Meditative or creative applications.
+
+### 46. lava_lamp
+- **Type**: Animated
+- **Effect**: lava_lamp
+- **Description**: Morphing, colored blobs that rise and fall.
+- **Best for**: Groovy, retro themes.
+
+### 47. kaleidoscope
+- **Type**: Animated
+- **Effect**: kaleidoscope
+- **Description**: Symmetrical, mirrored patterns that shift and rotate.
+- **Best for**: Visual-heavy, artistic applications.
+
+### 48. deep_dream
+- **Type**: Animated
+- **Effect**: deep_dream
+- **Description**: ASCII art with recursive, dream-like patterns.
+- **Best for**: AI-themed, surreal applications.
+
+### 49. trippy_tunnel
+- **Type**: Animated
+- **Effect**: trippy_tunnel
+- **Description**: A perspective tunnel with shifting colors.
+- **Best for**: Sci-fi, futuristic themes.
+
+### 50. melting_screen
+- **Type**: Animated
+- **Effect**: melting_screen
+- **Description**: Screen content appears to melt and drip downwards.
+- **Best for**: Surreal, artistic, or error-themed screens.
+
+### 51. color_pulse
+- **Type**: Animated
+- **Effect**: color_pulse
+- **Description**: Screen pulses through a psychedelic color palette.
+- **Best for**: Simple, yet vibrant loading screens.
+
+### 52. shroom_vision
+- **Type**: Animated
+- **Effect**: shroom_vision
+- **Description**: Simulates a "mushroom vision" effect with distorted visuals.
+- **Best for**: Fun, playful, or creative applications.
+
+### 53. hypno_swirl
+- **Type**: Animated
+- **Effect**: hypno_swirl
+- **Description**: A hypnotic, swirling pattern.
+- **Best for**: Mesmerizing, focus-themed applications.
+
+### 54. electric_sheep
+- **Type**: Animated
+- **Effect**: electric_sheep
+- **Description**: Abstract, evolving patterns.
+- **Best for**: Abstract, generative art-style screens.
+
 ## Creating Custom Cards
 
 Place custom splash card TOML files in `~/.config/tldw_cli/splash_cards/`. See the examples directory for templates.

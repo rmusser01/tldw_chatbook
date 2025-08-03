@@ -1,0 +1,7 @@
+# Psychedelic Mandala example splash card
+type = "animated"
+effect = "psychedelic_mandala"
+style = "black on black"
+animation_speed = 0.05
+title = "Mind's Eye"
+subtitle = "Journey within..."

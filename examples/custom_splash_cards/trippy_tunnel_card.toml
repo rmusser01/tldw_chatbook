@@ -1,0 +1,5 @@
+# Trippy Tunnel example splash card
+type = "animated"
+effect = "trippy_tunnel"
+style = "black on black"
+animation_speed = 0.05
