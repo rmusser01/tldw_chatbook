@@ -9816,7 +9816,7 @@ class ElectricSheepEffect(BaseEffect):
             p['vy'] += math.cos(p['x'] * 0.1 + self.time) * 0.1
             p['life'] -= 1
 
-            if p['life'] <= 0 or not (0 < p['x'] < self.width and 0 < p['y'] < self.height):
+            if p['life'] <= 0 or not (0 <= p['x'] < self.width and 0 <= p['y'] < self.height):
                 p['x'] = random.uniform(0, self.width)
                 p['y'] = random.uniform(0, self.height)
                 p['vx'] = random.uniform(-1, 1)
