@@ -1,0 +1,5 @@
+# Doom Fire example splash card
+type = "animated"
+effect = "doom_fire"
+style = "black on black"
+animation_speed = 0.05

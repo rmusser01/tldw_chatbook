@@ -1,0 +1,5 @@
+# Level Up example splash card
+type = "animated"
+effect = "level_up"
+style = "white on black"
+animation_speed = 0.05

@@ -1,0 +1,5 @@
+# Pacman example splash card
+type = "animated"
+effect = "pacman"
+style = "black on black"
+animation_speed = 0.1

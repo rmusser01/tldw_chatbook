@@ -1,0 +1,6 @@
+# Melting Screen example splash card
+type = "animated"
+effect = "melting_screen"
+style = "white on black"
+animation_speed = 0.05
+content = "REALITY IS DISSOLVING"

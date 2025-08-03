@@ -1,0 +1,7 @@
+# Lava Lamp example splash card
+type = "animated"
+effect = "lava_lamp"
+style = "black on black"
+animation_speed = 0.05
+title = "TLDW"
+subtitle = "Groovy..."
