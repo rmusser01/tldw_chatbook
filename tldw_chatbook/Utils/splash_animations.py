@@ -9590,7 +9590,7 @@ class KaleidoscopeEffect(BaseEffect):
                     grid[draw_y_m][draw_x_m] = p['char']
                     styles[draw_y_m][draw_x_m] = p['color']
 
-        self._add_centered_text(grid, styles, self.title, self.height // 2, 'bold white on black')
+        self._add_centered_text(grid, styles, self.title, self.display_height // 2, 'bold white on black')
         return self._grid_to_string(grid, styles)
 
 class DeepDreamEffect(BaseEffect):
