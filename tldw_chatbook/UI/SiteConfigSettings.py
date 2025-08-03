@@ -376,7 +376,7 @@ class SiteConfigSettings(Container):
     
     async def on_mount(self):
         """Load site configurations on mount."""
-        await self.load_site_list()
+        self.load_site_list()
     
     @work(thread=True)
     def load_site_list(self):

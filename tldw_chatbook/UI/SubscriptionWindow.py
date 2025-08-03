@@ -289,7 +289,7 @@ class SubscriptionWindow(Container):
                 yield FormField(
                     "Priority",
                     Select(
-                        [("1", "High"), ("3", "Medium"), ("5", "Low")],
+                        [("High", "1"), ("Medium", "3"), ("Low", "5")],
                         id="sub-priority",
                         value="3"
                     )
@@ -300,7 +300,7 @@ class SubscriptionWindow(Container):
                 yield FormField(
                     "Check Frequency",
                     Select(
-                        [(str(v), k) for k, v in SUBSCRIPTION_UPDATE_FREQUENCIES.items()],
+                        [(k, str(v)) for k, v in SUBSCRIPTION_UPDATE_FREQUENCIES.items()],
                         id="sub-frequency",
                         value="3600"
                     )
@@ -316,7 +316,7 @@ class SubscriptionWindow(Container):
                 yield FormField(
                     "Authentication",
                     Select(
-                        [("none", "None"), ("basic", "Basic Auth"), ("bearer", "Bearer Token")],
+                        [("None", "none"), ("Basic Auth", "basic"), ("Bearer Token", "bearer")],
                         id="sub-auth-type",
                         value="none"
                     )
@@ -431,10 +431,10 @@ class SubscriptionWindow(Container):
                         Select(
                             id="briefing-template",
                             options=[
-                                ("executive_summary", "Executive Summary"),
-                                ("technical_digest", "Technical Digest"),
-                                ("news_briefing", "News Briefing"),
-                                ("custom", "Custom Template")
+                                ("Executive Summary", "executive_summary"),
+                                ("Technical Digest", "technical_digest"),
+                                ("News Briefing", "news_briefing"),
+                                ("Custom Template", "custom")
                             ],
                             value="news_briefing"
                         )
@@ -445,10 +445,10 @@ class SubscriptionWindow(Container):
                         Select(
                             id="briefing-time-range",
                             options=[
-                                ("today", "Today"),
-                                ("yesterday", "Yesterday"),
-                                ("week", "Last 7 Days"),
-                                ("custom", "Custom Range")
+                                ("Today", "today"),
+                                ("Yesterday", "yesterday"),
+                                ("Last 7 Days", "week"),
+                                ("Custom Range", "custom")
                             ],
                             value="today"
                         )
@@ -459,10 +459,10 @@ class SubscriptionWindow(Container):
                         Select(
                             id="briefing-sources",
                             options=[
-                                ("all", "All Sources"),
-                                ("high_priority", "High Priority Only"),
-                                ("selected", "Selected Sources"),
-                                ("tags", "By Tags")
+                                ("All Sources", "all"),
+                                ("High Priority Only", "high_priority"),
+                                ("Selected Sources", "selected"),
+                                ("By Tags", "tags")
                             ],
                             value="all"
                         )
@@ -473,10 +473,10 @@ class SubscriptionWindow(Container):
                         Select(
                             id="briefing-format",
                             options=[
-                                ("markdown", "Markdown"),
-                                ("html", "HTML"),
-                                ("text", "Plain Text"),
-                                ("json", "JSON")
+                                ("Markdown", "markdown"),
+                                ("HTML", "html"),
+                                ("Plain Text", "text"),
+                                ("JSON", "json")
                             ],
                             value="markdown"
                         )
@@ -519,7 +519,7 @@ class SubscriptionWindow(Container):
                 yield Label("Export subscriptions")
                 with Horizontal():
                     yield Select(
-                        [("opml", "OPML"), ("json", "JSON")],
+                        [("OPML", "opml"), ("JSON", "json")],
                         id="export-format",
                         value="opml"
                     )
