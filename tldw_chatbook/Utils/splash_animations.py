@@ -9519,7 +9519,7 @@ class LavaLampEffect(BaseEffect):
                     styles[y][x] = f"rgb({r},{g},{b})"
 
         self._add_centered_text(grid, styles, self.title, 4, 'bold white on black')
-        self._add_centered_text(grid, styles, self.subtitle, self.height - 4, 'bold white on black')
+        self._add_centered_text(grid, styles, self.subtitle, self.display_height - 4, 'bold white on black')
         return self._grid_to_string(grid, styles)
 
 
