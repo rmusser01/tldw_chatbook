@@ -10,10 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial features pending documentation
 
+## [0.1.6.2] - 2025-08-3
+### Added
+- Textual Serve instructions added to readme
+
+
 ## [0.1.6.1] - 2025-08-3
 ### Added
 - Splashscreen modularization
-- Textual-serve - 
+- Textual-serve - we a webapp now (port 9000, tldw-cli --serve
 
 
 ## [0.1.6.0] - 2025-08-2

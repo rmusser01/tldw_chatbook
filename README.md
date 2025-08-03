@@ -1,6 +1,6 @@
 # tldw_chatbook
 
-A sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. It provides a complete ecosystem for AI-powered interactions including conversation management, character/persona chat, notes with bidirectional file sync, media ingestion, advanced RAG (Retrieval-Augmented Generation) capabilities, and comprehensive LLM evaluation system.
+A sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. It provides a complete ecosystem for AI-powered interactions including conversation management, character/persona chat, notes with bidirectional file sync, media ingestion, advanced RAG (Retrieval-Augmented Generation) capabilities, comprehensive LLM evaluation system, and optional web browser access.
 
 ![Screenshot](https://github.com/rmusser01/tldw_chatbook/blob/main/static/PoC-Frontpage.PNG?raw=true)
 
@@ -28,6 +28,12 @@ pip install -e .
 tldw-cli
 # Or: 
 python3 -m tldw_chatbook.app
+
+# Run in web browser (requires 'web' feature)
+pip install -e ".[web]"
+tldw-cli --serve
+# Or use dedicated command:
+tldw-serve --port 8080
 ```
 
 ### Installation with Optional Features
@@ -44,7 +50,7 @@ pip install -e ".[embeddings_rag,chunker]"
 pip install -e ".[websearch]"
 
 # All optional features
-pip install -e ".[embeddings_rag,chunker,websearch,audio,video,pdf,ebook,nemo,mcp,chatterbox,local_tts,higgs_tts,ocr_docext,debugging,mlx_whisper,diarization,coding_map,local_vllm,local_mlx,local_transformers]"
+pip install -e ".[embeddings_rag,chunker,websearch,audio,video,pdf,ebook,nemo,mcp,chatterbox,local_tts,higgs_tts,ocr_docext,debugging,mlx_whisper,diarization,coding_map,local_vllm,local_mlx,local_transformers,web]"
 
 # Common feature combinations
 pip install -e ".[audio,video]"  # Media transcription
@@ -54,6 +60,7 @@ pip install -e ".[local_tts,chatterbox]"  # Text-to-speech
 pip install -e ".[higgs_tts]"  # Higgs Audio V2 TTS (high-quality, voice cloning)
 pip install -e ".[mcp]"  # Model Context Protocol integration
 pip install -e ".[mlx_whisper]"  # Apple Silicon optimized Whisper
+pip install -e ".[web]"  # Web server for browser-based access
 
 # Development installation
 pip install -e ".[dev]"
@@ -82,6 +89,7 @@ pip install -e ".[dev]"
 | `ocr_docext`                   | OCR and document extraction | docext, gradio_client |
 | `debugging`                    | Metrics and telemetry | prometheus-client, opentelemetry-api |
 | `diarization`                  | Speaker diarization for audio | torch, torchaudio, speechbrain |
+| `web`                          | Web server for browser access | textual-serve |
 
 *Note: `sentence-transformers` and `chromadb` are detected separately and installed automatically when needed.
 
@@ -153,6 +161,11 @@ python scripts/verify_higgs_installation.py
   - View images directly in terminal
   - Screenshot viewing for debugging
   - Vision model support for multimodal LLMs
+- **Web server access** (optional)
+  - Run the TUI in a web browser
+  - Access from any device on your network
+  - No terminal emulator required
+  - Full functionality via browser interface
 
 ### Main Application Tabs
 1. **Chat** - Advanced AI conversation interface with streaming support
@@ -520,6 +533,16 @@ active_cards = ["default", "cyberpunk", "minimalist"]
 animation_speed = 1.0
 ```
 
+Example web server configuration:
+```toml
+[web_server]
+enabled = true
+host = "localhost"  # Use "0.0.0.0" to allow external access
+port = 8000
+title = "tldw chatbook"
+debug = false
+```
+
 ### Environment Variables
 API keys can also be set via environment variables:
 - `OPENAI_API_KEY`
@@ -536,6 +559,49 @@ Located at `~/.local/share/tldw_cli/`:
 - `evals.db`: Evaluation results and benchmarks
 - `subscriptions.db`: Content subscription tracking
 - `search_history.db`: Search query history
+
+## Web Server Access
+
+The application can be run in a web browser using the optional `textual-serve` integration. This allows you to access the full TUI interface through any modern web browser, making it accessible from devices without terminal access or when SSH is not available.
+
+### Installation
+```bash
+pip install -e ".[web]"
+```
+
+### Usage
+
+#### Method 1: Using the --serve flag
+```bash
+tldw-cli --serve
+# With custom options:
+tldw-cli --serve --host 0.0.0.0 --port 8080
+```
+
+#### Method 2: Using the dedicated command
+```bash
+tldw-serve
+# With options:
+tldw-serve --host 0.0.0.0 --port 8080 --title "My TUI App"
+```
+
+### Command-line Options
+- `--host`: Host address to bind to (default: localhost)
+- `--port`: Port number to bind to (default: 8000)
+- `--web-title` / `--title`: Custom title for the web page
+- `--debug`: Enable debug mode (only for tldw-serve)
+
+### Security Considerations
+- By default, the server binds to `localhost` for local access only
+- To allow external access, use `--host 0.0.0.0` but ensure proper firewall configuration
+- The web server runs the application in a subprocess with restricted permissions
+- No shell access is exposed through the web interface
+
+### Use Cases
+- Access the application from tablets or phones
+- Use the TUI on systems without proper terminal emulators
+- Share the interface with team members on the same network
+- Run on a server and access remotely without SSH
 
 ## Upgrading from requirements.txt
 
