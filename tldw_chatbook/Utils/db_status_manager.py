@@ -54,9 +54,9 @@ class DBStatusManager:
             
             # Get database sizes
             db_sizes = {
-                'prompts': self._get_db_size(get_prompts_db_path(), get_formatted_file_size),
-                'chachanotes': self._get_db_size(get_chachanotes_db_path(), get_formatted_file_size),
-                'media': self._get_db_size(get_media_db_path(), get_formatted_file_size)
+                'prompts': self._get_db_size(get_prompts_db_path, get_formatted_file_size),
+                'chachanotes': self._get_db_size(get_chachanotes_db_path, get_formatted_file_size),
+                'media': self._get_db_size(get_media_db_path, get_formatted_file_size)
             }
             
             # Format status string

@@ -8,7 +8,7 @@ This component provides:
 - Analysis display
 """
 
-from typing import TYPE_CHECKING, Dict, Any, Optional, List, Tuple
+from typing import TYPE_CHECKING, Dict, Any, Optional, List, Tuple, Any
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -265,15 +265,33 @@ class MediaViewerPanel(Container):
         padding: 1;
     }
     
+    MediaViewerPanel #analysis-container {
+        height: auto;
+        min-height: 10;
+        max-height: 30;
+        margin: 1;
+    }
+    
     MediaViewerPanel #analysis-display {
         min-height: 5;
         max-height: 30;
-        margin: 1;
         height: auto;
         padding: 1;
         border: solid $primary;
         background: $surface;
         overflow-y: auto;
+    }
+    
+    MediaViewerPanel #analysis-edit-area {
+        min-height: 5;
+        max-height: 30;
+        height: auto;
+        border: solid $primary;
+        background: $surface;
+    }
+    
+    MediaViewerPanel .hidden {
+        display: none;
     }
     
     MediaViewerPanel .provider-row {
@@ -348,6 +366,49 @@ class MediaViewerPanel(Container):
         height: 3;
     }
     
+    MediaViewerPanel .analysis-navigation {
+        layout: horizontal;
+        height: 3;
+        margin-top: 1;
+        margin-bottom: 1;
+        align: center middle;
+    }
+    
+    MediaViewerPanel .analysis-navigation Button {
+        width: 3;
+        margin: 0 1;
+    }
+    
+    MediaViewerPanel #analysis-indicator {
+        width: auto;
+        text-align: center;
+        padding: 0 2;
+        color: $text-muted;
+        margin: 0 1;
+    }
+    
+    MediaViewerPanel .analysis-navigation {
+        margin: 1 0;
+        background: $boost;
+        border: solid $primary;
+        padding: 1;
+        align: center middle;
+    }
+    
+    MediaViewerPanel .analysis-navigation Button {
+        min-width: 3;
+        width: 3;
+        margin: 0 1;
+    }
+    
+    MediaViewerPanel #analysis-date-info {
+        width: 100%;
+        text-align: center;
+        color: $text-muted;
+        margin-top: 0;
+        margin-bottom: 1;
+    }
+    
     MediaViewerPanel .analysis-actions {
         layout: horizontal;
         height: 3;
@@ -377,6 +438,10 @@ class MediaViewerPanel(Container):
     current_analysis: reactive[Optional[str]] = reactive(None)
     has_existing_analysis: reactive[bool] = reactive(False)
     analysis_edit_mode: reactive[bool] = reactive(False)
+    
+    # Multiple analyses support
+    all_analyses: reactive[List[Dict[str, Any]]] = reactive([])
+    current_analysis_index: reactive[int] = reactive(0)
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the viewer panel."""
@@ -538,7 +603,7 @@ class MediaViewerPanel(Container):
                     )
                     
                     # User prompt
-                    yield Label("User Prompt:", classes="prompt-label")
+                    yield Label("User Prompt: (use {content} for specific placement, otherwise content is appended)", classes="prompt-label")
                     yield TextArea(
                         "",
                         id="user-prompt-area",
@@ -552,14 +617,26 @@ class MediaViewerPanel(Container):
                         variant="primary"
                     )
                     
-                    # Analysis display area
-                    yield Markdown("", id="analysis-display")
+                    # Analysis navigation (for multiple analyses)
+                    with Horizontal(classes="analysis-navigation"):
+                        yield Button("◀", id="prev-analysis-btn", disabled=True)
+                        yield Static("Analysis 0/0", id="analysis-indicator")
+                        yield Button("▶", id="next-analysis-btn", disabled=True)
+                    
+                    # Analysis date info
+                    yield Static("", id="analysis-date-info")
+                    
+                    # Analysis display area - both view and edit modes
+                    with Container(id="analysis-container"):
+                        yield Markdown("", id="analysis-display")
+                        yield TextArea("", id="analysis-edit-area", classes="hidden")
                     
                     # Analysis action buttons
                     with Horizontal(classes="analysis-actions"):
                         yield Button("Save", id="save-analysis-btn", variant="success", disabled=True)
                         yield Button("Edit", id="edit-analysis-btn", variant="primary", disabled=True)
                         yield Button("Overwrite", id="overwrite-analysis-btn", variant="warning", disabled=True)
+                        yield Button("Delete", id="delete-analysis-btn", variant="error", disabled=True)
                     
                     # Add some padding at the bottom to ensure scrolling works
                     yield Static("", classes="bottom-spacer")
@@ -673,29 +750,9 @@ class MediaViewerPanel(Container):
         if not self.media_data:
             return
             
-        try:
-            analysis_display = self.query_one("#analysis-display", Markdown)
-            
-            # Check for analysis data
-            analysis = self.media_data.get('analysis', '')
-            if not analysis:
-                # Check for summary as fallback
-                analysis = self.media_data.get('summary', '')
-            
-            if not analysis:
-                analysis_display.update("*No analysis available*")
-                self.has_existing_analysis = False
-                self.current_analysis = None
-            else:
-                analysis_display.update(analysis)
-                self.has_existing_analysis = True
-                self.current_analysis = analysis
-                
-            # Update button states
-            self._update_analysis_button_states()
-            
-        except Exception as e:
-            logger.error(f"Error updating analysis display: {e}")
+        # The new navigation system handles analysis display
+        # This method is called when media is first loaded
+        # The load_all_analyses method will handle displaying analyses
     
     def populate_edit_fields(self) -> None:
         """Populate edit fields with current data."""
@@ -723,6 +780,7 @@ class MediaViewerPanel(Container):
             self.query_one("#metadata-display", Static).update("*No item selected*")
             self.query_one("#content-display", Markdown).update("*No item selected*")
             self.query_one("#analysis-display", Markdown).update("*No item selected*")
+            self.query_one("#analysis-date-info", Static).update("")
             # Clear search when no item is selected
             self.clear_search()
             # Clear search input
@@ -940,6 +998,142 @@ class MediaViewerPanel(Container):
             self.populate_providers()
         except Exception as e:
             logger.debug(f"Could not populate providers: {e}")
+        
+        # Load all analyses for this media item
+        self.load_all_analyses()
+    
+    def load_all_analyses(self) -> None:
+        """Load all analyses (document versions) for the current media item."""
+        if not self.media_data or not self.app_instance.media_db:
+            self.all_analyses = []
+            self.current_analysis_index = 0
+            self._update_analysis_navigation()
+            return
+        
+        try:
+            media_id = self.media_data.get('id')
+            if not media_id:
+                return
+            
+            # Get all document versions with analysis content
+            all_versions = self.app_instance.media_db.get_all_document_versions(
+                media_id=media_id,
+                include_content=False,  # We don't need content, just analysis
+                include_deleted=False
+            )
+            
+            logger.debug(f"Found {len(all_versions)} total versions for media_id={media_id}")
+            
+            # Filter to only versions that have analysis content
+            self.all_analyses = [v for v in all_versions if v.get('analysis_content')]
+            
+            logger.info(f"Found {len(self.all_analyses)} analyses with content out of {len(all_versions)} total versions")
+            
+            # Sort by version number (newest first)
+            self.all_analyses.sort(key=lambda x: x.get('version_number', 0), reverse=True)
+            
+            # Set current index to 0 (most recent) if we have analyses
+            if self.all_analyses:
+                self.current_analysis_index = 0
+                self.has_existing_analysis = True
+                # Display the current analysis
+                self._display_analysis_at_index(0)
+            else:
+                self.current_analysis_index = 0
+                self.has_existing_analysis = False
+                # If no analyses in versions but media has analysis, use it
+                if self.media_data.get('analysis'):
+                    logger.info("No document versions with analysis, but media has analysis field")
+                    # Create a pseudo-version for the existing analysis
+                    self.all_analyses = [{
+                        'version_number': 0,
+                        'analysis_content': self.media_data['analysis'],
+                        'created_at': self.media_data.get('updated_at', ''),
+                        'uuid': None,  # No UUID for legacy analysis
+                    }]
+                    self.has_existing_analysis = True
+                    self._display_analysis_at_index(0)
+            
+            self._update_analysis_navigation()
+            
+        except Exception as e:
+            logger.error(f"Error loading all analyses: {e}", exc_info=True)
+            self.all_analyses = []
+            self.current_analysis_index = 0
+            self._update_analysis_navigation()
+    
+    def _display_analysis_at_index(self, index: int) -> None:
+        """Display the analysis at the given index."""
+        if 0 <= index < len(self.all_analyses):
+            analysis = self.all_analyses[index]
+            analysis_content = analysis.get('analysis_content', '')
+            
+            try:
+                analysis_display = self.query_one("#analysis-display", Markdown)
+                edit_area = self.query_one("#analysis-edit-area", TextArea)
+                date_info = self.query_one("#analysis-date-info", Static)
+                
+                logger.debug(f"Displaying analysis at index {index}: {len(analysis_content)} chars")
+                
+                # Make sure we're in view mode when switching analyses
+                if self.analysis_edit_mode:
+                    self.analysis_edit_mode = False
+                    edit_area.add_class("hidden")
+                    analysis_display.remove_class("hidden")
+                
+                analysis_display.update(analysis_content)
+                self.current_analysis = analysis_content
+                self._update_analysis_button_states()
+                
+                # Update date info
+                created_at = analysis.get('created_at', '')
+                version_num = analysis.get('version_number', 'unsaved')
+                if version_num == 'unsaved':
+                    date_info.update("Unsaved analysis")
+                else:
+                    if created_at:
+                        # Format date nicely
+                        try:
+                            from datetime import datetime
+                            if isinstance(created_at, str):
+                                # Parse ISO format date
+                                dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                                formatted_date = dt.strftime("%Y-%m-%d %H:%M")
+                            else:
+                                formatted_date = str(created_at)
+                            date_info.update(f"Created: {formatted_date}")
+                        except:
+                            date_info.update(f"Version {version_num}")
+                    else:
+                        date_info.update(f"Version {version_num}")
+                
+                logger.debug(f"Analysis displayed successfully")
+            except Exception as e:
+                logger.error(f"Error displaying analysis: {e}")
+    
+    def _update_analysis_navigation(self) -> None:
+        """Update the analysis navigation UI elements."""
+        try:
+            prev_btn = self.query_one("#prev-analysis-btn", Button)
+            next_btn = self.query_one("#next-analysis-btn", Button)
+            indicator = self.query_one("#analysis-indicator", Static)
+            
+            total_analyses = len(self.all_analyses)
+            
+            if total_analyses == 0:
+                prev_btn.disabled = True
+                next_btn.disabled = True
+                indicator.update("No analyses")
+            else:
+                # Update navigation buttons
+                prev_btn.disabled = self.current_analysis_index == 0
+                next_btn.disabled = self.current_analysis_index >= total_analyses - 1
+                
+                # Update indicator (1-based for display)
+                current_display = self.current_analysis_index + 1
+                indicator.update(f"Analysis {current_display}/{total_analyses}")
+        except Exception as e:
+            logger.error(f"Error updating analysis navigation: {e}")
     
     # Analysis Methods
     def populate_providers(self) -> None:
@@ -1081,6 +1275,7 @@ class MediaViewerPanel(Container):
     
     def prepare_analysis_messages(self) -> Tuple[str, str]:
         """Prepare system and user prompts with media content."""
+        logger.debug("Preparing analysis messages")
         try:
             system_area = self.query_one("#system-prompt-area", TextArea)
             user_area = self.query_one("#user-prompt-area", TextArea)
@@ -1088,12 +1283,16 @@ class MediaViewerPanel(Container):
             system_prompt = system_area.text
             user_prompt = user_area.text
             
+            logger.debug(f"Raw prompts: system={len(system_prompt)} chars, user={len(user_prompt)} chars")
+            
             # Replace placeholders with actual media content
             if self.media_data:
                 # Truncate content if too long
                 content = self.media_data.get('content', '')
+                original_content_length = len(content)
                 if len(content) > 10000:
                     content = content[:10000] + "\n\n[Content truncated...]"
+                    logger.info(f"Content truncated from {original_content_length} to {len(content)} characters")
                 
                 replacements = {
                     "{title}": self.media_data.get('title', 'Untitled'),
@@ -1119,16 +1318,28 @@ class MediaViewerPanel(Container):
             save_btn = self.query_one("#save-analysis-btn", Button)
             edit_btn = self.query_one("#edit-analysis-btn", Button)
             overwrite_btn = self.query_one("#overwrite-analysis-btn", Button)
+            delete_btn = self.query_one("#delete-analysis-btn", Button)
             
             if self.analysis_edit_mode:
                 save_btn.disabled = True
                 edit_btn.label = "Cancel Edit"
                 overwrite_btn.disabled = False
+                delete_btn.disabled = True
             else:
                 save_btn.disabled = not self.current_analysis or self.has_existing_analysis
                 edit_btn.label = "Edit"
                 edit_btn.disabled = not self.current_analysis
                 overwrite_btn.disabled = not self.has_existing_analysis
+                # Delete button enabled only when there's a saved analysis with UUID
+                # Check if current analysis has a UUID (not a legacy analysis)
+                has_deletable_analysis = False
+                if self.has_existing_analysis and len(self.all_analyses) > 0:
+                    if 0 <= self.current_analysis_index < len(self.all_analyses):
+                        current_analysis = self.all_analyses[self.current_analysis_index]
+                        # Only enable delete if it has a UUID or is unsaved
+                        has_deletable_analysis = (current_analysis.get('uuid') is not None or 
+                                                  current_analysis.get('version_number') == 'unsaved')
+                delete_btn.disabled = not has_deletable_analysis
                 
         except Exception:
             pass
@@ -1181,9 +1392,15 @@ class MediaViewerPanel(Container):
     @on(Button.Pressed, "#generate-analysis-btn")
     def handle_generate_analysis(self) -> None:
         """Handle generate analysis button press."""
+        logger.info("Generate analysis button pressed")
+        
         if not self.media_data:
+            logger.warning("No media item selected")
             self.app_instance.notify("No media item selected", severity="warning")
             return
+        
+        logger.debug(f"Media data available: id={self.media_data.get('id')}, "
+                    f"title='{self.media_data.get('title', 'Unknown')}'")
         
         try:
             # Get selected provider and model
@@ -1193,14 +1410,21 @@ class MediaViewerPanel(Container):
             provider = provider_select.value if provider_select.value != Select.BLANK else None
             model = model_select.value if model_select.value != Select.BLANK else None
             
+            logger.info(f"Selected provider: {provider}, model: {model}")
+            
             if not provider or not model:
+                logger.warning("Provider or model not selected")
                 self.app_instance.notify("Please select a provider and model", severity="warning")
                 return
             
             # Get prompts from text areas
             system_prompt, user_prompt = self.prepare_analysis_messages()
             
+            logger.debug(f"Prompts prepared: system_prompt length={len(system_prompt or '')}, "
+                        f"user_prompt length={len(user_prompt or '')}")
+            
             if not system_prompt and not user_prompt:
+                logger.warning("No prompts provided")
                 self.app_instance.notify("Please provide at least one prompt", severity="warning")
                 return
             
@@ -1227,6 +1451,11 @@ class MediaViewerPanel(Container):
             
             # Post analysis request event
             from ...Event_Handlers.media_events import MediaAnalysisRequestEvent
+            
+            logger.info(f"Posting MediaAnalysisRequestEvent for media_id={self.media_data['id']}")
+            logger.debug(f"Event parameters: provider={provider.lower()}, model={model}, "
+                        f"temperature={temperature}, top_p={top_p}, min_p={min_p}, max_tokens={max_tokens}")
+            
             self.post_message(MediaAnalysisRequestEvent(
                 media_id=self.media_data['id'],
                 provider=provider.lower(),  # Normalize provider name
@@ -1240,17 +1469,44 @@ class MediaViewerPanel(Container):
                 type_slug=""  # Will be set by MediaWindow
             ))
             
+            logger.debug("MediaAnalysisRequestEvent posted successfully")
+            
             # Show loading state
             analysis_display = self.query_one("#analysis-display", Markdown)
             analysis_display.update("*Generating analysis...*")
+            logger.debug("Analysis display updated to show loading state")
             
             # Store current analysis as None while generating
             self.current_analysis = None
             self._update_analysis_button_states()
             
         except Exception as e:
-            logger.error(f"Error generating analysis: {e}")
+            logger.error(f"Error generating analysis: {e}", exc_info=True)
             self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
+    
+    @on(Button.Pressed, "#prev-analysis-btn")
+    def handle_prev_analysis(self) -> None:
+        """Navigate to the previous analysis."""
+        logger.debug(f"Prev button pressed. Current index: {self.current_analysis_index}, Total: {len(self.all_analyses)}")
+        if self.current_analysis_index > 0:
+            self.current_analysis_index -= 1
+            logger.info(f"Navigating to previous analysis: index {self.current_analysis_index}")
+            self._display_analysis_at_index(self.current_analysis_index)
+            self._update_analysis_navigation()
+        else:
+            logger.debug("Already at first analysis")
+    
+    @on(Button.Pressed, "#next-analysis-btn")
+    def handle_next_analysis(self) -> None:
+        """Navigate to the next analysis."""
+        logger.debug(f"Next button pressed. Current index: {self.current_analysis_index}, Total: {len(self.all_analyses)}")
+        if self.current_analysis_index < len(self.all_analyses) - 1:
+            self.current_analysis_index += 1
+            logger.info(f"Navigating to next analysis: index {self.current_analysis_index}")
+            self._display_analysis_at_index(self.current_analysis_index)
+            self._update_analysis_navigation()
+        else:
+            logger.debug("Already at last analysis")
     
     @on(Button.Pressed, "#save-analysis-btn")
     def handle_save_analysis(self) -> None:
@@ -1268,43 +1524,39 @@ class MediaViewerPanel(Container):
     @on(Button.Pressed, "#edit-analysis-btn")
     def handle_edit_analysis(self) -> None:
         """Handle edit analysis button press."""
+        logger.info(f"Edit button pressed. Current analysis: {len(self.current_analysis) if self.current_analysis else 0} chars")
+        
         if not self.current_analysis:
+            logger.warning("No current analysis to edit")
             return
         
         self.analysis_edit_mode = not self.analysis_edit_mode
+        logger.info(f"Edit mode toggled to: {self.analysis_edit_mode}")
         
-        if self.analysis_edit_mode:
-            # Switch to edit mode - convert markdown to textarea
-            try:
-                analysis_display = self.query_one("#analysis-display", Markdown)
-                # Store current markdown content
-                current_content = self.current_analysis
-                
-                # Replace markdown with textarea
-                parent = analysis_display.parent
-                analysis_display.remove()
-                
-                edit_area = TextArea(current_content, id="analysis-edit-area")
-                parent.mount(edit_area, before=0)
-                
-            except Exception as e:
-                logger.error(f"Error entering edit mode: {e}")
-        else:
-            # Exit edit mode - convert textarea back to markdown
-            try:
-                edit_area = self.query_one("#analysis-edit-area", TextArea)
-                # Get edited content
+        try:
+            analysis_display = self.query_one("#analysis-display", Markdown)
+            edit_area = self.query_one("#analysis-edit-area", TextArea)
+            
+            if self.analysis_edit_mode:
+                # Switch to edit mode
+                logger.debug("Switching to edit mode")
+                edit_area.load_text(self.current_analysis)
+                analysis_display.add_class("hidden")
+                edit_area.remove_class("hidden")
+                # Focus the text area
+                edit_area.focus()
+                logger.info("Edit mode activated")
+            else:
+                # Exit edit mode
+                logger.debug("Exiting edit mode")
                 self.current_analysis = edit_area.text
+                analysis_display.update(self.current_analysis)
+                edit_area.add_class("hidden")
+                analysis_display.remove_class("hidden")
+                logger.info("Edit mode deactivated")
                 
-                # Replace textarea with markdown
-                parent = edit_area.parent
-                edit_area.remove()
-                
-                analysis_display = Markdown(self.current_analysis, id="analysis-display")
-                parent.mount(analysis_display, before=0)
-                
-            except Exception as e:
-                logger.error(f"Error exiting edit mode: {e}")
+        except Exception as e:
+            logger.error(f"Error toggling edit mode: {e}", exc_info=True)
         
         self._update_analysis_button_states()
     
@@ -1337,3 +1589,129 @@ class MediaViewerPanel(Container):
         # Exit edit mode if active
         if self.analysis_edit_mode:
             self.handle_edit_analysis()
+    
+    @on(Button.Pressed, "#delete-analysis-btn")
+    def handle_delete_analysis(self) -> None:
+        """Handle delete analysis button press."""
+        if not self.media_data or len(self.all_analyses) == 0:
+            return
+        
+        # Get the current analysis being displayed
+        if 0 <= self.current_analysis_index < len(self.all_analyses):
+            self._run_delete_confirmation()
+    
+    @work(exclusive=True)
+    async def _run_delete_confirmation(self) -> None:
+        """Show confirmation dialog and handle deletion."""
+        if not self.media_data or len(self.all_analyses) == 0:
+            return
+            
+        # Get the current analysis being displayed
+        if not (0 <= self.current_analysis_index < len(self.all_analyses)):
+            return
+            
+        current_analysis_data = self.all_analyses[self.current_analysis_index]
+        analysis_version = current_analysis_data.get('version_number', 'unsaved')
+        analysis_uuid = current_analysis_data.get('uuid', '')
+        
+        from textual.widgets import Button, Label
+        from textual.containers import Container, Horizontal
+        from textual.screen import ModalScreen
+        
+        class DeleteConfirmDialog(ModalScreen):
+            """Confirmation dialog for analysis deletion."""
+            DEFAULT_CSS = """
+            DeleteConfirmDialog {
+                align: center middle;
+            }
+            
+            DeleteConfirmDialog > Container {
+                width: 60;
+                height: 11;
+                background: $surface;
+                border: thick $primary;
+                padding: 1;
+            }
+            
+            DeleteConfirmDialog .dialog-content {
+                width: 100%;
+                height: auto;
+                content-align: center middle;
+                margin-bottom: 2;
+            }
+            
+            DeleteConfirmDialog .dialog-buttons {
+                layout: horizontal;
+                width: 100%;
+                height: 3;
+                align: center middle;
+            }
+            
+            DeleteConfirmDialog .dialog-buttons Button {
+                margin: 0 1;
+            }
+            """
+            
+            def __init__(self, version_number: Any):
+                super().__init__()
+                self.version_number = version_number
+                self.result = False
+            
+            def compose(self) -> ComposeResult:
+                with Container():
+                    with Container(classes="dialog-content"):
+                        if self.version_number == 'unsaved':
+                            yield Label("Delete this unsaved analysis?")
+                        else:
+                            yield Label(f"Delete analysis version {self.version_number}?")
+                        yield Label("This action cannot be undone.", classes="warning")
+                    with Horizontal(classes="dialog-buttons"):
+                        yield Button("Delete", variant="error", id="confirm-delete")
+                        yield Button("Cancel", variant="default", id="cancel-delete")
+            
+            @on(Button.Pressed, "#confirm-delete")
+            def confirm(self) -> None:
+                self.result = True
+                self.dismiss()
+            
+            @on(Button.Pressed, "#cancel-delete")
+            def cancel(self) -> None:
+                self.result = False
+                self.dismiss()
+        
+        # Show dialog
+        dialog = DeleteConfirmDialog(analysis_version)
+        await self.app.push_screen(dialog, wait_for_dismiss=True)
+        
+        if dialog.result:
+            # Perform deletion
+            if analysis_version != 'unsaved' and analysis_uuid:
+                # Delete from database (only if we have a UUID)
+                from ...Event_Handlers.media_events import MediaAnalysisDeleteEvent
+                self.post_message(MediaAnalysisDeleteEvent(
+                    media_id=self.media_data['id'],
+                    version_uuid=analysis_uuid,
+                    type_slug=""  # Will be set by MediaWindow
+                ))
+            else:
+                # For unsaved analyses or legacy analyses without UUID
+                # Just remove from local list
+                self.all_analyses.pop(self.current_analysis_index)
+                # Adjust index if needed
+                if self.current_analysis_index >= len(self.all_analyses):
+                    self.current_analysis_index = max(0, len(self.all_analyses) - 1)
+                # Update display
+                if self.all_analyses:
+                    self._display_analysis_at_index(self.current_analysis_index)
+                else:
+                    # No more analyses - clear the display
+                    self.current_analysis = None
+                    self.has_existing_analysis = False
+                    # Clear the analysis display
+                    try:
+                        analysis_display = self.query_one("#analysis-display", Markdown)
+                        analysis_display.update("*No analysis available for this media item.*")
+                    except Exception as e:
+                        logger.error(f"Error clearing analysis display: {e}")
+                    self._update_analysis_button_states()
+                self._update_analysis_navigation()
