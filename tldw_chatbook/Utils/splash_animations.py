@@ -9427,8 +9427,8 @@ class PsychedelicMandalaEffect(BaseEffect):
                         b = int(128 + 127 * math.sin(math.radians(hue + 240)))
                         styles[y][x] = f"rgb({r},{g},{b})"
 
-        self._add_centered_text(grid, styles, self.title, self.height // 2 - 1, 'bold white on black')
-        self._add_centered_text(grid, styles, self.subtitle, self.height // 2 + 1, 'bold white on black')
+        self._add_centered_text(grid, styles, self.title, self.display_height // 2 - 1, 'bold white on black')
+        self._add_centered_text(grid, styles, self.subtitle, self.display_height // 2 + 1, 'bold white on black')
 
         return self._grid_to_string(grid, styles)
 
