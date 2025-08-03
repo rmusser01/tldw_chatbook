@@ -36,7 +36,6 @@ classifiers = [
 # --- Dependencies ---
 dependencies = [
     "chardet",
-    "cryptography",
     "httpx",
     "loguru",
     "textual>=3.3.0",
@@ -243,6 +242,7 @@ subscriptions = [
     "markdown",  # For HTML generation from markdown
     "schedule",  # For scheduled tasks
     "feedparser",  # For RSS feed parsing
+    "cryptography", # Security.py
 ]
 
 
