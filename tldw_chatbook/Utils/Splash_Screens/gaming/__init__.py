@@ -1,0 +1,1 @@
+"""Gaming and retro game inspired splash screen effects."""

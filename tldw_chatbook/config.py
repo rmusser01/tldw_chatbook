@@ -2541,6 +2541,14 @@ max_export_size_mb = 100  # Maximum size for exports in MB
 
 # Selection profiles directory
 profiles_directory = "~/.config/tldw_cli/github_profiles"  # Where to store selection profiles
+
+[web_server]
+# Web server configuration for running tldw_chatbook in a browser
+enabled = true  # Enable web server functionality
+host = "localhost"  # Host address to bind to
+port = 8000  # Port to bind to
+title = "tldw chatbook"  # Title for the web page
+debug = false  # Enable debug mode for development
 """
 
 try:

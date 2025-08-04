@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tldw_chatbook"
-version = "0.1.6.0"
+version = "0.1.6.2"
 authors = [
   { name="Robert Musser", email="contact@rmusser.net" },
 ]
@@ -244,6 +244,9 @@ subscriptions = [
     "feedparser",  # For RSS feed parsing
     "cryptography", # Security.py
 ]
+web = [
+    "textual-serve",  # Web server for running Textual apps in browser
+]
 
 
 [project.urls]
@@ -258,6 +261,8 @@ subscriptions = [
 # Points to the main function in your tldw_chatbook package's app module.
 # Structure: project_root/tldw_chatbook/app.py, function main_cli_runner
 tldw-cli = "tldw_chatbook.app:main_cli_runner"
+# Direct web server entry point
+tldw-serve = "tldw_chatbook.Web_Server.serve:main"
 
 [tool.setuptools.packages.find]
 where = ["."]  # Look for packages in the current directory (where pyproject.toml is)

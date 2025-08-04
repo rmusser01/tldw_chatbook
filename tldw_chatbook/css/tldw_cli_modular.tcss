@@ -7710,11 +7710,12 @@ Select:hover {
 /* Main splash screen container */
 SplashScreen, .splash-screen {
     layer: overlay;
-    background: $background;
+    background: black;
     width: 100%;
     height: 100%;
     align: center middle;
     dock: top;
+    layout: vertical;
 }
 
 /* Center container for splash content */
@@ -7741,12 +7742,30 @@ SplashScreen, .splash-screen {
     margin: 0;
 }
 
+/* Actual splash display element */
+#splash-display, .splash-display {
+    width: 100%;
+    height: 1fr;
+    content-align: center middle;
+    text-align: center;
+    margin: 0;
+    padding: 1;
+    color: $text;
+    background: transparent;
+}
+
 /* Progress text */
 #splash-progress-text, .splash-progress-text {
     width: 100%;
     text-align: center;
     color: $text-muted;
     margin-bottom: 1;
+}
+
+/* Progress bar */
+#splash-progress, .splash-progress {
+    width: 80%;
+    align: center middle;
 }
 
 /* Progress bar styling */

@@ -86,6 +86,9 @@ DEPENDENCIES_AVAILABLE = {
     'markdown': False,
     'schedule': False,
     'feedparser': False,
+    # Web server
+    'web': False,
+    'textual_serve': False,
 }
 
 # Store actual modules for conditional use
@@ -618,6 +621,21 @@ def check_subscriptions_deps() -> bool:
     
     return subscriptions_available
 
+def check_web_server_deps() -> bool:
+    """Check dependencies needed for web server functionality."""
+    textual_serve_available = check_dependency('textual_serve')
+    
+    web_available = textual_serve_available
+    DEPENDENCIES_AVAILABLE['web'] = web_available
+    DEPENDENCIES_AVAILABLE['textual_serve'] = textual_serve_available
+    
+    if web_available:
+        logger.info("✅ Web server dependencies found. Textual-serve is available.")
+    else:
+        logger.warning("⚠️ Web server dependencies missing. Install with: pip install tldw_chatbook[web]")
+    
+    return web_available
+
 def create_unavailable_feature_handler(feature_name: str, suggestion: str = "") -> Callable:
     """
     Create a function that raises an informative error when a feature is unavailable.
@@ -719,6 +737,9 @@ def reset_dependency_checks():
         'markdown': False,
         'schedule': False,
         'feedparser': False,
+        # Web server
+        'web': False,
+        'textual_serve': False,
     }
     MODULES = {}
     logger.debug("Reset dependency checks")
@@ -756,6 +777,7 @@ def initialize_dependency_checks():
     check_mcp_deps()
     check_mindmap_available()
     check_subscriptions_deps()
+    check_web_server_deps()
     
     # Log summary
     enabled_features = [name for name, available in DEPENDENCIES_AVAILABLE.items() if available]

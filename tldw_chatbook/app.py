@@ -1475,12 +1475,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Check if splash screen is enabled
         splash_enabled = get_cli_setting("splash_screen", "enabled", True)
+        logging.info(f"Splash screen enabled: {splash_enabled}")
         if splash_enabled:
             # Get splash screen configuration
             splash_duration = get_cli_setting("splash_screen", "duration", 1.5)
             splash_skip = get_cli_setting("splash_screen", "skip_on_keypress", True)
             splash_progress = get_cli_setting("splash_screen", "show_progress", True)
             splash_card = get_cli_setting("splash_screen", "card_selection", "random")
+            logging.info(f"Creating splash screen - duration: {splash_duration}, card: {splash_card}")
             
             # Create and yield splash screen
             self._splash_screen_widget = SplashScreen(
@@ -1492,6 +1494,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
             self.splash_screen_active = True
             yield self._splash_screen_widget
+            logging.info("Splash screen yielded, returning early from compose")
             
             # Important: Return early to only show splash screen initially
             # The main UI will be mounted after splash screen is closed
@@ -2500,7 +2503,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Update splash screen progress only if splash screen is active
         if self.splash_screen_active and self._splash_screen_widget:
-            self._splash_screen_widget.update_progress(0.3, "Setting up logging...")
+            try:
+                self._splash_screen_widget.update_progress(0.3, "Setting up logging...")
+            except Exception as e:
+                self.loguru_logger.warning(f"Failed to update splash screen progress: {e}")
         
         # The Logs window is now created as a real window during compose,
         # so the RichLog widget should be available for logging setup
@@ -2610,7 +2616,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
             # Update splash screen progress only if splash screen is active
             if self.splash_screen_active and self._splash_screen_widget:
-                self._splash_screen_widget.update_progress(0.5, f"Loading user interface...{splashscreen_message_selection}")
+                try:
+                    self._splash_screen_widget.update_progress(0.5, f"Loading user interface...{splashscreen_message_selection}")
+                except Exception as e:
+                    self.loguru_logger.warning(f"Failed to update splash screen progress: {e}")
 
         # Only schedule post-mount setup if splash screen is not active
         if not self.splash_screen_active:
@@ -2685,7 +2694,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Update splash screen progress (defensive check - shouldn't happen if splash was shown)
         if self.splash_screen_active and self._splash_screen_widget:
-            self._splash_screen_widget.update_progress(0.7, "Configuring providers...")
+            try:
+                self._splash_screen_widget.update_progress(0.7, "Configuring providers...")
+            except Exception as e:
+                self.loguru_logger.warning(f"Failed to update splash screen progress: {e}")
         
         # Removed populate_llm_help_texts from here - it's called when LLM tab is shown instead
         phase_start = time.perf_counter()
@@ -2786,7 +2798,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Update splash screen progress to completion (defensive check)
         if self.splash_screen_active and self._splash_screen_widget:
-            self._splash_screen_widget.update_progress(1.0, "Ready!")
+            try:
+                self._splash_screen_widget.update_progress(1.0, "Ready!")
+            except Exception as e:
+                self.loguru_logger.warning(f"Failed to update splash screen progress: {e}")
 
         # If initial tab is CCP, trigger its initial search.
         # This should happen *after* current_tab is set.
@@ -4488,8 +4503,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 )
                 self.push_screen(dialog)
     
-    @on(SplashScreenClosed)
-    async def on_splash_screen_closed(self, event: SplashScreenClosed) -> None:
+    @on(SplashScreen.Closed)
+    async def on_splash_screen_closed(self, event: SplashScreen.Closed) -> None:
         """Handle splash screen closing."""
         self.splash_screen_active = False
         logger.debug("Splash screen closed, mounting main UI")
@@ -5455,6 +5470,54 @@ def main_cli_runner():
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
+    # Parse command line arguments
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="tldw chatbook - A Textual TUI for chatting with LLMs",
+        prog="tldw-cli"
+    )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Run the application as a web server"
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        help="Host address for web server (default: localhost)"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        help="Port for web server (default: 8000)"
+    )
+    parser.add_argument(
+        "--web-title",
+        type=str,
+        help="Title for the web page"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode for web server"
+    )
+    
+    args = parser.parse_args()
+    
+    # If --serve flag is provided, run as web server
+    if args.serve:
+        from .Web_Server.serve import run_web_server
+        
+        loguru_logger.info("Starting tldw_chatbook in web server mode")
+        run_web_server(
+            host=args.host,
+            port=args.port,
+            title=args.web_title,
+            debug=args.debug
+        )
+        return  # Exit after web server stops
+    
+    # Otherwise, run as normal TUI app
     # Create instance with early logging flag
     app_instance = TldwCli()
     # Set the early logging flag so _setup_logging knows logging was already initialized
