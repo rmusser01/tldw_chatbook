@@ -124,7 +124,7 @@ DATA_FILES = [
 OPTIONS = {{
     'argv_emulation': False,
     'packages': ['tldw_chatbook', 'textual', 'rich', 'httpx', 'pydantic'],
-    'iconfile': 'assets/icon.icns',
+    'iconfile': '../assets/icon.icns',
     'plist': {{
         'CFBundleName': '{self.app_name}',
         'CFBundleDisplayName': '{PRODUCT_NAME}',
