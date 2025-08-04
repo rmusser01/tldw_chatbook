@@ -57,6 +57,7 @@ dependencies = [
     "aiofiles",
     "textual-image",
     "anytree",
+    "tqdm",
 ]
 
 # --- Optional Dependencies ---

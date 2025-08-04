@@ -116,14 +116,15 @@ from setuptools import setup
 
 APP = ['{self.project_root}/tldw_chatbook/app.py']
 DATA_FILES = [
-    ('css', ['{self.project_root}/tldw_chatbook/css']),
-    ('Config_Files', ['{self.project_root}/tldw_chatbook/Config_Files']),
+    ('css', glob.glob(f"{self.project_root}/tldw_chatbook/css/*")),
+    ('Config_Files', glob.glob(f"{self.project_root}/tldw_chatbook/Config_Files/*")),
+]
 ]
 
 OPTIONS = {{
     'argv_emulation': False,
     'packages': ['tldw_chatbook', 'textual', 'rich', 'httpx', 'pydantic'],
-    'iconfile': 'assets/icon.icns',
+    'iconfile': '../assets/icon.icns',
     'plist': {{
         'CFBundleName': '{self.app_name}',
         'CFBundleDisplayName': '{PRODUCT_NAME}',
