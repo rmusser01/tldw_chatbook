@@ -4,6 +4,8 @@ import random
 import time
 from typing import Optional, Any, List, Tuple
 
+from rich.markup import escape
+
 from ..base_effect import BaseEffect, register_effect
 
 
@@ -64,7 +66,7 @@ class AsciiMorphEffect(BaseEffect):
         progress = min(1.0, elapsed_time / self.duration)
 
         if progress >= 1.0:
-            return "\n".join(self.end_lines).replace('[',r'\[')
+            return escape("\n".join(self.end_lines))
 
         if self.morph_style == "dissolve" or self.morph_style == "random_pixel":
             num_chars_to_change = int(progress * len(self.all_positions))

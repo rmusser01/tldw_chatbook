@@ -6,7 +6,7 @@ import time
 from typing import Optional, Any, List, Tuple
 from dataclasses import dataclass
 
-from ..base_effect import BaseEffect, register_effect
+from ..base_effect import BaseEffect, register_effect, ESCAPED_OPEN_BRACKET
 
 
 @register_effect("raindrops")

@@ -6,7 +6,7 @@ import random
 import time
 from typing import Optional, Any, List, Tuple
 
-from ..base_effect import BaseEffect, register_effect
+from ..base_effect import BaseEffect, register_effect, ESCAPED_OPEN_BRACKET
 
 
 @register_effect("spotlight")

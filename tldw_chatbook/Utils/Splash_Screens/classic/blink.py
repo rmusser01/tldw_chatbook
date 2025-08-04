@@ -3,6 +3,7 @@
 from rich.style import Style
 import time
 from typing import Optional, Any, List, Tuple
+from rich.text import Text
 
 from ..base_effect import BaseEffect, register_effect
 

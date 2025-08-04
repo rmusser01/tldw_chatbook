@@ -136,7 +136,7 @@ class HolographicInterfaceEffect(BaseEffect):
                 char = grid[y][x]
                 style = style_grid[y][x]
                 if style:
-                    line += f"[{style}]{char}[/{style.split()[0]}]"
+                    line += f"[{style}]{char}[/]"
                 else:
                     line += char
             lines.append(line)
