@@ -57,7 +57,6 @@ dependencies = [
     "aiofiles",
     "textual-image",
     "anytree",
-    "tqdm",
 ]
 
 # --- Optional Dependencies ---
@@ -247,6 +246,7 @@ subscriptions = [
     "feedparser",  # For RSS feed parsing
     "cryptography", # Security.py
     "defusedxml",  # For safe XML parsing
+    "tqdm",
 ]
 web = [
     "textual-serve",  # Web server for running Textual apps in browser
