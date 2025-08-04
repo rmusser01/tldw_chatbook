@@ -17,13 +17,13 @@ os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
-__version__ = "0.1.0"
+__version__ = "0.1.6.2"
 __author__ = "Robert Musser"
 __email__ = "contact@rmusser.net"
 __license__ = "AGPLv3+"
 
 # Version tuple for programmatic comparison
-VERSION_TUPLE = (0, 1, 0)
+VERSION_TUPLE = (0, 1, 6, 2)
 
 # Export key components when package is imported
 __all__ = [

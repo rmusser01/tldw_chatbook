@@ -89,6 +89,8 @@ DEPENDENCIES_AVAILABLE = {
     # Web server
     'web': False,
     'textual_serve': False,
+    # Progress bars
+    'tqdm': False,
 }
 
 # Store actual modules for conditional use
@@ -602,9 +604,10 @@ def check_subscriptions_deps() -> bool:
     markdown_available = check_dependency('markdown')
     schedule_available = check_dependency('schedule')
     feedparser_available = check_dependency('feedparser')
+    defusedxml_available = check_dependency('defusedxml')
     
-    # All three are needed for subscriptions to work properly
-    subscriptions_available = markdown_available and schedule_available and feedparser_available
+    # All are needed for subscriptions to work properly
+    subscriptions_available = markdown_available and schedule_available and feedparser_available and defusedxml_available
     DEPENDENCIES_AVAILABLE['subscriptions'] = subscriptions_available
     
     if subscriptions_available:
@@ -617,6 +620,8 @@ def check_subscriptions_deps() -> bool:
             missing.append("schedule")
         if not feedparser_available:
             missing.append("feedparser")
+        if not defusedxml_available:
+            missing.append("defusedxml")
         logger.warning(f"⚠️ Subscriptions dependencies missing: {', '.join(missing)}")
     
     return subscriptions_available
@@ -758,6 +763,7 @@ def initialize_dependency_checks():
     check_dependency('fugashi')
     check_dependency('flashrank')
     check_dependency('cohere')
+    check_dependency('tqdm')
     
     # Check grouped features
     check_embeddings_rag_deps()

@@ -1,5 +1,0 @@
-pytest
-pytest-asyncio
-textual
-rich
-loguru

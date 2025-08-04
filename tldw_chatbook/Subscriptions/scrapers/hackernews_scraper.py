@@ -15,8 +15,12 @@ from urllib.parse import urlparse, quote, urlencode
 #
 # Third-Party Imports
 import httpx
-import defusedxml.ElementTree as ET
 from loguru import logger
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:
+    import xml.etree.ElementTree as ET
+    logger.warning("defusedxml not available, using standard xml.etree. Install defusedxml for better security.")
 #
 # Local Imports
 from ..web_scraping_pipelines import BaseScrapingPipeline, ScrapedItem, ScrapingConfig

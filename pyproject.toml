@@ -98,6 +98,8 @@ websearch = [
     "nltk",
     "scikit-learn",
     "aiohttp",
+    "defusedxml",
+    "tqdm",
 ]
 local_vllm = ["vllm"]
 local_mlx = ["mlx-lm"]
@@ -243,6 +245,7 @@ subscriptions = [
     "schedule",  # For scheduled tasks
     "feedparser",  # For RSS feed parsing
     "cryptography", # Security.py
+    "defusedxml",  # For safe XML parsing
 ]
 web = [
     "textual-serve",  # Web server for running Textual apps in browser

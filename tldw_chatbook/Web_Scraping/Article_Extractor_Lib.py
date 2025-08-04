@@ -87,7 +87,13 @@ except ImportError:
     TRAFILATURA_AVAILABLE = False
     trafilatura = None
 
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    def tqdm(iterable, *args, **kwargs):
+        return iterable
 #
 # Import Local
 from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
