@@ -23,7 +23,7 @@ The LLM evaluation system in tldw_chatbook provides a comprehensive framework fo
 - **Comprehensive Documentation**: [EVALUATION-SYSTEM.md](../../Docs/Development/EVALUATION-SYSTEM.md)
 - **Implementation Status**: [EVALUATIONS-STATUS.md](../../Docs/Development/EVALUATIONS-STATUS.md)
 - **User Guide**: [EVALUATIONS-QUICKSTART.md](../../Docs/Development/EVALUATIONS-QUICKSTART.md)
-- **Sample Tasks**: [/sample_evaluation_tasks/](../../sample_evaluation_tasks/)
+- **Sample Tasks**: [/sample_evaluation_tasks/](../../Helper_Scripts/sample_evaluation_tasks/)
 
 ## Module Structure
 

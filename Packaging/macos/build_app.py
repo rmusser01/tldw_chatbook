@@ -153,8 +153,29 @@ setup(
         
         return result.returncode == 0
     
+    def process_info_plist_template(self):
+        """Process Info.plist.template to create Info.plist with actual values"""
+        template_path = Path(__file__).parent / "Info.plist.template"
+        output_path = self.build_dir / "Info.plist"
+        
+        if template_path.exists():
+            content = template_path.read_text()
+            content = content.replace("__VERSION__", VERSION)
+            content = content.replace("__COPYRIGHT__", COPYRIGHT)
+            output_path.write_text(content)
+            print(f"Created Info.plist from template with version {VERSION}")
+    
     def create_launcher_script(self):
         """Create launcher script for terminal"""
+        # First, rename the original executable
+        app_path = self.dist_dir / f"{self.app_name}.app"
+        macos_dir = app_path / "Contents" / "MacOS"
+        original_exec = macos_dir / "tldw_chatbook"
+        renamed_exec = macos_dir / "tldw_chatbook_exec"
+        
+        if original_exec.exists():
+            original_exec.rename(renamed_exec)
+        
         launcher_content = '''#!/bin/bash
 # Launcher for tldw chatbook
 
@@ -164,16 +185,15 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Check if running in Terminal.app
 if [[ "$TERM_PROGRAM" != "Apple_Terminal" && "$TERM_PROGRAM" != "iTerm.app" ]]; then
     # Not in a proper terminal, launch in Terminal.app
-    osascript -e "tell application \\"Terminal\\" to do script \\"'$DIR/tldw-chatbook' $@\\""
+    osascript -e "tell application \\"Terminal\\" to do script \\"'$DIR/tldw_chatbook' $@\\""
 else
-    # Already in terminal, just run
+    # Already in terminal, just run the renamed executable
     cd "$DIR"
-    ./MacOS/tldw_chatbook "$@"
+    ./tldw_chatbook_exec "$@"
 fi
 '''
         
-        app_path = self.dist_dir / f"{self.app_name}.app"
-        launcher_path = app_path / "Contents" / "MacOS" / "tldw-chatbook"
+        launcher_path = macos_dir / "tldw_chatbook"
         launcher_path.write_text(launcher_content)
         os.chmod(launcher_path, 0o755)
     

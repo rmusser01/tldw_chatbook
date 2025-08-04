@@ -6,8 +6,25 @@ set -e
 # Configuration
 APP_NAME="tldw chatbook"
 DMG_NAME="tldw-chatbook"
-VERSION="0.1.6.2"
+
+# Get version from command line argument or read from version.py
+if [ -n "$1" ]; then
+    VERSION="$1"
+else
+    # Try to read from version.py
+    VERSION_PY="${BASH_SOURCE%/*}/../../common/version.py"
+    if [ -f "$VERSION_PY" ]; then
+        VERSION=$(python3 -c "exec(open('$VERSION_PY').read()); print(VERSION)")
+    else
+        echo "Error: No version specified and version.py not found"
+        echo "Usage: $0 [VERSION]"
+        exit 1
+    fi
+fi
+
 VOLUME_NAME="tldw chatbook ${VERSION}"
+
+echo "Building DMG for version: ${VERSION}"
 
 # Paths
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"

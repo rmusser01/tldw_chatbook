@@ -7,8 +7,12 @@
 
 ; Constants
 !define PRODUCT_NAME "tldw chatbook"
-!define PRODUCT_VERSION "0.1.6.2"
-!define PRODUCT_PUBLISHER "TLDW Project"
+!ifndef PRODUCT_VERSION
+  !define PRODUCT_VERSION "0.1.6.2"
+!endif
+!ifndef PRODUCT_PUBLISHER
+  !define PRODUCT_PUBLISHER "TLDW Project"
+!endif
 !define PRODUCT_WEB_SITE "https://github.com/rmusser01/tldw_chatbook"
 !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\tldw-cli.exe"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"

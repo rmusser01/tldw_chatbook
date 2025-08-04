@@ -11,6 +11,10 @@ from pathlib import Path
 import argparse
 import zipfile
 
+# Add parent directory to path to import version
+sys.path.insert(0, str(Path(__file__).parent.parent / "common"))
+from version import VERSION, COMPANY_NAME
+
 def check_requirements():
     """Check if all required tools are installed"""
     tools = {
@@ -113,9 +117,16 @@ def build_installer(nsis_path=None):
         print("ERROR: makensis not found")
         return False
     
-    # Run NSIS
-    result = subprocess.run([nsis_path, str(nsi_script)], 
-                          cwd=Path(__file__).parent)
+    # Run NSIS with version and publisher defines
+    cmd = [
+        nsis_path,
+        f"/DPRODUCT_VERSION={VERSION}",
+        f"/DPRODUCT_PUBLISHER={COMPANY_NAME}",
+        str(nsi_script)
+    ]
+    
+    print(f"Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, cwd=Path(__file__).parent)
     
     return result.returncode == 0
 
