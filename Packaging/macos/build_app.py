@@ -265,7 +265,7 @@ def main():
         try:
             subprocess.run([sys.executable, "-m", "nuitka", "--version"], 
                           capture_output=True, check=True)
-        except:
+        except (subprocess.CalledProcessError, FileNotFoundError):
             print("ERROR: Nuitka not found. Install with: pip install nuitka")
             sys.exit(1)
     else:

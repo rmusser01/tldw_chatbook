@@ -106,9 +106,10 @@ Section "Web Server Support" SEC02
 SectionEnd
 
 Section "Windows Terminal Integration" SEC03
-  ; Check if Windows Terminal is installed
-  ReadRegStr $0 HKCU "Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe" "PackageID"
-  ${If} $0 == ""
+  ; Check if Windows Terminal is installed by looking for wt.exe in PATH
+  nsExec::ExecToLog 'where wt.exe'
+  Pop $0
+  ${If} $0 != 0
     MessageBox MB_YESNO "Windows Terminal is not installed. Would you like to download it?" IDYES download_wt
     Goto skip_wt
     download_wt:

@@ -32,7 +32,7 @@ def check_requirements():
         subprocess.run([sys.executable, "-m", "nuitka", "--version"], 
                       capture_output=True, check=True)
         print("✓ Nuitka found")
-    except:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         print(f"✗ Nuitka not found. Install with: {tools['nuitka']}")
         return False
     
@@ -200,7 +200,10 @@ def main():
         sys.exit(1)
     
     # Prepare assets
-    create_icon()
+    if not create_icon():
+        print("\nERROR: Failed to create/find icon file. Build cannot continue.")
+        print("Please ensure icon.ico exists in the assets directory.")
+        sys.exit(1)
     create_license()
     
     # Build executables

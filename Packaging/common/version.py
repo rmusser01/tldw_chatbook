@@ -26,7 +26,16 @@ BUILD_FEATURES = {
     },
     "full": {
         "description": "All features including ML models",
-        "extras": ["web", "embeddings_rag", "chunker", "websearch", "audio", "video", 
-                  "pdf", "ebook", "local_tts", "mcp"],
+        "extras": ["web",
+                   "embeddings_rag",
+                   "chunker",
+                   "websearch",
+                   "audio",
+                   "video",
+                   "pdf",
+                   "ebook",
+                   "local_tts",
+                   "mcp"
+                   ],
     }
 }
