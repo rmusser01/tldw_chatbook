@@ -116,8 +116,9 @@ from setuptools import setup
 
 APP = ['{self.project_root}/tldw_chatbook/app.py']
 DATA_FILES = [
-    ('css', ['{self.project_root}/tldw_chatbook/css']),
-    ('Config_Files', ['{self.project_root}/tldw_chatbook/Config_Files']),
+    ('css', glob.glob(f"{self.project_root}/tldw_chatbook/css/*")),
+    ('Config_Files', glob.glob(f"{self.project_root}/tldw_chatbook/Config_Files/*")),
+]
 ]
 
 OPTIONS = {{
