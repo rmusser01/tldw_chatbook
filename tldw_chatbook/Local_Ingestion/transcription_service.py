@@ -252,28 +252,6 @@ class TranscriptionService:
         # Parakeet/NeMo models (lazy loaded)
         self._parakeet_model = None
         logger.debug("Parakeet model will be lazy-loaded on first use")
-    
-    def cleanup(self):
-        """Clean up resources held by the transcription service."""
-        logger.info("Cleaning up TranscriptionService resources")
-        
-        # Clear model cache
-        with self._model_cache_lock:
-            for cache_key, model in self._model_cache.items():
-                logger.debug(f"Releasing model from cache: {cache_key}")
-                # Models should be garbage collected when references are cleared
-            self._model_cache.clear()
-        
-        # Clear other models
-        self._qwen_model = None
-        self._qwen_processor = None
-        self._parakeet_model = None
-        if hasattr(self, '_parakeet_mlx_model'):
-            self._parakeet_mlx_model = None
-        if hasattr(self, '_lightning_whisper_model'):
-            self._lightning_whisper_model = None
-        
-        logger.info("TranscriptionService cleanup complete")
         
         # Canary model (lazy loaded)
         self._canary_model = None
@@ -310,6 +288,30 @@ class TranscriptionService:
         # Initialize diarization service (lazy loaded)
         self._diarization_service = None
         self._diarization_lock = threading.RLock()
+    
+    def cleanup(self):
+        """Clean up resources held by the transcription service."""
+        logger.info("Cleaning up TranscriptionService resources")
+        
+        # Clear model cache
+        with self._model_cache_lock:
+            for cache_key, model in self._model_cache.items():
+                logger.debug(f"Releasing model from cache: {cache_key}")
+                # Models should be garbage collected when references are cleared
+            self._model_cache.clear()
+        
+        # Clear other models
+        self._qwen_model = None
+        self._qwen_processor = None
+        self._parakeet_model = None
+        self._canary_model = None
+        self._canary_decoding = None
+        if hasattr(self, '_parakeet_mlx_model'):
+            self._parakeet_mlx_model = None
+        if hasattr(self, '_lightning_whisper_model'):
+            self._lightning_whisper_model = None
+        
+        logger.info("TranscriptionService cleanup complete")
         
     def transcribe(
         self,
@@ -375,49 +377,20 @@ class TranscriptionService:
             if provider == 'parakeet-mlx':
                 if not PARAKEET_MLX_AVAILABLE:
                     if sys.platform != 'darwin':
+                        logger.error("[TRANSCRIPTION] parakeet-mlx is only available on macOS (Apple Silicon)")
                         raise ValueError(f"parakeet-mlx is only available on macOS (Apple Silicon)")
                     else:
+                        logger.error("[TRANSCRIPTION] parakeet-mlx is not installed")
                         raise ValueError(f"parakeet-mlx is not installed. Install with: pip install parakeet-mlx")
-                
-                try:
-                    result = self._transcribe_with_parakeet_mlx(
-                        wav_path, model, source_lang,
-                        progress_callback=progress_callback, **kwargs
-                    )
-                except TranscriptionError as e:
-                    # Check if this is a memory error and fallback is enabled
-                    if ("memory allocation error" in str(e) and 
-                        kwargs.get('fallback_on_memory_error', True)):
-                        
-                        logger.warning(f"Parakeet MLX failed with memory error, attempting fallback")
-                        
-                        # Try fallback providers in order
-                        fallback_providers = ['faster-whisper', 'lightning-whisper-mlx']
-                        available_providers = self.get_available_providers()
-                        
-                        for fallback_provider in fallback_providers:
-                            if fallback_provider in available_providers:
-                                logger.info(f"Falling back to {fallback_provider} provider")
-                                
-                                # Recursive call with different provider
-                                return self.transcribe(
-                                    audio_path=audio_path,
-                                    provider=fallback_provider,
-                                    model=None,  # Use default model for fallback provider
-                                    language=language,
-                                    source_lang=source_lang,
-                                    target_lang=target_lang,
-                                    vad_filter=vad_filter,
-                                    diarize=diarize,
-                                    progress_callback=progress_callback,
-                                    **{k: v for k, v in kwargs.items() if k != 'fallback_on_memory_error'}
-                                )
-                        
-                        # No fallback available
-                        logger.error("No fallback transcription provider available")
-                        raise
-                    else:
-                        # Not a memory error or fallback disabled
+                else:
+                    try:
+                        logger.info("[TRANSCRIPTION] Attempting transcription with parakeet-mlx")
+                        result = self._transcribe_with_parakeet_mlx(
+                            wav_path, model, source_lang,
+                            progress_callback=progress_callback, **kwargs
+                        )
+                    except (TranscriptionError, TimeoutError, Exception) as e:
+                        logger.error(f"[TRANSCRIPTION] Parakeet MLX failed: {type(e).__name__}: {str(e)}")
                         raise
             elif provider == 'lightning-whisper-mlx':
                 if not LIGHTNING_WHISPER_AVAILABLE:
@@ -731,6 +704,11 @@ class TranscriptionService:
         if not FASTER_WHISPER_AVAILABLE:
             logger.error("faster-whisper is not installed")
             raise TranscriptionError("faster-whisper is not installed")
+        
+        # Use default model if not specified
+        if not model:
+            model = self.config.get('default_model', 'base')
+            logger.info(f"No model specified, using default: {model}")
         
         logger.info(f"Starting faster-whisper transcription: model={model}, language={language}, source_lang={source_lang}, target_lang={target_lang}")
         logger.info(f"Audio file path: {audio_path}, exists: {os.path.exists(audio_path)}, size: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 'N/A'} bytes")
@@ -1688,8 +1666,12 @@ class TranscriptionService:
     ) -> Dict[str, Any]:
         """Transcribe using Parakeet MLX (Apple Silicon optimized real-time ASR)."""
         
+        logger.info("[PARAKEET] _transcribe_with_parakeet_mlx called")
+        logger.info(f"[PARAKEET] Input audio_path: {audio_path}")
+        logger.info(f"[PARAKEET] PARAKEET_MLX_AVAILABLE: {PARAKEET_MLX_AVAILABLE}")
+        
         if not PARAKEET_MLX_AVAILABLE:
-            logger.error("parakeet-mlx is not installed")
+            logger.error("[PARAKEET] parakeet-mlx is not installed or not available")
             raise TranscriptionError("parakeet-mlx is not installed")
         
         # Use configured settings or provided parameters
@@ -1703,19 +1685,36 @@ class TranscriptionService:
         transcribe_start = time.time()
         
         # Lazy load Parakeet MLX model with thread safety
+        logger.info("[PARAKEET] Checking if model needs to be loaded...")
+        logger.info(f"[PARAKEET] Current model: {self._parakeet_mlx_model}")
+        logger.info(f"[PARAKEET] Requested model: {model}")
+        
         with self._parakeet_mlx_model_lock:
             if self._parakeet_mlx_model is None or \
                getattr(self._parakeet_mlx_model, '_model_name', None) != model:
                 
-                logger.info(f"Loading Parakeet MLX model: {model}")
+                logger.info(f"[PARAKEET] Need to load model: {model}")
+                logger.info(f"[PARAKEET] Model is None: {self._parakeet_mlx_model is None}")
+                if self._parakeet_mlx_model is not None:
+                    logger.info(f"[PARAKEET] Current model name: {getattr(self._parakeet_mlx_model, '_model_name', 'Unknown')}")
+                
                 model_load_start = time.time()
+                
+                # Report model loading to progress callback
+                if progress_callback:
+                    try:
+                        logger.info("[PARAKEET] Reporting model loading progress")
+                        progress_callback(0, "Loading Parakeet MLX model (first time may take several minutes)...", 
+                                        {"stage": "model_loading", "model": model, "provider": "parakeet-mlx"})
+                    except Exception as e:
+                        logger.warning(f"[PARAKEET] Progress callback error: {e}")
                 
                 try:
                     # Ensure model is a string and not None
                     if not model or not isinstance(model, str):
-                        logger.error(f"Invalid model value: {model} (type: {type(model)})")
+                        logger.error(f"[PARAKEET] Invalid model value: {model} (type: {type(model)})")
                         model = 'mlx-community/parakeet-tdt-0.6b-v2'
-                        logger.warning(f"Using default model: {model}")
+                        logger.warning(f"[PARAKEET] Using default model: {model}")
                     
                     # Map precision to MLX dtype
                     import mlx.core as mx
@@ -1729,11 +1728,35 @@ class TranscriptionService:
                     }
                     dtype = dtype_map.get(precision, mx.bfloat16)
                     
-                    logger.debug(f"Calling parakeet_from_pretrained with model='{model}', dtype={dtype}")
+                    logger.info(f"About to call parakeet_from_pretrained with model='{model}', dtype={dtype}")
+                    logger.info("Note: First time model loading may take several minutes to download from HuggingFace...")
+                    
+                    # Add detailed logging before the problematic call
+                    logger.debug(f"Current working directory: {os.getcwd()}")
+                    logger.debug(f"PARAKEET_MLX_AVAILABLE: {PARAKEET_MLX_AVAILABLE}")
+                    logger.debug(f"parakeet_from_pretrained function: {parakeet_from_pretrained}")
+                    
+                    logger.info("[PARAKEET] About to call parakeet_from_pretrained...")
+                    logger.info(f"[PARAKEET] Model name: '{model}'")
+                    logger.info(f"[PARAKEET] dtype: {dtype}")
+                    logger.info("[PARAKEET] This may take several minutes on first run to download the model...")
+                    
+                    # Try to update UI with download message
+                    if progress_callback:
+                        try:
+                            progress_callback(0, "Downloading Parakeet model from HuggingFace (first time only, may take several minutes)...", 
+                                            {"stage": "model_downloading", "model": model, "provider": "parakeet-mlx"})
+                        except Exception as e:
+                            logger.warning(f"[PARAKEET] Progress callback error during download: {e}")
+                    
+                    # Note: We cannot use signal-based timeout in worker threads
+                    # The model loading will either succeed or fail on its own
                     self._parakeet_mlx_model = parakeet_from_pretrained(
                         model,
                         dtype=dtype
                     )
+                    logger.info("[PARAKEET] parakeet_from_pretrained completed successfully")
+                    
                     # Store model name for cache comparison
                     self._parakeet_mlx_model._model_name = model
                     
@@ -1745,14 +1768,20 @@ class TranscriptionService:
                     raise TranscriptionError(
                         f"Failed to load Parakeet MLX model: {str(e)}"
                     ) from e
+            else:
+                logger.info("[PARAKEET] Model already loaded, using cached model")
+        
+        logger.info("[PARAKEET] Model loading/checking complete, proceeding to transcription")
         
         try:
             # Report progress
             if progress_callback:
                 try:
+                    logger.info("[PARAKEET] Reporting transcription start progress")
                     progress_callback(0, f"Starting transcription with Parakeet MLX model: {model}...", 
                                     {"stage": "transcription_start", "model": model, "provider": "parakeet-mlx"})
                 except Exception as e:
+                    logger.warning(f"[PARAKEET] Progress callback error at transcription start: {e}")
                     _handle_progress_callback_error(e)
             
             logger.info(f"Starting Parakeet MLX transcription")
@@ -1794,26 +1823,31 @@ class TranscriptionService:
                     logger.info(f"Audio duration ({audio_duration}s) exceeds threshold ({auto_chunk_threshold}s), will use chunking")
             
             # Transcribe the audio
+            logger.info(f"Starting actual transcription of audio file: {audio_path}")
+            logger.info(f"File exists: {os.path.exists(audio_path)}, size: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 'N/A'} bytes")
+            
             if use_chunking and hasattr(self._parakeet_mlx_model, 'transcribe'):
                 # Check if the model supports chunking parameters
                 try:
                     # Try with chunking parameters first
+                    logger.info(f"Attempting chunked transcription with chunk_duration={chunk_duration}, overlap={overlap_duration}")
                     result = self._parakeet_mlx_model.transcribe(
                         audio_path,
                         chunk_duration=chunk_duration,
                         overlap_duration=overlap_duration
                     )
-                    try:
-                        logger.info(f"Using chunked transcription with chunk_duration={chunk_duration}s, overlap={overlap_duration}s")
-                    except (TypeError, ValueError):
-                        logger.info(f"Using chunked transcription with chunk_duration={chunk_duration}, overlap={overlap_duration}")
+                    logger.info("Chunked transcription completed successfully")
                 except TypeError as e:
                     # If chunking not supported, fall back to regular transcription
                     logger.warning(f"Chunking parameters not supported by model, using regular transcription: {e}")
+                    logger.info("Starting regular transcription without chunking...")
                     result = self._parakeet_mlx_model.transcribe(audio_path)
+                    logger.info("Regular transcription completed successfully")
             else:
                 # Regular transcription
+                logger.info("Starting regular transcription...")
                 result = self._parakeet_mlx_model.transcribe(audio_path)
+                logger.info("Regular transcription completed successfully")
             
             transcribe_audio_time = time.time() - transcribe_audio_start
             try:

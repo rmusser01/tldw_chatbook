@@ -85,6 +85,7 @@ class CancelConfirmationDialog(ModalScreen[bool]):
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
+        event.stop()  # Prevent propagation to parent
         if event.button.id == "cancel-btn":
             self.dismiss(True)  # User confirmed cancellation
         else:

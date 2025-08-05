@@ -462,6 +462,7 @@ class LocalVideoProcessor:
                 result["processing_source"] = input_item
                 
                 # Extract metadata
+                logger.info(f"[VIDEO] Extracting metadata for URL: {input_item}")
                 metadata = self.extract_metadata(
                     input_item,
                     kwargs.get("use_cookies", False),
@@ -469,13 +470,16 @@ class LocalVideoProcessor:
                 )
                 if metadata:
                     result["metadata"] = metadata
+                    logger.info(f"[VIDEO] Metadata extracted successfully: title='{metadata.get('title', 'N/A')}', duration={metadata.get('duration', 'N/A')}s")
+                else:
+                    logger.warning(f"[VIDEO] No metadata extracted for URL: {input_item}")
                 
                 # Get transcription progress callback if provided
                 transcription_callback = kwargs.get('transcription_progress_callback')
                 
                 # Download video/audio
-                logger.info(f"Starting download from URL: {input_item}")
-                logger.debug(f"Download settings: video={download_video_flag}, cookies={kwargs.get('use_cookies', False)}")
+                logger.info(f"[VIDEO] Starting download from URL: {input_item}")
+                logger.debug(f"[VIDEO] Download settings: video={download_video_flag}, cookies={kwargs.get('use_cookies', False)}")
                     
                 downloaded_path = self.download_video(
                     url=input_item,
@@ -486,7 +490,11 @@ class LocalVideoProcessor:
                 )
                 
                 if not downloaded_path:
+                    logger.error(f"[VIDEO] Download failed for URL: {input_item}")
                     raise VideoDownloadError("Download failed")
+                
+                logger.info(f"[VIDEO] Download completed successfully: {downloaded_path}")
+                logger.info(f"[VIDEO] Downloaded file size: {os.path.getsize(downloaded_path) / (1024*1024):.2f} MB")
                 
                 # Notify about download completion if we have a callback
                 if transcription_callback:
@@ -509,15 +517,23 @@ class LocalVideoProcessor:
             if file_ext in audio_extensions:
                 # Already audio file, process directly
                 audio_path = processing_path
+                logger.info(f"[VIDEO] Input is already an audio file ({file_ext}), skipping extraction")
             else:
                 # Extract audio from video
-                logger.info(f"Extracting audio from video: {processing_path}")
-                audio_path = self._extract_audio_from_video(
-                    processing_path, 
-                    temp_dir,
-                    kwargs.get('start_time'),
-                    kwargs.get('end_time')
-                )
+                logger.info(f"[VIDEO] Starting audio extraction from video: {processing_path}")
+                logger.info(f"[VIDEO] Video file extension: {file_ext}")
+                try:
+                    audio_path = self._extract_audio_from_video(
+                        processing_path, 
+                        temp_dir,
+                        kwargs.get('start_time'),
+                        kwargs.get('end_time')
+                    )
+                    logger.info(f"[VIDEO] Audio extraction completed successfully: {audio_path}")
+                    logger.info(f"[VIDEO] Extracted audio file size: {os.path.getsize(audio_path) / (1024*1024):.2f} MB")
+                except Exception as e:
+                    logger.error(f"[VIDEO] Audio extraction failed: {type(e).__name__}: {str(e)}", exc_info=True)
+                    raise
             
             # Process audio using audio processor
             logger.info(f"Starting audio processing for extracted audio: {audio_path}")
@@ -532,22 +548,37 @@ class LocalVideoProcessor:
                 logger.info("Notifying callback about audio extraction completion")
                 transcription_callback(0, "Audio extracted, starting transcription...", None)
             
-            logger.info("Calling audio processor _process_single_audio()")
-            audio_result = self.audio_processor._process_single_audio(
-                input_item=audio_path,
-                processing_dir=temp_dir,
-                transcription_progress_callback=transcription_callback,
-                media_type="video",
-                original_url=input_item if is_url else None,  # Pass original URL for proper storage
-                **kwargs
-            )
-            logger.info("Audio processor _process_single_audio() returned")
+            logger.info("[VIDEO] Calling audio processor _process_single_audio()")
+            logger.info(f"[VIDEO] Transcription parameters: provider={kwargs.get('transcription_provider')}, model={kwargs.get('transcription_model')}, language={kwargs.get('transcription_language')}")
             
-            logger.debug(f"Audio processing completed, result status: {audio_result.get('status') if audio_result else 'None'}")
+            try:
+                audio_result = self.audio_processor._process_single_audio(
+                    input_item=audio_path,
+                    processing_dir=temp_dir,
+                    transcription_progress_callback=transcription_callback,
+                    media_type="video",
+                    original_url=input_item if is_url else None,  # Pass original URL for proper storage
+                    **kwargs
+                )
+                logger.info("[VIDEO] Audio processor _process_single_audio() returned successfully")
+            except Exception as e:
+                logger.error(f"[VIDEO] Audio processing failed with exception: {type(e).__name__}: {str(e)}", exc_info=True)
+                raise
             
-            # Check if audio processing failed
-            if audio_result is None:
-                logger.error("Audio processing failed - no result returned")
+            # Log detailed result information
+            if audio_result:
+                logger.info(f"[VIDEO] Audio processing result status: {audio_result.get('status', 'Unknown')}")
+                logger.info(f"[VIDEO] Transcription content length: {len(audio_result.get('content', '')) if audio_result.get('content') else 0} characters")
+                logger.info(f"[VIDEO] Number of segments: {len(audio_result.get('segments', [])) if audio_result.get('segments') else 0}")
+                logger.info(f"[VIDEO] Number of chunks: {len(audio_result.get('chunks', [])) if audio_result.get('chunks') else 0}")
+                logger.info(f"[VIDEO] Has analysis: {bool(audio_result.get('analysis'))}")
+                
+                if not audio_result.get('content'):
+                    logger.warning("[VIDEO] No transcription content in audio result!")
+                
+                logger.debug(f"[VIDEO] Full audio result keys: {list(audio_result.keys()) if audio_result else 'None'}")
+            else:
+                logger.error("[VIDEO] Audio processing failed - no result returned")
                 raise Exception("Audio processing failed - no result returned")
             
             # Merge results
@@ -566,12 +597,29 @@ class LocalVideoProcessor:
                 result["metadata"]["title"] = audio_result["metadata"]["title"]
             
             # Store in database if available
+            logger.info(f"[VIDEO] Checking database save conditions: media_db={bool(self.media_db)}, has_content={bool(result.get('content'))}")
             if self.media_db and result["content"]:
-                logger.info(f"Storing video result in database for: {input_item}")
-                db_result = self._store_in_database(result)
-                result["db_id"] = db_result.get("id")
-                result["db_message"] = db_result.get("message", "Stored successfully")
-                logger.debug(f"Database storage result: id={db_result.get('id')}, message={db_result.get('message')}")
+                logger.info(f"[VIDEO] Starting database save for: {input_item}")
+                logger.info(f"[VIDEO] Content to save length: {len(result['content'])} characters")
+                logger.debug(f"[VIDEO] Full result before DB save: {json.dumps({k: str(v)[:100] + '...' if isinstance(v, str) and len(str(v)) > 100 else v for k, v in result.items()}, indent=2)}")
+                
+                try:
+                    db_result = self._store_in_database(result)
+                    result["db_id"] = db_result.get("id")
+                    result["db_message"] = db_result.get("message", "Stored successfully")
+                    logger.info(f"[VIDEO] Database storage successful: id={db_result.get('id')}, message={db_result.get('message')}")
+                except Exception as e:
+                    logger.error(f"[VIDEO] Database storage failed: {type(e).__name__}: {str(e)}", exc_info=True)
+                    result["db_id"] = None
+                    result["db_message"] = f"Database storage failed: {str(e)}"
+                    raise
+            else:
+                if not self.media_db:
+                    logger.warning("[VIDEO] No media database available - skipping save")
+                    result["db_message"] = "No database available"
+                elif not result.get("content"):
+                    logger.warning("[VIDEO] No transcription content to save - skipping database save")
+                    result["db_message"] = "No transcription content to save"
             
             result["status"] = "Success" if not result["warnings"] else "Warning"
             
@@ -743,7 +791,9 @@ class LocalVideoProcessor:
     
     def _store_in_database(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """Store processing results in the media database."""
+        logger.info("[VIDEO] _store_in_database called")
         if not self.media_db:
+            logger.warning("[VIDEO] No media database instance available")
             return {"message": "No database available"}
         
         try:
@@ -752,28 +802,56 @@ class LocalVideoProcessor:
                 "url": result.get("input_ref", ""),
                 "title": result["metadata"].get("title", "Untitled"),
                 "media_type": "video",
-                "content": result.get("analysis") or result.get("content", ""),
+                "content": result.get("content", ""),  # Store transcription
                 "author": result["metadata"].get("uploader", "Unknown"),
-                "ingestion_date": None  # Will use current time
+                "ingestion_date": None,  # Will use current time
+                "analysis_content": result.get("analysis")  # Store analysis separately
             }
             
-            # Add media entry
+            logger.info(f"[VIDEO] Prepared media data for DB save:")
+            logger.info(f"[VIDEO]   - URL: {media_data['url']}")
+            logger.info(f"[VIDEO]   - Title: {media_data['title']}")
+            logger.info(f"[VIDEO]   - Content length: {len(media_data['content'])} chars")
+            logger.info(f"[VIDEO]   - Has analysis: {bool(media_data['analysis_content'])}")
+            
+            # Add media entry with analysis
+            logger.info("[VIDEO] Calling media_db.add_media_with_keywords()")
             media_id, _, _ = self.media_db.add_media_with_keywords(**media_data)
+            logger.info(f"[VIDEO] Successfully saved to database with media_id: {media_id}")
             
             # Store chunks if available
             if result.get("chunks"):
+                logger.info(f"[VIDEO] Storing {len(result['chunks'])} chunks for media_id: {media_id}")
+                
+                # Prepare chunks in the format expected by add_media_chunks_in_batches
+                chunks_to_add = []
                 for i, chunk in enumerate(result["chunks"]):
-                    self.media_db.add_media_chunk(
-                        media_id=media_id,
-                        chunk_text=chunk.get("text", ""),
-                        chunk_index=i,
-                        metadata=json.dumps(chunk.get("metadata", {}))
-                    )
+                    chunk_text = chunk.get("text", "")
+                    # Calculate start and end indices based on chunk position
+                    # This is approximate since we don't have exact character positions
+                    text_length = len(chunk_text)
+                    start_index = sum(len(c.get("text", "")) for c in result["chunks"][:i])
+                    end_index = start_index + text_length
+                    
+                    chunks_to_add.append({
+                        'text': chunk_text,
+                        'start_index': start_index,
+                        'end_index': end_index
+                    })
+                
+                # Use batch insert method
+                chunks_added = self.media_db.add_media_chunks_in_batches(
+                    media_id=media_id,
+                    chunks_to_add=chunks_to_add
+                )
+                logger.info(f"[VIDEO] Successfully stored {chunks_added} chunks")
+            else:
+                logger.info("[VIDEO] No chunks to store")
             
             return {"id": media_id, "message": "Stored successfully"}
             
         except Exception as e:
-            logger.error(f"Database storage error: {str(e)}")
+            logger.error(f"[VIDEO] Database storage error: {type(e).__name__}: {str(e)}", exc_info=True)
             return {"message": f"Storage failed: {str(e)}"}
 
 

@@ -3083,6 +3083,64 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
 # --- CLI Database and Log File Path Getters ---
 BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli" # Renamed for clarity
 
+def get_api_key(api_name: str) -> Optional[str]:
+    """
+    Get API key for a given provider.
+    
+    Args:
+        api_name: The API provider name (e.g., 'openai', 'anthropic', 'groq')
+        
+    Returns:
+        The API key if found, None otherwise
+    """
+    # Normalize the API name
+    api_name_lower = api_name.lower()
+    
+    # First try the newer api_settings.{provider} structure
+    try:
+        settings = load_settings()
+        api_settings_key = f"api_settings.{api_name_lower}"
+        
+        if api_settings_key in settings:
+            api_settings = settings[api_settings_key]
+            
+            # Check environment variable first if specified
+            if 'api_key_env_var' in api_settings:
+                env_var = api_settings['api_key_env_var']
+                env_value = os.getenv(env_var)
+                if env_value:
+                    return env_value
+            
+            # Fall back to config file API key
+            if 'api_key' in api_settings and api_settings['api_key'] != "<API_KEY_HERE>":
+                return api_settings['api_key']
+    except Exception as e:
+        logger.debug(f"Error accessing api_settings for {api_name}: {e}")
+    
+    # Try the legacy approach used elsewhere in the codebase
+    try:
+        # This is the pattern used in other files like Summarization_General_Lib.py
+        api_key = get_cli_setting("API", f"{api_name_lower}_api_key", "")
+        if api_key:
+            return api_key
+    except Exception as e:
+        logger.debug(f"Error getting API key via get_cli_setting for {api_name}: {e}")
+    
+    # Try direct environment variable access with common patterns
+    env_var_names = [
+        f"{api_name_lower.upper()}_API_KEY",
+        f"{api_name.upper()}_API_KEY"
+    ]
+    
+    for env_var in env_var_names:
+        env_value = os.getenv(env_var)
+        if env_value:
+            return env_value
+    
+    # No API key found
+    logger.debug(f"No API key found for provider: {api_name}")
+    return None
+
 def get_user_folder_name() -> str:
     """Get the current user folder name from configuration."""
     default_user = DEFAULT_CONFIG_FROM_TOML.get("general", {}).get("users_name", "default_user")

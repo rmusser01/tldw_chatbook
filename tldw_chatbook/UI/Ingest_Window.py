@@ -3368,16 +3368,36 @@ class IngestWindow(Container):
         # Run the actual processing in a worker thread with the collected options
         # Run the worker directly with partial to ensure proper binding
         from functools import partial
-        logger.info("Launching video processing worker...")
-        worker_func = partial(self._process_video_files_worker, options)
-        self._current_video_worker = self.run_worker(
-            worker_func,
-            exclusive=True, 
-            thread=True,
-            name="video_processing_worker",
-            description="Processing video files"
-        )
-        logger.info(f"Video processing worker launched: {self._current_video_worker}")
+        
+        # Log the options being passed to the worker
+        logger.info("Preparing to launch video processing worker...")
+        logger.info(f"Worker will process {len(options.get('inputs', []))} inputs")
+        logger.debug(f"Worker options summary:")
+        logger.debug(f"  - Transcription provider: {options.get('transcription_provider')}")
+        logger.debug(f"  - Transcription model: {options.get('transcription_model')}")
+        logger.debug(f"  - Transcription language: {options.get('transcription_language')}")
+        logger.debug(f"  - Perform analysis: {options.get('perform_analysis')}")
+        logger.debug(f"  - Perform chunking: {options.get('perform_chunking')}")
+        
+        try:
+            worker_func = partial(self._process_video_files_worker, options)
+            logger.info("Creating video processing worker...")
+            self._current_video_worker = self.run_worker(
+                worker_func,
+                exclusive=True, 
+                thread=True,
+                name="video_processing_worker",
+                description="Processing video files"
+            )
+            logger.info(f"Video processing worker launched successfully: {self._current_video_worker}")
+        except Exception as e:
+            logger.error(f"Failed to launch video processing worker: {type(e).__name__}: {str(e)}", exc_info=True)
+            self.app_instance.notify(f"Failed to start video processing: {str(e)}", severity="error")
+            # Reset UI state
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
+            return
         
         # Worker should handle cleanup when done - no callback needed here
         # The worker will update the UI through call_from_thread
@@ -3391,10 +3411,23 @@ class IngestWindow(Container):
         Returns:
             Dictionary with success status and results or error message
         """
-        logger.info(f"Video worker started with {len(options.get('inputs', []))} inputs")
+        # Configure logging for this thread
+        import logging
+        import threading
+        thread_name = threading.current_thread().name
+        logger.info(f"[WORKER-{thread_name}] Video worker thread started")
+        logger.info(f"[WORKER-{thread_name}] Processing {len(options.get('inputs', []))} inputs")
+        logger.info(f"[WORKER-{thread_name}] Thread ID: {threading.get_ident()}")
+        
+        # Log first input for debugging
+        inputs = options.get('inputs', [])
+        if inputs:
+            logger.info(f"[WORKER-{thread_name}] First input: {inputs[0]}")
+        
         result = {"success": False, "error": "Unknown error"}
         
         try:
+            logger.info(f"[WORKER-{thread_name}] Beginning processing...")
             # Extract all options from the passed dictionary
             all_inputs = options.get("inputs", [])
             
@@ -3412,26 +3445,61 @@ class IngestWindow(Container):
             else:
                 # Import the video processing function
                 try:
+                    logger.info(f"[WORKER-{thread_name}] Attempting to import LocalVideoProcessor...")
+                    import time
+                    import_start = time.time()
                     from ..Local_Ingestion import LocalVideoProcessor
+                    import_time = time.time() - import_start
+                    logger.info(f"[WORKER-{thread_name}] LocalVideoProcessor imported successfully in {import_time:.2f}s")
                 except ImportError as e:
-                    logger.error(f"Failed to import video processing library: {e}")
+                    logger.error(f"[WORKER-{thread_name}] Failed to import video processing library: {e}", exc_info=True)
                     result = {
                         "success": False,
                         "error": "Video processing library not available. Please install with: pip install tldw-chatbook[video]"
                     }
+                    # Update UI with error
+                    self.app_instance.call_from_thread(
+                        self._append_to_status_area,
+                        f"\n\nERROR: Failed to import video processing library: {str(e)}\n"
+                    )
+                except Exception as e:
+                    logger.error(f"[WORKER-{thread_name}] Unexpected error during import: {type(e).__name__}: {str(e)}", exc_info=True)
+                    result = {
+                        "success": False,
+                        "error": f"Failed to load video processing: {str(e)}"
+                    }
+                    # Update UI with error
+                    self.app_instance.call_from_thread(
+                        self._append_to_status_area,
+                        f"\n\nERROR: {str(e)}\n"
+                    )
                 else:
                     # Create processor instance and store it for cancellation
-                    processor = LocalVideoProcessor(self.app_instance.media_db)
-                    # Reset cancellation flag in case it was set from a previous run
-                    processor.reset_cancellation()
-                    self._current_video_processor = processor
+                    logger.info(f"[WORKER-{thread_name}] Creating LocalVideoProcessor instance...")
+                    try:
+                        processor = LocalVideoProcessor(self.app_instance.media_db)
+                        logger.info(f"[WORKER-{thread_name}] LocalVideoProcessor created successfully")
+                        # Reset cancellation flag in case it was set from a previous run
+                        processor.reset_cancellation()
+                        self._current_video_processor = processor
+                    except Exception as e:
+                        logger.error(f"[WORKER-{thread_name}] Failed to create LocalVideoProcessor: {type(e).__name__}: {str(e)}", exc_info=True)
+                        result = {
+                            "success": False,
+                            "error": f"Failed to initialize video processor: {str(e)}"
+                        }
+                        self.app_instance.call_from_thread(
+                            self._append_to_status_area,
+                            f"\n\nERROR: Failed to initialize video processor: {str(e)}\n"
+                        )
+                        return result
                     
                     # Process each video individually to provide progress updates
                     results_list = []
                     errors_list = []
                     
-                    logger.info(f"Starting video processing batch with {len(all_inputs)} inputs")
-                    logger.debug(f"Video processing options: {options}")
+                    logger.info(f"[WORKER-{thread_name}] Starting video processing batch with {len(all_inputs)} inputs")
+                    logger.debug(f"[WORKER-{thread_name}] Video processing options: {options}")
                     
                     # Initial status
                     self.app_instance.call_from_thread(
@@ -3577,6 +3645,9 @@ class IngestWindow(Container):
                             
                             # Process single video with progress callback
                             try:
+                                logger.info(f"[WORKER-{thread_name}] Calling processor.process_videos for: {input_item}")
+                                logger.info(f"[WORKER-{thread_name}] Provider: {options['transcription_provider']}, Model: {options['transcription_model']}")
+                                
                                 single_result = processor.process_videos(
                                     inputs=[input_item],
                                     download_video_flag=options["download_video"] and not options["extract_audio_only"],
@@ -3611,8 +3682,14 @@ class IngestWindow(Container):
                                 author=options["author"],
                                 keywords=options["keywords"]
                                 )
+                                logger.info(f"[WORKER-{thread_name}] processor.process_videos returned successfully")
                             except Exception as e:
-                                logger.error(f"Error in process_videos call: {type(e).__name__}: {str(e)}", exc_info=True)
+                                logger.error(f"[WORKER-{thread_name}] Error in process_videos call: {type(e).__name__}: {str(e)}", exc_info=True)
+                                # Update UI with error
+                                self.app_instance.call_from_thread(
+                                    self._append_to_status_area,
+                                    f"\n\nERROR during processing: {str(e)}\n"
+                                )
                                 # Create error result
                                 single_result = {
                                     "processed_count": 0,
