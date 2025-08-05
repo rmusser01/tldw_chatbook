@@ -53,14 +53,22 @@ pip install -e ".[websearch]"
 pip install -e ".[embeddings_rag,chunker,websearch,audio,video,pdf,ebook,nemo,mcp,chatterbox,local_tts,higgs_tts,ocr_docext,debugging,mlx_whisper,diarization,coding_map,local_vllm,local_mlx,local_transformers,web]"
 
 # Common feature combinations
-pip install -e ".[audio,video]"  # Media transcription
+pip install -e ".[audio,video]"  # Media transcription (includes faster-whisper)
 pip install -e ".[pdf,ebook]"    # Document processing
 pip install -e ".[embeddings_rag,audio]"  # RAG + transcription
 pip install -e ".[local_tts,chatterbox]"  # Text-to-speech
 pip install -e ".[higgs_tts]"  # Higgs Audio V2 TTS (high-quality, voice cloning)
 pip install -e ".[mcp]"  # Model Context Protocol integration
-pip install -e ".[mlx_whisper]"  # Apple Silicon optimized Whisper
 pip install -e ".[web]"  # Web server for browser-based access
+
+# Transcription providers (choose one):
+pip install -e ".[transcription_faster_whisper]"  # Default, works on all platforms
+pip install -e ".[transcription_lightning_whisper]"  # Apple Silicon optimized
+pip install -e ".[transcription_parakeet]"  # Real-time ASR for Apple Silicon
+
+# For Apple Silicon users wanting better performance:
+pip install -e ".[audio,transcription_lightning_whisper]"  # Audio + optimized transcription
+pip install -e ".[video,transcription_parakeet]"  # Video + real-time transcription
 
 # Development installation
 pip install -e ".[dev]"
@@ -76,9 +84,13 @@ pip install -e ".[dev]"
 | `coding_map`                   | Code analysis features | grep_ast, pygments |
 | `local_vllm`                   | vLLM inference support | vllm |
 | `local_mlx`                    | MLX inference (Apple Silicon) | mlx-lm |
-| `mlx_whisper`                  | Apple Silicon optimized Whisper & ASR | lightning-whisper-mlx, parakeet-mlx |
-| `audio`                        | Audio transcription (Whisper) | faster-whisper, soundfile |
-| `video`                        | Video processing & transcription | faster-whisper, yt-dlp |
+| `transcription_faster_whisper` | CPU/CUDA optimized Whisper transcription | faster-whisper |
+| `transcription_lightning_whisper` | Apple Silicon optimized Whisper | lightning-whisper-mlx |
+| `transcription_parakeet`       | Real-time ASR for Apple Silicon | parakeet-mlx |
+| `mlx_whisper`                  | Legacy: Both Apple Silicon transcription providers | lightning-whisper-mlx, parakeet-mlx |
+| `audio`                        | Audio processing with transcription | faster-whisper, soundfile, yt-dlp |
+| `video`                        | Video processing with transcription | faster-whisper, soundfile, yt-dlp |
+| `media_processing`             | Combined audio/video processing | faster-whisper, soundfile, yt-dlp |
 | `pdf`                          | PDF text extraction | pymupdf, docling |
 | `ebook`                        | E-book processing | ebooklib, beautifulsoup4, defusedxml |
 | `nemo`                         | NVIDIA Parakeet ASR models | nemo-toolkit[asr] |
@@ -92,6 +104,32 @@ pip install -e ".[dev]"
 | `web`                          | Web server for browser access | textual-serve |
 
 *Note: `sentence-transformers` and `chromadb` are detected separately and installed automatically when needed.
+
+### Transcription Providers
+
+The application supports multiple transcription providers. By default, `audio`, `video`, and `media_processing` extras include `faster-whisper` which works on all platforms. For better performance on specific hardware:
+
+#### Available Providers:
+- **faster-whisper** (Default): CPU/CUDA optimized implementation, works everywhere
+- **lightning-whisper-mlx**: Apple Silicon optimized Whisper implementation
+- **parakeet-mlx**: Real-time ASR optimized for Apple Silicon
+
+#### Installation Examples:
+```bash
+# Default installation (includes faster-whisper)
+pip install -e ".[audio]"
+
+# Replace default with Apple Silicon optimized provider
+pip install -e ".[audio,transcription_lightning_whisper]"
+
+# Add additional provider alongside default
+pip install -e ".[audio,transcription_parakeet]"
+
+# Install only a specific provider (no audio/video processing libs)
+pip install -e ".[transcription_parakeet]"
+```
+
+**Note for Apple Silicon users**: For the MLX-based providers, you may need to install with `--no-deps` and handle the tiktoken dependency separately if you encounter build errors.
 
 ### Special Installation: Higgs Audio TTS
 
