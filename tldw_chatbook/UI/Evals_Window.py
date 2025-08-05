@@ -182,15 +182,15 @@ class EvalsWindow(Container):
         
         try:
             from ..Event_Handlers.eval_events import get_recent_evaluations
-            recent_runs = await self.app.run_in_executor(None, get_recent_evaluations, self.app_instance)
+            recent_runs = await self.app_instance.run_in_executor(None, get_recent_evaluations, self.app_instance)
             
             # Update results list
             if recent_runs:
-                results_html = "\n".join([
-                    f"• {run['name']} ({run['status']}) - {run.get('metrics', {}).get('success_rate', 'N/A')}% success"
+                results_markdown = "\n".join([
+                    f"• **{run['name']}** ({run['status']}) - {run.get('metrics', {}).get('success_rate', 'N/A')}% success"
                     for run in recent_runs[:10]  # Show last 10 runs
                 ])
-                results_list.update(results_html)
+                results_list.update(results_markdown)
             else:
                 results_list.update("No evaluations found")
                 
@@ -209,7 +209,7 @@ class EvalsWindow(Container):
         
         try:
             from ..Event_Handlers.eval_events import get_available_models
-            models = await self.app.run_in_executor(None, get_available_models, self.app_instance)
+            models = await self.app_instance.run_in_executor(None, get_available_models, self.app_instance)
             
             if models:
                 models_html = "\n".join([
@@ -235,7 +235,7 @@ class EvalsWindow(Container):
         
         try:
             from ..Event_Handlers.eval_events import get_available_datasets
-            datasets = await self.app.run_in_executor(None, get_available_datasets, self.app_instance)
+            datasets = await self.app_instance.run_in_executor(None, get_available_datasets, self.app_instance)
             
             if datasets:
                 datasets_html = "\n".join([
@@ -385,6 +385,42 @@ class EvalsWindow(Container):
         logger.info(f"Template button pressed: {event.button.id}")
         from ..Event_Handlers.eval_events import handle_template_button
         handle_template_button(self.app_instance, event)
+    
+    @on(Button.Pressed, "#validate-datasets-btn")
+    def handle_validate_datasets(self, event: Button.Pressed) -> None:
+        """Handle validating datasets."""
+        logger.info("Validate datasets button pressed")
+        self._update_status("dataset-validation-status", "Dataset validation not yet implemented")
+    
+    @on(Button.Pressed, "#browse-samples-btn")
+    def handle_browse_samples(self, event: Button.Pressed) -> None:
+        """Handle browsing dataset samples."""
+        logger.info("Browse samples button pressed")
+        self._update_status("dataset-validation-status", "Sample browsing not yet implemented")
+    
+    @on(Button.Pressed, "#filter-results-btn")
+    def handle_filter_results(self, event: Button.Pressed) -> None:
+        """Handle filtering results."""
+        logger.info("Filter results button pressed")
+        self._update_status("export-status", "Results filtering not yet implemented")
+    
+    @on(Button.Pressed, "#export-report-btn")
+    def handle_export_report(self, event: Button.Pressed) -> None:
+        """Handle exporting a full evaluation report."""
+        logger.info("Export report button pressed")
+        self._update_status("export-status", "Report export not yet implemented")
+    
+    @on(Button.Pressed, "#test-connection-btn")
+    def handle_test_connection(self, event: Button.Pressed) -> None:
+        """Handle testing model connection."""
+        logger.info("Test connection button pressed")
+        self._update_status("model-test-status", "Select a model from the list to test")
+    
+    @on(Button.Pressed, "#import-templates-btn")
+    def handle_import_templates(self, event: Button.Pressed) -> None:
+        """Handle importing model templates."""
+        logger.info("Import templates button pressed")
+        self._update_status("model-test-status", "Template import not yet implemented")
     
     # --- Cost Estimation Updates ---
     @on(Select.Changed, "#model-select")
@@ -574,7 +610,8 @@ class EvalsWindow(Container):
         # Initialize evaluation system
         try:
             from ..Event_Handlers.eval_events import initialize_evals_system
-            initialize_evals_system(self.app_instance)
+            # Run initialization asynchronously
+            self.run_worker(initialize_evals_system(self.app_instance), exclusive=True)
             
             # Load initial data for dropdowns and lists
             self._populate_initial_data()
@@ -588,7 +625,7 @@ class EvalsWindow(Container):
         try:
             # Populate model select dropdown
             from ..Event_Handlers.eval_events import get_available_models
-            models = await self.app.run_in_executor(None, get_available_models, self.app_instance)
+            models = await self.app_instance.run_in_executor(None, get_available_models, self.app_instance)
             
             model_select = self.query_one("#model-select")
             model_options = [("Select Model", "")] + [(f"{m['name']} ({m['provider']})", m['id']) for m in models[:10]]
@@ -596,7 +633,7 @@ class EvalsWindow(Container):
             
             # Populate task select dropdown
             from ..Event_Handlers.eval_events import get_available_tasks
-            tasks = await self.app.run_in_executor(None, get_available_tasks, self.app_instance)
+            tasks = await self.app_instance.run_in_executor(None, get_available_tasks, self.app_instance)
             
             task_select = self.query_one("#task-select")
             task_options = [("Select Task", "")] + [(t['name'], t['id']) for t in tasks[:10]]

@@ -9,17 +9,13 @@ This guide helps you navigate the evaluation system documentation for tldw_chatb
 1. **[EVALUATION-SYSTEM.md](EVALUATION-SYSTEM.md)** ⭐ **START HERE**
    - Comprehensive technical reference
    - Architecture overview
-   - Implementation details
+   - Security considerations
+   - Implementation status
    - API reference
    - Development guide
+   - Metrics and monitoring
 
-2. **[EVALUATIONS-STATUS.md](EVALUATIONS-STATUS.md)**
-   - Current implementation status
-   - What's complete vs pending
-   - UI integration roadmap
-   - Recommendations for developers
-
-3. **[EVALUATIONS-QUICKSTART.md](EVALUATIONS-QUICKSTART.md)**
+2. **[EVALUATIONS-QUICKSTART.md](EVALUATIONS-QUICKSTART.md)**
    - User-friendly guide
    - Step-by-step instructions
    - Troubleshooting tips
@@ -27,19 +23,28 @@ This guide helps you navigate the evaluation system documentation for tldw_chatb
 
 ### 📂 Module Documentation
 
-4. **[tldw_chatbook/Evals/EVALS_SYSTEM_REFERENCE.md](../../tldw_chatbook/Evals/EVALS_SYSTEM_REFERENCE.md)**
+3. **[tldw_chatbook/Evals/EVALS_SYSTEM_REFERENCE.md](../../tldw_chatbook/Evals/EVALS_SYSTEM_REFERENCE.md)**
    - Module-specific reference
    - Links to main documentation
    - Quick API examples
    - Located within the Evals module
+
+### 📁 Archived Documentation
+
+The following documents have been archived for historical reference:
+- Implementation progress tracking documents
+- UI/UX design iterations
+- Development notes and scratch work
+
+Find them in: **[Archive/Evals/](Archive/Evals/)**
 
 
 ## Quick Navigation
 
 - **New to the system?** → Start with [EVALUATIONS-QUICKSTART.md](EVALUATIONS-QUICKSTART.md)
 - **Need technical details?** → Read [EVALUATION-SYSTEM.md](EVALUATION-SYSTEM.md)
-- **Checking progress?** → See [EVALUATIONS-STATUS.md](EVALUATIONS-STATUS.md)
 - **Working on code?** → Reference [EVALS_SYSTEM_REFERENCE.md](../../tldw_chatbook/Evals/EVALS_SYSTEM_REFERENCE.md)
+- **Historical docs?** → Check [Archive/Evals/](Archive/Evals/) directory
 
 ## Key Takeaways
 

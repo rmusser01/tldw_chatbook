@@ -7,12 +7,13 @@
 ## Table of Contents
 1. [Overview](#overview)
 2. [Architecture](#architecture)
-3. [Implementation Status](#implementation-status)
-4. [Supported Features](#supported-features)
-5. [API Reference](#api-reference)
-6. [Development Guide](#development-guide)
-7. [Testing](#testing)
-8. [Roadmap](#roadmap)
+3. [Security Considerations](#security-considerations)
+4. [Implementation Status](#implementation-status)
+5. [Supported Features](#supported-features)
+6. [API Reference](#api-reference)
+7. [Development Guide](#development-guide)
+8. [Testing](#testing)
+9. [Roadmap](#roadmap)
 
 ## Overview
 
@@ -57,11 +58,100 @@ tldw_chatbook/
 5. **Storage** → Save results to database
 6. **Analysis** → Aggregate and export results
 
+## Security Considerations
+
+### Code Execution Safety
+
+The evaluation system includes a `CodeExecutionRunner` for testing code generation tasks. Security measures include:
+
+**Implemented Protections**:
+- **Resource Limits**: CPU time (5s), memory (256MB), processes (10), file descriptors (50)
+- **Disabled Builtins**: `eval`, `exec`, `compile`, `__import__`, `open`, `input` are disabled
+- **Restricted Environment**: Minimal PATH, empty PYTHONPATH, isolated temp directory
+- **Subprocess Isolation**: Code runs in separate process with timeout protection
+- **No File Operations**: File size limit set to 0 to prevent file writes
+
+**⚠️ Security Warnings**:
+1. **Code execution still carries risks** - Malicious code could still cause resource exhaustion
+2. **Not suitable for untrusted code** - Only run evaluations with trusted datasets
+3. **Consider containerization** - For production use, implement Docker/Podman isolation
+4. **Monitor resource usage** - Set up alerts for unusual CPU/memory consumption
+
+### API Key Security
+
+**Implemented Protections**:
+- **Configuration-based**: API keys loaded from config files or environment variables
+- **Log Sanitization**: Sensitive data scrubbed from error logs using `log_sanitizer.py`
+- **No Hardcoding**: Keys never hardcoded in source files
+
+**Best Practices**:
+1. **Never commit API keys** to version control
+2. **Use environment variables** for production deployments
+3. **Rotate keys regularly** especially after suspected exposure
+4. **Monitor API usage** for unusual patterns
+5. **Set rate limits** on API keys when possible
+
+### Path Traversal Protection
+
+**Implemented Protections**:
+- **Path Validation**: All file paths validated using `path_validation.py`
+- **Dangerous Pattern Detection**: Blocks `../`, `~`, null bytes, command injection attempts
+- **Symlink Resolution**: Detects potential symlink attacks
+
+**Usage**:
+```python
+from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+# Validate before using any user-provided path
+safe_path = validate_path_simple(user_path, require_exists=True)
+```
+
+### Data Privacy
+
+**Considerations**:
+1. **Evaluation data may contain sensitive information** - Ensure proper data handling
+2. **Results stored locally** - Database files should be protected
+3. **No telemetry** - System doesn't send data to external services
+4. **Model outputs** may reflect training data biases or expose information
+
+### Recommended Security Enhancements
+
+For production deployments:
+
+1. **Container Isolation**:
+   ```dockerfile
+   # Use minimal base image
+   FROM python:3.11-slim
+   # Drop privileges
+   USER nobody
+   # Restrict capabilities
+   ```
+
+2. **Network Isolation**:
+   - Run evaluations in network-isolated environments
+   - Use firewall rules to block outbound connections
+
+3. **Audit Logging**:
+   - Log all evaluation runs with user/timestamp
+   - Monitor for suspicious patterns
+   - Set up alerts for security events
+
+4. **Access Control**:
+   - Implement authentication for UI access
+   - Use role-based permissions for sensitive operations
+   - Audit trail for configuration changes
+
 ## Implementation Status
+
+**Analysis Date**: 2025-07-06  
+**Overall Status**: **BACKEND COMPLETE - UI INCOMPLETE**
+
+The evaluation system has a fully functional backend with comprehensive testing and documentation. All core evaluation functionality is implemented and production-ready. The system can evaluate LLMs across 27+ task types using 30+ providers with advanced metrics. However, the Textual UI integration is incomplete, limiting access to programmatic usage only.
 
 ### ✅ Fully Implemented (Backend)
 
 #### Database Layer (`DB/Evals_DB.py`)
+- **Status**: COMPLETE & TESTED
 - **Complete schema** with 6 core tables:
   - `eval_tasks`: Task definitions and configurations
   - `eval_datasets`: Dataset management
@@ -71,11 +161,12 @@ tldw_chatbook/
   - `eval_run_metrics`: Aggregated metrics
 - **Features**:
   - Thread-safe SQLite with WAL mode
-  - FTS5 full-text search
-  - Optimistic locking with version fields
-  - Soft deletion support
+  - FTS5 full-text search integration
+  - Optimistic locking and soft deletion
+  - Complete CRUD operations for all entities
+  - Results aggregation and comparison
   - Schema versioning and migrations
-  - Comprehensive CRUD operations
+- **Test Coverage**: ~95% with 50+ test cases
 
 #### LLM Interface (`Evals/llm_interface.py`)
 Complete support for 30+ providers:
@@ -127,6 +218,38 @@ Complete support for 30+ providers:
 - **Semantic Similarity**: Sentence transformers integration
 - **Perplexity**: From log probabilities
 - **Custom Metrics**: Extensible metric framework
+
+#### OpenTelemetry Metrics Integration
+Comprehensive metrics tracking across all components:
+
+**Evaluation Lifecycle**:
+- Run duration, sample processing time, success/error rates
+- Dataset loading performance, sample counts
+- Cost estimation and tracking by provider/model
+
+**LLM Performance**:
+- API call latency, token usage (input/output/total)
+- Rate limiting, retry behavior
+- Provider-specific performance metrics
+
+**Specialized Runners**:
+- Code execution: syntax validation, test pass rates, execution time
+- Safety: harmful content detection, bias detection, safety scores
+- Multilingual: language detection, fluency scores
+- Creative: vocabulary diversity, creativity scores
+- Math: reasoning steps, correctness rates
+- Summarization: compression ratios, ROUGE scores
+- Dialogue: relevance, coherence, context maintenance
+
+**Database Operations**:
+- Query performance, transaction success rates
+- Batch operation sizes, result counts
+- Schema migration tracking
+
+**UI Interactions** (when connected):
+- Feature usage patterns, task creation methods
+- Evaluation flow completion rates
+- Export format preferences
 
 #### Task Loading System
 - **Format Detection**: Automatic format identification
@@ -386,6 +509,49 @@ pytest Tests/Evals/ --cov=tldw_chatbook.Evals
 - `test_eval_runner.py`: Runner functionality
 - `test_eval_integration.py`: Full pipeline tests
 - `test_eval_properties.py`: Property-based testing
+
+## Current Usage Options
+
+### 1. Programmatic Access (Available Now)
+```python
+from tldw_chatbook.Evals import EvaluationOrchestrator
+
+orchestrator = EvaluationOrchestrator()
+task_id = await orchestrator.create_task_from_file("task.json", "My Task")
+run_id = await orchestrator.run_evaluation(task_id, model_configs)
+```
+
+### 2. Direct Runner Usage (Available Now)
+```python
+from tldw_chatbook.Evals.eval_runner import create_runner
+
+runner = create_runner(task_config, model_config)
+results = await runner.run_evaluation(samples)
+```
+
+### 3. UI Access (Pending)
+- Requires completion of UI integration
+- Estimated 2-3 weeks of development
+
+## Critical Path to UI Completion
+
+### Week 1: Core UI Integration
+1. Implement missing configuration dialogs
+2. Connect event handlers to backend
+3. Add basic results display
+4. Enable progress tracking
+
+### Week 2: Enhanced Functionality  
+1. Complete results visualization
+2. Add export functionality
+3. Implement template management
+4. Polish user interactions
+
+### Week 3: Testing & Documentation
+1. End-to-end UI testing
+2. Update user documentation
+3. Create video tutorials
+4. Deploy to users
 
 ## Roadmap
 

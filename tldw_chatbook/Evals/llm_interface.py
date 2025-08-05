@@ -17,6 +17,7 @@ from loguru import logger
 
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.log_sanitizer import safe_log, sanitize_string
 
 # Import functions at runtime to avoid circular imports
 def _get_llm_functions():
@@ -207,7 +208,7 @@ class OpenAIProvider(LLMProvider):
             # Handle known API errors
             if 'authentication' in str(e).lower() or 'api key' in str(e).lower():
                 error_category = "authentication"
-                logger.error(f"OpenAI authentication error: {e}")
+                safe_log(logger.error, f"OpenAI authentication error: {sanitize_string(str(e))}")
                 log_counter("eval_llm_api_call_error", labels={
                     "provider": "openai",
                     "model": self.model_id,
@@ -222,7 +223,7 @@ class OpenAIProvider(LLMProvider):
                 raise EvalAuthenticationError(f"OpenAI authentication failed: {e}", provider="openai")
             elif 'rate limit' in str(e).lower():
                 error_category = "rate_limit"
-                logger.error(f"OpenAI rate limit error: {e}")
+                safe_log(logger.error, f"OpenAI rate limit error: {sanitize_string(str(e))}")
                 log_counter("eval_llm_api_call_error", labels={
                     "provider": "openai",
                     "model": self.model_id,
@@ -237,7 +238,7 @@ class OpenAIProvider(LLMProvider):
                 raise EvalRateLimitError(f"OpenAI rate limit exceeded: {e}", provider="openai")
             else:
                 error_category = "api_error"
-                logger.error(f"OpenAI generation failed: {e}")
+                safe_log(logger.error, f"OpenAI generation failed: {sanitize_string(str(e))}")
                 log_counter("eval_llm_api_call_error", labels={
                     "provider": "openai",
                     "model": self.model_id,

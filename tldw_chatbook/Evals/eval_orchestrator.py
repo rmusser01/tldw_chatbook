@@ -27,6 +27,7 @@ from .eval_runner import EvalRunner, EvalSampleResult
 from .llm_interface import LLMInterface
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 class EvaluationOrchestrator:
     """Orchestrates evaluation runs from start to finish."""

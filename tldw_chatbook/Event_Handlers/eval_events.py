@@ -1146,7 +1146,11 @@ async def initialize_evals_system(app: 'TldwCli') -> None:
     
     try:
         # Initialize orchestrator
-        get_orchestrator()
+        orchestrator = get_orchestrator()
+        
+        # Check if we have any data to show
+        tasks = orchestrator.list_tasks()
+        models = orchestrator.list_models()
         
         # Refresh all displays
         await refresh_tasks_list(app)
@@ -1157,7 +1161,13 @@ async def initialize_evals_system(app: 'TldwCli') -> None:
         # Log successful initialization
         log_counter("eval_ui_system_initialization_success")
         
-        app.notify("Evaluation system initialized", severity="information")
+        # More informative notification
+        if not tasks:
+            app.notify("Evaluation system ready. Create a task to get started!", severity="information")
+        elif not models:
+            app.notify("Evaluation system ready. Add a model to start evaluating!", severity="information")
+        else:
+            app.notify(f"Evaluation system ready. {len(tasks)} tasks, {len(models)} models available.", severity="information")
         
     except Exception as e:
         logger.error(f"Error initializing evaluation system: {e}")

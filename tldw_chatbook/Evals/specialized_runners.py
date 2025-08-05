@@ -205,7 +205,20 @@ class CodeExecutionRunner(BaseEvalRunner):
         return response.strip()
     
     def _execute_code(self, code: str, sample: EvalSample) -> Dict[str, Any]:
-        """Execute code and run test cases."""
+        """Execute code and run test cases.
+        
+        Security measures implemented:
+        - Resource limits (CPU, memory, processes, file descriptors)
+        - Dangerous builtins disabled (eval, exec, compile, etc.)
+        - Restricted environment with minimal PATH
+        - Execution timeout
+        - Runs in temporary directory with restricted HOME
+        
+        Future improvements:
+        - Consider using Docker/Podman for true isolation
+        - Add network isolation
+        - Use seccomp filters for syscall restrictions
+        """
         execution_start = time.time()
         results = {
             'syntax_valid': False,
@@ -293,6 +306,31 @@ class CodeExecutionRunner(BaseEvalRunner):
     def _create_test_code(self, code: str, test_cases: List[Dict[str, Any]]) -> str:
         """Create test code that executes the function with test cases."""
         test_code_parts = [
+            "# Security: Set resource limits",
+            "import resource",
+            "import signal",
+            "",
+            "# CPU time limit (5 seconds)",
+            "resource.setrlimit(resource.RLIMIT_CPU, (5, 5))",
+            "",
+            "# Memory limit (256MB) - only on systems that support it",
+            "try:",
+            "    resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))",
+            "except (ValueError, OSError):",
+            "    pass  # Some systems don't support RLIMIT_AS or have different limits",
+            "",
+            "# Limit number of processes/threads",
+            "try:",
+            "    resource.setrlimit(resource.RLIMIT_NPROC, (10, 10))",
+            "except:",
+            "    pass  # May not be available on all systems",
+            "",
+            "# Limit file descriptors",
+            "resource.setrlimit(resource.RLIMIT_NOFILE, (50, 50))",
+            "",
+            "# Disable file operations",
+            "resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))",
+            "",
             "# Disable certain dangerous builtins for safety",
             "import builtins",
             "dangerous_builtins = ['eval', 'exec', 'compile', '__import__', 'open', 'input']",
