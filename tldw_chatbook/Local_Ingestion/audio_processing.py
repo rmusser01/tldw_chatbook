@@ -72,12 +72,32 @@ class LocalAudioProcessor:
         self.media_db = media_db
         self.config = get_media_ingestion_defaults("audio")
         self.chunking_service = ChunkingService()
+        self._cancelled = False  # Flag to track cancellation
         
         # Get configuration settings
         self.max_file_size_mb = get_cli_setting('media_processing.max_audio_file_size_mb', 500)
         if self.max_file_size_mb is None:
             self.max_file_size_mb = 500
         self.max_file_size = self.max_file_size_mb * 1024 * 1024
+    
+    def cancel(self):
+        """Cancel the current processing operation."""
+        logger.info("Cancellation requested for audio processing")
+        self._cancelled = True
+        
+        # Clean up transcription service if it exists
+        if hasattr(self, 'transcription_service') and self.transcription_service:
+            if hasattr(self.transcription_service, 'cleanup'):
+                logger.info("Cleaning up transcription service resources")
+                self.transcription_service.cleanup()
+    
+    def is_cancelled(self) -> bool:
+        """Check if processing has been cancelled."""
+        return self._cancelled
+    
+    def reset_cancellation(self):
+        """Reset the cancellation flag."""
+        self._cancelled = False
         
     def download_audio_file(self, url: str, target_dir: str, 
                           use_cookies: bool = False, 
@@ -249,6 +269,17 @@ class LocalAudioProcessor:
             processing_dir = temp_dir or default_temp
             
             for input_item in inputs:
+                # Check for cancellation before processing each file
+                if self.is_cancelled():
+                    logger.info("Processing cancelled by user")
+                    if transcription_progress_callback:
+                        transcription_progress_callback(
+                            0, 
+                            "Processing cancelled. Already processed files have been saved.",
+                            {"cancelled": True}
+                        )
+                    break
+                
                 try:
                     result = self._process_single_audio(
                         input_item=input_item,
@@ -492,11 +523,18 @@ class LocalAudioProcessor:
             progress_callback: Optional callback for progress updates
             **kwargs: Additional transcription parameters
         """
+        # Wrap progress callback to check for cancellation
+        def cancellable_progress_callback(progress, message, data=None):
+            if self.is_cancelled():
+                raise AudioTranscriptionError("Transcription cancelled by user")
+            if progress_callback:
+                progress_callback(progress, message, data)
+        
         # Import transcription service when available
         try:
             from .transcription_service import TranscriptionService
             service = TranscriptionService()
-            return service.transcribe(audio_path, progress_callback=progress_callback, **kwargs)
+            return service.transcribe(audio_path, progress_callback=cancellable_progress_callback, **kwargs)
         except ImportError:
             # Fallback for testing
             logger.warning("Transcription service not available, using placeholder")

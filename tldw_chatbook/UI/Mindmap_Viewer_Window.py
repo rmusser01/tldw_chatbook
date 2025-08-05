@@ -167,6 +167,14 @@ class MindmapViewerWindow(Screen):
             yield Label("")
             yield Button("Check Again", id="check-deps", variant="primary")
     
+    def on_mount(self) -> None:
+        """Called when the window is mounted."""
+        # If mindmap is not available, show the alert dialog
+        if not self.mindmap_available:
+            from ..Utils.widget_helpers import alert_mindmap_not_available
+            # Show alert after a short delay to ensure UI is ready
+            self.set_timer(0.1, lambda: alert_mindmap_not_available(self))
+    
     def _compose_mindmap_view(self) -> ComposeResult:
         """Compose the main mindmap view"""
         with Container(classes="mindmap-main-container"):

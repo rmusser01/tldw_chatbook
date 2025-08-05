@@ -229,6 +229,13 @@ class VoiceCloningWindow(Screen):
     
     async def on_mount(self) -> None:
         """Initialize the window on mount"""
+        # Check if TTS dependencies are available
+        from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+        if not DEPENDENCIES_AVAILABLE.get('tts_processing', False):
+            from ..Utils.widget_helpers import alert_tts_not_available
+            # Show alert after a short delay to ensure UI is ready
+            self.set_timer(0.1, lambda: alert_tts_not_available(self))
+        
         # Initialize backend managers
         await self._initialize_backends()
         

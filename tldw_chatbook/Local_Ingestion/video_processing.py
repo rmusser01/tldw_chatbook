@@ -56,10 +56,30 @@ class LocalVideoProcessor:
         """
         self.media_db = media_db
         self.audio_processor = LocalAudioProcessor(media_db)
+        self._cancelled = False  # Flag to track cancellation
         self.max_file_size_mb = get_cli_setting('media_processing.max_video_file_size_mb', 2000)
         if self.max_file_size_mb is None:
             self.max_file_size_mb = 2000
         self.max_file_size = self.max_file_size_mb * 1024 * 1024
+    
+    def cancel(self):
+        """Cancel the current processing operation."""
+        logger.info("Cancellation requested for video processing")
+        self._cancelled = True
+        # Also cancel audio processor
+        if self.audio_processor:
+            self.audio_processor.cancel()
+    
+    def is_cancelled(self) -> bool:
+        """Check if processing has been cancelled."""
+        return self._cancelled
+    
+    def reset_cancellation(self):
+        """Reset the cancellation flag."""
+        self._cancelled = False
+        # Also reset audio processor cancellation
+        if self.audio_processor:
+            self.audio_processor.reset_cancellation()
         
     def download_video(
         self,
@@ -330,6 +350,12 @@ class LocalVideoProcessor:
         
         with tempfile.TemporaryDirectory(prefix="video_proc_") as temp_dir:
             for input_item in inputs:
+                # Check for cancellation before processing each file
+                if self.is_cancelled():
+                    logger.info("Processing cancelled by user")
+                    # Note: No progress callback available in this method signature
+                    break
+                
                 try:
                     result = self._process_single_video(
                         input_item=input_item,
@@ -595,9 +621,16 @@ class LocalVideoProcessor:
                     result["warnings"].append(f"Could not save video file: {str(e)}")
             
         except Exception as e:
-            logger.error(f"Error processing video: {str(e)}", exc_info=True)
-            result["status"] = "Error"
-            result["error"] = str(e)
+            error_msg = str(e)
+            # Check if this is a cancellation
+            if "cancelled by user" in error_msg.lower():
+                logger.info(f"Video processing cancelled by user for {input_item}")
+                result["status"] = "Cancelled"
+                result["error"] = "Processing cancelled by user"
+            else:
+                logger.error(f"Error processing video: {error_msg}", exc_info=True)
+                result["status"] = "Error"
+                result["error"] = error_msg
             
             # Log error metrics
             duration = time.time() - start_time

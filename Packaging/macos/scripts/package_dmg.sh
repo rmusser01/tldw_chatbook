@@ -106,8 +106,13 @@ EOF
 if [ -f "${SCRIPT_DIR}/../assets/dmg-background.png" ]; then
     echo_info "Background image found"
     DMG_BACKGROUND="${SCRIPT_DIR}/../assets/dmg-background.png"
+    
+    # Copy background image to DMG
+    mkdir -p "$DMG_DIR/.background"
+    cp "$DMG_BACKGROUND" "$DMG_DIR/.background/background.png"
+    echo_info "Background image copied to DMG"
 else
-    echo_warn "No background image found"
+    echo_warn "No background image found at ${SCRIPT_DIR}/../assets/dmg-background.png"
     DMG_BACKGROUND=""
 fi
 
@@ -132,7 +137,40 @@ sleep 2
 
 # Set up the DMG window properties using AppleScript
 echo_info "Configuring DMG window..."
-osascript << EOF
+
+if [ -n "$DMG_BACKGROUND" ]; then
+    # Configure with background
+    osascript << EOF
+tell application "Finder"
+    tell disk "${VOLUME_NAME}"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {100, 100, 650, 400}
+        set viewOptions to the icon view options of container window
+        set arrangement of viewOptions to not arranged
+        set icon size of viewOptions to 128
+        set background picture of viewOptions to file ".background:background.png"
+        
+        -- Position items
+        set position of item "${APP_NAME}.app" of container window to {150, 150}
+        set position of item "Applications" of container window to {400, 150}
+        set position of item "README.txt" of container window to {275, 250}
+        
+        -- Hide the .background folder
+        set position of item ".background" of container window to {900, 900}
+        
+        close
+        open
+        update without registering applications
+        delay 2
+    end tell
+end tell
+EOF
+else
+    # Configure without background
+    osascript << EOF
 tell application "Finder"
     tell disk "${VOLUME_NAME}"
         open
@@ -149,9 +187,6 @@ tell application "Finder"
         set position of item "Applications" of container window to {400, 150}
         set position of item "README.txt" of container window to {275, 250}
         
-        -- Set background if available
-        -- set background picture of viewOptions to file ".background:background.png"
-        
         close
         open
         update without registering applications
@@ -159,6 +194,7 @@ tell application "Finder"
     end tell
 end tell
 EOF
+fi
 
 # Unmount the temporary DMG
 echo_info "Unmounting temporary DMG..."

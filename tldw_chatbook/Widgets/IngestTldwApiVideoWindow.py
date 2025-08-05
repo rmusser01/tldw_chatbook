@@ -162,6 +162,10 @@ class IngestTldwApiVideoWindow(Vertical):
             yield Checkbox("Overwrite if media exists in local DB", False, id="tldw-api-overwrite-db-video")
             
             yield Button("Submit to TLDW API", id="tldw-api-submit-video", variant="primary", classes="ingest-submit-button")
+            
+            # --- Cancel Button (hidden by default) ---
+            yield Button("Cancel", id="tldw-api-cancel-video", variant="error", classes="ingest-submit-button hidden")
+            
             yield LoadingIndicator(id="tldw-api-loading-indicator-video", classes="hidden")
             yield TextArea(
                 "",

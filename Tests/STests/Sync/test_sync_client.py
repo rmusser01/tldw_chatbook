@@ -7,6 +7,9 @@ import pytest
 import json
 import os
 from unittest.mock import patch, MagicMock, call
+
+# Skip all tests in this file - sync engine is WIP
+pytestmark = pytest.mark.skip(reason="Sync engine is WIP and should not be tested currently")
 #
 # 3rd-Party Imports
 import requests

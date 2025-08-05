@@ -1,0 +1,119 @@
+/* config_search.tcss */
+/* Styling for configuration file search functionality */
+
+/* Search container */
+.config-search-container {
+    width: 100%;
+    margin-bottom: 1;
+    padding: 1;
+    background: $panel;
+    border: solid $primary;
+}
+
+/* Search input */
+.config-search-input {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* Search results collapsible */
+.config-search-results {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+.config-search-results Collapsible > Contents {
+    max-height: 20;
+    overflow-y: auto;
+}
+
+/* Results list */
+.config-results-list {
+    width: 100%;
+    height: auto;
+    max-height: 20;
+    background: $surface;
+}
+
+/* Individual search result item */
+.config-search-result-item {
+    width: 100%;
+    padding: 1;
+    margin-bottom: 0;
+}
+
+.config-search-result-item:hover {
+    background: $boost;
+}
+
+/* Result info section */
+.result-info {
+    width: 1fr;
+    padding-right: 1;
+}
+
+.result-path {
+    text-style: bold;
+    color: $primary;
+}
+
+.result-value {
+    color: $text;
+    margin-top: 0;
+}
+
+.result-context {
+    color: $text-muted;
+    text-style: italic;
+    margin-top: 0;
+}
+
+/* Result action buttons */
+.result-actions {
+    dock: right;
+    width: auto;
+    height: 3;
+    align: center middle;
+}
+
+.result-goto-btn {
+    margin-right: 1;
+    min-width: 8;
+}
+
+.result-edit-btn {
+    min-width: 8;
+}
+
+/* Highlight matches in search results */
+ConfigSearchResult ListItem.--highlight {
+    background: $accent 30%;
+}
+
+/* Ensure the config editor has proper spacing when search is shown */
+#config-text-area {
+    height: 1fr;
+    min-height: 20;
+}
+
+/* Highlight effect for found UI elements */
+.search-highlight {
+    background: $warning 30%;
+    border: thick $warning;
+}
+
+Input.search-highlight:focus {
+    border: thick $warning;
+}
+
+Select.search-highlight {
+    background: $warning 30%;
+}
+
+Checkbox.search-highlight {
+    color: $warning;
+}
+
+TextArea.search-highlight {
+    border: thick $warning;
+}

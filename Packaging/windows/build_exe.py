@@ -12,7 +12,7 @@ import argparse
 
 # Add parent directory to path to import version info
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common.version import VERSION, COMPANY_NAME, PRODUCT_NAME, COPYRIGHT
+from ..common.version import VERSION, COMPANY_NAME, PRODUCT_NAME, COPYRIGHT
 
 class NuitkaBuilder:
     def __init__(self, build_mode="standard"):
@@ -29,14 +29,13 @@ class NuitkaBuilder:
                 shutil.rmtree(dir_path)
             dir_path.mkdir(exist_ok=True)
     
-    def get_nuitka_args(self, entry_point, output_name):
+    def get_nuitka_args(self, entry_point, output_name=None):
         """Get Nuitka compilation arguments"""
         args = [
             sys.executable, "-m", "nuitka",
             "--standalone",
             "--assume-yes-for-downloads",
             f"--output-dir={self.dist_dir}",
-            f"--output-filename={output_name}.exe",
             "--enable-console",
             "--windows-console-mode=force",
             
@@ -111,12 +110,24 @@ class NuitkaBuilder:
         """Build the main CLI executable"""
         print("Building tldw-cli.exe...")
         entry_point = self.project_root / "tldw_chatbook" / "app.py"
-        args = self.get_nuitka_args(entry_point, "tldw-cli")
+        args = self.get_nuitka_args(entry_point)
         
         result = subprocess.run(args, cwd=self.project_root)
         if result.returncode != 0:
             print("ERROR: Nuitka compilation failed for CLI")
             sys.exit(1)
+            
+        # Nuitka creates app.exe and app.exe.dist - rename them
+        original_exe = self.dist_dir / "app.exe"
+        original_dist = self.dist_dir / "app.exe.dist"
+        target_exe = self.dist_dir / "tldw-cli.exe"
+        target_dist = self.dist_dir / "tldw-cli.exe.dist"
+        
+        if original_exe.exists():
+            original_exe.rename(target_exe)
+        if original_dist.exists():
+            original_dist.rename(target_dist)
+            
         print("Successfully built tldw-cli.exe")
     
     def build_serve_exe(self):
@@ -136,12 +147,24 @@ if __name__ == "__main__":
     main()
 """)
         
-        args = self.get_nuitka_args(serve_entry, "tldw-serve")
+        args = self.get_nuitka_args(serve_entry)
         
         result = subprocess.run(args, cwd=self.project_root)
         if result.returncode != 0:
             print("ERROR: Nuitka compilation failed for serve")
             sys.exit(1)
+            
+        # Nuitka creates serve_main.exe and serve_main.exe.dist - rename them
+        original_exe = self.dist_dir / "serve_main.exe"
+        original_dist = self.dist_dir / "serve_main.exe.dist"
+        target_exe = self.dist_dir / "tldw-serve.exe"
+        target_dist = self.dist_dir / "tldw-serve.exe.dist"
+        
+        if original_exe.exists():
+            original_exe.rename(target_exe)
+        if original_dist.exists():
+            original_dist.rename(target_dist)
+            
         print("Successfully built tldw-serve.exe")
     
     def copy_assets(self):

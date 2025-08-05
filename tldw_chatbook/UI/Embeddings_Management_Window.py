@@ -931,27 +931,16 @@ class EmbeddingsManagementWindow(Widget):
             self.notify("Please select a collection first", severity="warning")
             return
         
-        # Create a simple confirmation dialog
-        class DeleteCollectionDialog(ModalScreen):
-            """Modal dialog for confirming collection deletion."""
-            def __init__(self, collection_name: str) -> None:
-                self.collection_name = collection_name
-                super().__init__()
-            
-            def compose(self) -> ComposeResult:
-                with Container(id="dialog-container"):
-                    yield Label(f"Delete collection '{self.collection_name}'?", id="dialog-title")
-                    yield Label("This action cannot be undone.", id="dialog-message")
-                    with Horizontal(id="dialog-buttons"):
-                        yield Button("Cancel", id="cancel", variant="default")
-                        yield Button("Delete", id="confirm", variant="error")
-            
-            @on(Button.Pressed)
-            async def on_button_pressed(self, event: Button.Pressed) -> None:
-                self.dismiss(event.button.id == "confirm")
+        # Show confirmation dialog using our consistent DeleteConfirmationDialog
+        from ..Widgets.delete_confirmation_dialog import create_delete_confirmation
+        dialog = create_delete_confirmation(
+            item_type="Collection",
+            item_name=self.selected_collection,
+            additional_warning="All embeddings in this collection will be permanently deleted.",
+            permanent=True
+        )
         
-        # Show confirmation dialog
-        confirm = await self.app.push_screen(DeleteCollectionDialog(self.selected_collection), wait_for_dismiss=True)
+        confirm = await self.app.push_screen_wait(dialog)
         
         if confirm:
             # TODO: Implement actual collection deletion
@@ -1103,27 +1092,16 @@ class EmbeddingsManagementWindow(Widget):
             self.notify("No collections selected", severity="warning")
             return
         
-        # Create confirmation dialog
-        class BatchDeleteCollectionsDialog(ModalScreen):
-            """Modal dialog for confirming batch collection deletion."""
-            def __init__(self, count: int) -> None:
-                self.count = count
-                super().__init__()
-            
-            def compose(self) -> ComposeResult:
-                with Container(id="dialog-container"):
-                    yield Label(f"Delete {self.count} collections?", id="dialog-title")
-                    yield Label("This action cannot be undone.", id="dialog-message")
-                    with Horizontal(id="dialog-buttons"):
-                        yield Button("Cancel", id="cancel", variant="default")
-                        yield Button("Delete", id="confirm", variant="error")
-            
-            @on(Button.Pressed)
-            async def on_button_pressed(self, event: Button.Pressed) -> None:
-                self.dismiss(event.button.id == "confirm")
+        # Show confirmation dialog using our consistent DeleteConfirmationDialog
+        from ..Widgets.delete_confirmation_dialog import create_delete_confirmation
+        dialog = create_delete_confirmation(
+            item_type="Collections",
+            item_name=f"{len(self.selected_collections)} selected collections",
+            additional_warning="All embeddings in these collections will be permanently deleted.",
+            permanent=True
+        )
         
-        # Show confirmation dialog
-        confirm = await self.app.push_screen(BatchDeleteCollectionsDialog(len(self.selected_collections)), wait_for_dismiss=True)
+        confirm = await self.app.push_screen_wait(dialog)
         
         if confirm:
             # TODO: Implement batch collection deletion

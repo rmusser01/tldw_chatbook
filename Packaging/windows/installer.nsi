@@ -73,8 +73,8 @@ Section "Core Application (required)" SEC01
   SetOutPath "$INSTDIR"
   SetOverwrite try
   
-  ; Copy main executable and dependencies
-  File /r "dist\tldw-cli.exe.dist\*.*"
+  ; Copy main executable
+  File "dist\tldw-cli.exe"
   
   ; Copy batch wrappers
   File "dist\*.bat"
@@ -82,6 +82,10 @@ Section "Core Application (required)" SEC01
   ; Copy documentation
   File "dist\README.txt"
   File "dist\LICENSE.txt"
+  
+  ; Copy all DLLs and other dependencies from the flat dist directory
+  File "dist\*.dll"
+  File "dist\*.pyd"
   
   ; Create shortcuts
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"

@@ -108,6 +108,14 @@ class IngestLocalAudioWindowSimplified(Vertical):
                     variant="success",
                     classes="process-button"
                 )
+                
+                # Cancel button (hidden by default)
+                yield Button(
+                    "Cancel", 
+                    id="local-cancel-audio", 
+                    variant="error",
+                    classes="process-button hidden"
+                )
             
             # Basic options (visible in simple mode)
             with Container(id="audio-basic-options", classes="basic-options-container"):

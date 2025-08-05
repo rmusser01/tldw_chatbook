@@ -618,6 +618,19 @@ async def handle_notes_delete_button_pressed(app: 'TldwCli', event: Button.Press
         app.notify("No note selected to delete, or version is missing.", severity="warning")
         return
 
+    # Show confirmation dialog
+    from ..Widgets.delete_confirmation_dialog import create_delete_confirmation
+    dialog = create_delete_confirmation(
+        item_type="Note",
+        item_name=app.current_selected_note_title or "the selected note",
+        additional_warning="This note will be moved to trash and can be recovered later."
+    )
+    
+    confirmed = await app.push_screen_wait(dialog)
+    if not confirmed:
+        logger.info("Note deletion cancelled by user.")
+        return
+
     logger.info(
         f"Attempting to delete note ID: {app.current_selected_note_id}, Version: {app.current_selected_note_version}")
 

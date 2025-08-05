@@ -9,6 +9,7 @@ Reusable widget components for the application.
 """
 
 from .SmartContentTree import SmartContentTree, ContentNodeData, ContentSelectionChanged
+from .config_search_widget import ConfigSearchResult, UIElementSearchEngine
 
 # Optional imports
 try:
@@ -23,6 +24,8 @@ __all__ = [
     'SmartContentTree',
     'ContentNodeData',
     'ContentSelectionChanged',
+    'ConfigSearchResult',
+    'UIElementSearchEngine',
 ]
 
 if MINDMAP_AVAILABLE:

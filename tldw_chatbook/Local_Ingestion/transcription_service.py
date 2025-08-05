@@ -12,6 +12,7 @@ import sys
 import threading
 import io
 import wave
+import asyncio
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union, Callable
 import json
@@ -189,6 +190,22 @@ class ConversionError(TranscriptionError):
     pass
 
 
+def _handle_progress_callback_error(e: Exception) -> None:
+    """Handle errors from progress callbacks.
+    
+    Re-raises cancellation errors, logs and ignores others.
+    """
+    # Import here to avoid circular imports
+    from ..Local_Ingestion.audio_processing import AudioTranscriptionError
+    
+    # Re-raise cancellation errors
+    if isinstance(e, AudioTranscriptionError) or "cancelled by user" in str(e).lower():
+        raise  # Re-raise cancellation to outer handler
+    
+    # Log and ignore other errors
+    logger.warning(f"Progress callback error (ignored): {e}")
+
+
 class TranscriptionService:
     """Unified service for audio transcription with multiple backend support."""
     
@@ -235,6 +252,28 @@ class TranscriptionService:
         # Parakeet/NeMo models (lazy loaded)
         self._parakeet_model = None
         logger.debug("Parakeet model will be lazy-loaded on first use")
+    
+    def cleanup(self):
+        """Clean up resources held by the transcription service."""
+        logger.info("Cleaning up TranscriptionService resources")
+        
+        # Clear model cache
+        with self._model_cache_lock:
+            for cache_key, model in self._model_cache.items():
+                logger.debug(f"Releasing model from cache: {cache_key}")
+                # Models should be garbage collected when references are cleared
+            self._model_cache.clear()
+        
+        # Clear other models
+        self._qwen_model = None
+        self._qwen_processor = None
+        self._parakeet_model = None
+        if hasattr(self, '_parakeet_mlx_model'):
+            self._parakeet_mlx_model = None
+        if hasattr(self, '_lightning_whisper_model'):
+            self._lightning_whisper_model = None
+        
+        logger.info("TranscriptionService cleanup complete")
         
         # Canary model (lazy loaded)
         self._canary_model = None
@@ -711,8 +750,14 @@ class TranscriptionService:
                 # Report model loading progress
                 if progress_callback:
                     try:
-                        progress_callback(0, f"Loading Whisper model: {model} (this may take a few minutes on first use)...", 
-                                        {"stage": "model_loading", "model": model})
+                        # Check if this is likely a first-time download
+                        is_huggingface_model = "/" in model
+                        if is_huggingface_model:
+                            progress_callback(0, f"Downloading model '{model}' from HuggingFace (this may take several minutes on first use)...", 
+                                            {"stage": "model_downloading", "model": model, "provider": "faster-whisper"})
+                        else:
+                            progress_callback(0, f"Loading Whisper model: {model} (this may take a few minutes on first use)...", 
+                                            {"stage": "model_loading", "model": model, "provider": "faster-whisper"})
                     except Exception as e:
                         logger.warning(f"Progress callback error during model loading: {e}")
                 
@@ -734,14 +779,39 @@ class TranscriptionService:
                     if progress_callback:
                         try:
                             progress_callback(2, f"Model loaded successfully in {model_load_time:.1f}s", 
-                                            {"stage": "model_loaded", "load_time": model_load_time})
+                                            {"stage": "model_loaded", "load_time": model_load_time, "model": model, "provider": "faster-whisper"})
                         except Exception as e:
                             logger.warning(f"Progress callback error after model loading: {e}")
                 except Exception as e:
                     logger.error(f"Failed to load Whisper model: {str(e)}", exc_info=True)
                     # Provide more helpful error message
                     error_msg = f"Failed to load model {model}: {str(e)}"
-                    if "bad value(s) in fds_to_keep" in str(e):
+                    
+                    # Check for invalid model size error
+                    if "Invalid model size" in str(e):
+                        error_msg = f"The model '{model}' is not recognized by faster-whisper.\n\n"
+                        error_msg += "This usually happens when:\n"
+                        error_msg += "1. The model name is misspelled\n"
+                        error_msg += "2. A display name was used instead of the model ID\n"
+                        error_msg += "3. The model requires special handling\n\n"
+                        error_msg += "Try using one of these standard models instead:\n"
+                        error_msg += "• tiny, base, small, medium, large, large-v2, large-v3\n"
+                        error_msg += "• Or distil models: distil-large-v2, distil-large-v3\n"
+                        
+                        # If it's a HuggingFace model path, provide specific guidance
+                        if "/" in model:
+                            error_msg += f"\n\nNote: '{model}' appears to be a HuggingFace model path."
+                            error_msg += "\nThis model may need to be downloaded first or may not be compatible with faster-whisper."
+                            
+                            # Report failure to callback
+                            if progress_callback:
+                                try:
+                                    progress_callback(0, f"Model '{model}' not compatible with faster-whisper", 
+                                                    {"stage": "model_error", "error": "incompatible_model", "model": model})
+                                except Exception:
+                                    pass
+                    
+                    elif "bad value(s) in fds_to_keep" in str(e):
                         error_msg += "\n\nThis error typically occurs when file descriptors are not properly handled."
                         error_msg += "\nPossible solutions:"
                         error_msg += "\n1. Restart the application"
@@ -749,6 +819,7 @@ class TranscriptionService:
                         error_msg += f"\n   huggingface-cli download openai/whisper-{model}"
                         error_msg += "\n3. Set environment variable before starting:"
                         error_msg += "\n   export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES"
+                    
                     raise TranscriptionError(error_msg) from e
             
             whisper_model = self._model_cache[cache_key]
@@ -784,10 +855,10 @@ class TranscriptionService:
             if progress_callback:
                 try:
                     device_info = f" on {self.config['device'].upper()}" if self.config['device'] != 'cpu' else " on CPU (this may take several minutes)"
-                    progress_callback(3, f"Starting transcription{device_info}...", 
-                                    {"device": self.config['device'], "compute_type": self.config['compute_type']})
+                    progress_callback(3, f"Starting transcription with {model}{device_info}...", 
+                                    {"device": self.config['device'], "compute_type": self.config['compute_type'], "model": model, "provider": "faster-whisper"})
                 except Exception as e:
-                    logger.warning(f"Progress callback error (ignored): {e}")
+                    _handle_progress_callback_error(e)
             
             logger.info(f"Starting Whisper transcription with options: {options}")
             transcribe_start = time.time()
@@ -820,7 +891,7 @@ class TranscriptionService:
                             {"language": info.language, "confidence": info.language_probability}
                         )
                     except Exception as e:
-                        logger.warning(f"Progress callback error (ignored): {e}")
+                        _handle_progress_callback_error(e)
             
             # Collect segments
             segments = []
@@ -830,54 +901,83 @@ class TranscriptionService:
             segment_start_time = time.time()
             last_update_time = time.time()
             
-            for segment in segments_generator:
-                segment_dict = {
-                    "start": segment.start,
-                    "end": segment.end,
-                    "text": segment.text.strip(),
-                    "Time_Start": segment.start,  # Legacy format support
-                    "Time_End": segment.end,
-                    "Text": segment.text.strip()
-                }
-                segments.append(segment_dict)
-                # Only add non-empty text to full_text to avoid extra spaces when joining
-                stripped_text = segment.text.strip()
-                if stripped_text:
-                    full_text.append(stripped_text)
-                segment_count += 1
-                
-                if segment_count % 10 == 0:
-                    logger.debug(f"Processed {segment_count} segments, last segment: {segment.start:.1f}s - {segment.end:.1f}s")
-                
-                # Calculate and report progress
-                if progress_callback and total_duration > 0:
-                    # Calculate progress based on time (5-95% range, leaving room for finalization)
-                    time_progress = 5 + (segment.end / total_duration) * 90
-                    current_time = time.time()
+            # Wrap segment processing in try-except to handle cancellation
+            try:
+                for segment in segments_generator:
+                    segment_dict = {
+                        "start": segment.start,
+                        "end": segment.end,
+                        "text": segment.text.strip(),
+                        "Time_Start": segment.start,  # Legacy format support
+                        "Time_End": segment.end,
+                        "Text": segment.text.strip()
+                    }
+                    segments.append(segment_dict)
+                    # Only add non-empty text to full_text to avoid extra spaces when joining
+                    stripped_text = segment.text.strip()
+                    if stripped_text:
+                        full_text.append(stripped_text)
+                    segment_count += 1
                     
-                    # Update if progress increased by at least 1% OR if 5 seconds have passed since last update
-                    if time_progress - last_progress >= 1 or (current_time - last_update_time) >= 5:
-                        try:
-                            # Add processing speed info
-                            elapsed = current_time - transcribe_start
-                            speed = segment.end / elapsed if elapsed > 0 else 0
-                            speed_text = f" ({speed:.1f}x speed)" if speed > 0 else ""
-                            
-                            progress_callback(
-                                time_progress,
-                                f"Transcribing: {segment.end:.1f}s / {total_duration:.1f}s{speed_text}",
-                                {
-                                    "segment_num": segment_count,
-                                    "segment_text": segment.text.strip(),
-                                    "current_time": segment.end,
-                                    "total_time": total_duration,
-                                    "processing_speed": speed
-                                }
-                            )
-                            last_update_time = current_time
-                        except Exception as e:
-                            logger.warning(f"Progress callback error (ignored): {e}")
-                        last_progress = time_progress
+                    if segment_count % 10 == 0:
+                        logger.debug(f"Processed {segment_count} segments, last segment: {segment.start:.1f}s - {segment.end:.1f}s")
+                    
+                    # Calculate and report progress
+                    if progress_callback and total_duration > 0:
+                        # Calculate progress based on time (5-95% range, leaving room for finalization)
+                        time_progress = 5 + (segment.end / total_duration) * 90
+                        current_time = time.time()
+                        
+                        # Update if progress increased by at least 1% OR if 5 seconds have passed since last update
+                        if time_progress - last_progress >= 1 or (current_time - last_update_time) >= 5:
+                            try:
+                                # Add processing speed info
+                                elapsed = current_time - transcribe_start
+                                speed = segment.end / elapsed if elapsed > 0 else 0
+                                speed_text = f" ({speed:.1f}x speed)" if speed > 0 else ""
+                                
+                                progress_callback(
+                                    time_progress,
+                                    f"Transcribing with {model}: {segment.end:.1f}s / {total_duration:.1f}s{speed_text}",
+                                    {
+                                        "segment_num": segment_count,
+                                        "segment_text": segment.text.strip(),
+                                        "current_time": segment.end,
+                                        "total_time": total_duration,
+                                        "processing_speed": speed,
+                                        "model": model,
+                                        "provider": "faster-whisper"
+                                    }
+                                )
+                                last_update_time = current_time
+                            except Exception as e:
+                                # Re-raise cancellation errors, ignore others
+                                from ..Local_Ingestion.audio_processing import AudioTranscriptionError
+                                if isinstance(e, AudioTranscriptionError) or "cancelled by user" in str(e).lower():
+                                    raise  # Re-raise cancellation to outer handler
+                                _handle_progress_callback_error(e)
+                            last_progress = time_progress
+                
+            except Exception as e:
+                # Check if this is a cancellation - check both the exception type and message
+                from ..Local_Ingestion.audio_processing import AudioTranscriptionError
+                if isinstance(e, AudioTranscriptionError) or "cancelled by user" in str(e).lower():
+                    logger.warning(f"Transcription cancelled by user: {type(e).__name__}: {e}")
+                    # Create a partial result with what we have so far
+                    result = {
+                        "text": " ".join(full_text) + " [CANCELLED]",
+                        "segments": segments,
+                        "language": info.language if 'info' in locals() else None,
+                        "language_probability": info.language_probability if 'info' in locals() else None,
+                        "duration": segment.end if 'segment' in locals() else 0,
+                        "provider": "faster-whisper",
+                        "model": model,
+                        "status": "cancelled"
+                    }
+                    return result
+                else:
+                    # Re-raise other exceptions
+                    raise
             
             segment_time = time.time() - segment_start_time
             total_time = time.time() - transcribe_start
@@ -918,7 +1018,7 @@ class TranscriptionService:
                         }
                     )
                 except Exception as e:
-                    logger.warning(f"Progress callback error (ignored): {e}")
+                    _handle_progress_callback_error(e)
             
             return result
             
@@ -931,6 +1031,7 @@ class TranscriptionService:
     def _transcribe_with_qwen2audio(
         self,
         audio_path: str,
+        progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """Transcribe using Qwen2Audio model."""
@@ -944,6 +1045,14 @@ class TranscriptionService:
         
         logger.info("Starting Qwen2Audio transcription")
         transcribe_start = time.time()
+        
+        # Report progress
+        if progress_callback:
+            try:
+                progress_callback(0, "Starting transcription with Qwen2Audio 7B Instruct...", 
+                                {"stage": "transcription_start", "model": "Qwen/Qwen2-Audio-7B-Instruct", "provider": "qwen2audio"})
+            except Exception as e:
+                _handle_progress_callback_error(e)
         
         if not SOUNDFILE_AVAILABLE:
             raise TranscriptionError("soundfile required for Qwen2Audio")
@@ -1057,6 +1166,7 @@ class TranscriptionService:
         audio_path: str,
         model: Optional[str] = None,
         language: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """Transcribe using NVIDIA Parakeet models via NeMo."""
@@ -1068,8 +1178,17 @@ class TranscriptionService:
                 "Install with: pip install nemo-toolkit[asr]"
             )
         
-        logger.info(f"Starting Parakeet transcription with model: {model or 'nvidia/parakeet-tdt-1.1b'}")
+        model = model or 'nvidia/parakeet-tdt-1.1b'
+        logger.info(f"Starting Parakeet transcription with model: {model}")
         transcribe_start = time.time()
+        
+        # Report progress
+        if progress_callback:
+            try:
+                progress_callback(0, f"Starting transcription with Parakeet model: {model}...", 
+                                {"stage": "transcription_start", "model": model, "provider": "parakeet"})
+            except Exception as e:
+                _handle_progress_callback_error(e)
         
         # Lazy load Parakeet model
         if self._parakeet_model is None:
@@ -1172,6 +1291,7 @@ class TranscriptionService:
         source_lang: Optional[str] = None,
         target_lang: Optional[str] = None,
         chunk_len_in_secs: Optional[float] = None,
+        progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """Transcribe using NVIDIA Canary model with chunked inference for long audio."""
@@ -1179,9 +1299,18 @@ class TranscriptionService:
         # Use configured chunk length if not specified
         chunk_len_in_secs = chunk_len_in_secs or self.config['chunk_length_seconds']
         
-        logger.info(f"Starting Canary transcription with model: {model or 'nvidia/canary-1b-flash'}")
+        model = model or 'nvidia/canary-1b-flash'
+        logger.info(f"Starting Canary transcription with model: {model}")
         logger.info(f"Source language: {source_lang}, Target language: {target_lang}, Chunk length: {chunk_len_in_secs}s")
         transcribe_start = time.time()
+        
+        # Report progress
+        if progress_callback:
+            try:
+                progress_callback(0, f"Starting transcription with Canary model: {model}...", 
+                                {"stage": "transcription_start", "model": model, "provider": "canary"})
+            except Exception as e:
+                _handle_progress_callback_error(e)
         
         if not NEMO_AVAILABLE:
             logger.error("NeMo toolkit not installed")
@@ -1429,9 +1558,10 @@ class TranscriptionService:
             # Report progress
             if progress_callback:
                 try:
-                    progress_callback(0, "Starting transcription with Lightning Whisper MLX...", None)
+                    progress_callback(0, f"Starting transcription with Lightning Whisper MLX model: {model}...", 
+                                    {"stage": "transcription_start", "model": model, "provider": "lightning-whisper-mlx"})
                 except Exception as e:
-                    logger.warning(f"Progress callback error (ignored): {e}")
+                    _handle_progress_callback_error(e)
             
             logger.info(f"Transcribing audio file: {audio_path}")
             transcribe_audio_start = time.time()
@@ -1536,7 +1666,7 @@ class TranscriptionService:
                         }
                     )
                 except Exception as e:
-                    logger.warning(f"Progress callback error (ignored): {e}")
+                    _handle_progress_callback_error(e)
             
             return result
             
@@ -1620,9 +1750,10 @@ class TranscriptionService:
             # Report progress
             if progress_callback:
                 try:
-                    progress_callback(0, "Starting transcription with Parakeet MLX...", None)
+                    progress_callback(0, f"Starting transcription with Parakeet MLX model: {model}...", 
+                                    {"stage": "transcription_start", "model": model, "provider": "parakeet-mlx"})
                 except Exception as e:
-                    logger.warning(f"Progress callback error (ignored): {e}")
+                    _handle_progress_callback_error(e)
             
             logger.info(f"Starting Parakeet MLX transcription")
             logger.info(f"  Audio file: {audio_path}")
@@ -1789,7 +1920,7 @@ class TranscriptionService:
                         }
                     )
                 except Exception as e:
-                    logger.warning(f"Progress callback error (ignored): {e}")
+                    _handle_progress_callback_error(e)
             
             return result_dict
             
@@ -1834,6 +1965,14 @@ class TranscriptionService:
         """
         logger.info(f"Starting remote whisper transcription: {audio_path}")
         transcribe_start = time.time()
+        
+        # Report progress
+        if progress_callback:
+            try:
+                progress_callback(0, f"Starting transcription with remote Whisper model: {model or 'whisper-1'}...", 
+                                {"stage": "transcription_start", "model": model or 'whisper-1', "provider": "remote-whisper"})
+            except Exception as e:
+                _handle_progress_callback_error(e)
         
         # Get configuration
         from ..config import get_cli_setting
@@ -1896,7 +2035,8 @@ class TranscriptionService:
                 
                 logger.info(f"Sending request to {api_endpoint}")
                 if progress_callback:
-                    progress_callback(20, "Uploading audio to remote server", {"stage": "uploading"})
+                    progress_callback(20, f"Uploading audio to remote server for {model or 'whisper-1'} transcription", 
+                                    {"stage": "uploading", "model": model or 'whisper-1', "provider": "remote-whisper"})
                 
                 # Make request
                 response = requests.post(
@@ -2222,17 +2362,32 @@ class TranscriptionService:
             segments = []
             full_text = []
             
-            for segment in segments_generator:
-                seg_dict = {
-                    "start": segment.start,
-                    "end": segment.end,
-                    "text": segment.text,
-                    "Time_Start": segment.start,
-                    "Time_End": segment.end,
-                    "Text": segment.text
-                }
-                segments.append(seg_dict)
-                full_text.append(segment.text)
+            # Wrap segment processing to handle cancellation
+            try:
+                for segment in segments_generator:
+                    seg_dict = {
+                        "start": segment.start,
+                        "end": segment.end,
+                        "text": segment.text,
+                        "Time_Start": segment.start,
+                        "Time_End": segment.end,
+                        "Text": segment.text
+                    }
+                    segments.append(seg_dict)
+                    full_text.append(segment.text)
+            except Exception as e:
+                from ..Local_Ingestion.audio_processing import AudioTranscriptionError
+                if isinstance(e, AudioTranscriptionError) or "cancelled by user" in str(e).lower():
+                    logger.warning(f"Buffer transcription cancelled by user: {type(e).__name__}: {e}")
+                    # Return partial result
+                    text = ' '.join(full_text) + " [CANCELLED]"
+                    return {
+                        "text": text,
+                        "segments": segments,
+                        "status": "cancelled"
+                    }
+                else:
+                    raise
             
             text = ' '.join(full_text)
             

@@ -22,6 +22,22 @@ class IngestTldwApiPdfWindow(Vertical):
         self.selected_local_files = []
         logger.debug("IngestTldwApiPdfWindow initialized.")
     
+    def on_mount(self) -> None:
+        """Called when the widget is mounted."""
+        # Check if PDF processing dependencies are available
+        from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+        if not DEPENDENCIES_AVAILABLE.get('pdf_processing', False):
+            from ..Utils.widget_helpers import alert_pdf_not_available
+            # Show alert after a short delay to ensure UI is ready
+            self.set_timer(0.1, lambda: alert_pdf_not_available(self))
+            # Add warning to the UI
+            try:
+                from textual.css.query import NoMatches
+                static = self.query_one(".sidebar-title", Static)
+                static.update("[yellow]⚠ PDF processing dependencies not installed[/yellow]")
+            except NoMatches:
+                pass
+    
     def compose(self) -> ComposeResult:
         """Compose the PDF ingestion form."""
         # Get default API URL from app config

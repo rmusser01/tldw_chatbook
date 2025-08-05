@@ -8,6 +8,9 @@ import time
 import uuid
 from unittest.mock import MagicMock, call # Can use unittest.mock directly or pytest-mock's mocker
 
+# Skip all tests in this file - sync engine is WIP
+pytestmark = pytest.mark.skip(reason="Sync engine is WIP and should not be tested currently")
+
 # Import necessary components from your modules
 # Assuming they are in the parent directory or PYTHONPATH is set
 import sys

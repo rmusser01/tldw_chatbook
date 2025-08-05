@@ -11,7 +11,6 @@ from typing import Optional, Dict, Any, List, Callable
 import json
 #
 # Third-Party Imports
-from textual.worker import Worker
 from textual import work
 from textual.app import App
 from textual import events
@@ -47,15 +46,18 @@ from ..Metrics.metrics_logger import log_histogram, log_counter, log_gauge
 #
 ########################################################################################################################
 
-class SubscriptionSchedulerWorker(Worker):
+class SubscriptionSchedulerWorker:
     """
-    Textual worker for running subscription checks in the background.
+    Manager for running subscription checks in the background.
     
-    This worker:
+    This class:
     - Manages the subscription scheduler lifecycle
     - Handles scheduled checks asynchronously
     - Posts events to update the UI
     - Manages concurrent check limits
+    
+    Note: This is not a Textual Worker subclass, but rather a manager
+    that creates workers as needed.
     """
     
     def __init__(self, 
@@ -72,7 +74,6 @@ class SubscriptionSchedulerWorker(Worker):
             max_concurrent: Maximum concurrent checks
             check_interval: Interval between scheduler runs (seconds)
         """
-        super().__init__()
         self.app = app
         self.db = db
         self.max_concurrent = max_concurrent

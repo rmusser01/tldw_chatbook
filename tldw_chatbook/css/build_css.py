@@ -55,6 +55,8 @@ CSS_MODULES = [
     "features/_code_repo.tcss",
     "features/_coding.tcss",
     "features/_tab_dropdown.tcss",
+    "features/config_search.tcss",
+    "features/feature_alerts.tcss",
     
     # 5. Utilities - Helpers and Overrides (can override anything)
     "utilities/_helpers.tcss",

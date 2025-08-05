@@ -212,6 +212,10 @@ class IngestLocalVideoWindow(Vertical):
             
             # --- Submit Button ---
             yield Button("Submit", id="local-submit-video", variant="primary")
+            
+            # --- Cancel Button (hidden by default) ---
+            yield Button("Cancel", id="local-cancel-video", variant="error", classes="hidden")
+            
             yield LoadingIndicator(id="local-loading-indicator-video", classes="hidden")
             yield TextArea("", id="local-status-video", read_only=True, classes="ingest-status-area")
     
@@ -237,10 +241,10 @@ class IngestLocalVideoWindow(Vertical):
                 self._current_model_list = model_list
                 # Create user-friendly display names for models
                 model_options = self._get_model_display_options(provider, model_list)
-                # Swap tuple order for Select widget: (value, label) where label is displayed
-                select_options = [(model_id, display_name) for model_id, display_name in model_options]
+                # Select widget expects (label, value) format - label is displayed, value is stored
+                select_options = [(display_name, model_id) for model_id, display_name in model_options]
                 logger.debug(f"[Video] Setting {len(select_options)} model options for {provider}")
-                logger.debug(f"[Video] First option example: value='{select_options[0][0]}', label='{select_options[0][1]}'")
+                logger.debug(f"[Video] First option example: label='{select_options[0][0]}', value='{select_options[0][1]}'")
                 model_select.set_options(select_options)
                 model_select.prompt = "Select model..."
                 logger.info(f"[Video] Successfully updated model dropdown with {len(select_options)} models for {provider}")
@@ -302,7 +306,9 @@ class IngestLocalVideoWindow(Vertical):
                 'distil-small.en': 'Distil Small English',
                 'deepdml/faster-distil-whisper-large-v3.5': 'Distil Large v3.5 (DeepDML)',
                 'deepdml/faster-whisper-large-v3-turbo-ct2': 'Large v3 Turbo (DeepDML)',
-                'nyrahealth/faster_CrisperWhisper': 'CrisperWhisper (NyraHealth)'
+                'nyrahealth/faster_CrisperWhisper': 'CrisperWhisper (NyraHealth)',
+                'large-v3-turbo': 'Large v3 Turbo (latest, fastest)',
+                'turbo': 'Turbo (alias for large-v3-turbo)'
             }
             return [(m, whisper_names.get(m, m)) for m in model_list]
         elif provider == 'qwen2audio':

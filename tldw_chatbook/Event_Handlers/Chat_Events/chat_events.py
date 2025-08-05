@@ -1447,6 +1447,20 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
     elif "delete-button" in button_classes:
         logging.info("Action: Delete clicked for %s message: '%s...'", message_role, message_text[:50])
         message_id_to_delete = getattr(action_widget, 'message_id_internal', None)
+        
+        # Show confirmation dialog
+        from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
+        dialog = create_delete_confirmation(
+            item_type="Message",
+            item_name=f"{message_role} message",
+            additional_warning="This will remove the message from your conversation history."
+        )
+        
+        confirmed = await app.push_screen_wait(dialog)
+        if not confirmed:
+            loguru_logger.info("Message deletion cancelled by user.")
+            return
+        
         try:
             await action_widget.remove()
             if action_widget is app.current_ai_message_widget:

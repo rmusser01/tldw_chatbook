@@ -2,7 +2,7 @@
 #
 #
 # Imports
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, List, Dict, Any
 import os
 import shutil
 import json
@@ -15,10 +15,11 @@ from textual import work
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
 from textual.css.query import QueryError
-from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher, Collapsible
+from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher, Collapsible, ListView, ListItem
 from textual.screen import Screen
 from textual.worker import Worker
 from textual.widgets import Markdown
+from textual import on
 # Local Imports
 from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config, 
@@ -32,6 +33,7 @@ from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
 from ..Utils.path_validation import validate_path
 from .Theme_Editor_Window import ThemeEditorView
+from .Widgets import ConfigSearchResult, UIElementSearchEngine
 #
 # Local Imports
 #
@@ -266,6 +268,11 @@ class ToolsSettingsWindow(Container):
         padding: 1;
     }
     
+    .settings-section-spacer {
+        height: 1;
+        width: 100%;
+    }
+    
     .settings-group-title {
         text-style: bold;
         color: $primary;
@@ -478,6 +485,10 @@ class ToolsSettingsWindow(Container):
         """Compose basic general settings."""
         general_config = self.config_data.get("general", {})
         
+        # Add spacing before Application Settings section
+        yield Static("", classes="settings-section-spacer")
+        yield Static("", classes="settings-section-spacer")
+        
         # Application Settings Group
         with Container(classes="settings-group"):
             yield Static("🎯 Application Settings", classes="settings-group-title")
@@ -515,6 +526,10 @@ class ToolsSettingsWindow(Container):
                         classes="settings-checkbox",
                         tooltip="Use a compact dropdown menu instead of horizontal tabs"
                     )
+            
+            # Add spacing before Appearance section
+            yield Static("", classes="settings-section-spacer")
+            yield Static("", classes="settings-section-spacer")
             
             # Appearance Settings Group
             with Container(classes="settings-group"):
@@ -561,6 +576,10 @@ class ToolsSettingsWindow(Container):
                     variant="default"
                 )
             
+            # Add spacing before Startup section
+            yield Static("", classes="settings-section-spacer")
+            yield Static("", classes="settings-section-spacer")
+            
             # Splash Screen Settings Group
             with Container(classes="settings-group"):
                 yield Static("🚀 Startup", classes="settings-group-title")
@@ -584,6 +603,10 @@ class ToolsSettingsWindow(Container):
                         placeholder="1.5",
                         tooltip="How long to show the splash screen"
                     )
+            
+            # Add spacing before Developer section
+            yield Static("", classes="settings-section-spacer")
+            yield Static("", classes="settings-section-spacer")
             
             # Developer Settings Group
             with Container(classes="settings-group"):
@@ -628,6 +651,10 @@ class ToolsSettingsWindow(Container):
             providers = list(self.config_data.get("providers", {}).keys())
             provider_options = [(p, p) for p in providers]
             
+            # Add spacing before Provider & Model section
+            yield Static("", classes="settings-section-spacer")
+            yield Static("", classes="settings-section-spacer")
+            
             # Provider & Model Group
             with Container(classes="settings-group"):
                 yield Static("🤖 Default Provider & Model", classes="settings-group-title")
@@ -662,6 +689,10 @@ class ToolsSettingsWindow(Container):
                         placeholder="0.0 - 2.0",
                         tooltip="Controls randomness in responses (0=focused, 2=creative)"
                     )
+            
+            # Add spacing before Chat Interface Settings section
+            yield Static("", classes="settings-section-spacer")
+            yield Static("", classes="settings-section-spacer")
             
             # Chat Interface Settings Group
             with Container(classes="settings-group"):
@@ -704,6 +735,10 @@ class ToolsSettingsWindow(Container):
                     classes="help-text warning-text"
                 )
             
+            # Add spacing before Quick Actions section
+            yield Static("", classes="settings-section-spacer")
+            yield Static("", classes="settings-section-spacer")
+            
             # Quick Actions
             with Container(classes="settings-group"):
                 yield Static("⚡ Quick Actions", classes="settings-group-title")
@@ -730,6 +765,10 @@ class ToolsSettingsWindow(Container):
             character_config = self.config_data.get("character_defaults", {})
             providers = list(self.config_data.get("providers", {}).keys())
             provider_options = [(p, p) for p in providers]
+            
+            # Add spacing before Provider & Model section
+            yield Static("", classes="settings-section-spacer")
+            yield Static("", classes="settings-section-spacer")
             
             # Provider & Model Group
             with Container(classes="settings-group"):
@@ -766,6 +805,10 @@ class ToolsSettingsWindow(Container):
                         tooltip="Higher values make characters more creative/unpredictable"
                     )
             
+            # Add spacing before Character Behavior section
+            yield Static("", classes="settings-section-spacer")
+            yield Static("", classes="settings-section-spacer")
+            
             # Character Behavior Group
             with Container(classes="settings-group"):
                 yield Static("🎭 Character Behavior", classes="settings-group-title")
@@ -795,6 +838,10 @@ class ToolsSettingsWindow(Container):
         with VerticalScroll(classes="settings-tab-content"):
             encryption_config = self.config_data.get("encryption", {})
             encryption_enabled = encryption_config.get("enabled", False)
+            
+            # Add spacing before Encryption Settings section
+            yield Static("", classes="settings-section-spacer")
+            yield Static("", classes="settings-section-spacer")
             
             # Encryption Settings Group
             with Container(classes="settings-group"):
@@ -852,6 +899,10 @@ class ToolsSettingsWindow(Container):
                             tooltip="Disable encryption (requires password)"
                         )
             
+            # Add spacing before API Key Status section
+            yield Static("", classes="settings-section-spacer")
+            yield Static("", classes="settings-section-spacer")
+            
             # API Key Status Group
             with Container(classes="settings-group"):
                 yield Static("🔑 API Key Status", classes="settings-group-title")
@@ -892,6 +943,25 @@ class ToolsSettingsWindow(Container):
                 # Raw TOML Editor Tab
                 with TabPane("Raw TOML", id="tab-raw-toml"):
                     yield Static("Direct TOML Configuration Editor", classes="tab-description")
+                    
+                    # Search container
+                    with Container(id="config-search-container", classes="config-search-container"):
+                        yield Input(
+                            placeholder="🔍 Search settings (e.g., 'theme', 'api_key', 'chat.provider')",
+                            id="config-search-input",
+                            classes="config-search-input"
+                        )
+                        with Collapsible(
+                            title="Search Results (0)",
+                            collapsed=True,
+                            id="config-search-results-collapsible",
+                            classes="config-search-results"
+                        ):
+                            yield ListView(
+                                id="config-search-results-list",
+                                classes="config-results-list"
+                            )
+                    
                     config_text = ""
                     try:
                         if self.config_data:
@@ -3430,6 +3500,10 @@ Thank you for using tldw-chatbook! 🎉
             config_text_area = self.query_one("#config-text-area", TextArea)
             self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
             config_text_area.text = toml.dumps(self.config_data)
+            
+            # Clear any existing search results
+            await self._clear_config_search_results()
+            
             self.app_instance.notify("Configuration reloaded.")
         except Exception as e:
             self.app_instance.notify(f"Error reloading configuration: {e}", severity="error")
@@ -5194,6 +5268,102 @@ Thank you for using tldw-chatbook! 🎉
         
         except Exception as e:
             self.app_instance.notify(f"Error refreshing UI: {e}", severity="error")
+    
+    @on(Input.Changed, "#config-search-input")
+    async def on_config_search_changed(self, event: Input.Changed) -> None:
+        """Handle search input changes for configuration settings."""
+        query = event.value.strip()
+        
+        # Clear results if query is empty
+        if not query:
+            await self._clear_config_search_results()
+            return
+        
+        try:
+            # Get the active tab content
+            tabs = self.query_one("#config-tabs", TabbedContent)
+            active_tab = tabs.active
+            active_pane = tabs.get_pane(active_tab)
+            
+            if not active_pane:
+                return
+            
+            # Create search engine for the active tab
+            search_engine = UIElementSearchEngine(active_pane)
+            
+            # Perform search
+            results = search_engine.search(query)
+            await self._display_config_search_results(results)
+            
+        except Exception as e:
+            logger.error(f"Error searching UI elements: {e}")
+    
+    async def _clear_config_search_results(self) -> None:
+        """Clear the configuration search results."""
+        try:
+            results_list = self.query_one("#config-search-results-list", ListView)
+            await results_list.clear()
+            
+            # Update collapsible title
+            collapsible = self.query_one("#config-search-results-collapsible", Collapsible)
+            collapsible.title = "Search Results (0)"
+            collapsible.collapsed = True
+        except Exception as e:
+            logger.error(f"Error clearing search results: {e}")
+    
+    async def _display_config_search_results(self, results: List[Dict]) -> None:
+        """Display configuration search results."""
+        try:
+            results_list = self.query_one("#config-search-results-list", ListView)
+            await results_list.clear()
+            
+            # Update collapsible title and expand if results
+            collapsible = self.query_one("#config-search-results-collapsible", Collapsible)
+            collapsible.title = f"Search Results ({len(results)})"
+            if results:
+                collapsible.collapsed = False
+            
+            # Add results
+            for result in results:
+                search_result = ConfigSearchResult(
+                    widget=result["widget"],
+                    label=result["label"],
+                    element_type=result["element_type"],
+                    current_value=result["current_value"],
+                    widget_id=result["widget_id"]
+                )
+                await results_list.append(search_result)
+                
+        except Exception as e:
+            logger.error(f"Error displaying search results: {e}")
+    
+    @on(ConfigSearchResult.Selected)
+    async def on_config_result_selected(self, event: ConfigSearchResult.Selected) -> None:
+        """Handle when a config search result is selected to navigate to."""
+        try:
+            # Focus the widget
+            event.widget.focus()
+            
+            # Scroll the widget into view
+            event.widget.scroll_visible()
+            
+            # Add a temporary highlight class
+            event.widget.add_class("search-highlight")
+            
+            # Remove highlight after 2 seconds
+            self.set_timer(2.0, lambda: event.widget.remove_class("search-highlight"))
+            
+            # Show notification
+            self.app_instance.notify(
+                f"Navigated to: {event.label}",
+                severity="information",
+                timeout=2
+            )
+            
+        except Exception as e:
+            logger.error(f"Error navigating to UI element: {e}")
+            self.app_instance.notify(f"Error navigating: {e}", severity="error")
+    
 
 #
 # End of Tools_Settings_Window.py
