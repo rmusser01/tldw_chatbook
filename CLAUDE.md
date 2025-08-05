@@ -293,7 +293,7 @@ When breaking down features:
   Example of correct tasks splitting: task 1: "Add system for handling API requests", task 2: "Add user model and DB
   schema", task 3: "Add API endpoint for user data".
 
-## 3. Recommended Task Anatomy
+## 4. Recommended Task Anatomy
 
 ```markdown
 # task‑42 - Add GraphQL resolver
@@ -324,7 +324,7 @@ Short, imperative explanation of the goal of the task and why it is needed.
 - Modified or added files
 ```
 
-## 6. Implementing Tasks
+## 5. Implementing Tasks
 
 Mandatory sections for every task:
 
@@ -340,7 +340,7 @@ Mandatory sections for every task:
 **IMPORTANT**: Do not implement anything else that deviates from the **Acceptance Criteria**. If you need to
 implement something that is not in the AC, update the AC first and then implement it or create a new task for it.
 
-## 2. Typical Workflow
+## 6. Typical Workflow
 
 ```bash
 # 1 Identify work

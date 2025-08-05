@@ -120,7 +120,6 @@ DATA_FILES = [
     ('css', glob.glob(f"{self.project_root}/tldw_chatbook/css/*")),
     ('Config_Files', glob.glob(f"{self.project_root}/tldw_chatbook/Config_Files/*")),
 ]
-]
 
 OPTIONS = {{
     'argv_emulation': False,
