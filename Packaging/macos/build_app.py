@@ -113,6 +113,7 @@ class MacOSBuilder:
         setup_py = self.build_dir / "setup.py"
         setup_content = f"""
 from setuptools import setup
+import glob
 
 APP = ['{self.project_root}/tldw_chatbook/app.py']
 DATA_FILES = [
