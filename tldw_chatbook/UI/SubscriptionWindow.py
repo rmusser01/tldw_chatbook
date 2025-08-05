@@ -562,14 +562,25 @@ class SubscriptionWindow(Container):
     
     async def on_mount(self) -> None:
         """Initialize when window is mounted."""
+        # Check if subscriptions dependencies are available
+        from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+        if not DEPENDENCIES_AVAILABLE.get('subscriptions', False):
+            from ..Utils.widget_helpers import alert_subscriptions_not_available
+            # Show alert after a short delay to ensure UI is ready
+            self.set_timer(0.1, lambda: alert_subscriptions_not_available(self))
+        
         try:
             # Initialize database
             db_path = get_subscriptions_db_path()
             self.db = SubscriptionsDB(db_path, self.client_id)
             
-            # Initialize components
-            self.briefing_generator = BriefingGenerator(self.db)
-            self.template_manager = BriefingTemplateManager()
+            # Initialize components (if available)
+            if BRIEFING_AVAILABLE:
+                self.briefing_generator = BriefingGenerator(self.db)
+                self.template_manager = BriefingTemplateManager()
+            else:
+                self.briefing_generator = None
+                self.template_manager = None
             
             # Initialize scheduler worker
             self.scheduler_worker = SubscriptionSchedulerWorker(

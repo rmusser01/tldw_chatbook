@@ -112,6 +112,16 @@ class MediaAnalysisSaveEvent(Message):
         self.type_slug = type_slug
 
 
+class MediaAnalysisSaveAsNoteEvent(Message):
+    """Event fired when saving analysis as a new note."""
+    
+    def __init__(self, media_id: int, media_title: str, analysis_content: str) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.media_title = media_title
+        self.analysis_content = analysis_content
+
+
 class MediaAnalysisOverwriteEvent(Message):
     """Event fired when overwriting existing analysis content."""
     
@@ -633,84 +643,13 @@ async def handle_media_metadata_update(app: 'TldwCli', event: MediaMetadataUpdat
 async def handle_media_delete_confirmation(app: 'TldwCli', event: MediaDeleteConfirmationEvent) -> None:
     """
     Handles media delete confirmation by showing a modal dialog.
+    
+    Note: This function is kept for backwards compatibility but the actual
+    confirmation dialog is now handled directly in MediaWindow_v2 to avoid
+    the NoActiveWorker error when using push_screen_wait.
     """
-    from textual.screen import ModalScreen
-    from textual.widgets import Button, Label
-    from textual.containers import Vertical, Horizontal
-    
-    class DeleteConfirmationModal(ModalScreen):
-        """Modal dialog for confirming media deletion."""
-        
-        CSS = """
-        DeleteConfirmationModal {
-            align: center middle;
-        }
-        
-        DeleteConfirmationModal > Vertical {
-            background: $surface;
-            width: 50;
-            height: auto;
-            border: thick $background;
-            padding: 1 2;
-        }
-        
-        DeleteConfirmationModal .dialog-title {
-            text-style: bold;
-            margin-bottom: 1;
-        }
-        
-        DeleteConfirmationModal .dialog-text {
-            margin-bottom: 2;
-        }
-        
-        DeleteConfirmationModal .dialog-buttons {
-            align: center middle;
-            height: auto;
-        }
-        
-        DeleteConfirmationModal .dialog-buttons Button {
-            margin: 0 1;
-        }
-        """
-        
-        def __init__(self, media_id: int, media_title: str, type_slug: str):
-            super().__init__()
-            self.media_id = media_id
-            self.media_title = media_title
-            self.type_slug = type_slug
-            
-        def compose(self) -> ComposeResult:
-            with Vertical():
-                yield Label("Confirm Delete", classes="dialog-title")
-                yield Label(
-                    f"Are you sure you want to delete '{self.media_title}'?\n\n"
-                    "This item will be soft deleted and can be restored within the configured cleanup period.",
-                    classes="dialog-text"
-                )
-                with Horizontal(classes="dialog-buttons"):
-                    yield Button("Delete", variant="error", id="confirm-delete")
-                    yield Button("Cancel", variant="default", id="cancel-delete")
-        
-        @on(Button.Pressed, "#confirm-delete")
-        async def confirm_deletion(self) -> None:
-            """Handle delete confirmation."""
-            # Perform the deletion
-            if self.app.media_db:
-                success = self.app.media_db.soft_delete_media(self.media_id)
-                if success:
-                    self.app.notify(f"'{self.media_title}' has been deleted", severity="information")
-                    # MediaWindow_v2 will handle the refresh when it receives the event
-                else:
-                    self.app.notify(f"Failed to delete '{self.media_title}'", severity="error")
-            self.dismiss()
-        
-        @on(Button.Pressed, "#cancel-delete")
-        def cancel_deletion(self) -> None:
-            """Handle cancel button."""
-            self.dismiss()
-    
-    # Show the modal
-    await app.push_screen(DeleteConfirmationModal(event.media_id, event.media_title, event.type_slug))
+    logger.warning("handle_media_delete_confirmation called directly - should be handled in MediaWindow_v2")
+    # The MediaWindow_v2 now handles the confirmation dialog directly
 
 
 async def handle_media_undelete(app: 'TldwCli', event: MediaUndeleteEvent) -> None:

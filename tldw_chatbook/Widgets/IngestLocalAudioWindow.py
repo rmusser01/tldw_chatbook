@@ -199,6 +199,13 @@ class IngestLocalAudioWindow(Vertical):
             
             # --- Submit Button ---
             yield Button("Submit", id="local-submit-audio", variant="primary")
+            
+            # --- Cancel Button (hidden by default) ---
+            yield Button("Cancel", id="local-cancel-audio", variant="error", classes="hidden")
+            
+            # --- Status Area ---
+            yield LoadingIndicator(id="local-loading-indicator-audio", classes="hidden")
+            yield TextArea("", id="local-status-audio", read_only=True, classes="ingest-status-area hidden")
         
     
     def _update_models_for_provider(self, provider: str, model_select: Select) -> None:
@@ -218,8 +225,8 @@ class IngestLocalAudioWindow(Vertical):
             self._current_model_list = model_list
             # Create user-friendly display names for models
             model_options = self._get_model_display_options(provider, model_list)
-            # Swap tuple order for Select widget: (value, label) where label is displayed
-            select_options = [(model_id, display_name) for model_id, display_name in model_options]
+            # Select widget expects (label, value) format - label is displayed, value is stored
+            select_options = [(display_name, model_id) for model_id, display_name in model_options]
             logger.debug(f"[Audio] Setting {len(select_options)} model options for {provider}")
             model_select.set_options(select_options)
             model_select.prompt = "Select model..."

@@ -19,9 +19,17 @@ import secrets
 from base64 import b64encode, b64decode
 #
 # Third-Party Imports
-import defusedxml.ElementTree as ET
-from defusedxml import DefusedXmlException
 from loguru import logger
+
+try:
+    import defusedxml.ElementTree as ET
+    from defusedxml import DefusedXmlException
+    DEFUSEDXML_AVAILABLE = True
+except ImportError:
+    import xml.etree.ElementTree as ET
+    DefusedXmlException = Exception  # Fallback to base Exception
+    DEFUSEDXML_AVAILABLE = False
+    logger.warning("defusedxml not available, using standard xml.etree. Install defusedxml for better security.")
 
 # Optional cryptography import
 CRYPTOGRAPHY_AVAILABLE = False

@@ -72,12 +72,32 @@ class LocalAudioProcessor:
         self.media_db = media_db
         self.config = get_media_ingestion_defaults("audio")
         self.chunking_service = ChunkingService()
+        self._cancelled = False  # Flag to track cancellation
         
         # Get configuration settings
         self.max_file_size_mb = get_cli_setting('media_processing.max_audio_file_size_mb', 500)
         if self.max_file_size_mb is None:
             self.max_file_size_mb = 500
         self.max_file_size = self.max_file_size_mb * 1024 * 1024
+    
+    def cancel(self):
+        """Cancel the current processing operation."""
+        logger.info("Cancellation requested for audio processing")
+        self._cancelled = True
+        
+        # Clean up transcription service if it exists
+        if hasattr(self, 'transcription_service') and self.transcription_service:
+            if hasattr(self.transcription_service, 'cleanup'):
+                logger.info("Cleaning up transcription service resources")
+                self.transcription_service.cleanup()
+    
+    def is_cancelled(self) -> bool:
+        """Check if processing has been cancelled."""
+        return self._cancelled
+    
+    def reset_cancellation(self):
+        """Reset the cancellation flag."""
+        self._cancelled = False
         
     def download_audio_file(self, url: str, target_dir: str, 
                           use_cookies: bool = False, 
@@ -249,6 +269,17 @@ class LocalAudioProcessor:
             processing_dir = temp_dir or default_temp
             
             for input_item in inputs:
+                # Check for cancellation before processing each file
+                if self.is_cancelled():
+                    logger.info("Processing cancelled by user")
+                    if transcription_progress_callback:
+                        transcription_progress_callback(
+                            0, 
+                            "Processing cancelled. Already processed files have been saved.",
+                            {"cancelled": True}
+                        )
+                    break
+                
                 try:
                     result = self._process_single_audio(
                         input_item=input_item,
@@ -383,28 +414,49 @@ class LocalAudioProcessor:
             model = kwargs.get("transcription_model", None)
             language = kwargs.get("transcription_language", None)
             
-            logger.info(f"Starting transcription: provider={provider}, model={model}, language={language}")
-            logger.debug(f"Transcription audio file: {audio_path}, size: {Path(audio_path).stat().st_size / 1024 / 1024:.2f} MB")
+            logger.info(f"[AUDIO] Starting transcription: provider={provider}, model={model}, language={language}")
+            logger.info(f"[AUDIO] Transcription audio file: {audio_path}")
+            logger.info(f"[AUDIO] Audio file size: {Path(audio_path).stat().st_size / 1024 / 1024:.2f} MB")
+            logger.info(f"[AUDIO] Audio file exists: {os.path.exists(audio_path)}")
             
             transcription_start = time.time()
-            transcription_result = self._transcribe_audio(
-                audio_path,
-                provider=provider,
-                model=model,
-                language=language,
-                target_lang=kwargs.get("translation_target_language"),
-                vad_filter=kwargs.get("vad_use", False),
-                diarize=kwargs.get("diarize", False),
-                progress_callback=transcription_progress_callback
-            )
+            try:
+                logger.info("[AUDIO] Calling _transcribe_audio()")
+                transcription_result = self._transcribe_audio(
+                    audio_path,
+                    provider=provider,
+                    model=model,
+                    language=language,
+                    target_lang=kwargs.get("translation_target_language"),
+                    vad_filter=kwargs.get("vad_use", False),
+                    diarize=kwargs.get("diarize", False),
+                    progress_callback=transcription_progress_callback
+                )
+                logger.info("[AUDIO] _transcribe_audio() returned successfully")
+            except Exception as e:
+                logger.error(f"[AUDIO] Transcription failed: {type(e).__name__}: {str(e)}", exc_info=True)
+                raise
             
             transcription_time = time.time() - transcription_start
-            logger.info(f"Transcription completed in {transcription_time:.2f} seconds")
+            logger.info(f"[AUDIO] Transcription completed in {transcription_time:.2f} seconds")
+            
+            # Log detailed transcription results
+            if transcription_result:
+                logger.info(f"[AUDIO] Transcription result keys: {list(transcription_result.keys())}")
+                logger.info(f"[AUDIO] Transcription text length: {len(transcription_result.get('text', ''))} characters")
+                logger.info(f"[AUDIO] Number of segments: {len(transcription_result.get('segments', []))}")
+                
+                if not transcription_result.get("text"):
+                    logger.warning("[AUDIO] Transcription returned empty text!")
+                else:
+                    logger.info(f"[AUDIO] First 100 chars of transcription: {transcription_result['text'][:100]}...")
+            else:
+                logger.error("[AUDIO] Transcription result is None!")
             
             result["segments"] = transcription_result.get("segments", [])
             result["content"] = transcription_result.get("text", "")
             
-            logger.debug(f"Transcription result: {len(result['content'])} chars, {len(result['segments'])} segments")
+            logger.info(f"[AUDIO] Final result content length: {len(result['content'])} chars, segments: {len(result['segments'])}")
             
             # Perform chunking if requested
             if kwargs.get("perform_chunking") and result["content"]:
@@ -492,14 +544,39 @@ class LocalAudioProcessor:
             progress_callback: Optional callback for progress updates
             **kwargs: Additional transcription parameters
         """
+        logger.info(f"[AUDIO] _transcribe_audio called with audio_path: {audio_path}")
+        logger.info(f"[AUDIO] Transcription kwargs: provider={kwargs.get('provider')}, model={kwargs.get('model')}, language={kwargs.get('language')}")
+        
+        # Wrap progress callback to check for cancellation
+        def cancellable_progress_callback(progress, message, data=None):
+            if self.is_cancelled():
+                logger.info("[AUDIO] Transcription cancelled by user")
+                raise AudioTranscriptionError("Transcription cancelled by user")
+            if progress_callback:
+                logger.debug(f"[AUDIO] Progress update: {progress}% - {message}")
+                progress_callback(progress, message, data)
+        
         # Import transcription service when available
         try:
+            logger.info("[AUDIO] Importing TranscriptionService")
             from .transcription_service import TranscriptionService
             service = TranscriptionService()
-            return service.transcribe(audio_path, progress_callback=progress_callback, **kwargs)
-        except ImportError:
+            logger.info("[AUDIO] TranscriptionService imported successfully")
+            
+            logger.info("[AUDIO] Calling TranscriptionService.transcribe()")
+            result = service.transcribe(audio_path, progress_callback=cancellable_progress_callback, **kwargs)
+            logger.info("[AUDIO] TranscriptionService.transcribe() completed")
+            
+            if result:
+                logger.info(f"[AUDIO] Transcription service returned: text_length={len(result.get('text', ''))}, segments={len(result.get('segments', []))}")
+            else:
+                logger.error("[AUDIO] Transcription service returned None")
+            
+            return result
+        except ImportError as e:
             # Fallback for testing
-            logger.warning("Transcription service not available, using placeholder")
+            logger.error(f"[AUDIO] Failed to import TranscriptionService: {str(e)}")
+            logger.warning("[AUDIO] Transcription service not available, using placeholder")
             return {
                 "text": f"[Placeholder transcription for {Path(audio_path).name}]",
                 "segments": [
@@ -551,7 +628,7 @@ class LocalAudioProcessor:
                     summary = chat_api_call(
                         api_endpoint=api_name,
                         messages_payload=messages_payload,
-                        api_key=None,
+                        api_key=api_key,
                         temp=0.7,
                         system_message=system_prompt
                     )
@@ -566,7 +643,7 @@ class LocalAudioProcessor:
             return chat_api_call(
                 api_endpoint=api_name,
                 messages_payload=messages_payload,
-                api_key=None,
+                api_key=api_key,
                 temp=0.7,
                 system_message=system_prompt
             )
@@ -579,7 +656,7 @@ class LocalAudioProcessor:
             return chat_api_call(
                 api_endpoint=api_name,
                 messages_payload=messages_payload,
-                api_key=None,
+                api_key=api_key,
                 temp=0.7,
                 system_message=system_prompt
             )
@@ -590,28 +667,43 @@ class LocalAudioProcessor:
             return {"message": "No database available"}
         
         try:
-            # Prepare media data
+            # Prepare media data - store transcription in content field
             media_data = {
                 "url": result.get("input_ref", ""),
                 "title": result["metadata"].get("title", "Untitled"),
                 "media_type": result.get("media_type", "audio"),
-                "content": result.get("analysis") or result.get("content", ""),
+                "content": result.get("content", ""),  # Store transcription
                 "author": result["metadata"].get("author", "Unknown"),
-                "ingestion_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                "ingestion_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "analysis_content": result.get("analysis")  # Store analysis separately
             }
             
-            # Add media entry
+            # Add media entry with analysis
             media_id, _, _ = self.media_db.add_media_with_keywords(**media_data)
             
             # Store chunks if available
             if result.get("chunks"):
+                # Prepare chunks in the format expected by add_media_chunks_in_batches
+                chunks_to_add = []
                 for i, chunk in enumerate(result["chunks"]):
-                    self.media_db.add_media_chunk(
-                        media_id=media_id,
-                        chunk_text=chunk.get("text", ""),
-                        chunk_index=i,
-                        metadata=json.dumps(chunk.get("metadata", {}))
-                    )
+                    chunk_text = chunk.get("text", "")
+                    # Calculate start and end indices based on chunk position
+                    # This is approximate since we don't have exact character positions
+                    text_length = len(chunk_text)
+                    start_index = sum(len(c.get("text", "")) for c in result["chunks"][:i])
+                    end_index = start_index + text_length
+                    
+                    chunks_to_add.append({
+                        'text': chunk_text,
+                        'start_index': start_index,
+                        'end_index': end_index
+                    })
+                
+                # Use batch insert method
+                chunks_added = self.media_db.add_media_chunks_in_batches(
+                    media_id=media_id,
+                    chunks_to_add=chunks_to_add
+                )
             
             return {"id": media_id, "message": "Stored successfully"}
             

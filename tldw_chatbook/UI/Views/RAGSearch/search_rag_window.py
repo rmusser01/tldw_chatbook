@@ -438,6 +438,20 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
 
     def on_mount(self) -> None:
         """Called when the widget is mounted"""
+        # Check if embeddings/RAG dependencies are available
+        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+            from ....Utils.widget_helpers import alert_embeddings_not_available
+            # Show alert after a short delay to ensure UI is ready
+            self.set_timer(0.1, lambda: alert_embeddings_not_available(self))
+            # Disable search functionality
+            self.is_searching = True  # Prevent searches
+            try:
+                search_input = self.query_one("#search-query-input", Input)
+                search_input.disabled = True
+                search_input.placeholder = "Embeddings not available - install dependencies"
+            except NoMatches:
+                pass
+        
         # Setup UI components after all widgets are created
         self._setup_history_table()
         self._setup_analytics()

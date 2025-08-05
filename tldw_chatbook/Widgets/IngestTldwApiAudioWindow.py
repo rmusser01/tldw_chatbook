@@ -22,6 +22,22 @@ class IngestTldwApiAudioWindow(Vertical):
         self.selected_local_files = []
         logger.debug("IngestTldwApiAudioWindow initialized.")
     
+    def on_mount(self) -> None:
+        """Called when the widget is mounted."""
+        # Check if audio processing dependencies are available
+        from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+        if not DEPENDENCIES_AVAILABLE.get('audio_processing', False):
+            from ..Utils.widget_helpers import alert_audio_not_available
+            # Show alert after a short delay to ensure UI is ready
+            self.set_timer(0.1, lambda: alert_audio_not_available(self))
+            # Add warning to the UI
+            try:
+                from textual.css.query import NoMatches
+                static = self.query_one(".sidebar-title", Static)
+                static.update("[yellow]⚠ Audio processing dependencies not installed[/yellow]")
+            except NoMatches:
+                pass
+    
     def compose(self) -> ComposeResult:
         """Compose the audio ingestion form."""
         # Get default API URL from app config
@@ -161,6 +177,10 @@ class IngestTldwApiAudioWindow(Vertical):
             yield Checkbox("Overwrite if media exists in local DB", False, id="tldw-api-overwrite-db-audio")
             
             yield Button("Submit to TLDW API", id="tldw-api-submit-audio", variant="primary", classes="ingest-submit-button")
+            
+            # --- Cancel Button (hidden by default) ---
+            yield Button("Cancel", id="tldw-api-cancel-audio", variant="error", classes="ingest-submit-button hidden")
+            
             yield LoadingIndicator(id="tldw-api-loading-indicator-audio", classes="hidden")
             yield TextArea(
                 "",

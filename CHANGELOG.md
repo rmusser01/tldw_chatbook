@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial features pending documentation
 
+
+## [0.1.6.3] - 2025-08-4
+### Added
+- Cancellation button for transcription
+- Fixes suggested by gemini for Packaging
+- Warning dialogs for delete buttons
+
 ## [0.1.6.2] - 2025-08-3
 ### Added
 - Textual Serve instructions added to readme

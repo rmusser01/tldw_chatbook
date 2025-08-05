@@ -49,7 +49,7 @@ class ConfirmationDialog(ModalScreen):
     
     ConfirmationDialog .button-container {
         align: center middle;
-        height: 3;
+        height: auto;
         width: 100%;
     }
     

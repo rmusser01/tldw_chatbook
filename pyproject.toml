@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tldw_chatbook"
-version = "0.1.6.2"
+version = "0.1.6.3"
 authors = [
   { name="Robert Musser", email="contact@rmusser.net" },
 ]
@@ -98,9 +98,22 @@ websearch = [
     "nltk",
     "scikit-learn",
     "aiohttp",
+    "defusedxml",
+    "tqdm",
 ]
 local_vllm = ["vllm"]
 local_mlx = ["mlx-lm"]
+# Individual transcription providers
+transcription_faster_whisper = [
+    "faster-whisper",  # CPU/CUDA optimized Whisper
+]
+transcription_lightning_whisper = [
+    "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
+]
+transcription_parakeet = [
+    "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
+]
+# Legacy alias for backward compatibility
 mlx_whisper = [
     "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
     "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
@@ -125,30 +138,33 @@ ebook = [
 audio = [
     "soundfile",
     "scipy",
-    "faster-whisper",
-    "lightning-whisper-mlx; sys_platform == 'darwin'",  # macOS only
-    "parakeet-mlx; sys_platform == 'darwin'",  # macOS only - real-time ASR
     "yt-dlp",
     "numpy",
     "pydub",
+    "faster-whisper",  # Default transcription provider
+    # Note: For Apple Silicon optimized transcription, also install:
+    # pip install -e ".[audio,transcription_lightning_whisper]" or
+    # pip install -e ".[audio,transcription_parakeet]"
 ]
 video = [
     "soundfile",
     "scipy",
-    "faster-whisper",
-    "lightning-whisper-mlx; sys_platform == 'darwin'",  # macOS only
-    "parakeet-mlx; sys_platform == 'darwin'",  # macOS only - real-time ASR
     "yt-dlp",
     "numpy",
+    "faster-whisper",  # Default transcription provider
+    # Note: For Apple Silicon optimized transcription, also install:
+    # pip install -e ".[video,transcription_lightning_whisper]" or
+    # pip install -e ".[video,transcription_parakeet]"
 ]
 media_processing = [
     "soundfile",
     "scipy",
-    "faster-whisper",
-    "lightning-whisper-mlx; sys_platform == 'darwin'",  # macOS only
-    "parakeet-mlx; sys_platform == 'darwin'",  # macOS only - real-time ASR
     "yt-dlp",
     "numpy",
+    "faster-whisper",  # Default transcription provider
+    # Note: For Apple Silicon optimized transcription, also install:
+    # pip install -e ".[media_processing,transcription_lightning_whisper]" or
+    # pip install -e ".[media_processing,transcription_parakeet]"
 ]
 chatterbox = [
     "chatterbox-tts",
@@ -243,6 +259,8 @@ subscriptions = [
     "schedule",  # For scheduled tasks
     "feedparser",  # For RSS feed parsing
     "cryptography", # Security.py
+    "defusedxml",  # For safe XML parsing
+    "tqdm",
 ]
 web = [
     "textual-serve",  # Web server for running Textual apps in browser

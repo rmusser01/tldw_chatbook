@@ -232,10 +232,45 @@ class DocumentGenerationModal(ModalScreen):
     
     @on(Button.Pressed, "#note-button")
     def handle_note(self, event: Button.Pressed) -> None:
-        """Create original note."""
+        """Create original note with customization modal."""
         logger.debug("Original note creation requested")
         event.stop()
-        self._trigger_generation("note")
+        
+        # Import the note creation modal
+        from .note_creation_modal import NoteCreationModal
+        
+        # Prepare default title and content
+        timestamp_str = self.conversation_context.get("timestamp", "")
+        message_role = self.conversation_context.get("message_role", "Message")
+        
+        default_title = f"Chat Note - {message_role} - {timestamp_str}"
+        default_content = f"""From: {message_role}
+Date: {timestamp_str}
+Message ID: {self.conversation_context.get("message_id") or 'N/A'}
+---
+{self.message_content}"""
+        
+        # Show the note creation modal
+        note_modal = NoteCreationModal(
+            initial_title=default_title,
+            initial_content=default_content,
+            initial_keywords=""
+        )
+        
+        # Define callback for when note modal is dismissed
+        def on_note_modal_dismiss(result):
+            """Handle note modal result."""
+            if result:
+                # User saved the note
+                logger.debug(f"Note creation confirmed with custom data: {result.get('title')}")
+                # Dismiss this modal with the note data
+                self.dismiss(("note", result))
+            else:
+                # User cancelled - don't dismiss this modal
+                logger.debug("Note creation cancelled by user")
+        
+        # Push the note modal without waiting
+        self.app.push_screen(note_modal, on_note_modal_dismiss)
     
     @on(Button.Pressed, "#close-button")
     def handle_close(self, event: Button.Pressed) -> None:

@@ -548,8 +548,18 @@ async def handle_ccp_right_delete_character_button_pressed(app: 'TldwCli', event
     character_id_to_delete = app.current_ccp_character_details.get('id')
     character_name_to_delete = app.current_ccp_character_details.get('name', 'The selected character')
 
-    # Optional: Add a confirmation dialog here in a future iteration.
-    # app.push_screen(ConfirmationDialog("Are you sure you want to delete...?"), callback=...)
+    # Show confirmation dialog
+    from ..Widgets.delete_confirmation_dialog import create_delete_confirmation
+    dialog = create_delete_confirmation(
+        item_type="Character",
+        item_name=character_name_to_delete,
+        additional_warning="All associated conversation data will be preserved."
+    )
+    
+    confirmed = await app.push_screen_wait(dialog)
+    if not confirmed:
+        logger.info("Character deletion cancelled by user.")
+        return
 
     try:
         db = app.notes_service._get_db(app.notes_user_id)
@@ -1181,6 +1191,19 @@ async def handle_ccp_prompt_delete_button_pressed(app: 'TldwCli', event: Button.
             app.notify("Error: No prompt ID available for deletion.", severity="error")
             return
 
+        # Show confirmation dialog
+        from ..Widgets.delete_confirmation_dialog import create_delete_confirmation
+        dialog = create_delete_confirmation(
+            item_type="Prompt",
+            item_name=app.current_prompt_name or "selected prompt",
+            additional_warning="This prompt will no longer be available for use."
+        )
+        
+        confirmed = await app.push_screen_wait(dialog)
+        if not confirmed:
+            logger.info("Prompt deletion cancelled by user.")
+            return
+
         # soft_delete_prompt in your DB class returns True on success, False if not found/already deleted
         # It raises ConflictError or DatabaseError on other issues.
         success = prompts_interop.soft_delete_prompt(prompt_id_to_delete) # client_id is handled internally
@@ -1641,6 +1664,19 @@ async def handle_ccp_editor_prompt_delete_button_pressed(app: 'TldwCli', event: 
         prompt_id_to_delete = app.current_prompt_id
         if prompt_id_to_delete is None:
             app.notify("Editor: No prompt ID available for deletion.", severity="error")
+            return
+
+        # Show confirmation dialog
+        from ..Widgets.delete_confirmation_dialog import create_delete_confirmation
+        dialog = create_delete_confirmation(
+            item_type="Prompt",
+            item_name=app.current_prompt_name or "selected prompt",
+            additional_warning="This prompt will no longer be available for use."
+        )
+        
+        confirmed = await app.push_screen_wait(dialog)
+        if not confirmed:
+            logger.info("Editor: Prompt deletion cancelled by user.")
             return
 
         success = prompts_interop.soft_delete_prompt(prompt_id_to_delete)
@@ -2160,6 +2196,19 @@ async def handle_ccp_editor_char_delete_button_pressed(app: 'TldwCli', event: Bu
     if character_id_to_delete is None:
         app.notify("No character loaded in the editor to delete.", severity="warning")
         logger.warning("Delete Character from editor: No character ID loaded.")
+        return
+
+    # Show confirmation dialog
+    from ..Widgets.delete_confirmation_dialog import create_delete_confirmation
+    dialog = create_delete_confirmation(
+        item_type="Character",
+        item_name=character_name_to_delete,
+        additional_warning="All associated conversation data will be preserved."
+    )
+    
+    confirmed = await app.push_screen_wait(dialog)
+    if not confirmed:
+        logger.info("Editor: Character deletion cancelled by user.")
         return
 
     try:
@@ -3345,6 +3394,29 @@ async def handle_ccp_dict_delete_button_pressed(app: 'TldwCli', event: Button.Pr
         app.notify("Database service not available.", severity="error")
         return
         
+    # Get dictionary name if available
+    dict_name = "the selected dictionary"
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        loaded_dict = cdl.get_chat_dictionary(db, int(app.loaded_dictionary_id))
+        if loaded_dict and loaded_dict.get('name'):
+            dict_name = loaded_dict['name']
+    except:
+        pass
+    
+    # Show confirmation dialog
+    from ..Widgets.delete_confirmation_dialog import create_delete_confirmation
+    dialog = create_delete_confirmation(
+        item_type="Dictionary",
+        item_name=dict_name,
+        additional_warning="This dictionary will be removed from all conversations using it."
+    )
+    
+    confirmed = await app.push_screen_wait(dialog)
+    if not confirmed:
+        logger.info("Dictionary deletion cancelled by user.")
+        return
+    
     try:
         db = app.notes_service._get_db(app.notes_user_id)
         success = cdl.delete_chat_dictionary(db, int(app.loaded_dictionary_id))

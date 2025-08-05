@@ -337,6 +337,21 @@ async def handle_ollama_delete_model_button_pressed(app: "TldwCli") -> None:
             model_name_input.focus()
             return
 
+        # Show confirmation dialog
+        from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
+        dialog = create_delete_confirmation(
+            item_type="Model",
+            item_name=model_name,
+            additional_warning="This will uninstall the model from your system.",
+            permanent=True
+        )
+        
+        confirmed = await app.push_screen_wait(dialog)
+        if not confirmed:
+            logger.info(f"Model deletion cancelled for: {model_name}")
+            log_output_widget.write(f"Model deletion cancelled for: {model_name}")
+            return
+
         log_output_widget.write(f"Attempting to delete model: {model_name} from {base_url}")
 
         def stream_to_log(message: str):

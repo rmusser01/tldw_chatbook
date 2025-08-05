@@ -1045,30 +1045,36 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         }
         
         # Create callback to handle document generation
-        async def handle_document_generation(document_type: str, message_content: str):
+        async def handle_document_generation(result, message_content: str):
             """Handle document generation after modal selection."""
-            if document_type == "note":
-                # Original note creation functionality
-                timestamp_str = conversation_context["timestamp"]
-                note_title = f"Chat Note - {message_role} - {timestamp_str}"
-                
-                note_content = f"""From: {message_role}
-Date: {timestamp_str}
-Message ID: {conversation_context["message_id"] or 'N/A'}
-
----
-
-{message_content}"""
+            if isinstance(result, tuple) and result[0] == "note":
+                # Handle note creation with custom data from modal
+                document_type, note_data = result
                 
                 try:
+                    # Create the note with custom data
                     note_id = app.notes_service.add_note(
                         user_id=app.notes_user_id,
-                        title=note_title,
-                        content=note_content
+                        title=note_data["title"],
+                        content=note_data["content"]
                     )
                     
                     if note_id:
-                        app.notify("Note created from message", severity="information", timeout=3)
+                        # Add keywords if provided
+                        if note_data.get("keywords"):
+                            db = app.notes_service._get_db(app.notes_user_id)
+                            for keyword in note_data["keywords"]:
+                                try:
+                                    # Get or create keyword
+                                    keyword_id = db.add_keyword(keyword)
+                                    if keyword_id:
+                                        # Link keyword to note
+                                        db.link_note_to_keyword(note_id, keyword_id)
+                                        loguru_logger.debug(f"Linked keyword '{keyword}' to note {note_id}")
+                                except Exception as kw_e:
+                                    loguru_logger.error(f"Error adding keyword '{keyword}': {kw_e}")
+                        
+                        app.notify(f"Note created: {note_data['title']}", severity="information", timeout=3)
                         
                         # Expand notes section if collapsed
                         try:
@@ -1078,7 +1084,7 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
                         except QueryError:
                             pass
                         
-                        loguru_logger.info(f"Created note '{note_title}' with ID: {note_id}")
+                        loguru_logger.info(f"Created note '{note_data['title']}' with ID: {note_id} and {len(note_data.get('keywords', []))} keywords")
                     else:
                         app.notify("Failed to create note", severity="error")
                         
@@ -1086,27 +1092,25 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
                     loguru_logger.error(f"Error creating note from message: {e}", exc_info=True)
                     app.notify(f"Failed to create note: {str(e)}", severity="error")
             
-            else:
-                # Generate document using LLM
-                await generate_document_with_llm(app, document_type, message_content, conversation_context)
+            elif isinstance(result, str):
+                # Generate document using LLM (other document types)
+                await generate_document_with_llm(app, result, message_content, conversation_context)
         
-        # Show document generation modal and wait for result
-        # We need to run this in a worker since push_screen_wait requires it
-        async def show_document_modal():
-            modal = DocumentGenerationModal(
-                message_content=message_text,
-                conversation_context=conversation_context
-            )
-            
-            # Push modal and wait for result
-            result = await app.push_screen_wait(modal)
-            
-            # Handle the result if user selected an option
+        # Show document generation modal
+        # We need to use push_screen (without wait) since we're not in a worker
+        modal = DocumentGenerationModal(
+            message_content=message_text,
+            conversation_context=conversation_context
+        )
+        
+        # Set up a callback to handle the result when modal is dismissed
+        async def on_modal_dismiss(result):
+            """Handle the modal result after dismissal."""
             if result:
                 await handle_document_generation(result, message_text)
         
-        # Run in worker
-        app.run_worker(show_document_modal())
+        # Push the screen without waiting
+        app.push_screen(modal, on_modal_dismiss)
 
     elif "file-extract-button" in button_classes:
         logging.info("Action: Extract Files clicked for %s message: '%s...'", message_role, message_text[:50])
@@ -1118,18 +1122,18 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
             return
         
         # Show extraction dialog
-        # We need to run this in a worker since push_screen_wait requires it
-        async def show_extraction_dialog():
-            dialog = FileExtractionDialog(extracted_files)
-            result = await app.push_screen_wait(dialog)
-            
+        dialog = FileExtractionDialog(extracted_files)
+        
+        # Set up a callback to handle the result when dialog is dismissed
+        async def on_extraction_dismiss(result):
+            """Handle the extraction dialog result after dismissal."""
             if result and result.get('files'):
                 # Files were saved successfully
                 saved_count = len(result['files'])
                 loguru_logger.info(f"Saved {saved_count} files from message")
         
-        # Run in worker
-        app.run_worker(show_extraction_dialog())
+        # Push the screen without waiting
+        app.push_screen(dialog, on_extraction_dismiss)
     
     elif "speak-button" in button_classes:
         logging.info(f"Action: Speak clicked for {message_role} message: '{message_text[:50]}...'")
@@ -1447,6 +1451,20 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
     elif "delete-button" in button_classes:
         logging.info("Action: Delete clicked for %s message: '%s...'", message_role, message_text[:50])
         message_id_to_delete = getattr(action_widget, 'message_id_internal', None)
+        
+        # Show confirmation dialog
+        from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
+        dialog = create_delete_confirmation(
+            item_type="Message",
+            item_name=f"{message_role} message",
+            additional_warning="This will remove the message from your conversation history."
+        )
+        
+        confirmed = await app.push_screen_wait(dialog)
+        if not confirmed:
+            loguru_logger.info("Message deletion cancelled by user.")
+            return
+        
         try:
             await action_widget.remove()
             if action_widget is app.current_ai_message_widget:

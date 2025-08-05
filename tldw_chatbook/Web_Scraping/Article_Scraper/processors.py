@@ -40,7 +40,19 @@ Example:
 import logging
 import time
 from typing import List, Dict, Any, Callable, Optional, Coroutine
-from tqdm.asyncio import tqdm_asyncio
+try:
+    from tqdm.asyncio import tqdm_asyncio
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    # Fallback implementation
+    class tqdm_asyncio:
+        @staticmethod
+        async def gather(*args, **kwargs):
+            import asyncio
+            # Remove 'desc' from kwargs if present
+            kwargs.pop('desc', None)
+            return await asyncio.gather(*args)
 #
 # Third-Party Libraries
 import asyncio

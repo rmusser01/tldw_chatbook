@@ -385,7 +385,7 @@ class ChunkingTemplatesWidget(Container):
         )
     
     @on(Button.Pressed, "#delete-template-btn")
-    def handle_delete_template(self) -> None:
+    async def handle_delete_template(self) -> None:
         """Handle delete template button press."""
         if not self.selected_template_id:
             return
@@ -399,11 +399,16 @@ class ChunkingTemplatesWidget(Container):
             return
         
         # Show confirmation dialog
-        from ..Event_Handlers.template_events import TemplateDeleteConfirmationEvent
-        self.post_message(TemplateDeleteConfirmationEvent(
-            template_id=self.selected_template_id,
-            template_name=template['name']
-        ))
+        from ..Widgets.delete_confirmation_dialog import create_delete_confirmation
+        dialog = create_delete_confirmation(
+            item_type="Template",
+            item_name=template['name'],
+            additional_warning="This template will no longer be available for creating new items."
+        )
+        
+        confirmed = await self.app_instance.push_screen_wait(dialog)
+        if confirmed:
+            self.delete_template(self.selected_template_id)
     
     @on(Button.Pressed, "#import-template-btn")
     def handle_import_template(self) -> None:

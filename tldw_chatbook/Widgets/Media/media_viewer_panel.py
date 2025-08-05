@@ -634,6 +634,7 @@ class MediaViewerPanel(Container):
                     # Analysis action buttons
                     with Horizontal(classes="analysis-actions"):
                         yield Button("Save", id="save-analysis-btn", variant="success", disabled=True)
+                        yield Button("Save as Note", id="save-as-note-btn", variant="success", disabled=True)
                         yield Button("Edit", id="edit-analysis-btn", variant="primary", disabled=True)
                         yield Button("Overwrite", id="overwrite-analysis-btn", variant="warning", disabled=True)
                         yield Button("Delete", id="delete-analysis-btn", variant="error", disabled=True)
@@ -1316,17 +1317,20 @@ class MediaViewerPanel(Container):
         """Update analysis button states based on current state."""
         try:
             save_btn = self.query_one("#save-analysis-btn", Button)
+            save_as_note_btn = self.query_one("#save-as-note-btn", Button)
             edit_btn = self.query_one("#edit-analysis-btn", Button)
             overwrite_btn = self.query_one("#overwrite-analysis-btn", Button)
             delete_btn = self.query_one("#delete-analysis-btn", Button)
             
             if self.analysis_edit_mode:
                 save_btn.disabled = True
+                save_as_note_btn.disabled = True
                 edit_btn.label = "Cancel Edit"
                 overwrite_btn.disabled = False
                 delete_btn.disabled = True
             else:
                 save_btn.disabled = not self.current_analysis or self.has_existing_analysis
+                save_as_note_btn.disabled = not self.current_analysis
                 edit_btn.label = "Edit"
                 edit_btn.disabled = not self.current_analysis
                 overwrite_btn.disabled = not self.has_existing_analysis
@@ -1519,6 +1523,19 @@ class MediaViewerPanel(Container):
             media_id=self.media_data['id'],
             analysis_content=self.current_analysis,
             type_slug=""  # Will be set by MediaWindow
+        ))
+    
+    @on(Button.Pressed, "#save-as-note-btn")
+    def handle_save_analysis_as_note(self) -> None:
+        """Handle save analysis as note button press."""
+        if not self.current_analysis or not self.media_data:
+            return
+        
+        from ...Event_Handlers.media_events import MediaAnalysisSaveAsNoteEvent
+        self.post_message(MediaAnalysisSaveAsNoteEvent(
+            media_id=self.media_data['id'],
+            media_title=self.media_data.get('title', 'Untitled Media'),
+            analysis_content=self.current_analysis
         ))
     
     @on(Button.Pressed, "#edit-analysis-btn")

@@ -1,0 +1,79 @@
+/* feature_alerts.tcss */
+/* Styling for feature availability alerts */
+
+FeatureNotAvailableDialog {
+    width: 70;
+    height: auto;
+    background: $panel;
+    border: thick $warning;
+    align: center middle;
+    layer: dialog;
+    padding: 2 4;
+    opacity: 0.98;
+}
+
+FeatureNotAvailableDialog > Vertical {
+    width: 100%;
+    height: auto;
+}
+
+FeatureNotAvailableDialog .dialog-title {
+    text-align: center;
+    color: $warning;
+    text-style: bold;
+    margin-bottom: 1;
+    padding: 1 0;
+}
+
+FeatureNotAvailableDialog .dialog-message {
+    margin-bottom: 1;
+    text-align: center;
+    color: $text;
+}
+
+FeatureNotAvailableDialog .install-command {
+    background: $boost;
+    padding: 1 2;
+    margin: 1 0;
+    border: solid $primary;
+    text-align: center;
+    color: $text-muted;
+}
+
+FeatureNotAvailableDialog .button-container {
+    dock: bottom;
+    align: center middle;
+    height: 3;
+    margin-top: 1;
+}
+
+FeatureNotAvailableDialog Button {
+    margin: 0 1;
+    min-width: 12;
+}
+
+FeatureNotAvailableDialog Button:focus {
+    text-style: bold;
+}
+
+/* Warning styles for disabled UI elements */
+.feature-disabled-warning {
+    color: $warning;
+    text-style: italic;
+    margin: 1;
+    text-align: center;
+}
+
+/* Overlay for disabled features */
+.feature-disabled-overlay {
+    background: $background 50%;
+    layer: overlay;
+    align: center middle;
+    padding: 2;
+}
+
+.feature-disabled-overlay Label {
+    color: $warning;
+    text-style: bold;
+    text-align: center;
+}

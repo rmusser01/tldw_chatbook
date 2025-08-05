@@ -99,9 +99,36 @@ class IngestWindow(Container):
         self._current_media_type_for_file_dialog = None # Stores the media_type for the active file dialog
         self._failed_urls_for_retry = []  # Store failed URLs for retry
         self._retry_attempts = {}  # Track retry attempts per URL
+        self._current_audio_processor = None  # Store current audio processor for cancellation
+        self._current_video_processor = None  # Store current video processor for cancellation
         self._local_video_window = None
         self._local_audio_window = None
         logger.debug("IngestWindow initialized.")
+    
+    def on_unmount(self) -> None:
+        """Clean up when the window is unmounted or app is closing."""
+        logger.info("IngestWindow unmounting - cleaning up active processes")
+        
+        # Cancel any active video processing
+        if self._current_video_processor:
+            logger.info("Cancelling active video processing")
+            self._current_video_processor.cancel()
+            self._current_video_processor = None
+        
+        # Cancel any active audio processing
+        if self._current_audio_processor:
+            logger.info("Cancelling active audio processing")
+            self._current_audio_processor.cancel()
+            self._current_audio_processor = None
+        
+        # Cancel web scraping if active
+        if hasattr(self, '_web_scraping_worker') and self._web_scraping_worker:
+            if not self._web_scraping_worker.is_finished:
+                logger.info("Cancelling active web scraping")
+                self._web_scraping_worker.cancel()
+        
+        # Call parent unmount
+        super().on_unmount()
     
     def get_default_model_for_provider(self, provider: str) -> str:
         """Get default model for a transcription provider."""
@@ -621,6 +648,20 @@ class IngestWindow(Container):
             event.stop()
             media_type = button_id.replace("local-clear-files-", "")
             await self._handle_clear_local_files(f"local_{media_type}")
+        
+        # Handle cancel buttons
+        elif button_id == "local-cancel-audio":
+            event.stop()
+            self._handle_cancel_audio_processing()
+        elif button_id == "local-cancel-video":
+            event.stop()
+            self._handle_cancel_video_processing()
+        elif button_id == "tldw-api-cancel-audio":
+            event.stop()
+            await self._handle_cancel_api_audio_processing()
+        elif button_id == "tldw-api-cancel-video":
+            event.stop()
+            await self._handle_cancel_api_video_processing()
         
         # Handle local PDF/Ebook browse buttons
         elif button_id.startswith("local-browse-local-files-button-"):
@@ -2899,6 +2940,13 @@ class IngestWindow(Container):
         status_area.classes = status_area.classes - {"hidden"}
         process_button.disabled = True
         
+        # Show cancel button
+        try:
+            cancel_button = self.query_one("#local-cancel-audio", Button)
+            cancel_button.classes = cancel_button.classes - {"hidden"}
+        except Exception:
+            logger.warning("Cancel button not found")
+        
         try:
             # Get selected files
             local_key = "local_audio"
@@ -3020,8 +3068,11 @@ class IngestWindow(Container):
                 status_area.load_text("Error: Audio processing library not available.\nPlease install with: pip install tldw-chatbook[audio]")
                 return
             
-            # Create processor instance
+            # Create processor instance and store it for cancellation
             processor = LocalAudioProcessor(self.app_instance.media_db)
+            # Reset cancellation flag in case it was set from a previous run
+            processor.reset_cancellation()
+            self._current_audio_processor = processor
             
             # Process audio files
             status_area.load_text("Processing audio files...\n")
@@ -3047,13 +3098,14 @@ class IngestWindow(Container):
                         segments = data.get("segment_num", 0)
                         progress_msg = f"  → Transcription: Processing audio {current:.1f}s / {total:.1f}s ({segments} segments) [{progress:.0f}%]"
                         
-                        # Add segment preview if available
-                        if data.get("segment_text"):
-                            preview = data["segment_text"][:50].strip()
-                            if len(data["segment_text"]) > 50:
-                                preview += "..."
-                            if preview:
-                                progress_msg += f'\n      Latest: "{preview}"'
+                        # Add time estimate if possible
+                        if progress > 0:
+                            elapsed = time.time() - self._audio_start_time if hasattr(self, '_audio_start_time') else 0
+                            if elapsed > 0:
+                                estimated_total = elapsed / (progress / 100)
+                                remaining = estimated_total - elapsed
+                                if remaining > 0:
+                                    progress_msg += f" - Est. {remaining:.0f}s remaining"
                     
                     # Completion info
                     elif progress >= 100 and "total_segments" in data:
@@ -3146,6 +3198,16 @@ class IngestWindow(Container):
             loading_indicator.display = False
             loading_indicator.classes = loading_indicator.classes | {"hidden"}
             process_button.disabled = False
+            
+            # Hide cancel button
+            try:
+                cancel_button = self.query_one("#local-cancel-audio", Button)
+                cancel_button.classes = cancel_button.classes | {"hidden"}
+            except Exception:
+                pass
+            
+            # Clean up processor reference
+            self._current_audio_processor = None
 
     async def handle_local_video_process(self) -> None:
         """Handle processing of local video files."""
@@ -3162,10 +3224,12 @@ class IngestWindow(Container):
             return
         
         # Collect all UI values before starting the worker
+        logger.info("Starting to collect UI values for video processing")
         try:
             # Get selected files
             local_key = "local_video"
             selected_files = self.selected_local_files.get(local_key, [])
+            logger.info(f"Selected files for video: {len(selected_files)} files")
             
             # Get URL input (TextArea for multiple URLs)
             url_input = self.query_one("#local-urls-video", TextArea).text.strip()
@@ -3179,7 +3243,9 @@ class IngestWindow(Container):
             
             all_inputs.extend(selected_files)
             
+            logger.info(f"Total inputs collected: {len(all_inputs)} items")
             if not all_inputs:
+                logger.warning("No video files or URLs selected for processing")
                 self.app_instance.notify("No video files or URLs selected for processing", severity="warning")
                 loading_indicator.display = False
                 loading_indicator.classes = loading_indicator.classes | {"hidden"}
@@ -3292,18 +3358,49 @@ class IngestWindow(Container):
         status_area.classes = status_area.classes - {"hidden"}
         process_button.disabled = True
         
-        # Run the actual processing in a worker thread with the collected options
-        # Create a closure to pass the options parameter
-        def video_worker():
-            return self._process_video_files_worker(options)
+        # Show cancel button
+        try:
+            cancel_button = self.query_one("#local-cancel-video", Button)
+            cancel_button.classes = cancel_button.classes - {"hidden"}
+        except Exception:
+            logger.warning("Cancel button not found for video")
         
-        worker = self.run_worker(
-            video_worker,
-            exclusive=True, 
-            thread=True,
-            name="video_processing_worker",
-            description="Processing video files"
-        )
+        # Run the actual processing in a worker thread with the collected options
+        # Run the worker directly with partial to ensure proper binding
+        from functools import partial
+        
+        # Log the options being passed to the worker
+        logger.info("Preparing to launch video processing worker...")
+        logger.info(f"Worker will process {len(options.get('inputs', []))} inputs")
+        logger.debug(f"Worker options summary:")
+        logger.debug(f"  - Transcription provider: {options.get('transcription_provider')}")
+        logger.debug(f"  - Transcription model: {options.get('transcription_model')}")
+        logger.debug(f"  - Transcription language: {options.get('transcription_language')}")
+        logger.debug(f"  - Perform analysis: {options.get('perform_analysis')}")
+        logger.debug(f"  - Perform chunking: {options.get('perform_chunking')}")
+        
+        try:
+            worker_func = partial(self._process_video_files_worker, options)
+            logger.info("Creating video processing worker...")
+            self._current_video_worker = self.run_worker(
+                worker_func,
+                exclusive=True, 
+                thread=True,
+                name="video_processing_worker",
+                description="Processing video files"
+            )
+            logger.info(f"Video processing worker launched successfully: {self._current_video_worker}")
+        except Exception as e:
+            logger.error(f"Failed to launch video processing worker: {type(e).__name__}: {str(e)}", exc_info=True)
+            self.app_instance.notify(f"Failed to start video processing: {str(e)}", severity="error")
+            # Reset UI state
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
+            return
+        
+        # Worker should handle cleanup when done - no callback needed here
+        # The worker will update the UI through call_from_thread
 
     def _process_video_files_worker(self, options: dict) -> dict:
         """Process video files in a background worker thread.
@@ -3314,9 +3411,23 @@ class IngestWindow(Container):
         Returns:
             Dictionary with success status and results or error message
         """
+        # Configure logging for this thread
+        import logging
+        import threading
+        thread_name = threading.current_thread().name
+        logger.info(f"[WORKER-{thread_name}] Video worker thread started")
+        logger.info(f"[WORKER-{thread_name}] Processing {len(options.get('inputs', []))} inputs")
+        logger.info(f"[WORKER-{thread_name}] Thread ID: {threading.get_ident()}")
+        
+        # Log first input for debugging
+        inputs = options.get('inputs', [])
+        if inputs:
+            logger.info(f"[WORKER-{thread_name}] First input: {inputs[0]}")
+        
         result = {"success": False, "error": "Unknown error"}
         
         try:
+            logger.info(f"[WORKER-{thread_name}] Beginning processing...")
             # Extract all options from the passed dictionary
             all_inputs = options.get("inputs", [])
             
@@ -3334,23 +3445,61 @@ class IngestWindow(Container):
             else:
                 # Import the video processing function
                 try:
+                    logger.info(f"[WORKER-{thread_name}] Attempting to import LocalVideoProcessor...")
+                    import time
+                    import_start = time.time()
                     from ..Local_Ingestion import LocalVideoProcessor
+                    import_time = time.time() - import_start
+                    logger.info(f"[WORKER-{thread_name}] LocalVideoProcessor imported successfully in {import_time:.2f}s")
                 except ImportError as e:
-                    logger.error(f"Failed to import video processing library: {e}")
+                    logger.error(f"[WORKER-{thread_name}] Failed to import video processing library: {e}", exc_info=True)
                     result = {
                         "success": False,
                         "error": "Video processing library not available. Please install with: pip install tldw-chatbook[video]"
                     }
+                    # Update UI with error
+                    self.app_instance.call_from_thread(
+                        self._append_to_status_area,
+                        f"\n\nERROR: Failed to import video processing library: {str(e)}\n"
+                    )
+                except Exception as e:
+                    logger.error(f"[WORKER-{thread_name}] Unexpected error during import: {type(e).__name__}: {str(e)}", exc_info=True)
+                    result = {
+                        "success": False,
+                        "error": f"Failed to load video processing: {str(e)}"
+                    }
+                    # Update UI with error
+                    self.app_instance.call_from_thread(
+                        self._append_to_status_area,
+                        f"\n\nERROR: {str(e)}\n"
+                    )
                 else:
-                    # Create processor instance
-                    processor = LocalVideoProcessor(self.app_instance.media_db)
+                    # Create processor instance and store it for cancellation
+                    logger.info(f"[WORKER-{thread_name}] Creating LocalVideoProcessor instance...")
+                    try:
+                        processor = LocalVideoProcessor(self.app_instance.media_db)
+                        logger.info(f"[WORKER-{thread_name}] LocalVideoProcessor created successfully")
+                        # Reset cancellation flag in case it was set from a previous run
+                        processor.reset_cancellation()
+                        self._current_video_processor = processor
+                    except Exception as e:
+                        logger.error(f"[WORKER-{thread_name}] Failed to create LocalVideoProcessor: {type(e).__name__}: {str(e)}", exc_info=True)
+                        result = {
+                            "success": False,
+                            "error": f"Failed to initialize video processor: {str(e)}"
+                        }
+                        self.app_instance.call_from_thread(
+                            self._append_to_status_area,
+                            f"\n\nERROR: Failed to initialize video processor: {str(e)}\n"
+                        )
+                        return result
                     
                     # Process each video individually to provide progress updates
                     results_list = []
                     errors_list = []
                     
-                    logger.info(f"Starting video processing batch with {len(all_inputs)} inputs")
-                    logger.debug(f"Video processing options: {options}")
+                    logger.info(f"[WORKER-{thread_name}] Starting video processing batch with {len(all_inputs)} inputs")
+                    logger.debug(f"[WORKER-{thread_name}] Video processing options: {options}")
                     
                     # Initial status
                     self.app_instance.call_from_thread(
@@ -3359,6 +3508,22 @@ class IngestWindow(Container):
                     )
                     
                     for idx, input_item in enumerate(all_inputs, 1):
+                        # Check if processing was cancelled
+                        if self._current_video_processor and self._current_video_processor.is_cancelled():
+                            logger.info("Video processing cancelled - marking remaining files as cancelled")
+                            # Mark all remaining files as cancelled
+                            for remaining_idx in range(idx - 1, len(all_inputs)):
+                                results_list.append({
+                                    "status": "Cancelled",
+                                    "input_ref": all_inputs[remaining_idx],
+                                    "error": "Processing cancelled by user"
+                                })
+                            self.app_instance.call_from_thread(
+                                self._append_to_status_area, 
+                                "\n\nProcessing cancelled. Already processed files have been saved.\n"
+                            )
+                            break
+                        
                         # Update progress
                         logger.info(f"Processing video {idx}/{len(all_inputs)}: {input_item}")
                         progress_msg = f"\n[{idx}/{len(all_inputs)}] Processing: {input_item}\n"
@@ -3379,21 +3544,45 @@ class IngestWindow(Container):
                             
                             # Show initial transcription stage message
                             logger.info(f"Stage: Preparing to transcribe audio for {input_item} using {options['transcription_provider']}")
+                            model_info = f"{options['transcription_provider']}"
+                            if options.get('transcription_model'):
+                                model_info += f" - {options['transcription_model']}"
                             self.app_instance.call_from_thread(
                                 self._append_to_status_area, 
-                                f"  → Transcribing audio (using {options['transcription_provider']})...\n"
+                                f"  → Preparing transcription ({model_info})...\n"
                             )
                             
-                            # Create transcription progress callback
+                            # Create transcription progress callback with throttling
+                            last_update_time = [0]  # Use list to make it mutable in closure
+                            
                             def transcription_progress(progress: float, status: str, data: Optional[Dict] = None):
                                 """Handle transcription progress updates."""
+                                # Throttle updates to every 0.25 seconds to prevent UI freezing
+                                current_time = time.time()
+                                if current_time - last_update_time[0] < 0.25 and progress < 100:
+                                    return
+                                last_update_time[0] = current_time
+                                
                                 # Build detailed progress message
                                 progress_msg = f"  → Transcription: {status} [{progress:.0f}%]"
                                 
                                 # Add additional details based on the data available
                                 if data:
+                                    # Model loading/downloading stage
+                                    stage = data.get("stage", "")
+                                    if stage == "model_downloading":
+                                        progress_msg = f"  → Downloading model from HuggingFace (first time only)..."
+                                    elif stage == "model_loading":
+                                        progress_msg = f"  → Loading transcription model..."
+                                    elif stage == "model_loaded":
+                                        load_time = data.get("load_time", 0)
+                                        progress_msg = f"  → Model loaded successfully ({load_time:.1f}s)"
+                                    elif stage == "model_error":
+                                        error_type = data.get("error", "unknown")
+                                        if error_type == "incompatible_model":
+                                            progress_msg = f"  → Error: Model not compatible with faster-whisper"
                                     # Language detection info
-                                    if "language" in data and progress < 10:
+                                    elif "language" in data and progress < 10:
                                         lang = data["language"]
                                         conf = data.get("confidence", 0)
                                         progress_msg = f"  → Transcription: Detected language: {lang} (confidence: {conf:.2%}) [{progress:.0f}%]"
@@ -3405,13 +3594,13 @@ class IngestWindow(Container):
                                         segments = data.get("segment_num", 0)
                                         progress_msg = f"  → Transcription: Processing audio {current:.1f}s / {total:.1f}s ({segments} segments) [{progress:.0f}%]"
                                         
-                                        # Add segment preview if available
-                                        if data.get("segment_text"):
-                                            preview = data["segment_text"][:50].strip()
-                                            if len(data["segment_text"]) > 50:
-                                                preview += "..."
-                                            if preview:
-                                                progress_msg += f'\n      Latest: "{preview}"'
+                                        # Estimate time remaining
+                                        if progress > 0:
+                                            elapsed = time.time() - start_time
+                                            estimated_total = elapsed / (progress / 100)
+                                            remaining = estimated_total - elapsed
+                                            if remaining > 0:
+                                                progress_msg += f" - Est. {remaining:.0f}s remaining"
                                     
                                     # Completion info
                                     elif progress >= 100 and "total_segments" in data:
@@ -3456,6 +3645,9 @@ class IngestWindow(Container):
                             
                             # Process single video with progress callback
                             try:
+                                logger.info(f"[WORKER-{thread_name}] Calling processor.process_videos for: {input_item}")
+                                logger.info(f"[WORKER-{thread_name}] Provider: {options['transcription_provider']}, Model: {options['transcription_model']}")
+                                
                                 single_result = processor.process_videos(
                                     inputs=[input_item],
                                     download_video_flag=options["download_video"] and not options["extract_audio_only"],
@@ -3490,8 +3682,14 @@ class IngestWindow(Container):
                                 author=options["author"],
                                 keywords=options["keywords"]
                                 )
+                                logger.info(f"[WORKER-{thread_name}] processor.process_videos returned successfully")
                             except Exception as e:
-                                logger.error(f"Error in process_videos call: {type(e).__name__}: {str(e)}", exc_info=True)
+                                logger.error(f"[WORKER-{thread_name}] Error in process_videos call: {type(e).__name__}: {str(e)}", exc_info=True)
+                                # Update UI with error
+                                self.app_instance.call_from_thread(
+                                    self._append_to_status_area,
+                                    f"\n\nERROR during processing: {str(e)}\n"
+                                )
                                 # Create error result
                                 single_result = {
                                     "processed_count": 0,
@@ -3538,13 +3736,34 @@ class IngestWindow(Container):
                                 logger.info(f"Successfully processed {input_item} - Success")
                                 status_update = f"  ✓ Completed in {time_str}{result_info}\n"
                             else:
+                                # Check if it was cancelled
+                                if single_result.get("results") and len(single_result["results"]) > 0:
+                                    first_result = single_result["results"][0]
+                                    if first_result.get("status") == "Cancelled":
+                                        logger.info(f"Processing cancelled for {input_item}")
+                                        status_update = f"  ⚠ Cancelled after {time_str}\n"
+                                        # Don't add detailed error info for cancellation
+                                        self.app_instance.call_from_thread(
+                                            self._append_to_status_area, status_update
+                                        )
+                                        continue
+                                
                                 logger.warning(f"Failed to process {input_item}")
                                 status_update = f"  ✗ Failed after {time_str}\n"
                                 if single_result.get("errors"):
                                     errors_list.extend(single_result["errors"])
                                     error_msg = single_result["errors"][0] if single_result["errors"] else "Unknown error"
                                     logger.error(f"Processing error for {input_item}: {error_msg}")
-                                    status_update += f"     Error: {error_msg}\n"
+                                    
+                                    # Format error message for better clarity
+                                    if "Invalid model size" in error_msg:
+                                        status_update += f"     Error: Model not compatible with faster-whisper\n"
+                                        status_update += f"     Suggestion: Try using 'large-v3' or 'base' model instead\n"
+                                    elif "Failed to load model" in error_msg:
+                                        status_update += f"     Error: Could not load transcription model\n"
+                                        status_update += f"     This may be a download issue - please try again\n"
+                                    else:
+                                        status_update += f"     Error: {error_msg}\n"
                             
                             self.app_instance.call_from_thread(
                                 self._append_to_status_area, status_update
@@ -3552,28 +3771,49 @@ class IngestWindow(Container):
                             
                         except Exception as e:
                             elapsed_time = time.time() - start_time
-                            logger.error(f"Exception processing {input_item} after {elapsed_time:.2f}s: {e}", exc_info=True)
-                            error_msg = f"  ✗ Error after {elapsed_time:.1f}s: {str(e)}\n"
-                            self.app_instance.call_from_thread(
-                                self._append_to_status_area, error_msg
-                            )
-                            errors_list.append(str(e))
-                            results_list.append({
-                                "status": "Error",
-                                "input_ref": input_item,
-                                "error": str(e)
-                            })
-                            logger.debug(f"Added error result for {input_item}: {str(e)}")
+                            error_str = str(e)
+                            
+                            # Check if this is a cancellation
+                            if "cancelled by user" in error_str.lower():
+                                logger.info(f"Processing cancelled for {input_item} after {elapsed_time:.2f}s")
+                                status_msg = f"  ⚠ Cancelled after {elapsed_time:.1f}s\n"
+                                self.app_instance.call_from_thread(
+                                    self._append_to_status_area, status_msg
+                                )
+                                results_list.append({
+                                    "status": "Cancelled",
+                                    "input_ref": input_item,
+                                    "error": "Processing cancelled by user"
+                                })
+                                # Continue to next file instead of breaking
+                                continue
+                            else:
+                                logger.error(f"Exception processing {input_item} after {elapsed_time:.2f}s: {e}", exc_info=True)
+                                error_msg = f"  ✗ Error after {elapsed_time:.1f}s: {error_str}\n"
+                                self.app_instance.call_from_thread(
+                                    self._append_to_status_area, error_msg
+                                )
+                                errors_list.append(error_str)
+                                results_list.append({
+                                    "status": "Error",
+                                    "input_ref": input_item,
+                                    "error": error_str
+                                })
+                                logger.debug(f"Added error result for {input_item}: {error_str}")
                     
                     # Aggregate results
                     processed_count = sum(1 for r in results_list if r.get("status") == "Success")
-                    errors_count = len(results_list) - processed_count
+                    cancelled_count = sum(1 for r in results_list if r.get("status") == "Cancelled")
+                    errors_count = len(results_list) - processed_count - cancelled_count
                     
-                    logger.info(f"Video batch processing complete: {processed_count} succeeded, {errors_count} failed out of {len(all_inputs)} total")
+                    logger.info(f"Video batch processing complete: {processed_count} succeeded, {cancelled_count} cancelled, {errors_count} failed out of {len(all_inputs)} total")
                     
                     # Add final summary
                     summary_msg = f"\n{'='*50}\n"
-                    summary_msg += f"Processing Complete: {processed_count} succeeded, {errors_count} failed\n"
+                    if cancelled_count > 0:
+                        summary_msg += f"Processing Cancelled: {processed_count} succeeded, {cancelled_count} cancelled, {errors_count} failed\n"
+                    else:
+                        summary_msg += f"Processing Complete: {processed_count} succeeded, {errors_count} failed\n"
                     summary_msg += f"{'='*50}\n"
                     self.app_instance.call_from_thread(
                         self._append_to_status_area, summary_msg
@@ -3658,6 +3898,8 @@ class IngestWindow(Container):
         finally:
             # Reset UI state
             self.app_instance.call_from_thread(self._reset_video_ui_state)
+            # Clean up processor reference
+            self._current_video_processor = None
             
         return result
     
@@ -3665,9 +3907,11 @@ class IngestWindow(Container):
         """Update the status area from the worker thread."""
         try:
             status_area = self.query_one("#local-status-video", TextArea)
-            status_area.load_text(text)
-        except Exception:
-            pass
+            # Clear and set text more efficiently
+            status_area.clear()
+            status_area.insert(text, location=(0, 0))
+        except Exception as e:
+            logger.debug(f"Failed to update status area: {e}")
     
     def _reset_video_ui_state(self) -> None:
         """Reset the video UI state after processing completes."""
@@ -3678,6 +3922,16 @@ class IngestWindow(Container):
             loading_indicator.display = False
             loading_indicator.classes = loading_indicator.classes | {"hidden"}
             process_button.disabled = False
+            
+            # Hide cancel button
+            try:
+                cancel_button = self.query_one("#local-cancel-video", Button)
+                cancel_button.classes = cancel_button.classes | {"hidden"}
+            except Exception:
+                pass
+            
+            # Clean up processor reference
+            self._current_video_processor = None
         except Exception:
             pass
     
@@ -3685,10 +3939,12 @@ class IngestWindow(Container):
         """Append text to the status area."""
         try:
             status_area = self.query_one("#local-status-video", TextArea)
-            current_text = status_area.text
-            status_area.load_text(current_text + text)
-        except Exception:
-            pass
+            # Use insert at document end for better performance
+            status_area.insert(text, location=status_area.document.end)
+            # Scroll to the end to show the latest content
+            status_area.scroll_cursor_visible()
+        except Exception as e:
+            logger.debug(f"Failed to append to status area: {e}")
     
     def _update_transcription_progress(self, text: str) -> None:
         """Update the last line in status area for transcription progress."""
@@ -3778,6 +4034,60 @@ class IngestWindow(Container):
                 self._append_to_status_area(f"\n{text}")
             except Exception as e2:
                 logger.error(f"Fallback append also failed: {e2}")
+    
+    def _handle_cancel_audio_processing(self) -> None:
+        """Handle cancellation of audio processing."""
+        # Run the async confirmation in a worker
+        self.run_worker(self._handle_cancel_audio_processing_async())
+    
+    async def _handle_cancel_audio_processing_async(self) -> None:
+        """Handle cancellation of audio processing asynchronously."""
+        from ..Widgets.cancel_confirmation_dialog import CancelConfirmationDialog
+        
+        # Show confirmation dialog
+        confirmed = await self.app_instance.push_screen_wait(
+            CancelConfirmationDialog(
+                title="Cancel Audio Transcription?",
+                message="Are you sure you want to cancel the audio transcription?\nAlready processed files will be kept."
+            )
+        )
+        
+        if confirmed and self._current_audio_processor:
+            logger.info("User confirmed audio processing cancellation")
+            self._current_audio_processor.cancel()
+            self.app_instance.notify("Audio processing cancelled", severity="warning")
+    
+    def _handle_cancel_video_processing(self) -> None:
+        """Handle cancellation of video processing."""
+        # Run the async confirmation in a worker
+        self.run_worker(self._handle_cancel_video_processing_async())
+    
+    async def _handle_cancel_video_processing_async(self) -> None:
+        """Handle cancellation of video processing asynchronously."""
+        from ..Widgets.cancel_confirmation_dialog import CancelConfirmationDialog
+        
+        # Show confirmation dialog
+        confirmed = await self.app_instance.push_screen_wait(
+            CancelConfirmationDialog(
+                title="Cancel Video Processing?",
+                message="Are you sure you want to cancel the video processing?\nAlready processed files will be kept."
+            )
+        )
+        
+        if confirmed and self._current_video_processor:
+            logger.info("User confirmed video processing cancellation")
+            self._current_video_processor.cancel()
+            self.app_instance.notify("Video processing cancelled", severity="warning")
+    
+    async def _handle_cancel_api_audio_processing(self) -> None:
+        """Handle cancellation of API audio processing."""
+        # TODO: Implement API cancellation when API processing is async
+        self.app_instance.notify("API processing cancellation not yet implemented", severity="information")
+    
+    async def _handle_cancel_api_video_processing(self) -> None:
+        """Handle cancellation of API video processing."""
+        # TODO: Implement API cancellation when API processing is async
+        self.app_instance.notify("API processing cancellation not yet implemented", severity="information")
 
 #
 # End of Ingest_Window.py

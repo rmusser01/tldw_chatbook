@@ -34,6 +34,7 @@ from ..Event_Handlers.media_events import (
     SidebarCollapseEvent,
     MediaAnalysisRequestEvent,
     MediaAnalysisSaveEvent,
+    MediaAnalysisSaveAsNoteEvent,
     MediaAnalysisOverwriteEvent,
     MediaAnalysisDeleteEvent
 )
@@ -243,29 +244,48 @@ class MediaWindow(Container):
             )
     
     @on(MediaDeleteConfirmationEvent)
-    async def handle_delete_confirmation(self, event: MediaDeleteConfirmationEvent) -> None:
+    def handle_delete_confirmation(self, event: MediaDeleteConfirmationEvent) -> None:
         """Handle delete confirmation from viewer panel."""
-        # Set the type slug
-        event.type_slug = self.active_media_type or ""
+        # Run the async confirmation in a worker
+        self.run_worker(self._handle_delete_confirmation_async(event))
+    
+    async def _handle_delete_confirmation_async(self, event: MediaDeleteConfirmationEvent) -> None:
+        """Handle delete confirmation asynchronously in a worker."""
+        # Show confirmation dialog using our consistent DeleteConfirmationDialog
+        from ..Widgets.delete_confirmation_dialog import create_delete_confirmation
+        dialog = create_delete_confirmation(
+            item_type="Media",
+            item_name=event.media_title,
+            additional_warning="This will permanently remove the media and all associated data.",
+            permanent=True
+        )
         
-        # Forward to existing handler
-        from ..Event_Handlers import media_events
-        await media_events.handle_media_delete_confirmation(self.app_instance, event)
-        
-        # Refresh the list after deletion
-        if self.active_media_type:
-            search_term = self.search_panel.search_term
-            keyword_filter = self.search_panel.keyword_filter
-            self._perform_search(
-                self.active_media_type,
-                search_term,
-                keyword_filter
-            )
-            
-        # Clear the viewer if the deleted item was being displayed
-        if self.selected_media_id == event.media_id:
-            self.selected_media_id = None
-            self.viewer_panel.clear_display()
+        confirmed = await self.app.push_screen_wait(dialog)
+        if confirmed:
+            # Perform the deletion
+            if self.app_instance.media_db:
+                success = self.app_instance.media_db.soft_delete_media(event.media_id)
+                if success:
+                    self.app_instance.notify(f"'{event.media_title}' has been deleted", severity="information")
+                    
+                    # Refresh the list after deletion
+                    if self.active_media_type:
+                        search_term = self.search_panel.search_term
+                        keyword_filter = self.search_panel.keyword_filter
+                        self._perform_search(
+                            self.active_media_type,
+                            search_term,
+                            keyword_filter
+                        )
+                        
+                    # Clear the viewer if the deleted item was being displayed
+                    if self.selected_media_id == event.media_id:
+                        self.selected_media_id = None
+                        self.viewer_panel.clear_display()
+                else:
+                    self.app_instance.notify(f"Failed to delete '{event.media_title}'", severity="error")
+        else:
+            logger.info(f"Media deletion cancelled for: {event.media_title}")
     
     @on(MediaUndeleteEvent)
     async def handle_media_undelete(self, event: MediaUndeleteEvent) -> None:
@@ -565,6 +585,42 @@ class MediaWindow(Container):
                 
         except Exception as e:
             logger.error(f"Error saving analysis: {e}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
+    
+    @on(MediaAnalysisSaveAsNoteEvent)
+    def handle_analysis_save_as_note(self, event: MediaAnalysisSaveAsNoteEvent) -> None:
+        """Handle saving analysis as a new note."""
+        try:
+            if not self.app_instance.notes_db:
+                self.app_instance.notify("Notes database not available", severity="error")
+                return
+            
+            # Generate a title for the note
+            note_title = f"Analysis: {event.media_title}"
+            
+            # Create the note content with metadata
+            note_content = f"# {note_title}\n\n"
+            note_content += f"*Generated from media: {event.media_title} (ID: {event.media_id})*\n\n"
+            note_content += "---\n\n"
+            note_content += event.analysis_content
+            
+            # Create the note
+            note_id = self.app_instance.notes_db.create_note(
+                title=note_title,
+                content=note_content,
+                tags=["media-analysis", f"media-id-{event.media_id}"]
+            )
+            
+            if note_id:
+                self.app_instance.notify(
+                    f"Analysis saved as note: {note_title}",
+                    severity="information"
+                )
+            else:
+                self.app_instance.notify("Failed to save analysis as note", severity="error")
+                
+        except Exception as e:
+            logger.error(f"Error saving analysis as note: {e}", exc_info=True)
             self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
     
     @on(MediaAnalysisOverwriteEvent)
