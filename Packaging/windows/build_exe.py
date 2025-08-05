@@ -12,7 +12,7 @@ import argparse
 
 # Add parent directory to path to import version info
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from ..common.version import VERSION, COMPANY_NAME, PRODUCT_NAME, COPYRIGHT
+from common.version import VERSION, COMPANY_NAME, PRODUCT_NAME, COPYRIGHT
 
 class NuitkaBuilder:
     def __init__(self, build_mode="standard"):
