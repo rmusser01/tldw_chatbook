@@ -13,7 +13,7 @@ from tldw_chatbook.Evals.specialized_runners import (
     RobustnessEvaluationRunner
 )
 from tldw_chatbook.Evals.eval_runner import EvalSample, EvalSampleResult, TaskConfig
-from tldw_chatbook.Evals.llm_interface import LLMInterface
+# LLMInterface removed - using existing chat infrastructure
 
 
 class TestMultilingualEvaluationRunner:
@@ -44,9 +44,10 @@ class TestMultilingualEvaluationRunner:
     @pytest.fixture
     def runner(self, task_config, model_config):
         """Create a MultilingualEvaluationRunner instance."""
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as MockLLM:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLM:
             mock_llm = Mock(spec=LLMInterface)
-            MockLLM.return_value = mock_llm
+            # Mock chat_api_call to return expected responses
+            MockLLM.return_value = \"Mocked response\"
             return MultilingualEvaluationRunner(task_config, model_config)
     
     @pytest.mark.asyncio
@@ -182,7 +183,7 @@ class TestCreativeEvaluationRunner:
     def runner(self, task_config):
         """Create a CreativeEvaluationRunner instance."""
         model_config = {"provider": "openai", "model_id": "gpt-4"}
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface'):
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
             return CreativeEvaluationRunner(task_config, model_config)
     
     @pytest.mark.asyncio
@@ -305,7 +306,7 @@ class TestRobustnessEvaluationRunner:
     def runner(self, task_config):
         """Create a RobustnessEvaluationRunner instance."""
         model_config = {"provider": "openai", "model_id": "gpt-3.5-turbo"}
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface'):
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
             return RobustnessEvaluationRunner(task_config, model_config)
     
     @pytest.mark.asyncio
@@ -459,7 +460,7 @@ class TestSpecializedRunnersIntegration:
             
             model_config = {"provider": "test", "model_id": "test-model"}
             
-            with patch('tldw_chatbook.Evals.eval_runner.LLMInterface'):
+            with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
                 runner = MultilingualEvaluationRunner(task_config, model_config)
                 runner.llm_interface.generate = AsyncMock(return_value="Bonjour")
                 

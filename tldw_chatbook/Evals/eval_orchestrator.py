@@ -39,67 +39,6 @@ from .eval_errors import (
 # Import refactored components
 from .concurrency_manager import ConcurrentRunManager
 from .configuration_validator import ConfigurationValidator
-        
-        # Task type validation
-        valid_task_types = ['question_answer', 'classification', 'generation', 'logprob', 
-                           'code_generation', 'safety', 'translation', 'summarization']
-        if task_config.get('task_type') not in valid_task_types:
-            errors.append(f"Invalid task_type: {task_config.get('task_type')}. Must be one of {valid_task_types}")
-        
-        # Validate generation parameters
-        gen_kwargs = task_config.get('generation_kwargs', {})
-        if 'temperature' in gen_kwargs:
-            temp = gen_kwargs['temperature']
-            if not isinstance(temp, (int, float)) or temp < 0 or temp > 2:
-                errors.append(f"Invalid temperature: {temp}. Must be between 0 and 2")
-        
-        if 'max_tokens' in gen_kwargs:
-            max_tokens = gen_kwargs['max_tokens']
-            if not isinstance(max_tokens, int) or max_tokens < 1:
-                errors.append(f"Invalid max_tokens: {max_tokens}. Must be positive integer")
-        
-        if errors:
-            raise ValidationError(ErrorContext(
-                category=ErrorCategory.VALIDATION,
-                severity=ErrorSeverity.ERROR,
-                message="Task configuration validation failed",
-                details="\n".join(errors),
-                suggestion="Fix the configuration errors and try again",
-                is_retryable=False
-            ))
-    
-    @staticmethod
-    def validate_model_config(model_config: Dict[str, Any]):
-        """Validate model configuration."""
-        errors = []
-        
-        # Required fields
-        if not model_config.get('provider'):
-            errors.append("Missing provider name")
-        
-        if not model_config.get('model_id'):
-            errors.append("Missing model ID")
-        
-        # Provider-specific validation
-        provider = model_config.get('provider', '').lower()
-        if provider in ['openai', 'anthropic', 'cohere'] and not model_config.get('api_key'):
-            # Check for API key in config
-            from tldw_chatbook.config import load_settings
-            settings = load_settings()
-            api_settings = settings.get('api_settings', {})
-            provider_settings = api_settings.get(provider, {})
-            if not provider_settings.get('api_key'):
-                errors.append(f"API key required for {provider}")
-        
-        if errors:
-            raise ModelConfigurationError(ErrorContext(
-                category=ErrorCategory.MODEL_CONFIGURATION,
-                severity=ErrorSeverity.ERROR,
-                message="Model configuration validation failed",
-                details="\n".join(errors),
-                suggestion="Provide all required configuration parameters",
-                is_retryable=False
-            ))
 
 
 class EvaluationOrchestrator:
@@ -292,13 +231,14 @@ class EvaluationOrchestrator:
         logger.info(f"Created model config: {name} ({model_config_id})")
         return model_config_id
     
-    def _create_llm_interface(self, model_data: Dict[str, Any]) -> LLMInterface:
-        """Create an LLM interface from model configuration data."""
-        provider = model_data.get('provider', '')
-        model_id = model_data.get('model_id', '')
-        config = model_data.get('config', {})
-        
-        return LLMInterface(provider_name=provider, model_id=model_id, config=config)
+    def _create_model_config(self, model_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create model configuration from database data."""
+        return {
+            'provider': model_data.get('provider', ''),
+            'model_id': model_data.get('model_id', ''),
+            'api_key': model_data.get('config', {}).get('api_key'),
+            **model_data.get('config', {})
+        }
     
     async def run_evaluation(self, 
                            task_id: str, 

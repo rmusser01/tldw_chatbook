@@ -5,10 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Some kind of Versioning
     
-## [Unreleased]
+## [Unreleased (placeholder for copy/paste)]
 
 ### Added
 - Initial features pending documentation
+
+
+## [0.1.6.4] - 2025-08-5
+### Mutilated
+- Evals module.
 
 
 ## [0.1.6.3] - 2025-08-4
@@ -16,6 +21,7 @@ and this project adheres to Some kind of Versioning
 - Cancellation button for transcription
 - Fixes suggested by gemini for Packaging
 - Warning dialogs for delete buttons
+
 
 ## [0.1.6.2] - 2025-08-3
 ### Added

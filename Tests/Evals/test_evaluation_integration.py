@@ -108,13 +108,14 @@ class TestMultilingualRunnerIntegration:
         )
         
         # Create runner with mocked LLM
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as MockLLM:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLM:
             mock_llm = Mock()
             mock_llm.generate = AsyncMock(side_effect=[
                 "Bonjour le monde",
                 "Bon matin"  # Slightly different translation
             ])
-            MockLLM.return_value = mock_llm
+            # Mock chat_api_call to return expected responses
+            MockLLM.return_value = \"Mocked response\"
             
             runner = MultilingualEvaluationRunner(task_config, model_config)
             
@@ -178,7 +179,7 @@ class TestMultilingualRunnerIntegration:
             EvalSample(id="4", input_text="このテキストを分析", expected_output="日本語のテキスト")
         ]
         
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface'):
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
             runner = MultilingualEvaluationRunner(task_config, {"provider": "test", "model_id": "test"})
             
             # Mock LLM responses in different languages
@@ -243,7 +244,7 @@ class TestCreativeRunnerIntegration:
             model_id=model_id
         )
         
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface'):
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
             runner = CreativeEvaluationRunner(task_config, {"provider": "openai", "model_id": "gpt-4"})
             
             # Mock creative response
@@ -289,7 +290,7 @@ class TestCreativeRunnerIntegration:
             metadata={"subcategory": "dialogue_generation"}
         )
         
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface'):
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
             runner = CreativeEvaluationRunner(task_config, {"provider": "test", "model_id": "test"})
             
             dialogue = '''Detective: "The evidence doesn't add up. Someone's lying."
@@ -332,7 +333,7 @@ class TestRobustnessRunnerIntegration:
             }
         )
         
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface'):
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
             runner = RobustnessEvaluationRunner(task_config, {"provider": "test", "model_id": "test"})
             
             # Test adversarial question (trying to trick the model)
@@ -371,7 +372,7 @@ class TestRobustnessRunnerIntegration:
             }
         )
         
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface'):
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
             runner = RobustnessEvaluationRunner(task_config, {"provider": "test", "model_id": "test"})
             
             sample = EvalSample(
@@ -555,11 +556,12 @@ class TestEvaluationSystemIntegration:
             model_id=model_id
         )
         
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as MockLLM:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLM:
             mock_llm = Mock()
             # Simulate LLM error
             mock_llm.generate = AsyncMock(side_effect=Exception("API Error"))
-            MockLLM.return_value = mock_llm
+            # Mock chat_api_call to return expected responses
+            MockLLM.return_value = \"Mocked response\"
             
             from tldw_chatbook.Evals.eval_runner import BaseEvalRunner
             

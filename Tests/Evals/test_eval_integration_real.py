@@ -123,7 +123,7 @@ class TestRealDatabaseIntegration:
             task_id=task_id,
             model_id=model_id,
             name="Test Run",
-            config={'max_samples': 10}
+            config_overrides={'max_samples': 10}
         )
         
         assert run_id is not None
@@ -132,7 +132,7 @@ class TestRealDatabaseIntegration:
         db.store_result(
             run_id=run_id,
             sample_id="sample-1",
-            input_text="What is 2+2?",
+            input_data={'input': "What is 2+2?"},
             expected_output="4",
             actual_output="4",
             metrics={'exact_match': 1.0},
@@ -330,7 +330,9 @@ class TestUnifiedErrorHandler:
             nonlocal attempt_count
             attempt_count += 1
             if attempt_count < 3:
-                raise ValueError("Temporary failure")
+                # Use a retryable error type instead
+                from tldw_chatbook.Chat.Chat_Deps import ChatAPIError
+                raise ChatAPIError("Temporary failure")
             return "success"
         
         # Should succeed on third attempt

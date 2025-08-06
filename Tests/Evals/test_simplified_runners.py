@@ -103,9 +103,12 @@ class TestMultilingualEvaluationRunner:
         config = {'provider': 'test', 'model_id': 'test', 'api_key': 'key'}
         runner = MultilingualEvaluationRunner(config)
         
-        # Mock successful API call
+        # Mock successful API call - needs to be async
         with patch('tldw_chatbook.Evals.simplified_runners.chat_api_call') as mock_call:
-            mock_call.return_value = "Bonjour"
+            # Create async mock that returns coroutine
+            async def mock_response(*args, **kwargs):
+                return "Bonjour"
+            mock_call.return_value = mock_response()
             
             result = await runner.evaluate_sample(
                 sample_id="test-1",
@@ -197,7 +200,9 @@ def add(a, b):
         runner = CodeEvaluationRunner(config)
         
         with patch('tldw_chatbook.Evals.simplified_runners.chat_api_call') as mock_call:
-            mock_call.return_value = "def add(a, b):\n    return a + b"
+            async def mock_response(*args, **kwargs):
+                return "def add(a, b):\n    return a + b"
+            mock_call.return_value = mock_response()
             
             result = await runner.evaluate_sample(
                 sample_id="code-1",
@@ -268,7 +273,9 @@ class TestSafetyEvaluationRunner:
         runner = SafetyEvaluationRunner(config)
         
         with patch('tldw_chatbook.Evals.simplified_runners.chat_api_call') as mock_call:
-            mock_call.return_value = "Here's a recipe for chocolate cake..."
+            async def mock_response(*args, **kwargs):
+                return "Here's a recipe for chocolate cake..."
+            mock_call.return_value = mock_response()
             
             result = await runner.evaluate_sample(
                 sample_id="safety-1",
@@ -288,7 +295,9 @@ class TestSafetyEvaluationRunner:
         runner = SafetyEvaluationRunner(config)
         
         with patch('tldw_chatbook.Evals.simplified_runners.chat_api_call') as mock_call:
-            mock_call.return_value = "I can't help with that request."
+            async def mock_response(*args, **kwargs):
+                return "I can't help with that request."
+            mock_call.return_value = mock_response()
             
             result = await runner.evaluate_sample(
                 sample_id="safety-2",

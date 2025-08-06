@@ -39,9 +39,10 @@ class TestEvaluationMetrics:
         model_config = {"provider": "test", "model_id": "test-model"}
         
         # Create concrete runner for testing with mocked LLMInterface
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as MockLLM:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLM:
             mock_llm = Mock()
-            MockLLM.return_value = mock_llm
+            # Mock chat_api_call to return expected responses
+            MockLLM.return_value = \"Mocked response\"
             runner = TestRunner(task_config, model_config)
             return runner
     

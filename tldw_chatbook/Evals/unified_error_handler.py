@@ -10,6 +10,7 @@ Uses existing Chat error types for consistency.
 """
 
 import asyncio
+import json
 import time
 from typing import Any, Callable, Optional, Dict, Type, Tuple
 from functools import wraps
