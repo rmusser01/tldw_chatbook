@@ -1,0 +1,45 @@
+{
+  "name": "MMLU Custom Subject Example",
+  "description": "Example of custom MMLU-style questions in JSON format",
+  "task_type": "classification",
+  "dataset_name": "mmlu_custom_data.json",
+  "metric": "accuracy",
+  "num_fewshot": 3,
+  
+  "doc_to_text": "Subject: {subject}\n\nQuestion: {question}\n\nOptions:\nA) {choices[0]}\nB) {choices[1]}\nC) {choices[2]}\nD) {choices[3]}\n\nPlease select the best answer (A, B, C, or D):",
+  
+  "doc_to_choice": ["A", "B", "C", "D"],
+  "doc_to_target": "{answer}",
+  
+  "generation_kwargs": {
+    "max_tokens": 1,
+    "temperature": 0,
+    "top_p": 1.0,
+    "stop_sequences": ["\n"]
+  },
+  
+  "few_shot_examples": [
+    {
+      "question": "What is the capital of France?",
+      "choices": ["London", "Berlin", "Paris", "Madrid"],
+      "answer": "C"
+    },
+    {
+      "question": "Which planet is known as the Red Planet?",
+      "choices": ["Venus", "Mars", "Jupiter", "Saturn"],
+      "answer": "B"
+    },
+    {
+      "question": "What is 2 + 2?",
+      "choices": ["3", "4", "5", "6"],
+      "answer": "B"
+    }
+  ],
+  
+  "metadata": {
+    "version": "1.0",
+    "created_date": "2024-01-01",
+    "author": "Example Creator",
+    "notes": "This is a template for creating custom MMLU-style evaluations"
+  }
+}

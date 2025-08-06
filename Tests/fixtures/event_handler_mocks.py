@@ -5,12 +5,12 @@ async/sync methods, query_one behavior, and all necessary mock attributes.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from textual.widgets import (
-    Button, Input, TextArea, Static, Select, Checkbox, ListView, ListItem, Label,
+    Button, Input, TextArea, Static, Select, Checkbox, ListView, Label,
     RichLog, ProgressBar, LoadingIndicator, DataTable
 )
-from textual.containers import VerticalScroll, Container
+from textual.containers import VerticalScroll
 from textual.css.query import QueryError
 
 
@@ -308,7 +308,7 @@ def mock_app():
 @pytest.fixture
 def mock_chat_message():
     """Fixture for ChatMessage widget mock."""
-    from tldw_chatbook.Widgets.chat_message import ChatMessage
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
     
     mock = MagicMock(spec=ChatMessage)
     mock.role = "User"

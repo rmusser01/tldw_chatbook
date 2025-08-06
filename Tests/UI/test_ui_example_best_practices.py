@@ -4,13 +4,12 @@ Example UI test demonstrating best practices for Textual application testing.
 This file shows various patterns and techniques for testing Textual UI components.
 """
 import pytest
-from textual.widgets import Button, Input, TextArea, Label
+from textual.widgets import Button, TextArea, Label
 from textual.containers import Container
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 
 from tldw_chatbook.UI.Chat_Window import ChatWindow
-from tldw_chatbook.UI.Notes_Window import NotesWindow
-from tldw_chatbook.Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 
 
 @pytest.mark.ui

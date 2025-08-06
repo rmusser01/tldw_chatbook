@@ -23,11 +23,10 @@ from rich.text import Text # For displaying messages if needed
 # Local Imports
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from ..Third_Party.textual_fspicker import Filters  # For file filtering
-from ..Widgets.chat_message import ChatMessage # If CCP tab displays ChatMessage widgets
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..Character_Chat import Chat_Dictionary_Lib as cdl
 from ..Prompt_Management import Prompts_Interop as prompts_interop
-from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError, InputError # For specific error handling
+from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError  # For specific error handling
 from .Chat_Events.chat_events import load_branched_conversation_history_ui
 #
 if TYPE_CHECKING:

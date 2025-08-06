@@ -12,40 +12,35 @@ from loguru import logger
 from textual.app import ComposeResult
 from textual.css.query import QueryError
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
-from textual.widgets import Static, Button, Input, Select, Checkbox, TextArea, Label, RadioSet, RadioButton, Collapsible, ListView, ListItem, Markdown, LoadingIndicator, TabbedContent, TabPane # Button, ListView, ListItem, Label are already here
+from textual.widgets import Static, Button, Input, Select, Checkbox, TextArea, Label, RadioSet, RadioButton, Collapsible, ListView, ListItem, Markdown, LoadingIndicator  # Button, ListView, ListItem, Label are already here
 from textual import on
 from textual.worker import Worker
 from textual import work
 from textual.reactive import reactive
 from ..Widgets.form_components import (
-    create_form_field, create_button_group, create_status_area
+    create_button_group
 )
 from ..Widgets.status_widget import EnhancedStatusWidget
 
 # Configure logger with context
 logger = logger.bind(module="Ingest_Window")
 
-from ..Constants import TLDW_API_AUDIO_OPTIONS_ID, TLDW_API_VIDEO_OPTIONS_ID, TLDW_API_PDF_OPTIONS_ID, \
-    TLDW_API_EBOOK_OPTIONS_ID, TLDW_API_DOCUMENT_OPTIONS_ID, TLDW_API_XML_OPTIONS_ID, TLDW_API_MEDIAWIKI_OPTIONS_ID
 #
 # Local Imports
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
-from ..tldw_api.schemas import MediaType, ChunkMethod, PdfEngine  # Import Enums
-from ..Widgets.IngestTldwApiVideoWindow import IngestTldwApiVideoWindow
-from ..Widgets.IngestTldwApiAudioWindow import IngestTldwApiAudioWindow
-from ..Widgets.IngestTldwApiPdfWindow import IngestTldwApiPdfWindow
-from ..Widgets.IngestTldwApiEbookWindow import IngestTldwApiEbookWindow
-from ..Widgets.IngestTldwApiDocumentWindow import IngestTldwApiDocumentWindow
-from ..Widgets.IngestTldwApiXmlWindow import IngestTldwApiXmlWindow
-from ..Widgets.IngestTldwApiMediaWikiWindow import IngestTldwApiMediaWikiWindow
-from ..Widgets.IngestTldwApiPlaintextWindow import IngestTldwApiPlaintextWindow
-from ..Widgets.IngestLocalPlaintextWindow import IngestLocalPlaintextWindow
-from ..Widgets.IngestLocalWebArticleWindow import IngestLocalWebArticleWindow
-from ..Widgets.IngestLocalDocumentWindow import IngestLocalDocumentWindow
-from ..Widgets.IngestLocalEbookWindow import IngestLocalEbookWindow
-from ..Widgets.IngestLocalPdfWindow import IngestLocalPdfWindow
-from ..Widgets.IngestLocalAudioWindow import IngestLocalAudioWindow
-from ..Widgets.IngestLocalVideoWindow import IngestLocalVideoWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiVideoWindow import IngestTldwApiVideoWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiAudioWindow import IngestTldwApiAudioWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiPdfWindow import IngestTldwApiPdfWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiEbookWindow import IngestTldwApiEbookWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiDocumentWindow import IngestTldwApiDocumentWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiXmlWindow import IngestTldwApiXmlWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiMediaWikiWindow import IngestTldwApiMediaWikiWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiPlaintextWindow import IngestTldwApiPlaintextWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalPlaintextWindow import IngestLocalPlaintextWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalWebArticleWindow import IngestLocalWebArticleWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalDocumentWindow import IngestLocalDocumentWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalAudioWindow import IngestLocalAudioWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalVideoWindow import IngestLocalVideoWindow
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -470,12 +465,12 @@ class IngestWindow(Container):
                 yield from window.compose()
                 
             with VerticalScroll(id="ingest-view-local-pdf", classes="ingest-view-area"):
-                from ..Widgets.IngestLocalPdfWindow import IngestLocalPdfWindow
+                from tldw_chatbook.Widgets.Media_Ingest.IngestLocalPdfWindow import IngestLocalPdfWindow
                 window = IngestLocalPdfWindow(self.app_instance)
                 yield from window.compose()
                 
             with VerticalScroll(id="ingest-view-local-ebook", classes="ingest-view-area"):
-                from ..Widgets.IngestLocalEbookWindow import IngestLocalEbookWindow
+                from tldw_chatbook.Widgets.Media_Ingest.IngestLocalEbookWindow import IngestLocalEbookWindow
                 window = IngestLocalEbookWindow(self.app_instance)
                 yield from window.compose()
                 
@@ -1619,8 +1614,7 @@ class IngestWindow(Container):
         max_retries = data.get('max_retries', 2)
         
         # Import scraping function
-        from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
-        
+
         # Create event loop for async operations
         import asyncio
         loop = asyncio.new_event_loop()
@@ -3412,7 +3406,6 @@ class IngestWindow(Container):
             Dictionary with success status and results or error message
         """
         # Configure logging for this thread
-        import logging
         import threading
         thread_name = threading.current_thread().name
         logger.info(f"[WORKER-{thread_name}] Video worker thread started")

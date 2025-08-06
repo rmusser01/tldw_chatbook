@@ -3,17 +3,14 @@ Integration tests for file extraction workflow.
 """
 import pytest
 import tempfile
-import shutil
 from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock
-import asyncio
+from unittest.mock import Mock, patch
 
 from textual.app import App
-from textual.widgets import Button, DataTable
 
 from tldw_chatbook.Widgets.file_extraction_dialog import FileExtractionDialog
 from tldw_chatbook.Utils.file_extraction import FileExtractor, ExtractedFile
-from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 
 
 class MockApp(App):

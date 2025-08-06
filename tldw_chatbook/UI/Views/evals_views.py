@@ -12,12 +12,9 @@ Provides focused view components for each section of the evaluation system:
 - DatasetManagementView: Dataset handling
 """
 
-from typing import Optional, Dict, Any, List
-from pathlib import Path
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll, Grid
-from textual.widgets import Button, Static, Input, Select, Label, DataTable, Tree
-from textual.reactive import reactive
+from textual.containers import Container, VerticalScroll
+from textual.widgets import Button, Static, Select, Label
 from textual.message import Message
 from textual import on, work
 from loguru import logger
@@ -27,12 +24,12 @@ from ...Widgets.base_components import (
     SectionContainer, ActionButtonRow, StatusDisplay, 
     ConfigurationForm, ButtonConfig, FormField
 )
-from ...Widgets.eval_results_widgets import (
+from tldw_chatbook.Widgets.Evals.eval_results_widgets import (
     ProgressTracker, MetricsDisplay, ResultsTable
 )
-from ...Widgets.cost_estimation_widget import CostEstimationWidget
+from tldw_chatbook.Widgets.Evals.cost_estimation_widget import CostEstimationWidget
 from ...Widgets.loading_states import WorkflowProgress
-from ...Models.evaluation_state import EvaluationState, RunStatus
+from ...Models.evaluation_state import EvaluationState
 
 # Configure logger
 logger = logger.bind(module="evals_views")

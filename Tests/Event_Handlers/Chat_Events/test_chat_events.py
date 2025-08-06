@@ -2,18 +2,16 @@
 # Unit tests for chat event handlers using mocked components
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from rich.text import Text
 # Mock Textual UI elements before they are imported by the module under test
 from textual.widgets import (
-    Button, Input, TextArea, Static, Select, Checkbox, ListView, ListItem, Label, Markdown
+    Button, Input, TextArea, ListItem, Markdown
 )
 from textual.containers import VerticalScroll
 from textual.css.query import QueryError
 
 # Mock DB Errors
-from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError, InputError
 
 # Functions to test
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
@@ -22,14 +20,13 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
     handle_chat_new_conversation_button_pressed,
     handle_chat_save_current_chat_button_pressed,
     handle_chat_load_character_button_pressed,
-    handle_chat_clear_active_character_button_pressed,
     # ... import other handlers as you write tests for them
 )
 from tldw_chatbook.Utils.Emoji_Handling import (
     EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT, EMOJI_EDIT, FALLBACK_EDIT
 )
-from tldw_chatbook.Widgets.chat_message import ChatMessage
-from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 
 # Import our comprehensive mock fixture
 from Tests.fixtures.event_handler_mocks import mock_app

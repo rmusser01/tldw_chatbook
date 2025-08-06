@@ -16,21 +16,99 @@ This is the main entry point for running evaluations.
 
 import asyncio
 import time
+import sqlite3
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Callable, Tuple
 from pathlib import Path
+from contextlib import contextmanager
 
 from loguru import logger
 
 from .task_loader import TaskLoader, TaskConfig
 from .eval_runner import EvalRunner, EvalSampleResult
-from .llm_interface import LLMInterface
+# Use existing infrastructure
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils.cost_estimation import estimate_evaluation_cost, get_model_cost_per_1k_tokens
+from .eval_errors import (
+    get_error_handler, EvaluationError, ValidationError, 
+    DatabaseError, FileSystemError, ModelConfigurationError,
+    ErrorContext, ErrorCategory, ErrorSeverity
+)
+# Import refactored components
+from .concurrency_manager import ConcurrentRunManager
+from .configuration_validator import ConfigurationValidator
+        
+        # Task type validation
+        valid_task_types = ['question_answer', 'classification', 'generation', 'logprob', 
+                           'code_generation', 'safety', 'translation', 'summarization']
+        if task_config.get('task_type') not in valid_task_types:
+            errors.append(f"Invalid task_type: {task_config.get('task_type')}. Must be one of {valid_task_types}")
+        
+        # Validate generation parameters
+        gen_kwargs = task_config.get('generation_kwargs', {})
+        if 'temperature' in gen_kwargs:
+            temp = gen_kwargs['temperature']
+            if not isinstance(temp, (int, float)) or temp < 0 or temp > 2:
+                errors.append(f"Invalid temperature: {temp}. Must be between 0 and 2")
+        
+        if 'max_tokens' in gen_kwargs:
+            max_tokens = gen_kwargs['max_tokens']
+            if not isinstance(max_tokens, int) or max_tokens < 1:
+                errors.append(f"Invalid max_tokens: {max_tokens}. Must be positive integer")
+        
+        if errors:
+            raise ValidationError(ErrorContext(
+                category=ErrorCategory.VALIDATION,
+                severity=ErrorSeverity.ERROR,
+                message="Task configuration validation failed",
+                details="\n".join(errors),
+                suggestion="Fix the configuration errors and try again",
+                is_retryable=False
+            ))
+    
+    @staticmethod
+    def validate_model_config(model_config: Dict[str, Any]):
+        """Validate model configuration."""
+        errors = []
+        
+        # Required fields
+        if not model_config.get('provider'):
+            errors.append("Missing provider name")
+        
+        if not model_config.get('model_id'):
+            errors.append("Missing model ID")
+        
+        # Provider-specific validation
+        provider = model_config.get('provider', '').lower()
+        if provider in ['openai', 'anthropic', 'cohere'] and not model_config.get('api_key'):
+            # Check for API key in config
+            from tldw_chatbook.config import load_settings
+            settings = load_settings()
+            api_settings = settings.get('api_settings', {})
+            provider_settings = api_settings.get(provider, {})
+            if not provider_settings.get('api_key'):
+                errors.append(f"API key required for {provider}")
+        
+        if errors:
+            raise ModelConfigurationError(ErrorContext(
+                category=ErrorCategory.MODEL_CONFIGURATION,
+                severity=ErrorSeverity.ERROR,
+                message="Model configuration validation failed",
+                details="\n".join(errors),
+                suggestion="Provide all required configuration parameters",
+                is_retryable=False
+            ))
+
 
 class EvaluationOrchestrator:
-    """Orchestrates evaluation runs from start to finish."""
+    """
+    Orchestrates evaluation runs from start to finish.
+    
+    Single Responsibility: Coordinates the evaluation workflow by delegating
+    specific tasks to specialized components.
+    """
     
     def __init__(self, db_path: str = None, client_id: str = "eval_orchestrator"):
         """
@@ -40,21 +118,65 @@ class EvaluationOrchestrator:
             db_path: Path to evaluation database (defaults to user data directory)
             client_id: Client identifier for audit trail
         """
+        # Initialize specialized components (composition over inheritance)
+        self.concurrent_manager = ConcurrentRunManager()
+        self.validator = ConfigurationValidator()
+        self.error_handler = get_error_handler()
+        self._client_id = client_id
+        
+        # Initialize database connection
+        self.db = self._initialize_database(db_path, client_id)
+        
+        # Initialize task loader
+        self.task_loader = TaskLoader()
+    
+    def _initialize_database(self, db_path: str, client_id: str) -> EvalsDB:
+        """Initialize database connection with proper path."""
         if db_path is None:
             # Use default path in user data directory
             from tldw_chatbook.config import load_settings
             settings = load_settings()
             user_data_dir = Path(settings.get('user_data_dir', '~/.local/share/tldw_cli')).expanduser()
             
-            # Use user ID from config instead of hardcoded 'default_user'
+            # Use user ID from config
             user_id = settings.get('user_id', settings.get('username', 'default_user'))
             db_path = user_data_dir / user_id / 'evals.db'
         
-        self.db = EvalsDB(db_path=str(db_path), client_id=client_id)
-        self.task_loader = TaskLoader()
-        self._active_tasks = {}  # Track active evaluation tasks
+        # Ensure directory exists
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        logger.info(f"EvaluationOrchestrator initialized with DB: {db_path}")
+        return EvalsDB(db_path=str(db_path), client_id=client_id)
+    
+    @contextmanager
+    def _db_operation(self, operation_name: str):
+        """Context manager for database operations with error handling."""
+        try:
+            yield self.db
+        except sqlite3.OperationalError as e:
+            if 'locked' in str(e):
+                raise DatabaseError(ErrorContext(
+                    category=ErrorCategory.DATABASE,
+                    severity=ErrorSeverity.WARNING,
+                    message=f"Database is locked during {operation_name}",
+                    suggestion="Another process may be using the database. Try again in a moment",
+                    is_retryable=True
+                ))
+            else:
+                raise DatabaseError(ErrorContext(
+                    category=ErrorCategory.DATABASE,
+                    severity=ErrorSeverity.ERROR,
+                    message=f"Database operation failed: {operation_name}",
+                    details=str(e),
+                    is_retryable=False
+                ))
+        except Exception as e:
+            raise DatabaseError(ErrorContext(
+                category=ErrorCategory.DATABASE,
+                severity=ErrorSeverity.ERROR,
+                message=f"Database operation failed: {operation_name}",
+                details=str(e),
+                is_retryable=False
+            ))
     
     async def create_task_from_file(self, task_file_path: str, format_type: str = 'auto') -> str:
         """
@@ -76,8 +198,19 @@ class EvaluationOrchestrator:
         })
         
         try:
+            # Validate and normalize the file path
+            validated_path = validate_path_simple(task_file_path)
+            if not Path(validated_path).exists():
+                raise FileSystemError(ErrorContext(
+                    category=ErrorCategory.FILE_SYSTEM,
+                    severity=ErrorSeverity.ERROR,
+                    message=f"Task file not found: {task_file_path}",
+                    suggestion="Check the file path and ensure the file exists",
+                    is_retryable=False
+                ))
+            
             # Load task configuration
-            task_config = self.task_loader.load_task(task_file_path, format_type)
+            task_config = self.task_loader.load_task(validated_path, format_type)
             
             # Validate task
             validation_issues = self.task_loader.validate_task(task_config)
@@ -138,12 +271,23 @@ class EvaluationOrchestrator:
         """
         logger.info(f"Creating model config: {name} ({provider}/{model_id})")
         
-        model_config_id = self.db.create_model(
-            name=name,
-            provider=provider,
-            model_id=model_id,
-            config=config or {}
-        )
+        # Validate model configuration
+        model_data = {
+            'name': name,
+            'provider': provider,
+            'model_id': model_id,
+            'config': config or {},
+            'api_key': (config or {}).get('api_key')
+        }
+        self.validator.raise_if_invalid(model_data, 'model')
+        
+        with self._db_operation("creating model configuration"):
+            model_config_id = self.db.create_model(
+                name=name,
+                provider=provider,
+                model_id=model_id,
+                config=config or {}
+            )
         
         logger.info(f"Created model config: {name} ({model_config_id})")
         return model_config_id
@@ -177,56 +321,79 @@ class EvaluationOrchestrator:
         Returns:
             Evaluation run ID
         """
-        # Load task and model configurations
-        task_data = self.db.get_task(task_id)
-        model_data = self.db.get_model(model_id)
-        
-        if not task_data:
-            raise ValueError(f"Task not found: {task_id}")
-        if not model_data:
-            raise ValueError(f"Model not found: {model_id}")
-        
-        # Create TaskConfig from database data
-        # Merge database fields with config_data to ensure all required fields are present
-        task_config_dict = {
-            'name': task_data['name'],
-            'description': task_data.get('description', ''),
-            'task_type': task_data.get('task_type', 'question_answer'),
-            'dataset_name': task_data.get('dataset_name', 'custom'),
-        }
-        # Update with any additional config from config_data
-        if task_data.get('config_data'):
-            task_config_dict.update(task_data['config_data'])
-        
-        if config_overrides:
-            task_config_dict.update(config_overrides)
-        
-        task_config = TaskConfig(**task_config_dict)
-        
-        # Generate run name if not provided
-        if not run_name:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            run_name = f"{task_data['name']}_{model_data['name']}_{timestamp}"
-        
-        logger.info(f"Starting evaluation run: {run_name}")
-        eval_start_time = time.time()
-        
-        # Log evaluation start metrics
-        log_counter("eval_run_started", labels={
-            "task_type": task_config.task_type,
-            "provider": model_data['provider'],
-            "model": model_data['model_id']
-        })
-        
-        # Create evaluation run record
-        run_id = self.db.create_run(
-            name=run_name,
-            task_id=task_id,
-            model_id=model_id,
-            config_overrides=config_overrides or {}
-        )
+        run_id = None
         
         try:
+            # Load task and model configurations with error handling
+            with self._db_operation("loading task configuration"):
+                task_data = self.db.get_task(task_id)
+                if not task_data:
+                    raise ValidationError(ErrorContext(
+                        category=ErrorCategory.VALIDATION,
+                        severity=ErrorSeverity.ERROR,
+                        message=f"Task not found: {task_id}",
+                        suggestion="Check the task ID or create the task first",
+                        is_retryable=False
+                    ))
+            
+            with self._db_operation("loading model configuration"):
+                model_data = self.db.get_model(model_id)
+                if not model_data:
+                    raise ModelConfigurationError(ErrorContext(
+                        category=ErrorCategory.MODEL_CONFIGURATION,
+                        severity=ErrorSeverity.ERROR,
+                        message=f"Model configuration not found: {model_id}",
+                        suggestion="Check the model ID or configure the model first",
+                        is_retryable=False
+                    ))
+        
+            # Create TaskConfig from database data
+            # Merge database fields with config_data to ensure all required fields are present
+            task_config_dict = {
+                'name': task_data['name'],
+                'description': task_data.get('description', ''),
+                'task_type': task_data.get('task_type', 'question_answer'),
+                'dataset_name': task_data.get('dataset_name', 'custom'),
+            }
+            # Update with any additional config from config_data
+            if task_data.get('config_data'):
+                task_config_dict.update(task_data['config_data'])
+            
+            if config_overrides:
+                task_config_dict.update(config_overrides)
+            
+            # Validate configurations
+            ConfigurationValidator.validate_task_config(task_config_dict)
+            ConfigurationValidator.validate_model_config(model_data)
+            
+            task_config = TaskConfig(**task_config_dict)
+            
+            # Generate run name if not provided
+            if not run_name:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                run_name = f"{task_data['name']}_{model_data['name']}_{timestamp}"
+            
+            logger.info(f"Starting evaluation run: {run_name}")
+            eval_start_time = time.time()
+            
+            # Log evaluation start metrics
+            log_counter("eval_run_started", labels={
+                "task_type": task_config.task_type,
+                "provider": model_data['provider'],
+                "model": model_data['model_id']
+            })
+            
+            # Create evaluation run record
+            with self._db_operation("creating evaluation run"):
+                run_id = self.db.create_run(
+                    name=run_name,
+                    task_id=task_id,
+                    model_id=model_id,
+                    config_overrides=config_overrides or {}
+                )
+            
+            # Register with concurrent manager
+            await self.concurrent_manager.register_run(run_id, task_id, model_id)
             # Update run status to running
             self.db.update_run_status(run_id, 'running')
             
@@ -257,7 +424,7 @@ class EvaluationOrchestrator:
                     "task_type": task_config.task_type,
                     "provider": model_data['provider'],
                     "model": model_data['model_id'],
-                    "success": "true" if result.success else "false"
+                    "success": "true" if not result.error_info and 'error' not in result.metrics else "false"
                 })
                 
                 # Log individual metric values
@@ -344,25 +511,42 @@ class EvaluationOrchestrator:
         except Exception as e:
             logger.error(f"Evaluation failed: {e}")
             
-            # Log failure metrics
-            eval_duration = time.time() - eval_start_time
-            log_histogram("eval_run_duration", eval_duration, labels={
-                "task_type": task_config.task_type,
-                "provider": model_data['provider'],
-                "model": model_data['model_id'],
-                "status": "failed"
-            })
-            log_counter("eval_run_failed", labels={
-                "task_type": task_config.task_type,
-                "provider": model_data['provider'],
-                "model": model_data['model_id'],
-                "error_type": type(e).__name__
-            })
+            # Log failure metrics if we have the necessary data
+            if 'eval_start_time' in locals():
+                eval_duration = time.time() - eval_start_time
+                log_histogram("eval_run_duration", eval_duration, labels={
+                    "task_type": task_config_dict.get('task_type', 'unknown') if 'task_config_dict' in locals() else 'unknown',
+                    "provider": model_data['provider'] if 'model_data' in locals() else 'unknown',
+                    "model": model_data['model_id'] if 'model_data' in locals() else 'unknown',
+                    "status": "failed"
+                })
+                log_counter("eval_run_failed", labels={
+                    "task_type": task_config_dict.get('task_type', 'unknown') if 'task_config_dict' in locals() else 'unknown',
+                    "provider": model_data['provider'] if 'model_data' in locals() else 'unknown',
+                    "model": model_data['model_id'] if 'model_data' in locals() else 'unknown',
+                    "error_type": type(e).__name__
+                })
             
-            # Update run status to failed
-            self.db.update_run_status(run_id, 'failed', str(e))
+            # Update run status to failed if we have a run_id
+            if run_id:
+                with self._db_operation("updating run status to failed"):
+                    self.db.update_run_status(run_id, 'failed', str(e))
             
+            # Re-raise with enhanced error context if not already an EvaluationError
+            if not isinstance(e, EvaluationError):
+                raise EvaluationError(ErrorContext(
+                    category=ErrorCategory.UNKNOWN,
+                    severity=ErrorSeverity.ERROR,
+                    message="Evaluation failed",
+                    details=str(e),
+                    is_retryable=False
+                )) from e
             raise
+            
+        finally:
+            # Always unregister the run from concurrent manager
+            if run_id:
+                await self.concurrent_manager.unregister_run(run_id)
     
     def get_run_summary(self, run_id: str) -> Dict[str, Any]:
         """Get a comprehensive summary of an evaluation run."""

@@ -9,7 +9,6 @@ import pytest_asyncio
 import tempfile
 import os
 from pathlib import Path
-from io import BytesIO
 from unittest.mock import patch
 
 # 3rd-party Libraries
@@ -20,8 +19,7 @@ from textual.widgets import Input, Button, TextArea
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Chat_Window import ChatWindow
 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
-from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 

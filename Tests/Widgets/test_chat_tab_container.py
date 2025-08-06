@@ -3,18 +3,14 @@
 #
 # Imports
 import pytest
-import uuid
-from unittest.mock import Mock, AsyncMock, patch, call
+from unittest.mock import Mock, AsyncMock, patch
 #
 # 3rd-Party Imports
-from textual.app import App
-from textual.widgets import Static
-from textual.containers import Container
 #
 # Local Imports
-from tldw_chatbook.Widgets.chat_tab_container import ChatTabContainer
-from tldw_chatbook.Widgets.chat_tab_bar import ChatTabBar
-from tldw_chatbook.Widgets.chat_session import ChatSession
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_bar import ChatTabBar
+from tldw_chatbook.Widgets.Chat_Widgets.chat_session import ChatSession
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 #
 ########################################################################################################################

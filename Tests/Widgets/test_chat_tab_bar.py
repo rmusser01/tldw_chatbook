@@ -3,14 +3,13 @@
 #
 # Imports
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, AsyncMock
 #
 # 3rd-Party Imports
 from textual.app import App
-from textual.widgets import Button
 #
 # Local Imports
-from tldw_chatbook.Widgets.chat_tab_bar import ChatTabBar
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_bar import ChatTabBar
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 #
 ########################################################################################################################

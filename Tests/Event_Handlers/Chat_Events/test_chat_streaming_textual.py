@@ -4,15 +4,13 @@ This replaces the mock-heavy approach with proper Textual app testing.
 """
 import pytest
 import pytest_asyncio
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 from textual.app import App, ComposeResult
-from textual.pilot import Pilot
-from textual.widgets import Button, TextArea, Static
 from textual.containers import VerticalScroll
 from textual.widgets._markdown import Markdown
 
 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
-from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_streaming_events
 from tldw_chatbook.Constants import TAB_CHAT

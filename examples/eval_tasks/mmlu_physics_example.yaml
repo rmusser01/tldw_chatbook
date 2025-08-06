@@ -1,0 +1,56 @@
+# MMLU High School Physics Example Task
+# This example shows how to create an MMLU-style multiple choice evaluation
+
+task: mmlu_high_school_physics_example
+dataset_path: mmlu_physics_sample.json  # Local file with sample questions
+output_type: multiple_choice
+num_fewshot: 5
+
+# Dataset splits
+training_split: train
+validation_split: val  
+test_split: test
+
+# Prompt template for formatting questions
+doc_to_text: |
+  The following are multiple choice questions (with answers) about high school physics.
+  
+  Question: {{question}}
+  A) {{choices[0]}}
+  B) {{choices[1]}}
+  C) {{choices[2]}}
+  D) {{choices[3]}}
+  Answer:
+
+# Define the valid choices
+doc_to_choice: ["A", "B", "C", "D"]
+
+# Extract the target answer from the dataset
+doc_to_target: answer
+
+# Metrics to compute
+metric_list:
+  - metric: acc
+    aggregation: mean
+  - metric: acc_norm
+    aggregation: mean
+
+# Generation parameters for the model
+generation_kwargs:
+  max_gen_toks: 1  # Only generate one token (the answer)
+  temperature: 0   # Deterministic selection
+  do_sample: false
+  top_p: 1.0
+
+# Optional metadata
+metadata:
+  subject: physics
+  level: high_school
+  source: MMLU
+  
+# Filter for specific question types (optional)
+filter_list:
+  - name: mechanics_only
+    filter: "lambda x: 'mechanics' in x['topic'].lower()"
+  - name: exclude_quantum  
+    filter: "lambda x: 'quantum' not in x['question'].lower()"

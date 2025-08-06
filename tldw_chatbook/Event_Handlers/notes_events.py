@@ -4,9 +4,8 @@
 # Imports
 import logging
 from datetime import datetime
-import json
 from pathlib import Path
-from typing import Any, Optional, Dict, Tuple, TYPE_CHECKING
+from typing import Any, Optional, Tuple, TYPE_CHECKING
 import time
 #
 # 3rd-Party Imports
@@ -16,12 +15,12 @@ from textual.css.query import QueryError  # For try-except
 import yaml
 #
 # Local Imports
-from ..Widgets.notes_sidebar_right import NotesSidebarRight
+from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarRight
 from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError
-from ..Widgets.notes_sidebar_left import NotesSidebarLeft
+from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
 from ..Third_Party.textual_fspicker import Filters
-from ..config import get_cli_setting, load_cli_config_and_ensure_existence
+from ..config import load_cli_config_and_ensure_existence
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -1139,8 +1138,8 @@ async def handle_notes_copy_text_button_pressed(app: 'TldwCli', event: Button.Pr
 
 async def handle_notes_sidebar_emoji_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles the sidebar emoji button press."""
-    from ..Widgets.emoji_picker import EmojiPickerScreen, EmojiSelected
-    
+    from ..Widgets.emoji_picker import EmojiPickerScreen
+
     async def emoji_callback(emoji_char: str) -> None:
         if emoji_char:
             # Insert emoji at cursor in notes editor
@@ -1229,7 +1228,6 @@ Note ID: {app.current_selected_note_id}
 # --- Template Definitions ---
 
 import json
-import os
 from pathlib import Path
 
 def load_note_templates():

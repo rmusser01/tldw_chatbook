@@ -15,7 +15,6 @@ if 'TEXTUAL_LOG' not in os.environ:
     os.environ['TEXTUAL_LOG'] = ''  # Empty string disables logging
 
 # Imports
-import asyncio
 import concurrent.futures
 import functools
 import inspect
@@ -33,19 +32,17 @@ from textual.widget import Widget
 # 3rd-Party Libraries
 from PIL import Image
 from loguru import logger as loguru_logger, logger
-from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import (
-    Static, Button, Input, Header, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch, Markdown
+    Static, Button, Input, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch, Markdown
 )
 
 from textual.containers import Container, VerticalScroll
 from textual.reactive import reactive
-from textual.worker import Worker, WorkerState
+from textual.worker import Worker
 from textual.binding import Binding
 from textual.message import Message
-from textual.dom import DOMNode  # For type hinting if needed
 from textual.timer import Timer
 from textual.css.query import QueryError
 from textual.command import Hit, Hits, Provider
@@ -55,7 +52,7 @@ from pathlib import Path
 from tldw_chatbook.Utils.text import slugify
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
-from tldw_chatbook.Metrics.metrics import log_histogram, log_counter, log_gauge, log_resource_usage, init_metrics_server
+from tldw_chatbook.Metrics.metrics import log_histogram, log_counter, log_resource_usage, init_metrics_server
 from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
 #
 # --- Local API library Imports ---
@@ -65,7 +62,6 @@ from .Event_Handlers.LLM_Management_Events import (llm_management_events, llm_ma
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import handle_streaming_chunk, handle_stream_done
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from .Widgets.AppFooterStatus import AppFooterStatus
-from .Utils import Utils
 from .config import (
     get_media_db_path,
     get_prompts_db_path,
@@ -78,9 +74,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
 from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
-from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, EMOJI_TITLE_NOTE, \
-    FALLBACK_TITLE_NOTE, EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH, supports_emoji, \
-    EMOJI_SEND, FALLBACK_SEND, EMOJI_STOP, FALLBACK_STOP
+from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, supports_emoji
 from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 from tldw_chatbook.Utils.ui_helpers import UIHelpers
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
@@ -101,9 +95,9 @@ from .config import (
 from .Event_Handlers import (
     conv_char_events as ccp_handlers,
     notes_events as notes_handlers,
-    worker_events as worker_handlers, worker_events, ingest_events,
+    worker_events, ingest_events,
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
-    search_events, notes_sync_events, embeddings_events, subscription_events,
+    search_events, subscription_events,
 )
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks, \
     chat_events_dictionaries
@@ -116,12 +110,12 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 )
 from .Notes.Notes_Library import NotesInteropService
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
-from .Widgets.chat_message import ChatMessage
-from .Widgets.chat_message_enhanced import ChatMessageEnhanced
-from .Widgets.notes_sidebar_left import NotesSidebarLeft
-from .Widgets.notes_sidebar_right import NotesSidebarRight
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
+from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarRight
 from .Widgets.titlebar import TitleBar
-from .Widgets.splash_screen import SplashScreen, SplashScreenClosed
+from .Widgets.splash_screen import SplashScreen
 from .LLM_Calls.LLM_API_Calls import (
         chat_with_openai, chat_with_anthropic, chat_with_cohere,
         chat_with_groq, chat_with_openrouter, chat_with_huggingface,
@@ -142,15 +136,14 @@ from .UI.Stats_Window import StatsWindow
 from .UI.Ingest_Window import IngestWindow, INGEST_NAV_BUTTON_IDS, MEDIA_TYPES
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
-# Using v3 of EvalsWindow with two-column layout for Evaluation Setup
-from .UI.Evals_Window_v3 import EvalsWindow
+# Using unified Evals dashboard
+from .UI.Evals_Window_v3_unified import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Study_Window import StudyWindow
 from .UI.Chatbooks_Window import ChatbooksWindow
-from .UI.SubscriptionWindow import SubscriptionWindow
 from .UI.Tab_Bar import TabBar
-from .UI.Tab_Dropdown import TabDropdown, TabChanged
+from .UI.Tab_Dropdown import TabDropdown
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
@@ -782,7 +775,11 @@ class PlaceholderWindow(Container):
                 child.remove()
             
             # Create the actual window
-            self._actual_window = self.window_class(self.app_instance, id=self.window_id, classes=self.actual_classes)
+            # EvalsLab is a Container that doesn't take app instance as first argument
+            if self.window_class.__name__ == 'EvalsLab':
+                self._actual_window = self.window_class(id=self.window_id, classes=self.actual_classes)
+            else:
+                self._actual_window = self.window_class(self.app_instance, id=self.window_id, classes=self.actual_classes)
             
             # Clear placeholder styling and mount actual window
             self.remove_class("placeholder-window")
@@ -3355,14 +3352,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Populate LLM help texts when the tab is shown
             self.call_after_refresh(llm_management_events.populate_llm_help_texts, self)
         elif new_tab == TAB_EVALS: # Added for Evals tab
-            # Activate initial view for EvalsWindow when switching to the tab
-            from .UI.Evals_Window_v3 import EvalsWindow
-            try:
-                evals_window = self.query_one(EvalsWindow)
-                evals_window.activate_initial_view()
-            except QueryError:
-                self.loguru_logger.error("Could not find EvalsWindow to activate its initial view.")
-            self.loguru_logger.debug(f"Switched to Evals tab. Initial sidebar state: collapsed={self.evals_sidebar_collapsed}")
+            # EvalsLab is a unified dashboard - no need for view activation
+            self.loguru_logger.debug(f"Switched to Evals tab")
 
 
     def _log_view_dimensions(self, view, parent):
@@ -3520,20 +3511,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             logging.error(f"Error toggling Conversations, Characters & Prompts left sidebar pane: {e}", exc_info=True)
 
     def watch_evals_sidebar_collapsed(self, collapsed: bool) -> None:
-        """Hide or show the Evals sidebar."""
-        if not self._ui_ready:
-            self.loguru_logger.debug("watch_evals_sidebar_collapsed: UI not ready.")
-            return
-        try:
-            sidebar = self.query_one("#evals-nav-pane") # Updated ID from new EvalsWindow implementation
-            toggle_button = self.query_one("#evals-sidebar-toggle-button")
-            sidebar.set_class(collapsed, "collapsed")
-            toggle_button.set_class(collapsed, "collapsed")
-            self.loguru_logger.debug(f"Evals sidebar collapsed state: {collapsed}, class set/removed.")
-        except QueryError:
-            self.loguru_logger.error("Evals sidebar (#evals-nav-pane) not found for collapse toggle.")
-        except Exception as e:
-            self.loguru_logger.error(f"Error toggling Evals sidebar: {e}", exc_info=True)
+        """EvalsLab uses unified dashboard - no sidebar to collapse."""
+        # This method is kept for backwards compatibility but does nothing
+        # The new EvalsLab UI doesn't have a collapsible sidebar
+        pass
     
     def watch_media_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
         """Notify MediaWindow when media_active_view changes."""
@@ -4390,8 +4371,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def on_switch_changed(self, event: Switch.Changed) -> None:
         """Handles changes in Switch widgets."""
-        from textual.widgets import Switch
-        
+
         switch_id = event.switch.id
         current_active_tab = self.current_tab
         

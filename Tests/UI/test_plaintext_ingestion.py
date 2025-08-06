@@ -6,11 +6,11 @@ Tests both local plaintext processing and TLDW API plaintext ingestion.
 
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from textual.widgets import Button, Select, Input, Checkbox, TextArea, ListView
+from unittest.mock import Mock, AsyncMock, patch
+from textual.widgets import Button, Select, Input, Checkbox, TextArea
 
 from tldw_chatbook.UI.Ingest_Window import IngestWindow
-from tldw_chatbook.Widgets.IngestTldwApiPlaintextWindow import IngestTldwApiPlaintextWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiPlaintextWindow import IngestTldwApiPlaintextWindow
 from tldw_chatbook.tldw_api import ProcessPlaintextRequest
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 

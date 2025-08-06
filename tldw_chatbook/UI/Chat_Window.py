@@ -14,8 +14,8 @@ from textual.reactive import reactive
 #
 # Local Imports
 from ..Widgets.settings_sidebar import create_settings_sidebar
-from ..Widgets.chat_right_sidebar import create_chat_right_sidebar
-from ..Widgets.chat_tab_container import ChatTabContainer
+from tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar import create_chat_right_sidebar
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ..Constants import TAB_CHAT
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE, EMOJI_SEND, FALLBACK_SEND, \
     EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON, EMOJI_STOP, FALLBACK_STOP
@@ -213,7 +213,7 @@ class ChatWindow(Container):
             focused_widget = self.app_instance.focused
             
             # Check if the focused widget is a ChatMessage or if we need to find one
-            from ..Widgets.chat_message import ChatMessage
+            from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
             
             if isinstance(focused_widget, ChatMessage):
                 message_widget = focused_widget

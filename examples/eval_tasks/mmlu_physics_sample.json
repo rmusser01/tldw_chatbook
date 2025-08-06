@@ -1,0 +1,62 @@
+[
+  {
+    "question": "A block slides down a frictionless inclined plane. Which of the following quantities remains constant?",
+    "choices": [
+      "Kinetic energy",
+      "Potential energy", 
+      "Total mechanical energy",
+      "Velocity"
+    ],
+    "answer": "C",
+    "topic": "mechanics",
+    "difficulty": "medium"
+  },
+  {
+    "question": "Two objects of different masses are dropped from the same height in a vacuum. Which statement is true?",
+    "choices": [
+      "The heavier object falls faster",
+      "The lighter object falls faster",
+      "Both objects fall at the same rate",
+      "The rate depends on the shape of the objects"
+    ],
+    "answer": "C",
+    "topic": "mechanics",
+    "difficulty": "easy"
+  },
+  {
+    "question": "What is the SI unit of electric current?",
+    "choices": [
+      "Volt",
+      "Ohm",
+      "Ampere",
+      "Watt"
+    ],
+    "answer": "C",
+    "topic": "electricity",
+    "difficulty": "easy"
+  },
+  {
+    "question": "A wave has a frequency of 500 Hz and a wavelength of 0.68 m. What is its speed?",
+    "choices": [
+      "340 m/s",
+      "735 m/s",
+      "500 m/s",
+      "0.68 m/s"
+    ],
+    "answer": "A",
+    "topic": "waves",
+    "difficulty": "medium"
+  },
+  {
+    "question": "According to Newton's third law, when object A exerts a force on object B:",
+    "choices": [
+      "Object B exerts an equal force in the same direction on A",
+      "Object B exerts an equal and opposite force on A",
+      "Object B exerts a smaller force on A",
+      "Object B does not exert any force on A"
+    ],
+    "answer": "B",
+    "topic": "mechanics",
+    "difficulty": "easy"
+  }
+]

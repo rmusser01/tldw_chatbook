@@ -268,11 +268,12 @@ Before submitting widget tests, ensure:
 import pytest
 from unittest.mock import patch, MagicMock
 from Tests.textual_test_utils import widget_pilot, create_mock_app
-from tldw_chatbook.Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+
 
 class TestChatMessage:
     """Test suite for ChatMessage widget."""
-    
+
     @pytest.fixture
     def mock_database(self):
         """Mock database for tests."""
@@ -284,50 +285,50 @@ class TestChatMessage:
                 'timestamp': '2024-01-01 12:00:00'
             }
             yield mock
-    
+
     async def test_message_display(self, widget_pilot, mock_database):
         """Test message displays correctly."""
         async with widget_pilot(ChatMessage, message_id=1) as pilot:
             widget = pilot.app.test_widget
-            
+
             # Wait for message to load
             await pilot.wait_for(lambda: widget.loaded, timeout=2.0)
-            
+
             # Verify content
             assert "Test message" in widget.content
             assert widget.role == "user"
-    
+
     async def test_message_copy(self, widget_pilot, mock_database):
         """Test copying message to clipboard."""
         mock_app = create_mock_app()
-        
+
         async with widget_pilot(ChatMessage, message_id=1) as pilot:
             widget = pilot.app.test_widget
-            
+
             # Mock clipboard
             with patch('pyperclip.copy') as mock_copy:
                 # Trigger copy
                 await widget.copy_to_clipboard()
-                
+
                 # Verify
                 mock_copy.assert_called_with('Test message')
-    
+
     async def test_message_edit_mode(self, widget_pilot, mock_database):
         """Test entering and exiting edit mode."""
         async with widget_pilot(ChatMessage, message_id=1) as pilot:
             widget = pilot.app.test_widget
-            
+
             # Enter edit mode
             await widget.enter_edit_mode()
             await pilot.pause()
-            
+
             assert widget.editing
             assert widget.has_class("editing")
-            
+
             # Exit edit mode
             await widget.cancel_edit()
             await pilot.pause()
-            
+
             assert not widget.editing
             assert not widget.has_class("editing")
 ```

@@ -2,20 +2,19 @@
 # Description: This file contains the UI components for the Notes Window 
 #
 # Imports
-from typing import TYPE_CHECKING, Optional # Added Optional
+from typing import TYPE_CHECKING  # Added Optional
 #
 # 3rd-Party Imports
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
-from textual.widgets import Button, TextArea, Static, Label
+from textual.widgets import Button, TextArea, Label
 #
 # Local Imports
-from ..Widgets.notes_sidebar_left import NotesSidebarLeft
-from ..Widgets.notes_sidebar_right import NotesSidebarRight
-from ..Widgets.notes_sync_widget_improved import NotesSyncWidgetImproved
+from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
+from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarRight
+from tldw_chatbook.Widgets.Note_Widgets.notes_sync_widget_improved import NotesSyncWidgetImproved
 # Import EmojiSelected and EmojiPickerScreen
-from ..Widgets.emoji_picker import EmojiSelected, EmojiPickerScreen
-from ..Widgets.voice_input_button import VoiceInputButton
+from ..Widgets.emoji_picker import EmojiSelected
 from ..Event_Handlers.Audio_Events.dictation_integration_events import InsertDictationTextEvent
 # from ..Constants import TAB_NOTES # Not strictly needed if IDs are hardcoded here
 #

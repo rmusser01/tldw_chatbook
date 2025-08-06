@@ -16,7 +16,7 @@ from the current chat conversation including:
 from typing import Optional, Callable, Dict, Any
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal, Center, ScrollableContainer
+from textual.containers import Container, ScrollableContainer
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static, LoadingIndicator
 from textual.reactive import reactive
@@ -237,7 +237,7 @@ class DocumentGenerationModal(ModalScreen):
         event.stop()
         
         # Import the note creation modal
-        from .note_creation_modal import NoteCreationModal
+        from tldw_chatbook.Widgets.Note_Widgets.note_creation_modal import NoteCreationModal
         
         # Prepare default title and content
         timestamp_str = self.conversation_context.get("timestamp", "")
