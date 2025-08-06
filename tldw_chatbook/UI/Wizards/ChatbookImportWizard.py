@@ -31,7 +31,7 @@ from .BaseWizard import WizardContainer, WizardStep, WizardStepConfig, WizardScr
 from ...Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 from ...Chatbooks.chatbook_models import ChatbookManifest, ContentType
 from ...Chatbooks.conflict_resolver import ConflictResolution
-from ...Widgets.enhanced_file_picker import EnhancedFilePicker
+from ...Widgets.enhanced_file_picker import EnhancedFileOpen
 
 if TYPE_CHECKING:
     from ...app import TldwCli
@@ -71,7 +71,7 @@ class FileSelectionStep(WizardStep):
         """Open file browser to select chatbook."""
         try:
             # Use the enhanced file picker
-            file_dialog = EnhancedFilePicker(
+            file_dialog = EnhancedFileOpen(
                 title="Select Chatbook File",
                 select_type="file",
                 filters=["*.zip"],
