@@ -238,7 +238,6 @@ class ChatbooksWindowImproved(Screen):
     
     .action-icon {
         text-align: center;
-        font-size: 200%;
         margin-bottom: 1;
     }
     

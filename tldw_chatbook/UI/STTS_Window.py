@@ -1509,7 +1509,7 @@ class TTSPlaygroundWidget(Widget):
                 ),
                 ("All Files", lambda p: True),
             ),
-            select_type="file",
+            must_exist=True
         )
         self.app.push_screen(file_open, handle_selection)
     

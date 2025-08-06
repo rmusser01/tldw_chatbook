@@ -3152,7 +3152,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Special handling for ChatbooksWindow to ensure it initializes
             if new_tab == "chatbooks" and hasattr(new_window, '_ensure_initialized'):
                 loguru_logger.debug("Triggering ChatbooksWindow initialization...")
-                self.run_worker(new_window._ensure_initialized())
+                # Call the async method directly, not as a worker
+                self.call_after_refresh(new_window._ensure_initialized)
             
             # Update word count and token count in footer based on tab
             try:
@@ -4443,9 +4444,22 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await self._splash_screen_widget.remove()
             self._splash_screen_widget = None
         
+        # Check if main UI widgets already exist (avoid duplicate IDs)
+        existing_ids = {widget.id for widget in self.screen._nodes if widget.id}
+        
         # Create and mount the main UI components after splash screen is closed
         main_ui_widgets = self._create_main_ui_widgets()
-        await self.mount(*main_ui_widgets)
+        
+        # Only mount widgets that don't already exist
+        widgets_to_mount = []
+        for widget in main_ui_widgets:
+            if widget.id not in existing_ids:
+                widgets_to_mount.append(widget)
+            else:
+                logger.debug(f"Skipping duplicate widget with ID: {widget.id}")
+        
+        if widgets_to_mount:
+            await self.mount(*widgets_to_mount)
         
         # Now that the main UI is mounted, set up logging if it was deferred
         if not self._rich_log_handler:

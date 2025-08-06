@@ -206,7 +206,6 @@ class ChatbookTemplatesWindow(ModalScreen):
     }
     
     .template-icon {
-        font-size: 200%;
         text-align: center;
         margin-bottom: 1;
     }
@@ -221,13 +220,11 @@ class ChatbookTemplatesWindow(ModalScreen):
     .template-description {
         text-align: center;
         color: $text-muted;
-        font-size: 90%;
         margin-bottom: 1;
     }
     
     .template-tags {
         text-align: center;
-        font-size: 85%;
         color: $text-disabled;
     }
     
@@ -256,7 +253,6 @@ class ChatbookTemplatesWindow(ModalScreen):
     .use-case-list {
         margin-left: 2;
         color: $text-muted;
-        font-size: 90%;
     }
     
     .action-buttons {
@@ -312,12 +308,14 @@ class ChatbookTemplatesWindow(ModalScreen):
         for template in self.templates:
             card = Container(classes="template-card", id=f"template-{template.id}")
             
-            card.mount(Static(template.icon, classes="template-icon"))
-            card.mount(Static(template.name, classes="template-name"))
-            card.mount(Static(template.description, classes="template-description"))
-            card.mount(Static(f"Tags: {', '.join(template.tags[:3])}", classes="template-tags"))
+            # Mount the card to grid first
+            await grid.mount(card)
             
-            grid.mount(card)
+            # Then mount children to the card
+            await card.mount(Static(template.icon, classes="template-icon"))
+            await card.mount(Static(template.name, classes="template-name"))
+            await card.mount(Static(template.description, classes="template-description"))
+            await card.mount(Static(f"Tags: {', '.join(template.tags[:3])}", classes="template-tags"))
         
         # Initialize details
         self._update_details(None)
@@ -366,21 +364,21 @@ class ChatbookTemplatesWindow(ModalScreen):
         
         # Content types
         types_section = Container(classes="details-section")
+        content.mount(types_section)
         types_section.mount(Static("Includes: ", classes="details-label"))
         types_text = ", ".join(t.title() for t in template.content_types)
         types_section.mount(Static(types_text))
-        content.mount(types_section)
         
         # Use cases
         if template.use_cases:
             use_cases_section = Container(classes="details-section")
+            content.mount(use_cases_section)
             use_cases_section.mount(Static("Common use cases:", classes="details-label"))
             
             use_list = Container(classes="use-case-list")
+            use_cases_section.mount(use_list)
             for use_case in template.use_cases:
                 use_list.mount(Static(f"• {use_case}"))
-            use_cases_section.mount(use_list)
-            content.mount(use_cases_section)
     
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

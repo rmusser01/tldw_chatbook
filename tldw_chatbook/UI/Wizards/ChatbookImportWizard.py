@@ -73,9 +73,8 @@ class FileSelectionStep(WizardStep):
             # Use the enhanced file picker
             file_dialog = EnhancedFileOpen(
                 title="Select Chatbook File",
-                select_type="file",
                 filters=["*.zip"],
-                show_hidden=False
+                must_exist=True
             )
             
             file_path = await self.wizard.app_instance.push_screen(file_dialog, wait_for_dismiss=True)

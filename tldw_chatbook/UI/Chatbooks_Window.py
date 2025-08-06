@@ -443,24 +443,32 @@ class ChatbooksWindow(Container):
         # View mode toggles
         if button_id in ["view-grid", "view-list"]:
             self.view_mode = "grid" if button_id == "view-grid" else "list"
+            event.stop()
         
         # Empty state buttons
         elif button_id == "empty-create-btn":
             self.action_create_chatbook()
+            event.stop()
         elif button_id == "empty-import-btn":
             self.action_import_chatbook()
+            event.stop()
         elif button_id == "empty-templates-btn":
             self.action_browse_templates()
+            event.stop()
         
         # Toolbar buttons
         elif button_id == "toolbar-create":
             self.action_create_chatbook()
+            event.stop()
         elif button_id == "toolbar-import":
             self.action_import_chatbook()
+            event.stop()
         elif button_id == "toolbar-templates":
             self.action_browse_templates()
+            event.stop()
         elif button_id == "toolbar-manage":
             self.action_manage_exports()
+            event.stop()
             
                 
     async def on_input_changed(self, event: Input.Changed) -> None:

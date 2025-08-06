@@ -180,7 +180,6 @@ def open_dataset_file_picker(app, callback: Callable[[Path, Dict[str, Any]], Non
     picker = EnhancedFileOpen(
         title="Select Dataset File",
         filters=filters,
-        show_hidden=False,
         must_exist=True,
         context="evaluation_datasets"  # For recent files tracking
     )

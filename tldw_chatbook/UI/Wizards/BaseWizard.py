@@ -201,6 +201,10 @@ class WizardNavigation(Horizontal):
         
     def update_progress_text(self) -> None:
         """Update the progress text."""
+        # Skip if not mounted yet
+        if not self.is_mounted:
+            return
+            
         try:
             progress = self.query_one("#wizard-progress", Static)
             progress.update(f"Step {self.current_step} of {self.total_steps}")
@@ -209,6 +213,10 @@ class WizardNavigation(Horizontal):
             
     def update_button_states(self) -> None:
         """Update button enabled states."""
+        # Skip if not mounted yet or buttons don't exist
+        if not self.is_mounted:
+            return
+            
         try:
             back_btn = self.query_one("#wizard-back", Button)
             next_btn = self.query_one("#wizard-next", Button)
@@ -485,16 +493,18 @@ class WizardContainer(Container):
             for step in self.steps:
                 yield step
                 
-        # Navigation
-        nav = WizardNavigation(classes="wizard-navigation")
+        # Navigation - Don't set reactive values here as it triggers watchers before mount
+        yield WizardNavigation(classes="wizard-navigation")
+        
+    def on_mount(self) -> None:
+        """Initialize wizard on mount."""
+        # Set navigation values after mount to avoid warnings
+        nav = self.query_one(".wizard-navigation", WizardNavigation)
         nav.current_step = self.current_step + 1
         nav.total_steps = self.total_steps
         nav.can_go_back = self.current_step > 0
         nav.can_go_forward = self.can_proceed
-        yield nav
         
-    def on_mount(self) -> None:
-        """Initialize wizard on mount."""
         self.show_step(0)
         # Trigger initial validation after a short delay to allow step to fully initialize
         self.set_timer(0.1, self.validate_step)
