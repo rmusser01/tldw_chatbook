@@ -168,15 +168,21 @@ class WizardNavigation(Horizontal):
     
     can_go_back = reactive(True)
     can_go_forward = reactive(False)
+    
+    def watch_can_go_forward(self) -> None:
+        """React to can_go_forward changes."""
+        logger.debug(f"WizardNavigation: can_go_forward changed to {self.can_go_forward}")
+        self.update_button_states()
     current_step = reactive(1)
     total_steps = reactive(1)
     
     def compose(self) -> ComposeResult:
         """Compose navigation elements."""
         yield Button("Cancel", id="wizard-cancel", variant="error")
-        yield Button("← Back", id="wizard-back", variant="default")
+        yield Button("← Back", id="wizard-back", variant="default", disabled=True)
         yield Static("", id="wizard-progress", classes="wizard-progress-text")
-        yield Button("Next →", id="wizard-next", variant="primary")
+        # Start with Next button disabled until validation passes
+        yield Button("Next →", id="wizard-next", variant="default", disabled=True)
         
     def on_mount(self) -> None:
         """Update initial state."""
@@ -185,6 +191,7 @@ class WizardNavigation(Horizontal):
         
     def watch_current_step(self) -> None:
         """React to step changes."""
+        logger.debug(f"WizardNavigation: current_step changed to {self.current_step}")
         self.update_progress_text()
         self.update_button_states()
         
@@ -206,8 +213,17 @@ class WizardNavigation(Horizontal):
             back_btn = self.query_one("#wizard-back", Button)
             next_btn = self.query_one("#wizard-next", Button)
             
+            # Update back button
             back_btn.disabled = not self.can_go_back or self.current_step <= 1
-            next_btn.disabled = not self.can_go_forward
+            
+            # Update next button - make sure to enable/disable properly
+            should_disable = not self.can_go_forward
+            if next_btn.disabled != should_disable:
+                next_btn.disabled = should_disable
+                # Force refresh the button
+                next_btn.refresh()
+            
+            logger.debug(f"WizardNavigation.update_button_states: can_go_forward={self.can_go_forward}, next_btn.disabled={next_btn.disabled}")
             
             # Update next button text for last step
             if self.current_step >= self.total_steps:
@@ -215,9 +231,11 @@ class WizardNavigation(Horizontal):
                 next_btn.variant = "success"
             else:
                 next_btn.label = "Next →"
-                next_btn.variant = "primary"
+                # Only set variant to primary if button is enabled
+                if not next_btn.disabled:
+                    next_btn.variant = "primary"
         except NoMatches:
-            pass
+            logger.warning("WizardNavigation: Could not find buttons to update")
 
 
 class WizardProgress(Horizontal):
@@ -478,6 +496,8 @@ class WizardContainer(Container):
     def on_mount(self) -> None:
         """Initialize wizard on mount."""
         self.show_step(0)
+        # Trigger initial validation after a short delay to allow step to fully initialize
+        self.set_timer(0.1, self.validate_step)
         
     def show_step(self, step_index: int) -> None:
         """Show a specific step."""
@@ -519,6 +539,8 @@ class WizardContainer(Container):
             
     def validate_step(self) -> None:
         """Validate the current step and update navigation."""
+        logger.debug(f"WizardContainer.validate_step called for step {self.current_step}")
+        
         if 0 <= self.current_step < len(self.steps):
             step = self.steps[self.current_step]
             is_valid, errors = step.validate()
@@ -526,16 +548,21 @@ class WizardContainer(Container):
             step.validation_errors = errors
             self.can_proceed = is_valid
             
+            logger.debug(f"Step validation result: valid={is_valid}, errors={errors}")
+            logger.debug(f"Setting can_proceed to {is_valid}")
+            
             # Update navigation
             try:
                 nav = self.query_one(".wizard-navigation", WizardNavigation)
                 nav.can_go_forward = is_valid
+                logger.debug(f"Updated navigation can_go_forward to {is_valid}")
             except NoMatches:
-                pass
+                logger.warning("Could not find wizard navigation to update")
             
             # Allow proceeding if this is a special step (like ProgressStep)
             if hasattr(step, 'can_proceed'):
                 self.can_proceed = step.can_proceed()
+                logger.debug(f"Special step can_proceed override: {self.can_proceed}")
                 
     @on(Button.Pressed, "#wizard-next")
     def handle_next(self) -> None:
@@ -612,3 +639,8 @@ class WizardContainer(Container):
             if step.is_complete or step.is_active:
                 all_data.update(step.get_data())
         return all_data
+    
+    def refresh_current_step(self) -> None:
+        """Refresh the current step's validation state."""
+        logger.debug(f"refresh_current_step called for step {self.current_step}")
+        self.validate_step()

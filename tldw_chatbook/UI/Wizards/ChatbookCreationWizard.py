@@ -26,10 +26,11 @@ from textual.widgets import (
 )
 from textual.worker import Worker, WorkerState
 from textual.reactive import reactive
+from textual import on
 from loguru import logger
 
 from .BaseWizard import WizardContainer, WizardStep, WizardStepConfig, WizardScreen
-from ..Widgets.SmartContentTree import SmartContentTree, ContentNodeData
+from ..Widgets.SmartContentTree import SmartContentTree, ContentNodeData, ContentSelectionChanged
 from ...Chatbooks.chatbook_creator import ChatbookCreator
 from ...Chatbooks.chatbook_models import ContentType
 
@@ -40,6 +41,10 @@ if TYPE_CHECKING:
 class BasicInfoStep(WizardStep):
     """Step 1: Basic Information."""
     
+    def __init__(self, wizard: WizardContainer, config: WizardStepConfig, **kwargs):
+        super().__init__(wizard, config, **kwargs)
+        self.wizard = wizard  # Ensure wizard reference is set
+        logger.debug(f"BasicInfoStep initialized with wizard: {wizard}")
     
     def compose(self) -> ComposeResult:
         """Compose the basic info form."""
@@ -109,7 +114,29 @@ class BasicInfoStep(WizardStep):
         name = self.query_one("#chatbook-name", Input).value.strip()
         if not name:
             errors.append("Please enter a chatbook name")
+        
+        # Debug logging
+        logger.debug(f"BasicInfoStep.validate: name='{name}', valid={len(errors) == 0}")
+        
         return len(errors) == 0, errors
+    
+    @on(Input.Changed)
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Trigger validation when inputs change."""
+        logger.debug(f"BasicInfoStep: Input changed - {event.input.id} = '{event.value}'")
+        # Trigger validation in the parent wizard
+        if hasattr(self, 'wizard') and self.wizard:
+            logger.debug("BasicInfoStep: Triggering wizard validation")
+            self.wizard.validate_step()
+        else:
+            logger.warning("BasicInfoStep: No wizard reference to trigger validation")
+    
+    @on(TextArea.Changed)
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Trigger validation when text area changes."""
+        # Trigger validation in the parent wizard
+        if hasattr(self, 'wizard') and self.wizard:
+            self.wizard.validate_step()
 
 
 class ContentSelectionStep(WizardStep):
@@ -147,40 +174,65 @@ class ContentSelectionStep(WizardStep):
         try:
             # Load from app's database connections
             if hasattr(self, 'wizard') and self.wizard and hasattr(self.wizard, 'app_instance'):
-                if hasattr(self.wizard.app_instance, 'db') and self.wizard.app_instance.db:
-                    # Conversations
-                    conversations = self.wizard.app_instance.db.get_all_conversations()
-                for conv_id, title in conversations:
-                    # Get message count
-                    messages = self.wizard.app_instance.db.get_messages_for_conversation(conv_id)
-                    msg_count = len(messages) if messages else 0
+                logger.debug(f"App instance found: {self.wizard.app_instance}")
+                
+                # Try different attributes for the main database
+                main_db = None
+                if hasattr(self.wizard.app_instance, 'chachanotes_db') and self.wizard.app_instance.chachanotes_db:
+                    main_db = self.wizard.app_instance.chachanotes_db
+                    logger.debug(f"Main DB found via chachanotes_db: {main_db}")
+                elif hasattr(self.wizard.app_instance, 'db') and self.wizard.app_instance.db:
+                    main_db = self.wizard.app_instance.db
+                    logger.debug(f"Main DB found via db: {main_db}")
+                
+                if main_db:
                     
-                    content_data[ContentType.CONVERSATION].append(
-                        ContentNodeData(
-                            type=ContentType.CONVERSATION,
-                            id=str(conv_id),
-                            title=title or "Untitled",
-                            subtitle=f"{msg_count} messages"
+                    # Conversations
+                    conversations = main_db.list_all_active_conversations(limit=100)
+                    logger.debug(f"Found {len(conversations) if conversations else 0} conversations")
+                    
+                    for conv in conversations:
+                        conv_id = conv.get('id')
+                        title = conv.get('title', 'Untitled')
+                        msg_count = conv.get('message_count', 0)  # If available in the result
+                        
+                        content_data[ContentType.CONVERSATION].append(
+                            ContentNodeData(
+                                type=ContentType.CONVERSATION,
+                                id=str(conv_id),
+                                title=title or "Untitled",
+                                subtitle=f"{msg_count} messages" if msg_count else "No messages"
+                            )
                         )
-                    )
                     
                     # Notes
-                    notes = self.wizard.app_instance.db.get_all_notes()
-                for note_id, title, content, _ in notes:
-                    word_count = len(content.split()) if content else 0
+                    notes = main_db.list_notes(limit=100)
+                    logger.debug(f"Found {len(notes) if notes else 0} notes")
                     
-                    content_data[ContentType.NOTE].append(
-                        ContentNodeData(
-                            type=ContentType.NOTE,
-                            id=str(note_id),
-                            title=title or "Untitled",
-                            subtitle=f"{word_count} words"
+                    for note in notes:
+                        note_id = note.get('id')
+                        title = note.get('title', 'Untitled')
+                        content = note.get('content', '')
+                        word_count = len(content.split()) if content else 0
+                        
+                        content_data[ContentType.NOTE].append(
+                            ContentNodeData(
+                                type=ContentType.NOTE,
+                                id=str(note_id),
+                                title=title or "Untitled",
+                                subtitle=f"{word_count} words"
+                            )
                         )
-                    )
                     
                     # Characters
-                    characters = self.wizard.app_instance.db.get_all_characters()
-                    for char_id, name, description in characters:
+                    characters = main_db.list_character_cards(limit=100)
+                    logger.debug(f"Found {len(characters) if characters else 0} characters")
+                    
+                    for char in characters:
+                        char_id = char.get('id')
+                        name = char.get('name', 'Unnamed')
+                        description = char.get('description', '')
+                        
                         content_data[ContentType.CHARACTER].append(
                             ContentNodeData(
                                 type=ContentType.CHARACTER,
@@ -190,9 +242,15 @@ class ContentSelectionStep(WizardStep):
                             )
                         )
                 
+                else:
+                    logger.warning("Main DB not found or not initialized")
+                
                 # Prompts
                 if hasattr(self.wizard.app_instance, 'prompts_db') and self.wizard.app_instance.prompts_db:
+                    logger.debug(f"Prompts DB found: {self.wizard.app_instance.prompts_db}")
                     prompts = self.wizard.app_instance.prompts_db.get_all_prompts()
+                    logger.debug(f"Found {len(prompts) if prompts else 0} prompts")
+                    
                     for prompt in prompts:
                         content_data[ContentType.PROMPT].append(
                             ContentNodeData(
@@ -203,18 +261,21 @@ class ContentSelectionStep(WizardStep):
                             )
                         )
                 
+                else:
+                    logger.warning("Prompts DB not found or not initialized")
+                
                 # Media
                 if hasattr(self.wizard.app_instance, 'media_db') and self.wizard.app_instance.media_db:
-                    media_items = self.wizard.app_instance.media_db.get_all_media_items(limit=100)
+                    logger.debug(f"Media DB found: {self.wizard.app_instance.media_db}")
+                    # Use get_paginated_media_list to get media items
+                    media_items, total_pages, current_page, total_items = self.wizard.app_instance.media_db.get_paginated_media_list(
+                        page=1, results_per_page=100
+                    )
+                    logger.debug(f"Found {len(media_items) if media_items else 0} media items (total: {total_items})")
                     for item in media_items:
-                        if isinstance(item, dict):
-                            media_id = item.get('media_id', item.get('id', 'unknown'))
-                            title = item.get('title', 'Untitled')
-                            media_type = item.get('media_type', 'unknown')
-                        else:
-                            media_id = getattr(item, 'media_id', getattr(item, 'id', 'unknown'))
-                            title = getattr(item, 'title', 'Untitled')
-                            media_type = getattr(item, 'media_type', 'unknown')
+                        media_id = item.get('id', 'unknown')
+                        title = item.get('title', 'Untitled')
+                        media_type = item.get('type', 'unknown')
                         
                         content_data[ContentType.MEDIA].append(
                             ContentNodeData(
@@ -224,6 +285,10 @@ class ContentSelectionStep(WizardStep):
                                 subtitle=media_type
                             )
                         )
+                else:
+                    logger.warning("Media DB not found or not initialized")
+            else:
+                logger.error("Wizard or app_instance not properly initialized")
                     
         except Exception as e:
             logger.error(f"Error loading content: {e}")
@@ -252,6 +317,17 @@ class ContentSelectionStep(WizardStep):
             errors.append("Please select at least one item to include in the chatbook")
             
         return len(errors) == 0, errors
+    
+    @on(ContentSelectionChanged)
+    def on_content_selection_changed(self, event: ContentSelectionChanged) -> None:
+        """Handle selection changes from the content tree."""
+        logger.debug("ContentSelectionStep: Content selection changed")
+        # Trigger validation in the parent wizard
+        if hasattr(self, 'wizard') and self.wizard:
+            logger.debug("ContentSelectionStep: Triggering wizard validation")
+            self.wizard.validate_step()
+        else:
+            logger.warning("ContentSelectionStep: No wizard reference to trigger validation")
 
 
 class ExportOptionsStep(WizardStep):
@@ -533,7 +609,17 @@ class ProgressStep(WizardStep):
             if not hasattr(self, 'wizard') or not self.wizard or not hasattr(self.wizard, 'app_instance'):
                 raise ValueError("Wizard not properly initialized")
                 
-            db_config = self.wizard.app_instance.config_data.get("database", {})
+            # Get config - try different attributes
+            if hasattr(self.wizard.app_instance, 'app_config'):
+                config = self.wizard.app_instance.app_config
+            elif hasattr(self.wizard.app_instance, 'config_data'):
+                config = self.wizard.app_instance.config_data
+            else:
+                # Fallback to loading config directly
+                from ...config import load_settings
+                config = load_settings()
+            
+            db_config = config.get("database", {})
             db_paths = {
                 "ChaChaNotes": str(Path(db_config.get("chachanotes_db_path", 
                     "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db")).expanduser()),

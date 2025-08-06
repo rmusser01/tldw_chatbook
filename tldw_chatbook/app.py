@@ -30,6 +30,7 @@ from typing import Union, Optional, Any, Dict, List, Callable
 from textual.widget import Widget
 #
 # 3rd-Party Libraries
+import asyncio
 from PIL import Image
 from loguru import logger as loguru_logger, logger
 from textual import on
@@ -37,7 +38,6 @@ from textual.app import App, ComposeResult
 from textual.widgets import (
     Static, Button, Input, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch, Markdown
 )
-
 from textual.containers import Container, VerticalScroll
 from textual.reactive import reactive
 from textual.worker import Worker
@@ -818,6 +818,14 @@ class PlaceholderWindow(Container):
         """Show a loading message until initialized."""
         if not self._initialized:
             yield Static("Loading...", classes="loading-placeholder")
+    
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Proxy button presses to the actual window if initialized."""
+        if self._initialized and self._actual_window:
+            if hasattr(self._actual_window, 'on_button_pressed'):
+                result = self._actual_window.on_button_pressed(event)
+                if hasattr(result, '__await__'):
+                    await result
 
 
 # --- Main App ---

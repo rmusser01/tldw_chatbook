@@ -209,10 +209,10 @@ class SmartContentTree(Container):
         
         if selected:
             node.set_label(f"✓ {original_label}")
-            node.add_class("selected-node")
+            # TreeNode doesn't have add_class, just update the label
         else:
             node.set_label(original_label)
-            node.remove_class("selected-node")
+            # TreeNode doesn't have remove_class, just update the label
     
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

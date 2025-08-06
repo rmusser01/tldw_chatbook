@@ -146,7 +146,7 @@ class ChatbookTemplatesWindow(ModalScreen):
         align: center middle;
     }
     
-    ChatbookTemplatesWindow > Container {
+    ChatbookTemplatesWindow Container {
         width: 80%;
         height: 80%;
         max-width: 100;

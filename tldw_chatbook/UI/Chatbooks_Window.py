@@ -118,8 +118,8 @@ class EmptyStateWidget(Container):
     
     .empty-state-container {
         align: center middle;
-        max-width: 80;
-        width: 100%;
+        max-width: 50;
+        width: auto;
         padding: 4;
         layout: vertical;
     }
