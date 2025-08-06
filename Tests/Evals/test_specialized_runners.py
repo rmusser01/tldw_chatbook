@@ -45,9 +45,9 @@ class TestMultilingualEvaluationRunner:
     def runner(self, task_config, model_config):
         """Create a MultilingualEvaluationRunner instance."""
         with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLM:
-            mock_llm = Mock(spec=LLMInterface)
+            mock_llm = Mock()
             # Mock chat_api_call to return expected responses
-            MockLLM.return_value = \"Mocked response\"
+            MockLLM.return_value = mock_llm
             return MultilingualEvaluationRunner(task_config, model_config)
     
     @pytest.mark.asyncio

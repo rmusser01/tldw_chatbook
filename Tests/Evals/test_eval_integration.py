@@ -93,9 +93,8 @@ class TestEndToEndEvaluation:
         
         # Run evaluation with mocked LLM
         with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
-
             # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+            MockLLMInterface.return_value = "Mocked response"
             run_id = await orchestrator.run_evaluation(
                 task_id=task_id,
                 model_id=model_id,
@@ -199,7 +198,7 @@ class TestEndToEndEvaluation:
             with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
                 # Configure the mock to return our mock_llm instance
                 # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                MockLLMInterface.return_value = "Mocked response"
                 
                 run_id = await orchestrator.run_evaluation(
                     task_id=task_id,
@@ -282,7 +281,7 @@ class TestEndToEndEvaluation:
             with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
 
                 # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                MockLLMInterface.return_value = "Mocked response"
                 run_id = await orchestrator.run_evaluation(
                     task_id=task_id,
                     model_id=model_id,
@@ -360,7 +359,7 @@ class TestMultiProviderIntegration:
             with patch('tldw_chatbook.Evals.eval_runner.DatasetLoader.load_dataset_samples', return_value=eval_samples):
                 with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
                     # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                    MockLLMInterface.return_value = "Mocked response"
                     run_id = await orchestrator.run_evaluation(
                         task_id=task_id,
                         model_id=model_id,
@@ -529,7 +528,7 @@ class TestSpecializedTaskIntegration:
             with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
 
                 # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                MockLLMInterface.return_value = "Mocked response"
                 run_id = await orchestrator.run_evaluation(
                     task_id=task_id,
                     model_id=model_id,
@@ -609,7 +608,7 @@ class TestSpecializedTaskIntegration:
             with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
 
                 # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                MockLLMInterface.return_value = "Mocked response"
                 run_id = await orchestrator.run_evaluation(
                     task_id=task_id,
                     model_id=model_id,
@@ -692,7 +691,7 @@ class TestSpecializedTaskIntegration:
             with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
 
                 # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                MockLLMInterface.return_value = "Mocked response"
                 run_id = await orchestrator.run_evaluation(
                     task_id=task_id,
                     model_id=model_id,
@@ -767,7 +766,7 @@ class TestConcurrentEvaluations:
                 with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
 
                     # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                    MockLLMInterface.return_value = "Mocked response"
                     return await orchestrator.run_evaluation(
                         task_id=task_id,
                         model_id=model_id,
@@ -841,7 +840,7 @@ class TestConcurrentEvaluations:
                 with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
 
                     # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                    MockLLMInterface.return_value = "Mocked response"
                     return await orchestrator.run_evaluation(
                         task_id=task_id,
                         model_id=model_id,
@@ -918,7 +917,7 @@ class TestErrorRecoveryIntegration:
             with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
 
                 # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                MockLLMInterface.return_value = "Mocked response"
                 run_id = await orchestrator.run_evaluation(
                     task_id=task_id,
                     model_id=model_id,
@@ -985,7 +984,7 @@ class TestErrorRecoveryIntegration:
                 with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
 
                     # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                    MockLLMInterface.return_value = "Mocked response"
                     # Should retry and succeed
                     run_id = await orchestrator.run_evaluation(
                         task_id=task_id,
@@ -1049,7 +1048,7 @@ class TestPerformanceIntegration:
             with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
 
                 # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                MockLLMInterface.return_value = "Mocked response"
                 run_id = await orchestrator.run_evaluation(
                     task_id=task_id,
                     model_id=model_id,
@@ -1114,7 +1113,7 @@ class TestPerformanceIntegration:
             with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLMInterface:
 
                 # Mock chat_api_call to return expected responses
-            MockLLMInterface.return_value = \"Mocked response\"
+                MockLLMInterface.return_value = "Mocked response"
                 run_id = await orchestrator.run_evaluation(
                     task_id=task_id,
                     model_id=model_id,

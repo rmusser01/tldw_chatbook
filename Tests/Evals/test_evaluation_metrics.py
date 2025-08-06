@@ -42,7 +42,7 @@ class TestEvaluationMetrics:
         with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLM:
             mock_llm = Mock()
             # Mock chat_api_call to return expected responses
-            MockLLM.return_value = \"Mocked response\"
+            MockLLM.return_value = mock_llm
             runner = TestRunner(task_config, model_config)
             return runner
     

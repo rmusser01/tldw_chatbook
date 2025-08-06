@@ -115,7 +115,7 @@ class TestMultilingualRunnerIntegration:
                 "Bon matin"  # Slightly different translation
             ])
             # Mock chat_api_call to return expected responses
-            MockLLM.return_value = \"Mocked response\"
+            MockLLM.return_value = mock_llm
             
             runner = MultilingualEvaluationRunner(task_config, model_config)
             
@@ -561,7 +561,7 @@ class TestEvaluationSystemIntegration:
             # Simulate LLM error
             mock_llm.generate = AsyncMock(side_effect=Exception("API Error"))
             # Mock chat_api_call to return expected responses
-            MockLLM.return_value = \"Mocked response\"
+            MockLLM.return_value = mock_llm
             
             from tldw_chatbook.Evals.eval_runner import BaseEvalRunner
             
