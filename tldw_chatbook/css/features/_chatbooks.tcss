@@ -8,6 +8,236 @@ ChatbooksWindow {
     background: $background;
 }
 
+/* Main content container */
+#chatbooks-main-content {
+    height: 1fr;
+    width: 100%;
+    align: center middle;
+}
+
+/* Toolbar for when chatbooks exist */
+.chatbooks-toolbar {
+    height: auto;
+    padding: 2;
+    background: $panel;
+    border-bottom: solid $background-darken-1;
+}
+
+.toolbar-row {
+    layout: horizontal;
+    height: auto;
+    align: left middle;
+    margin-bottom: 1;
+}
+
+.toolbar-actions {
+    layout: horizontal;
+    width: auto;
+    height: 3;
+}
+
+.toolbar-button {
+    margin-right: 1;
+    min-width: 12;
+}
+
+.toolbar-spacer {
+    width: 1fr;
+}
+
+.search-container {
+    width: 40;
+    height: 3;
+}
+
+/* Content area for displaying chatbooks */
+.content-area {
+    height: 1fr;
+    padding: 2;
+    overflow-y: auto;
+}
+
+.content-header {
+    layout: horizontal;
+    height: 3;
+    margin-bottom: 2;
+    align: left middle;
+}
+
+.content-title {
+    text-style: bold;
+    color: $text;
+    width: 1fr;
+}
+
+.view-toggles {
+    layout: horizontal;
+    width: auto;
+}
+
+.view-toggle {
+    margin-left: 1;
+    min-width: 8;
+}
+
+/* Chatbooks grid layout */
+.chatbooks-grid {
+    layout: grid;
+    grid-size: 3;
+    grid-gutter: 2;
+    height: auto;
+    width: 100%;
+}
+
+/* Chatbooks list layout */
+.chatbooks-list {
+    height: 100%;
+    width: 100%;
+}
+
+/* Chatbook display container */
+#chatbook-display {
+    height: auto;
+    width: 100%;
+}
+
+/* Stats bar */
+.stats-bar {
+    dock: bottom;
+    height: 3;
+    background: $panel;
+    border-top: solid $background-darken-1;
+    padding: 1;
+    align: center middle;
+}
+
+.stats-text {
+    text-align: center;
+    color: $text-muted;
+}
+
+.no-results {
+    text-align: center;
+    color: $text-muted;
+    padding: 4;
+}
+
+/* Chatbook Card Widget */
+ChatbookCard {
+    height: 8;
+    background: $boost;
+    border: round $background-darken-1;
+    padding: 1;
+    margin: 0 1 1 1;
+}
+
+ChatbookCard:hover {
+    background: $primary 10%;
+    border: round $primary 50%;
+}
+
+.chatbook-card-title {
+    text-style: bold;
+    color: $text;
+}
+
+.chatbook-card-description {
+    color: $text-muted;
+    text-overflow: ellipsis;
+}
+
+.chatbook-card-meta {
+    layout: horizontal;
+    height: 1;
+    margin-top: 1;
+}
+
+.chatbook-card-date {
+    color: $text-disabled;
+    width: 1fr;
+}
+
+.chatbook-card-size {
+    color: $text-disabled;
+    text-align: right;
+    width: auto;
+}
+
+.chatbook-card-stats {
+    color: $primary;
+    margin-top: 1;
+}
+
+/* Empty State Widget */
+EmptyStateWidget {
+    align: center middle;
+    height: 100%;
+    width: 100%;
+}
+
+.empty-state-container {
+    align: center middle;
+    max-width: 50;
+    width: auto;
+    padding: 4;
+    layout: vertical;
+}
+
+.empty-state-icon {
+    text-align: center;
+    color: $primary;
+    text-style: bold;
+    margin-bottom: 3;
+    width: 100%;
+}
+
+.empty-state-title {
+    text-align: center;
+    text-style: bold;
+    color: $text;
+    margin-bottom: 2;
+    width: 100%;
+}
+
+.empty-state-description {
+    text-align: center;
+    color: $text-muted;
+    margin-bottom: 4;
+    width: 100%;
+    max-width: 60;
+    align-horizontal: center;
+}
+
+.empty-state-cards {
+    layout: vertical;
+    width: 100%;
+    max-width: 50;
+    align: center middle;
+    align-horizontal: center;
+}
+
+.primary-action-button {
+    width: 100%;
+    height: 12;
+    margin-bottom: 2;
+    text-align: center;
+    padding: 2;
+}
+
+.secondary-actions {
+    layout: horizontal;
+    width: 100%;
+    height: 10;
+}
+
+.secondary-action-button {
+    width: 1fr;
+    height: 100%;
+    margin: 0 1;
+    text-align: center;
+    padding: 1;
+}
+
 .chatbooks-header {
     height: auto;
     background: $boost;

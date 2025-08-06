@@ -779,10 +779,20 @@ class PlaceholderWindow(Container):
             if self.window_class.__name__ == 'EvalsLab':
                 self._actual_window = self.window_class(id=self.window_id, classes=self.actual_classes)
             else:
-                self._actual_window = self.window_class(self.app_instance, id=self.window_id, classes=self.actual_classes)
+                self._actual_window = self.window_class(self.app_instance, classes=self.actual_classes)
             
             # Clear placeholder styling and mount actual window
             self.remove_class("placeholder-window")
+            # Set proper layout for the container AND make it visible
+            self.styles.layout = "vertical"
+            self.styles.height = "100%"
+            self.styles.width = "100%"
+            self.styles.display = "block"  # CRITICAL: Reset display to block after removing placeholder class
+            
+            # Make sure the actual window fills the container
+            self._actual_window.styles.height = "100%"
+            self._actual_window.styles.width = "100%"
+            
             self.mount(self._actual_window)
             self._initialized = True
             
@@ -1587,13 +1597,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         for window_name, window_class, window_id in windows:
             is_initial_window = window_id == f"{initial_tab}-window"
             
-            # Always load LogsWindow immediately to capture startup logs
-            if is_initial_window or window_id == "logs-window":
-                # Create the actual window for the initial tab AND logs tab
-                logger.info(f"Creating actual window for {'initial' if is_initial_window else 'logs'} tab: {window_name}")
+            # Always load LogsWindow and ChatbooksWindow immediately
+            if is_initial_window or window_id == "logs-window" or window_id == "chatbooks-window":
+                # Create the actual window for the initial tab, logs tab, and chatbooks tab
+                logger.info(f"Creating actual window for {window_name}")
                 window_widget = window_class(self, id=window_id, classes="window")
-                # For logs window, make it visible but behind the initial window
-                if window_id == "logs-window" and not is_initial_window:
+                # For non-initial windows, make them invisible initially
+                if not is_initial_window:
                     window_widget.display = False
             else:
                 # Create a placeholder for other tabs
@@ -1625,82 +1635,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         log_resource_usage()  # Check memory after compose
         
         return widgets
-
-    ############################################################
-    #
-    # Code that builds the content area of the app aka the main UI.
-    #
-    ###########################################################
-    def compose_content_area(self) -> ComposeResult:
-        """Yields the main window component for each tab."""
-        content_area_start = time.perf_counter()
-        
-        # Check config for which chat window to use
-        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
-        chat_window_class = ChatWindowEnhanced if use_enhanced_chat else ChatWindow
-        logger.info(f"Using {'enhanced' if use_enhanced_chat else 'basic'} chat window (use_enhanced_window={use_enhanced_chat})")
-        
-        # Create content container and add windows to it
-        content_container = Container(id="content")
-        
-        windows = [
-            ("chat", chat_window_class, "chat-window"),
-            ("ccp", CCPWindow, "conversations_characters_prompts-window"),
-            ("notes", NotesWindow, "notes-window"),
-            ("media", MediaWindow, "media-window"),
-            ("search", SearchWindow, "search-window"),
-            ("ingest", IngestWindow, "ingest-window"),
-            ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
-            ("llm_management", LLMManagementWindow, "llm_management-window"),
-            ("logs", LogsWindow, "logs-window"),
-            ("coding", CodingWindow, "coding-window"),
-            ("stats", StatsWindow, "stats-window"),
-            ("evals", EvalsWindow, "evals-window"),
-            ("stts", STTSWindow, "stts-window"),
-            ("study", StudyWindow, "study-window"),
-            ("chatbooks", ChatbooksWindow, "chatbooks-window"),
-        ]
-        
-        window_widgets = []
-        for window_name, window_class, window_id in windows:
-            window_start = time.perf_counter()
-            
-            # Use lazy loading for non-initial tabs
-            initial_tab = self._initial_tab_value
-            is_initial_window = window_id == f"{initial_tab}-window"
-            
-            # Always load LogsWindow immediately to capture startup logs
-            if is_initial_window or window_id == "logs-window":
-                # Create the actual window for the initial tab AND logs tab
-                logger.info(f"Creating actual window for {'initial' if is_initial_window else 'logs'} tab: {window_name}")
-                window_widget = window_class(self, id=window_id, classes="window")
-            else:
-                # Create a placeholder for other tabs
-                logger.debug(f"Creating placeholder for tab: {window_name}")
-                window_widget = PlaceholderWindow(self, window_class, window_id, classes="window")
-            
-            window_widgets.append(window_widget)
-            
-            window_duration = time.perf_counter() - window_start
-            is_actual_window = is_initial_window or window_id == "logs-window"
-            log_histogram("app_window_creation_duration_seconds", window_duration,
-                         labels={"window": window_name, "type": "actual" if is_actual_window else "placeholder"}, 
-                         documentation="Time to create individual window")
-        
-        # Add all windows to the container
-        content_container._nodes._children.extend(window_widgets)
-        for widget in window_widgets:
-            widget._parent = content_container
-        
-        # Yield the container with all windows
-        yield content_container
-        
-        # Log total content area creation time
-        content_area_duration = time.perf_counter() - content_area_start
-        log_histogram("ui_content_area_duration_seconds", content_area_duration,
-                     documentation="Total time to create all content windows")
-        log_counter("ui_windows_created", len(windows), 
-                   documentation="Number of UI windows created")
     
 
     @on(ChatMessage.Action)
@@ -3211,7 +3145,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 loguru_logger.info(f"Initializing lazy-loaded window for tab: {new_tab}")
                 new_window.initialize()
             
+            # Always set display to True for the new window
             new_window.display = True
+            loguru_logger.debug(f"Set display=True for window: {new_window.__class__.__name__} (id={new_tab}-window)")
+            
+            # Special handling for ChatbooksWindow to ensure it initializes
+            if new_tab == "chatbooks" and hasattr(new_window, '_ensure_initialized'):
+                loguru_logger.debug("Triggering ChatbooksWindow initialization...")
+                self.run_worker(new_window._ensure_initialized())
             
             # Update word count and token count in footer based on tab
             try:

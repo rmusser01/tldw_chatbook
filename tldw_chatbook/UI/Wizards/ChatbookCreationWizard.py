@@ -771,7 +771,10 @@ class ProgressStep(WizardStep):
                 
         elif button_id == "create-another":
             # Dismiss wizard to create another
-            self.wizard.dismiss("create_another")
+            # Find and dismiss the parent screen (following the pattern from BaseWizard)
+            parent_screen = self.wizard.ancestors_with_self[1] if len(self.wizard.ancestors_with_self) > 1 else None
+            if parent_screen and hasattr(parent_screen, 'dismiss'):
+                parent_screen.dismiss("create_another")
             
         elif button_id == "share-chatbook":
             if hasattr(self, 'wizard') and self.wizard and hasattr(self.wizard, 'app_instance'):
