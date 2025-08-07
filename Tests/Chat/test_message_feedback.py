@@ -3,9 +3,8 @@ Test message feedback functionality.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
-from tldw_chatbook.Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 
 
 class TestMessageFeedback:

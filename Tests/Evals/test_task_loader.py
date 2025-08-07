@@ -548,7 +548,8 @@ class TestErrorHandling:
         """Test handling of non-existent files."""
         loader = TaskLoader()
         
-        with pytest.raises(TaskLoadError):
+        # Path validation now catches non-existent files earlier
+        with pytest.raises(ValueError, match="does not exist"):
             loader.load_task("nonexistent_file.yaml", 'eleuther')
     
     def test_invalid_yaml_syntax(self, tmp_path):

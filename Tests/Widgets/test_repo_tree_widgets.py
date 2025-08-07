@@ -5,16 +5,14 @@ Tests the TreeNode and TreeView widgets in isolation with mocked dependencies.
 """
 
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from pathlib import Path
-import os
+from unittest.mock import MagicMock, AsyncMock
 
-from tldw_chatbook.Widgets.repo_tree_widgets import (
+from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import (
     TreeNode, TreeView, TreeNodeSelected, TreeNodeExpanded
 )
-from textual.widgets import Button, Checkbox, Static
+from textual.widgets import Button, Checkbox
 from textual.containers import Container
-from Tests.textual_test_utils import widget_pilot, wait_for_widget_mount
+from Tests.textual_test_utils import widget_pilot
 
 
 class TestTreeNode:

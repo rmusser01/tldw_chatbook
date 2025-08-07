@@ -23,6 +23,7 @@ from typing import Dict, List, Any, Optional, Union, Tuple
 from dataclasses import dataclass, asdict
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 try:
     from datasets import load_dataset, Dataset
@@ -188,7 +189,8 @@ class TaskLoader:
         if isinstance(source, dict):
             config_data = source
         else:
-            path = Path(source)
+            # Validate path for security
+            path = validate_path_simple(source, require_exists=True)
             if not path.exists():
                 raise TaskLoadError(f"Eleuther task file not found: {path}")
             
@@ -304,7 +306,8 @@ class TaskLoader:
         if isinstance(source, dict):
             config_data = source
         else:
-            path = Path(source)
+            # Validate path for security
+            path = validate_path_simple(source, require_exists=True)
             if not path.exists():
                 raise TaskLoadError(f"Custom task file not found: {path}")
             
@@ -354,7 +357,8 @@ class TaskLoader:
             raise TaskLoadError("HuggingFace datasets not available. Install with: pip install datasets")
         
         # Check if source is a file path containing HuggingFace config
-        path = Path(source)
+        # Validate path for security
+        path = validate_path_simple(source, require_exists=False)
         if path.exists() and path.is_file():
             # Load configuration from file
             try:
@@ -428,7 +432,8 @@ class TaskLoader:
     
     def _load_csv_task(self, source: Union[str, Path]) -> TaskConfig:
         """Load task from CSV/TSV file."""
-        path = Path(source)
+        # Validate path for security
+        path = validate_path_simple(source, require_exists=True)
         if not path.exists():
             raise TaskLoadError(f"CSV file not found: {path}")
         
@@ -571,7 +576,8 @@ class TaskLoader:
                    format_type: str = 'custom') -> None:
         """Export task configuration to file."""
         start_time = time.time()
-        path = Path(output_path)
+        # Validate output path for security
+        path = validate_path_simple(output_path, require_exists=False)
         
         # Log export attempt
         log_counter("eval_task_export_attempt", labels={
@@ -704,7 +710,8 @@ class TaskLoader:
     
     def _detect_file_format(self, path: str) -> str:
         """Detect the format of a task configuration file."""
-        p = Path(path)
+        # Validate path for security
+        p = validate_path_simple(path, require_exists=False)
         
         # For CSV/TSV, just check extension
         if p.suffix.lower() in ['.csv', '.tsv']:

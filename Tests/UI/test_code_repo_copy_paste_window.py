@@ -6,11 +6,10 @@ Tests the window functionality with mocked GitHub API but real UI interactions.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from textual.widgets import Input, Button, Select, TextArea, Static
-from textual.containers import Container
+from textual.widgets import Input, Button, Select, Static
 
 from tldw_chatbook.UI.CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
-from tldw_chatbook.Widgets.repo_tree_widgets import TreeView
+from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeView
 from tldw_chatbook.Utils.github_api_client import GitHubAPIError
 from Tests.textual_test_utils import app_pilot, wait_for_widget_mount
 

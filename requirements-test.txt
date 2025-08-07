@@ -36,6 +36,6 @@ html2text
 lxml
 markdownify
 beautifulsoup4
-
+anytree
 # Additional test utilities
 anyio

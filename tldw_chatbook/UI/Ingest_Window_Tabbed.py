@@ -3,59 +3,46 @@
 # Refactored Ingest Window with tabbed navigation for better UX
 #
 # Imports
-from typing import TYPE_CHECKING, List, Dict, Any, Optional
+from typing import TYPE_CHECKING
 from pathlib import Path
-import asyncio
-import time
 #
 # 3rd-Party Imports
 from loguru import logger
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.css.query import QueryError
-from textual.containers import Container, VerticalScroll, Horizontal, Vertical
+from textual.containers import Container, VerticalScroll
 from textual.widgets import (
-    Static, Button, Input, Select, Checkbox, TextArea, Label, 
-    RadioSet, RadioButton, Collapsible, ListView, ListItem, 
-    Markdown, LoadingIndicator, TabbedContent, TabPane
+    Static, Button, TextArea, Label,
+    RadioSet, RadioButton, ListView, ListItem,
+    TabbedContent, TabPane
 )
 from textual import on
-from textual.worker import Worker
-from textual import work
 from textual.reactive import reactive
 from ..Widgets.form_components import (
-    create_form_field, create_button_group, create_status_area
+    create_button_group
 )
 from ..Widgets.status_widget import EnhancedStatusWidget
 
 # Configure logger with context
 logger = logger.bind(module="Ingest_Window_Tabbed")
 
-from ..Constants import (
-    TLDW_API_AUDIO_OPTIONS_ID, TLDW_API_VIDEO_OPTIONS_ID, 
-    TLDW_API_PDF_OPTIONS_ID, TLDW_API_EBOOK_OPTIONS_ID, 
-    TLDW_API_DOCUMENT_OPTIONS_ID, TLDW_API_XML_OPTIONS_ID, 
-    TLDW_API_MEDIAWIKI_OPTIONS_ID
-)
 #
 # Local Imports
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
-from ..tldw_api.schemas import MediaType, ChunkMethod, PdfEngine
-from ..Widgets.IngestTldwApiVideoWindow import IngestTldwApiVideoWindow
-from ..Widgets.IngestTldwApiAudioWindow import IngestTldwApiAudioWindow
-from ..Widgets.IngestTldwApiPdfWindow import IngestTldwApiPdfWindow
-from ..Widgets.IngestTldwApiEbookWindow import IngestTldwApiEbookWindow
-from ..Widgets.IngestTldwApiDocumentWindow import IngestTldwApiDocumentWindow
-from ..Widgets.IngestTldwApiXmlWindow import IngestTldwApiXmlWindow
-from ..Widgets.IngestTldwApiMediaWikiWindow import IngestTldwApiMediaWikiWindow
-from ..Widgets.IngestTldwApiPlaintextWindow import IngestTldwApiPlaintextWindow
-from ..Widgets.IngestLocalPlaintextWindowSimplified import IngestLocalPlaintextWindowSimplified
-from ..Widgets.IngestLocalWebArticleWindow import IngestLocalWebArticleWindow
-from ..Widgets.IngestLocalDocumentWindowSimplified import IngestLocalDocumentWindowSimplified
-from ..Widgets.IngestLocalEbookWindowSimplified import IngestLocalEbookWindowSimplified
-from ..Widgets.IngestLocalPdfWindowSimplified import IngestLocalPdfWindowSimplified
-from ..Widgets.IngestLocalAudioWindowSimplified import IngestLocalAudioWindowSimplified
-from ..Widgets.IngestLocalVideoWindowSimplified import IngestLocalVideoWindowSimplified
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiVideoWindow import IngestTldwApiVideoWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiAudioWindow import IngestTldwApiAudioWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiPdfWindow import IngestTldwApiPdfWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiEbookWindow import IngestTldwApiEbookWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiDocumentWindow import IngestTldwApiDocumentWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiPlaintextWindow import IngestTldwApiPlaintextWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalPlaintextWindowSimplified import IngestLocalPlaintextWindowSimplified
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalWebArticleWindow import IngestLocalWebArticleWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalDocumentWindowSimplified import IngestLocalDocumentWindowSimplified
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalEbookWindowSimplified import IngestLocalEbookWindowSimplified
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalPdfWindowSimplified import IngestLocalPdfWindowSimplified
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalAudioWindowSimplified import IngestLocalAudioWindowSimplified
+from tldw_chatbook.Widgets.Media_Ingest.IngestLocalVideoWindowSimplified import IngestLocalVideoWindowSimplified
 if TYPE_CHECKING:
     from ..app import TldwCli
 #

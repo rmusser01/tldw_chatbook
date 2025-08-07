@@ -8,17 +8,15 @@ import time
 from typing import TYPE_CHECKING, Generator, Any, Union
 #
 # 3rd-Party Imports
-from loguru import logger as loguru_logger  # If used directly here
 from rich.text import Text
 from rich.markup import escape as escape_markup
 from textual.message import Message
 from textual.worker import Worker, WorkerState
-from textual.widgets import Static, TextArea, Label, Button, Markdown  # Added TextArea
+from textual.widgets import TextArea, Label, Markdown  # Added TextArea
 from textual.containers import VerticalScroll  # Added VerticalScroll
 from textual.css.query import QueryError  # Added QueryError
 #
 # Local Imports
-from ..Widgets.chat_message import ChatMessage
 from ..Utils.Emoji_Handling import get_char, EMOJI_THINKING, FALLBACK_THINKING
 # Import the actual chat function if it's to be called from chat_wrapper_function
 from ..Chat.Chat_Functions import chat as core_chat_function, parse_tool_calls_from_response

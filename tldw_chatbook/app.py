@@ -15,7 +15,6 @@ if 'TEXTUAL_LOG' not in os.environ:
     os.environ['TEXTUAL_LOG'] = ''  # Empty string disables logging
 
 # Imports
-import asyncio
 import concurrent.futures
 import functools
 import inspect
@@ -31,21 +30,19 @@ from typing import Union, Optional, Any, Dict, List, Callable
 from textual.widget import Widget
 #
 # 3rd-Party Libraries
+import asyncio
 from PIL import Image
 from loguru import logger as loguru_logger, logger
-from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import (
-    Static, Button, Input, Header, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch, Markdown
+    Static, Button, Input, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch, Markdown
 )
-
 from textual.containers import Container, VerticalScroll
 from textual.reactive import reactive
-from textual.worker import Worker, WorkerState
+from textual.worker import Worker
 from textual.binding import Binding
 from textual.message import Message
-from textual.dom import DOMNode  # For type hinting if needed
 from textual.timer import Timer
 from textual.css.query import QueryError
 from textual.command import Hit, Hits, Provider
@@ -55,7 +52,7 @@ from pathlib import Path
 from tldw_chatbook.Utils.text import slugify
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
-from tldw_chatbook.Metrics.metrics import log_histogram, log_counter, log_gauge, log_resource_usage, init_metrics_server
+from tldw_chatbook.Metrics.metrics import log_histogram, log_counter, log_resource_usage, init_metrics_server
 from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
 #
 # --- Local API library Imports ---
@@ -65,7 +62,6 @@ from .Event_Handlers.LLM_Management_Events import (llm_management_events, llm_ma
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import handle_streaming_chunk, handle_stream_done
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from .Widgets.AppFooterStatus import AppFooterStatus
-from .Utils import Utils
 from .config import (
     get_media_db_path,
     get_prompts_db_path,
@@ -78,9 +74,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
 from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
-from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, EMOJI_TITLE_NOTE, \
-    FALLBACK_TITLE_NOTE, EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH, supports_emoji, \
-    EMOJI_SEND, FALLBACK_SEND, EMOJI_STOP, FALLBACK_STOP
+from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, supports_emoji
 from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 from tldw_chatbook.Utils.ui_helpers import UIHelpers
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
@@ -101,9 +95,9 @@ from .config import (
 from .Event_Handlers import (
     conv_char_events as ccp_handlers,
     notes_events as notes_handlers,
-    worker_events as worker_handlers, worker_events, ingest_events,
+    worker_events, ingest_events,
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
-    search_events, notes_sync_events, embeddings_events, subscription_events,
+    search_events, subscription_events,
 )
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks, \
     chat_events_dictionaries
@@ -116,12 +110,12 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 )
 from .Notes.Notes_Library import NotesInteropService
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
-from .Widgets.chat_message import ChatMessage
-from .Widgets.chat_message_enhanced import ChatMessageEnhanced
-from .Widgets.notes_sidebar_left import NotesSidebarLeft
-from .Widgets.notes_sidebar_right import NotesSidebarRight
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
+from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarRight
 from .Widgets.titlebar import TitleBar
-from .Widgets.splash_screen import SplashScreen, SplashScreenClosed
+from .Widgets.splash_screen import SplashScreen
 from .LLM_Calls.LLM_API_Calls import (
         chat_with_openai, chat_with_anthropic, chat_with_cohere,
         chat_with_groq, chat_with_openrouter, chat_with_huggingface,
@@ -142,15 +136,14 @@ from .UI.Stats_Window import StatsWindow
 from .UI.Ingest_Window import IngestWindow, INGEST_NAV_BUTTON_IDS, MEDIA_TYPES
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
-# Using v3 of EvalsWindow with two-column layout for Evaluation Setup
-from .UI.Evals_Window_v3 import EvalsWindow
+# Using unified Evals dashboard
+from .UI.Evals_Window_v3_unified import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Study_Window import StudyWindow
 from .UI.Chatbooks_Window import ChatbooksWindow
-from .UI.SubscriptionWindow import SubscriptionWindow
 from .UI.Tab_Bar import TabBar
-from .UI.Tab_Dropdown import TabDropdown, TabChanged
+from .UI.Tab_Dropdown import TabDropdown
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
@@ -782,10 +775,24 @@ class PlaceholderWindow(Container):
                 child.remove()
             
             # Create the actual window
-            self._actual_window = self.window_class(self.app_instance, id=self.window_id, classes=self.actual_classes)
+            # EvalsLab is a Container that doesn't take app instance as first argument
+            if self.window_class.__name__ == 'EvalsLab':
+                self._actual_window = self.window_class(id=self.window_id, classes=self.actual_classes)
+            else:
+                self._actual_window = self.window_class(self.app_instance, classes=self.actual_classes)
             
             # Clear placeholder styling and mount actual window
             self.remove_class("placeholder-window")
+            # Set proper layout for the container AND make it visible
+            self.styles.layout = "vertical"
+            self.styles.height = "100%"
+            self.styles.width = "100%"
+            self.styles.display = "block"  # CRITICAL: Reset display to block after removing placeholder class
+            
+            # Make sure the actual window fills the container
+            self._actual_window.styles.height = "100%"
+            self._actual_window.styles.width = "100%"
+            
             self.mount(self._actual_window)
             self._initialized = True
             
@@ -821,6 +828,14 @@ class PlaceholderWindow(Container):
         """Show a loading message until initialized."""
         if not self._initialized:
             yield Static("Loading...", classes="loading-placeholder")
+    
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Proxy button presses to the actual window if initialized."""
+        if self._initialized and self._actual_window:
+            if hasattr(self._actual_window, 'on_button_pressed'):
+                result = self._actual_window.on_button_pressed(event)
+                if hasattr(result, '__await__'):
+                    await result
 
 
 # --- Main App ---
@@ -1582,13 +1597,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         for window_name, window_class, window_id in windows:
             is_initial_window = window_id == f"{initial_tab}-window"
             
-            # Always load LogsWindow immediately to capture startup logs
-            if is_initial_window or window_id == "logs-window":
-                # Create the actual window for the initial tab AND logs tab
-                logger.info(f"Creating actual window for {'initial' if is_initial_window else 'logs'} tab: {window_name}")
+            # Always load LogsWindow and ChatbooksWindow immediately
+            if is_initial_window or window_id == "logs-window" or window_id == "chatbooks-window":
+                # Create the actual window for the initial tab, logs tab, and chatbooks tab
+                logger.info(f"Creating actual window for {window_name}")
                 window_widget = window_class(self, id=window_id, classes="window")
-                # For logs window, make it visible but behind the initial window
-                if window_id == "logs-window" and not is_initial_window:
+                # For non-initial windows, make them invisible initially
+                if not is_initial_window:
                     window_widget.display = False
             else:
                 # Create a placeholder for other tabs
@@ -1620,82 +1635,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         log_resource_usage()  # Check memory after compose
         
         return widgets
-
-    ############################################################
-    #
-    # Code that builds the content area of the app aka the main UI.
-    #
-    ###########################################################
-    def compose_content_area(self) -> ComposeResult:
-        """Yields the main window component for each tab."""
-        content_area_start = time.perf_counter()
-        
-        # Check config for which chat window to use
-        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
-        chat_window_class = ChatWindowEnhanced if use_enhanced_chat else ChatWindow
-        logger.info(f"Using {'enhanced' if use_enhanced_chat else 'basic'} chat window (use_enhanced_window={use_enhanced_chat})")
-        
-        # Create content container and add windows to it
-        content_container = Container(id="content")
-        
-        windows = [
-            ("chat", chat_window_class, "chat-window"),
-            ("ccp", CCPWindow, "conversations_characters_prompts-window"),
-            ("notes", NotesWindow, "notes-window"),
-            ("media", MediaWindow, "media-window"),
-            ("search", SearchWindow, "search-window"),
-            ("ingest", IngestWindow, "ingest-window"),
-            ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
-            ("llm_management", LLMManagementWindow, "llm_management-window"),
-            ("logs", LogsWindow, "logs-window"),
-            ("coding", CodingWindow, "coding-window"),
-            ("stats", StatsWindow, "stats-window"),
-            ("evals", EvalsWindow, "evals-window"),
-            ("stts", STTSWindow, "stts-window"),
-            ("study", StudyWindow, "study-window"),
-            ("chatbooks", ChatbooksWindow, "chatbooks-window"),
-        ]
-        
-        window_widgets = []
-        for window_name, window_class, window_id in windows:
-            window_start = time.perf_counter()
-            
-            # Use lazy loading for non-initial tabs
-            initial_tab = self._initial_tab_value
-            is_initial_window = window_id == f"{initial_tab}-window"
-            
-            # Always load LogsWindow immediately to capture startup logs
-            if is_initial_window or window_id == "logs-window":
-                # Create the actual window for the initial tab AND logs tab
-                logger.info(f"Creating actual window for {'initial' if is_initial_window else 'logs'} tab: {window_name}")
-                window_widget = window_class(self, id=window_id, classes="window")
-            else:
-                # Create a placeholder for other tabs
-                logger.debug(f"Creating placeholder for tab: {window_name}")
-                window_widget = PlaceholderWindow(self, window_class, window_id, classes="window")
-            
-            window_widgets.append(window_widget)
-            
-            window_duration = time.perf_counter() - window_start
-            is_actual_window = is_initial_window or window_id == "logs-window"
-            log_histogram("app_window_creation_duration_seconds", window_duration,
-                         labels={"window": window_name, "type": "actual" if is_actual_window else "placeholder"}, 
-                         documentation="Time to create individual window")
-        
-        # Add all windows to the container
-        content_container._nodes._children.extend(window_widgets)
-        for widget in window_widgets:
-            widget._parent = content_container
-        
-        # Yield the container with all windows
-        yield content_container
-        
-        # Log total content area creation time
-        content_area_duration = time.perf_counter() - content_area_start
-        log_histogram("ui_content_area_duration_seconds", content_area_duration,
-                     documentation="Total time to create all content windows")
-        log_counter("ui_windows_created", len(windows), 
-                   documentation="Number of UI windows created")
     
 
     @on(ChatMessage.Action)
@@ -3206,7 +3145,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 loguru_logger.info(f"Initializing lazy-loaded window for tab: {new_tab}")
                 new_window.initialize()
             
+            # Always set display to True for the new window
             new_window.display = True
+            loguru_logger.debug(f"Set display=True for window: {new_window.__class__.__name__} (id={new_tab}-window)")
             
             # Update word count and token count in footer based on tab
             try:
@@ -3355,14 +3296,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Populate LLM help texts when the tab is shown
             self.call_after_refresh(llm_management_events.populate_llm_help_texts, self)
         elif new_tab == TAB_EVALS: # Added for Evals tab
-            # Activate initial view for EvalsWindow when switching to the tab
-            from .UI.Evals_Window_v3 import EvalsWindow
-            try:
-                evals_window = self.query_one(EvalsWindow)
-                evals_window.activate_initial_view()
-            except QueryError:
-                self.loguru_logger.error("Could not find EvalsWindow to activate its initial view.")
-            self.loguru_logger.debug(f"Switched to Evals tab. Initial sidebar state: collapsed={self.evals_sidebar_collapsed}")
+            # EvalsLab is a unified dashboard - no need for view activation
+            self.loguru_logger.debug(f"Switched to Evals tab")
 
 
     def _log_view_dimensions(self, view, parent):
@@ -3520,20 +3455,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             logging.error(f"Error toggling Conversations, Characters & Prompts left sidebar pane: {e}", exc_info=True)
 
     def watch_evals_sidebar_collapsed(self, collapsed: bool) -> None:
-        """Hide or show the Evals sidebar."""
-        if not self._ui_ready:
-            self.loguru_logger.debug("watch_evals_sidebar_collapsed: UI not ready.")
-            return
-        try:
-            sidebar = self.query_one("#evals-nav-pane") # Updated ID from new EvalsWindow implementation
-            toggle_button = self.query_one("#evals-sidebar-toggle-button")
-            sidebar.set_class(collapsed, "collapsed")
-            toggle_button.set_class(collapsed, "collapsed")
-            self.loguru_logger.debug(f"Evals sidebar collapsed state: {collapsed}, class set/removed.")
-        except QueryError:
-            self.loguru_logger.error("Evals sidebar (#evals-nav-pane) not found for collapse toggle.")
-        except Exception as e:
-            self.loguru_logger.error(f"Error toggling Evals sidebar: {e}", exc_info=True)
+        """EvalsLab uses unified dashboard - no sidebar to collapse."""
+        # This method is kept for backwards compatibility but does nothing
+        # The new EvalsLab UI doesn't have a collapsible sidebar
+        pass
     
     def watch_media_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
         """Notify MediaWindow when media_active_view changes."""
@@ -4390,8 +4315,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def on_switch_changed(self, event: Switch.Changed) -> None:
         """Handles changes in Switch widgets."""
-        from textual.widgets import Switch
-        
+
         switch_id = event.switch.id
         current_active_tab = self.current_tab
         
@@ -4514,9 +4438,22 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await self._splash_screen_widget.remove()
             self._splash_screen_widget = None
         
+        # Check if main UI widgets already exist (avoid duplicate IDs)
+        existing_ids = {widget.id for widget in self.screen._nodes if widget.id}
+        
         # Create and mount the main UI components after splash screen is closed
         main_ui_widgets = self._create_main_ui_widgets()
-        await self.mount(*main_ui_widgets)
+        
+        # Only mount widgets that don't already exist
+        widgets_to_mount = []
+        for widget in main_ui_widgets:
+            if widget.id not in existing_ids:
+                widgets_to_mount.append(widget)
+            else:
+                logger.debug(f"Skipping duplicate widget with ID: {widget.id}")
+        
+        if widgets_to_mount:
+            await self.mount(*widgets_to_mount)
         
         # Now that the main UI is mounted, set up logging if it was deferred
         if not self._rich_log_handler:

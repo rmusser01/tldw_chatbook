@@ -8,29 +8,27 @@ Evaluation Setup Window
 Provides interface for configuring and launching evaluations.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 from textual import on, work
 from textual.app import ComposeResult
 from textual.widgets import (
-    Button, Label, Static, Select, Input, 
-    ProgressBar, ListView, ListItem
+    Button, Label, Static, Select
 )
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Grid
+from textual.containers import Container, Horizontal, VerticalScroll, Grid
 from textual.reactive import reactive
 from loguru import logger
 
 from .eval_shared_components import (
     BaseEvaluationWindow, EvaluationStarted, EvaluationProgress,
     EvaluationCompleted, EvaluationError, EVALS_VIEW_RESULTS,
-    format_model_display, format_status_badge
+    format_status_badge
 )
-from ..Widgets.cost_estimation_widget import CostEstimationWidget
-from ..Widgets.eval_results_widgets import ProgressTracker
+from tldw_chatbook.Widgets.Evals.cost_estimation_widget import CostEstimationWidget
+from tldw_chatbook.Widgets.Evals.eval_results_widgets import ProgressTracker
 from ..Event_Handlers.eval_events import (
     get_available_providers, get_available_models,
-    refresh_models_list, refresh_datasets_list
+    refresh_datasets_list
 )
-from ..Evals.cost_estimator import CostEstimator
 
 
 class EvaluationSetupWindow(BaseEvaluationWindow):

@@ -5,7 +5,6 @@
 # Imports
 import json
 from os import getenv
-from pathlib import Path
 from typing import TYPE_CHECKING, Optional, List, Any, Dict, Union
 
 # 3rd-party Libraries
@@ -116,7 +115,13 @@ def _collect_common_form_data(app: 'TldwCli', media_type: str) -> Dict[str, Any]
                     "mediawiki_dump": "IngestTldwApiMediaWikiWindow"
                 }
                 if media_type in window_map:
-                    from ..Widgets import IngestTldwApiVideoWindow, IngestTldwApiAudioWindow, IngestTldwApiPdfWindow, IngestTldwApiEbookWindow, IngestTldwApiDocumentWindow, IngestTldwApiXmlWindow, IngestTldwApiMediaWikiWindow
+                    from ..Widgets.Media_Ingest import IngestTldwApiPdfWindow
+                    from ..Widgets.Media_Ingest import IngestTldwApiVideoWindow
+                    from ..Widgets.Media_Ingest import IngestTldwApiDocumentWindow
+                    from ..Widgets.Media_Ingest import IngestTldwApiXmlWindow
+                    from ..Widgets.Media_Ingest import IngestTldwApiMediaWikiWindow
+                    from ..Widgets.Media_Ingest import IngestTldwApiAudioWindow
+                    from ..Widgets.Media_Ingest import IngestTldwApiEbookWindow
                     window_classes = {
                         "video": IngestTldwApiVideoWindow,
                         "audio": IngestTldwApiAudioWindow,

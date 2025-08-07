@@ -5,34 +5,29 @@
 # and export them in various formats (ZIP, clipboard, embeddings).
 
 from __future__ import annotations
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
-import asyncio
+from typing import Optional, List, Dict, TYPE_CHECKING
 import json
 import zipfile
-import io
 import os
 import subprocess
 from pathlib import Path
 from datetime import datetime
-import aiofiles
 
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Container, ScrollableContainer, Horizontal, Vertical
+from textual.containers import Container, ScrollableContainer
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button, Input, Label, Select, Static, TextArea,
-    LoadingIndicator, Checkbox, DataTable, ProgressBar
+    LoadingIndicator
 )
-from textual.screen import Screen
 from textual.reactive import reactive
 from textual.message import Message
 
 # Local imports
-from ..Widgets.repo_tree_widgets import TreeView
+from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeView
 from ..Utils.github_api_client import GitHubAPIClient, GitHubAPIError
-from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -452,8 +447,8 @@ class CodeRepoCopyPasteWindow(ModalScreen):
     @on(Button.Pressed, "#token-config-btn")
     async def configure_token(self, event: Button.Pressed) -> None:
         """Open token configuration dialog."""
-        from ..config import get_cli_setting, save_setting_to_cli_config
-        
+        from ..config import get_cli_setting
+
         # Create a simple input dialog using Textual's built-in functionality
         current_token = get_cli_setting("github", "api_token", "")
         has_token = bool(current_token and not current_token.startswith("<"))

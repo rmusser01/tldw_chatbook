@@ -8,22 +8,21 @@ Results Dashboard Window
 Provides interface for viewing and analyzing evaluation results.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from textual import on, work
 from textual.app import ComposeResult
 from textual.widgets import (
-    Button, Label, Static, Select, DataTable,
+    Button, Static, Select, DataTable,
     TabbedContent, TabPane, Tree
 )
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.reactive import reactive
 from loguru import logger
 
 from .eval_shared_components import (
-    BaseEvaluationWindow, RefreshDataRequest,
-    format_model_display, format_status_badge
+    BaseEvaluationWindow, format_status_badge
 )
-from ..Widgets.eval_results_widgets import (
+from tldw_chatbook.Widgets.Evals.eval_results_widgets import (
     MetricsDisplay, ResultsTable, RunSummaryWidget, ComparisonView
 )
 # from ..Widgets.eval_visualizations import MetricsChart, ConfusionMatrixWidget

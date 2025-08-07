@@ -4,12 +4,9 @@ Simplified unit tests for repository tree widgets.
 Tests basic functionality without full Textual app context.
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from pathlib import Path
-import os
+from unittest.mock import MagicMock
 
-from tldw_chatbook.Widgets.repo_tree_widgets import (
+from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import (
     TreeNode, TreeView, TreeNodeSelected, TreeNodeExpanded
 )
 

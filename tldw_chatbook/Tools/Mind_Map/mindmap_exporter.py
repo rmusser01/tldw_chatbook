@@ -12,6 +12,8 @@ Export mindmaps to various formats:
 - Anki flashcards
 - JSON
 - HTML
+- JSON Canvas (Obsidian)
+- OPML
 """
 
 from typing import List, Dict, Any, Optional, TextIO
@@ -23,6 +25,7 @@ import html
 from loguru import logger
 
 from .mermaid_parser import NodeShape
+from .jsoncanvas_handler import JSONCanvasHandler
 
 
 class MindmapExporter:
@@ -486,6 +489,34 @@ class MindmapExporter:
         lines.append('</opml>')
         
         return '\n'.join(lines)
+    
+    @staticmethod
+    def to_json_canvas(root: Node, 
+                       layout: str = 'hierarchical',
+                       include_metadata: bool = True) -> str:
+        """Export to JSON Canvas format (Obsidian)
+        
+        Args:
+            root: Root node of the mindmap
+            layout: Layout algorithm ('hierarchical', 'radial', 'grid')
+            include_metadata: Whether to include node metadata
+            
+        Returns:
+            JSON Canvas format string
+        """
+        return JSONCanvasHandler.to_json_canvas(root, layout, include_metadata)
+    
+    @staticmethod
+    def from_json_canvas(canvas_data: str) -> Node:
+        """Import from JSON Canvas format
+        
+        Args:
+            canvas_data: JSON Canvas format string
+            
+        Returns:
+            Root node of the imported mindmap
+        """
+        return JSONCanvasHandler.from_json_canvas(canvas_data)
     
     @staticmethod
     def save_to_file(content: str, filepath: Path, encoding: str = 'utf-8') -> None:

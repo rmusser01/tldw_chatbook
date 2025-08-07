@@ -1,389 +1,206 @@
 /* _chatbooks.tcss */
-/* Styles specific to chatbook functionality */
+/* Styles for the Chatbooks window */
 
-/* Main Chatbooks Window */
+/* Main window */
 ChatbooksWindow {
-    layout: vertical;
-    height: 100%;
     background: $background;
 }
 
-.chatbooks-header {
-    height: auto;
-    background: $boost;
-    padding: 2;
-    border-bottom: thick $background-darken-1;
-}
-
-.chatbooks-title {
-    text-style: bold;
-    text-align: center;
-    color: $primary;
-    margin-bottom: 1;
-}
-
-.chatbooks-subtitle {
-    text-align: center;
-    color: $text-muted;
-    margin-top: 0;
-}
-
-/* Chatbook Landing Page */
-.chatbook-landing {
-    layout: vertical;
-    height: 100%;
-    padding: 2;
-    align: center middle;
-}
-
-.create-chatbook-card {
-    width: 80%;
-    max-width: 60;
-    padding: 3;
-    background: $boost;
-    border: thick $primary;
-    margin-bottom: 3;
-    align: center middle;
-}
-
-.card-icon {
-    text-align: center;
-    margin-bottom: 2;
-}
-
-.card-title {
-    text-style: bold;
-    text-align: center;
-    margin-bottom: 1;
-}
-
-.card-description {
-    text-align: center;
-    color: $text-muted;
-    margin-bottom: 2;
-}
-
-.card-action {
-    margin-top: 2;
-}
-
-/* Recent Chatbooks List */
-.recent-chatbooks {
-    width: 80%;
-    max-width: 60;
-    background: $panel;
-    border: round $background-darken-1;
-    padding: 2;
-}
-
-.recent-header {
-    text-style: bold;
-    margin-bottom: 1;
-    color: $primary;
-}
-
-.chatbook-list {
-    layout: vertical;
-    height: auto;
-}
-
-.chatbook-item {
+/* Main horizontal layout */
+#main-layout {
     layout: horizontal;
-    height: 3;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    height: 100%;
+}
+
+/* Left sidebar */
+#chatbooks-sidebar {
+    width: 30;
+    background: $panel;
+    border-right: solid $background-darken-1;
+    padding: 1;
+    layout: vertical;
+}
+
+.sidebar-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+    text-align: center;
+}
+
+#chatbooks-list {
+    height: 1fr;
     background: $boost;
     border: round $background-darken-1;
-    align: left middle;
 }
 
-.chatbook-item:hover {
+#chatbooks-list ListItem {
+    padding: 0 1;
+    height: 3;
+}
+
+#chatbooks-list ListItem:hover {
     background: $primary 20%;
-    border: round $primary;
 }
 
-.chatbook-name {
+#chatbooks-list ListItem.--highlight {
+    background: $primary 30%;
+}
+
+/* Right content area */
+#content-area {
     width: 1fr;
-    text-align: left;
+    layout: vertical;
+    padding: 1;
+}
+
+/* Header section */
+#chatbooks-header {
+    background: $boost;
+    border: round $background-darken-1;
+    padding: 2;
+    margin-bottom: 1;
+}
+
+.header-title {
+    text-style: bold;
+    text-align: center;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.header-subtitle {
+    text-align: center;
+    color: $text-muted;
+    margin-bottom: 2;
+}
+
+#action-buttons {
+    layout: horizontal;
+    align: center middle;
+    height: 3;
+}
+
+#action-buttons Button {
+    margin: 0 1;
+    min-width: 20;
+}
+
+/* Dynamic content area */
+#dynamic-content {
+    height: 1fr;
+    background: $boost;
+    border: round $background-darken-1;
+    padding: 2;
+    overflow-y: auto;
+}
+
+/* Welcome text */
+.welcome-text {
+    color: $text;
+    padding: 2;
+}
+
+/* Status text */
+.status-text {
+    color: $text-muted;
+    text-align: center;
+    padding: 2;
+}
+
+/* Info text */
+.info-text {
+    color: $text-muted;
+    text-align: center;
+    padding: 2;
+}
+
+/* Templates text */
+.templates-text {
+    color: $text;
+    padding: 2;
+}
+
+/* Chatbook details */
+.chatbook-details {
+    layout: vertical;
+    padding: 1;
+}
+
+.chatbook-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.chatbook-desc {
+    color: $text;
+    margin-bottom: 1;
+}
+
+.chatbook-size {
+    color: $text-muted;
+    margin-bottom: 1;
 }
 
 .chatbook-date {
-    width: auto;
-    text-align: right;
     color: $text-muted;
+    margin-bottom: 2;
 }
 
-/* Smart Content Tree Styles */
-SmartContentTree {
-    layout: vertical;
-    height: 100%;
-}
-
-.tree-controls {
-    height: auto;
-    padding: 1;
-    background: $boost;
-    border: round $background-darken-1;
-    margin-bottom: 1;
-}
-
-.search-row {
+/* Management buttons */
+.management-buttons {
     layout: horizontal;
     height: 3;
-    margin-bottom: 1;
-    align: left middle;
+    margin-top: 2;
 }
 
-.search-input {
-    width: 1fr;
+.management-buttons Button {
     margin-right: 1;
-}
-
-.filter-button {
     min-width: 12;
 }
 
-.category-filters {
-    layout: horizontal;
+/* Error button variant */
+Button.error {
+    background: $error;
+    color: $text;
+}
+
+Button.error:hover {
+    background: $error-darken-1;
+}
+
+/* Template management styles */
+.templates-list {
+    layout: vertical;
     height: auto;
-    margin-bottom: 1;
-}
-
-.category-checkbox {
-    margin-right: 2;
-}
-
-.selection-controls {
-    layout: horizontal;
-    height: auto;
-}
-
-.selection-button {
-    margin-right: 1;
-    min-width: 10;
-}
-
-.tree-container {
-    height: 1fr;
-    border: round $background-darken-1;
-    background: $boost;
-    padding: 1;
-}
-
-.tree-stats {
-    height: 2;
-    padding: 0 1;
-    text-align: right;
-    color: $text-muted;
-}
-
-/* Tree Node Selection Styling */
-Tree > .selected-node {
-    text-style: bold;
-    color: $success;
-}
-
-Tree > .tree--cursor.selected-node {
-    background: $success 30%;
-}
-
-/* Preview Styles */
-.preview-section {
-    margin-bottom: 2;
-    padding: 1 2;
-    background: $boost;
-    border: round $background-darken-1;
-}
-
-.section-title {
-    text-style: bold;
-    margin-bottom: 1;
-    color: $primary;
-}
-
-.content-list {
-    margin-left: 2;
-    color: $text-muted;
-}
-
-.file-tree {
-    height: 12;
-    border: round $background-darken-1;
-    background: $background;
-    padding: 1;
-    margin: 1 0;
-}
-
-.location-section {
-    margin-top: 2;
-    padding: 1 2;
+    max-height: 20;
+    overflow-y: auto;
+    margin: 1 0 2 0;
     background: $panel;
+    border: round $background-darken-1;
+    padding: 1;
+}
+
+.template-item {
+    padding: 1;
+    margin-bottom: 1;
+    background: $boost;
+    border: round $background-darken-1;
+}
+
+.template-item:hover {
+    background: $primary 10%;
     border: round $primary;
 }
 
-.location-path {
+.template-name {
+    text-style: bold;
     color: $primary;
-    margin: 1 0;
+    margin-bottom: 0;
 }
 
-/* Import/Export Status */
-.import-status {
-    layout: vertical;
-    padding: 1 2;
-    background: $boost;
-    border: round $background-darken-1;
-    margin: 1 0;
-}
-
-.status-header {
-    text-style: bold;
-    margin-bottom: 1;
-}
-
-.status-detail {
-    margin: 0 0 0 2;
+.template-description {
     color: $text-muted;
-}
-
-.status-success {
-    color: $success;
-}
-
-.status-error {
-    color: $error;
-}
-
-.status-warning {
-    color: $warning;
-}
-
-/* Conflict Resolution */
-.conflict-container {
-    layout: vertical;
-    padding: 2;
-    background: $boost;
-    border: round $warning;
-    margin: 1 0;
-}
-
-.conflict-header {
-    text-style: bold;
-    color: $warning;
-    margin-bottom: 1;
-}
-
-.conflict-comparison {
-    layout: horizontal;
-    height: auto;
-    margin: 1 0;
-}
-
-.comparison-side {
-    width: 1fr;
-    padding: 1;
-    background: $background;
-    border: round $background-darken-1;
-    margin: 0 1;
-}
-
-.comparison-label {
-    text-style: bold;
-    margin-bottom: 1;
-    text-align: center;
-}
-
-.comparison-content {
-    color: $text-muted;
-}
-
-.conflict-actions {
-    layout: vertical;
-    margin-top: 1;
-}
-
-.conflict-action {
-    margin: 0 0 1 1;
-}
-
-/* Drag & Drop Zone */
-.drop-zone {
-    width: 100%;
-    height: 20;
-    border: dashed $background-darken-2;
-    background: $boost;
-    align: center middle;
-    margin: 2 0;
-}
-
-.drop-zone.hover {
-    border: solid $primary;
-    background: $primary 10%;
-}
-
-.drop-zone.invalid {
-    border: solid $error;
-    background: $error 10%;
-}
-
-.drop-zone-content {
-    text-align: center;
-    padding: 2;
-}
-
-.drop-zone-icon {
-    margin-bottom: 1;
-    color: $text-muted;
-}
-
-.drop-zone-text {
-    color: $text-muted;
-    margin-bottom: 1;
-}
-
-.drop-zone-hint {
-    color: $text-disabled;
-}
-
-/* Action Buttons */
-.action-panel {
-    layout: horizontal;
-    height: auto;
-    padding: 1 2;
-    background: $panel;
-    border-top: solid $background-darken-1;
-    align: center middle;
-}
-
-.action-panel Button {
-    margin: 0 1;
-    min-width: 16;
-}
-
-.action-panel .primary-action {
-    background: $primary;
-    color: $text;
-}
-
-.action-panel .secondary-action {
-    background: $boost;
-    color: $text;
-}
-
-/* Responsive Design */
-/* Note: Textual doesn't support @media queries
-   Apply these classes dynamically based on terminal size */
-.chatbooks-small .create-chatbook-card {
-    width: 95%;
-}
-
-.chatbooks-small .recent-chatbooks {
-    width: 95%;
-}
-
-.chatbooks-small .category-checkbox {
-    margin-right: 1;
-}
-
-.chatbooks-small .selection-button {
-    min-width: 8;
+    text-style: italic;
 }

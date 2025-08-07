@@ -14,14 +14,13 @@ Handles all evaluation-related events:
 """
 
 import asyncio
-import json
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from loguru import logger
 
-from textual.widgets import Button, Input
+from textual.widgets import Button
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 if TYPE_CHECKING:
@@ -30,7 +29,10 @@ if TYPE_CHECKING:
 # Import evaluation components
 from tldw_chatbook.Evals import EvaluationOrchestrator
 from tldw_chatbook.Evals import TaskLoader, TaskLoadError
-from ..Widgets.eval_config_dialogs import ModelConfigDialog, TaskConfigDialog, RunConfigDialog
+from tldw_chatbook.Evals.eval_runner import EvalProgress, EvalSampleResult
+# Use existing cost estimation from Utils
+from tldw_chatbook.Utils.cost_estimation import estimate_evaluation_cost, get_model_cost_per_1k_tokens
+from tldw_chatbook.Widgets.Evals.eval_config_dialogs import ModelConfigDialog, TaskConfigDialog, RunConfigDialog
 
 # File picker dialogs
 from ..Widgets.file_picker_dialog import TaskFilePickerDialog, DatasetFilePickerDialog, ExportFilePickerDialog
@@ -41,8 +43,9 @@ try:
 except ImportError:
     TemplateSelectorDialog = None
 
-# Global orchestrator instance (will be initialized on first use)
+# Global instances (will be initialized on first use)
 _orchestrator: Optional[EvaluationOrchestrator] = None
+_task_loader: Optional[TaskLoader] = None
 
 def get_orchestrator() -> EvaluationOrchestrator:
     """Get or create the global evaluation orchestrator."""
@@ -64,6 +67,119 @@ def get_orchestrator() -> EvaluationOrchestrator:
         
         _orchestrator = EvaluationOrchestrator(db_path=str(db_path))
     return _orchestrator
+
+# Cost estimation functions are now imported from Utils/cost_estimation.py
+# No need for a separate cost estimator instance
+
+def get_task_loader() -> TaskLoader:
+    """Get or create the global task loader."""
+    global _task_loader
+    if _task_loader is None:
+        _task_loader = TaskLoader()
+        logger.info("Initialized task loader")
+    return _task_loader
+
+class EvaluationProgressAdapter:
+    """Adapts orchestrator progress callbacks to UI messages."""
+    
+    def __init__(self, app_or_lab, eval_id: str):
+        """Initialize adapter. Can work with both TldwCli app or EvalsLab widget."""
+        self.app_or_lab = app_or_lab
+        self.eval_id = eval_id
+        self.start_time = time.time()
+        self.sample_count = 0
+        self.correct_count = 0
+        self.total_cost = 0.0
+        
+    async def on_progress(self, progress: EvalProgress, sample_result: Optional[EvalSampleResult] = None):
+        """Handle progress update from orchestrator."""
+        try:
+            # Check if we're working with EvalsLab (has _is_paused attribute)
+            if hasattr(self.app_or_lab, '_is_paused'):
+                # Check if paused - if so, wait
+                while self.app_or_lab._is_paused:
+                    await asyncio.sleep(0.1)
+                    # Check if cancelled during pause
+                    if self.app_or_lab.current_run_status != "running":
+                        raise asyncio.CancelledError()
+            
+            # Update sample count
+            self.sample_count = progress.current
+            
+            # Calculate metrics
+            if sample_result:
+                # Update accuracy
+                if sample_result.metrics and sample_result.metrics.get('correct', False):
+                    self.correct_count += 1
+                
+                # Update cost (if token counts available)
+                if sample_result.metadata:
+                    input_tokens = sample_result.metadata.get('input_tokens', 0)
+                    output_tokens = sample_result.metadata.get('output_tokens', 0)
+                    total_tokens = input_tokens + output_tokens
+                    
+                    # Get model for pricing - handle both app and lab cases
+                    if hasattr(self.app_or_lab, 'selected_model'):
+                        # EvalsLab case
+                        model = self.app_or_lab.selected_model
+                    else:
+                        # TldwCli app case - use default
+                        model = "default"
+                    
+                    # Calculate cost using simplified Utils function
+                    cost_per_1k = get_model_cost_per_1k_tokens(model)
+                    sample_cost = (total_tokens / 1000) * cost_per_1k
+                    self.total_cost += sample_cost
+            
+            # Calculate derived metrics
+            accuracy = (self.correct_count / self.sample_count * 100) if self.sample_count > 0 else 0
+            elapsed_time = time.time() - self.start_time
+            speed = self.sample_count / elapsed_time if elapsed_time > 0 else 0
+            
+            # Update reactive state if working with EvalsLab
+            if hasattr(self.app_or_lab, 'evaluation_progress'):
+                self.app_or_lab.evaluation_progress = progress.percentage
+                self.app_or_lab.accuracy = accuracy
+                self.app_or_lab.spent_cost = self.total_cost
+                self.app_or_lab.elapsed_time = int(elapsed_time)
+            
+            # Create sample preview data
+            sample_data = {
+                'index': progress.current,
+                'text': sample_result.input_text if sample_result else f'Sample {progress.current}',
+                'expected': sample_result.expected_output if sample_result else None,
+                'actual': sample_result.actual_output if sample_result else None,
+                'correct': sample_result.metrics.get('correct', False) if sample_result and sample_result.metrics else None,
+                'error': sample_result.error_info if sample_result else None,
+            }
+            
+            # Post progress message - handle both app and lab cases
+            if hasattr(self.app_or_lab, 'post_message_from_worker'):
+                # EvalsLab case
+                self.app_or_lab.post_message_from_worker(
+                    self.app_or_lab.EvaluationProgress(
+                        self.eval_id,
+                        progress.percentage,
+                        sample_data
+                    )
+                )
+            else:
+                # TldwCli app case - update UI differently
+                self.app_or_lab.notify(
+                    f"Evaluation progress: {progress.percentage:.1f}% ({progress.current}/{progress.total})",
+                    severity="information"
+                )
+            
+            # Log metrics
+            log_histogram("eval_sample_processing_time", 
+                         sample_result.processing_time if sample_result else 0,
+                         labels={"eval_id": self.eval_id})
+            
+        except asyncio.CancelledError:
+            # Re-raise cancellation
+            raise
+        except Exception as e:
+            logger.error(f"Error in progress callback: {e}")
 
 # === TASK MANAGEMENT EVENTS ===
 
@@ -393,38 +509,43 @@ async def _execute_evaluation(app: 'TldwCli', config: Dict[str, Any]):
         except:
             pass
         
-        def progress_callback(completed: int, total: int, result):
-            """Progress callback for real-time updates."""
-            # Try to update via EvalsWindow method for more detailed updates
+        # Use the new EvaluationProgressAdapter for better integration
+        progress_adapter = EvaluationProgressAdapter(app, config.get('run_id', 'current'))
+        
+        async def progress_callback(progress: EvalProgress, sample_result: Optional[EvalSampleResult] = None):
+            """Enhanced progress callback using the adapter."""
+            await progress_adapter.on_progress(progress, sample_result)
+            
+            # Also update the UI directly for backward compatibility
             try:
                 def update_ui():
                     # Convert result to dict format if needed
                     result_dict = None
-                    if hasattr(result, '__dict__'):
+                    if sample_result and hasattr(sample_result, '__dict__'):
                         result_dict = {
-                            'error_info': getattr(result, 'error_info', None),
-                            'sample_id': getattr(result, 'sample_id', None),
-                            'metrics': getattr(result, 'metrics', {})
+                            'error_info': getattr(sample_result, 'error_info', None),
+                            'sample_id': getattr(sample_result, 'sample_id', None),
+                            'metrics': getattr(sample_result, 'metrics', {})
                         }
                     
                     # Use EvalsWindow's update method if available
                     if hasattr(evals_window, 'update_evaluation_progress'):
                         evals_window.update_evaluation_progress(
                             run_id=config.get('run_id', 'current'),
-                            completed=completed,
-                            total=total,
+                            completed=progress.current,
+                            total=progress.total,
                             current_result=result_dict
                         )
                     elif progress_tracker:
                         # Fallback to direct progress tracker update
-                        progress_tracker.current_progress = completed
-                        progress_tracker.total_samples = total
+                        progress_tracker.current_progress = progress.current
+                        progress_tracker.total_samples = progress.total
                         
                         # Update status message
-                        if completed == total:
+                        if progress.current == progress.total:
                             progress_tracker.complete_evaluation()
                         else:
-                            progress_tracker.status_message = f"Processing sample {completed}/{total}"
+                            progress_tracker.status_message = f"Processing sample {progress.current}/{progress.total}"
                 
                 app.call_from_thread(update_ui)
             except Exception as e:
@@ -454,18 +575,20 @@ async def _execute_evaluation(app: 'TldwCli', config: Dict[str, Any]):
             app.call_from_thread(cost_estimator.start_tracking, run_id)
         
         # Modified progress callback to include cost tracking
-        def enhanced_progress_callback(completed: int, total: int, result):
+        async def enhanced_progress_callback(progress: EvalProgress, sample_result: Optional[EvalSampleResult] = None):
             # Call original progress callback
-            progress_callback(completed, total, result)
+            await progress_callback(progress, sample_result)
             
             # Update cost if we have token counts
-            if cost_estimator and hasattr(result, 'token_usage'):
-                app.call_from_thread(
-                    cost_estimator.update_sample_cost,
-                    result.token_usage.get('input_tokens', 0),
-                    result.token_usage.get('output_tokens', 0),
-                    completed - 1  # 0-based index
-                )
+            if cost_estimator and sample_result and hasattr(sample_result, 'metadata'):
+                metadata = sample_result.metadata or {}
+                if 'input_tokens' in metadata or 'output_tokens' in metadata:
+                    app.call_from_thread(
+                        cost_estimator.update_sample_cost,
+                        metadata.get('input_tokens', 0),
+                        metadata.get('output_tokens', 0),
+                        progress.current - 1  # 0-based index
+                    )
         
         actual_run_id = await orchestrator.run_evaluation(
             task_id=config['task_id'],
@@ -606,7 +729,7 @@ async def update_results_table(app: 'TldwCli', run_id: str):
             # Try to find and update the ResultsTable widget
             try:
                 evals_window = app.query_one("EvalsWindow")
-                from ..Widgets.eval_results_widgets import ResultsTable
+                from tldw_chatbook.Widgets.Evals.eval_results_widgets import ResultsTable
                 results_table = evals_window.query_one(ResultsTable)
                 
                 # Update the table on the main thread
@@ -619,7 +742,7 @@ async def update_results_table(app: 'TldwCli', run_id: str):
                 run_summary = orchestrator.get_run_summary(run_id)
                 if run_summary and run_summary.get('metrics'):
                     try:
-                        from ..Widgets.eval_results_widgets import MetricsDisplay
+                        from tldw_chatbook.Widgets.Evals.eval_results_widgets import MetricsDisplay
                         metrics_display = evals_window.query_one(MetricsDisplay)
                         
                         def update_metrics():
@@ -1043,7 +1166,7 @@ async def handle_compare_runs(app: 'TldwCli', event: Button.Pressed) -> None:
     if len(runs) > 2:
         # Import here to avoid circular imports
         try:
-            from ..Widgets.eval_additional_dialogs import RunSelectionDialog
+            from tldw_chatbook.Widgets.Evals.eval_additional_dialogs import RunSelectionDialog
             
             def on_runs_selected(selected_runs):
                 if selected_runs and len(selected_runs) >= 2:
@@ -1146,7 +1269,11 @@ async def initialize_evals_system(app: 'TldwCli') -> None:
     
     try:
         # Initialize orchestrator
-        get_orchestrator()
+        orchestrator = get_orchestrator()
+        
+        # Check if we have any data to show
+        tasks = orchestrator.list_tasks()
+        models = orchestrator.list_models()
         
         # Refresh all displays
         await refresh_tasks_list(app)
@@ -1157,7 +1284,13 @@ async def initialize_evals_system(app: 'TldwCli') -> None:
         # Log successful initialization
         log_counter("eval_ui_system_initialization_success")
         
-        app.notify("Evaluation system initialized", severity="information")
+        # More informative notification
+        if not tasks:
+            app.notify("Evaluation system ready. Create a task to get started!", severity="information")
+        elif not models:
+            app.notify("Evaluation system ready. Add a model to start evaluating!", severity="information")
+        else:
+            app.notify(f"Evaluation system ready. {len(tasks)} tasks, {len(models)} models available.", severity="information")
         
     except Exception as e:
         logger.error(f"Error initializing evaluation system: {e}")
@@ -1402,3 +1535,45 @@ async def handle_cancel_evaluation(app: 'TldwCli', run_id: Optional[str]) -> Non
         })
         
         app.notify(f"Error cancelling evaluation: {str(e)}", severity="error")
+
+def handle_evaluation_error(error: Exception, eval_id: str) -> Dict[str, Any]:
+    """Convert evaluation errors to user-friendly format."""
+    error_info = {
+        'type': type(error).__name__,
+        'message': str(error),
+        'suggestions': []
+    }
+    
+    # Add specific suggestions based on error type
+    if 'rate limit' in str(error).lower():
+        error_info['suggestions'] = [
+            "Wait a few minutes before retrying",
+            "Reduce parallel request count",
+            "Use a different API key"
+        ]
+    elif 'authentication' in str(error).lower() or 'api key' in str(error).lower():
+        error_info['suggestions'] = [
+            "Check your API key in settings",
+            "Ensure the key has proper permissions",
+            "Verify the key hasn't expired"
+        ]
+    elif 'timeout' in str(error).lower():
+        error_info['suggestions'] = [
+            "Increase timeout in advanced settings",
+            "Check your internet connection",
+            "Try with fewer samples"
+        ]
+    else:
+        error_info['suggestions'] = [
+            "Check the error details",
+            "Verify model and task compatibility",
+            "Try with a smaller sample size"
+        ]
+    
+    # Log error
+    log_counter("eval_error", labels={
+        "error_type": error_info['type'],
+        "eval_id": eval_id
+    })
+    
+    return error_info

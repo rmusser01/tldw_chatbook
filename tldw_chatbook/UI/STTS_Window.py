@@ -6,21 +6,17 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
-from textual.widgets import Label, Button, TextArea, Select, Input, Static, RichLog, Switch, Collapsible, Rule, ProgressBar
+from textual.widgets import Label, Button, TextArea, Select, Input, Static, RichLog, Switch, Collapsible, Rule
 from textual.widget import Widget
 from textual.reactive import reactive
-from textual.message import Message
-from textual import work
 from textual.binding import Binding
 from loguru import logger
 
 # Local imports
 from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSRequestEvent, TTSCompleteEvent
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
 )
-from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
@@ -1513,7 +1509,7 @@ class TTSPlaygroundWidget(Widget):
                 ),
                 ("All Files", lambda p: True),
             ),
-            select_type="file",
+            must_exist=True
         )
         self.app.push_screen(file_open, handle_selection)
     
@@ -3367,7 +3363,7 @@ class AudioBookGenerationWidget(Widget):
             
             # Chapter Editor - Enhanced visual chapter editing
             with Collapsible(title="📖 Chapter Editor", classes="settings-section", collapsed=False):
-                from tldw_chatbook.Widgets.chapter_editor_widget import ChapterEditorWidget
+                from tldw_chatbook.Widgets.TTS.chapter_editor_widget import ChapterEditorWidget
                 yield ChapterEditorWidget(id="chapter-editor-widget")
             
             # Voice assignment - Enhanced character voice management
@@ -3391,7 +3387,7 @@ class AudioBookGenerationWidget(Widget):
                     yield Switch(id="multi-voice-switch", value=False)
                 
                 # Character voice widget
-                from tldw_chatbook.Widgets.character_voice_widget import CharacterVoiceWidget
+                from tldw_chatbook.Widgets.TTS.character_voice_widget import CharacterVoiceWidget
                 yield CharacterVoiceWidget(id="character-voice-widget")
             
             # Generation settings
@@ -3486,7 +3482,7 @@ class AudioBookGenerationWidget(Widget):
         if event.select.id == "audiobook-provider-select":
             # Update character voice widget provider
             try:
-                from tldw_chatbook.Widgets.character_voice_widget import CharacterVoiceWidget
+                from tldw_chatbook.Widgets.TTS.character_voice_widget import CharacterVoiceWidget
                 voice_widget = self.query_one("#character-voice-widget", CharacterVoiceWidget)
                 voice_widget.provider = event.value
                 logger.info(f"Updated voice widget provider to: {event.value}")
@@ -3556,7 +3552,7 @@ class AudioBookGenerationWidget(Widget):
     
     def _import_from_notes(self) -> None:
         """Import content from notes"""
-        from tldw_chatbook.Widgets.note_selection_dialog import NoteSelectionDialog
+        from tldw_chatbook.Widgets.Note_Widgets.note_selection_dialog import NoteSelectionDialog
         from tldw_chatbook.DB.ChaChaNotes_DB import fetch_all_notes
         
         try:
@@ -3685,11 +3681,11 @@ class AudioBookGenerationWidget(Widget):
     
     def on_chapter_edit_event(self, event) -> None:
         """Handle chapter edit events from the chapter editor"""
-        from tldw_chatbook.Widgets.chapter_editor_widget import ChapterEditEvent
+        from tldw_chatbook.Widgets.TTS.chapter_editor_widget import ChapterEditEvent
         if isinstance(event, ChapterEditEvent):
             # Update our internal chapter list
             try:
-                from tldw_chatbook.Widgets.chapter_editor_widget import ChapterEditorWidget
+                from tldw_chatbook.Widgets.TTS.chapter_editor_widget import ChapterEditorWidget
                 chapter_editor = self.query_one("#chapter-editor-widget", ChapterEditorWidget)
                 self.detected_chapters = chapter_editor.get_chapters()
                 logger.info(f"Chapter {event.action}: {event.chapter.title}")
@@ -3698,14 +3694,14 @@ class AudioBookGenerationWidget(Widget):
     
     def on_chapter_preview_event(self, event) -> None:
         """Handle chapter preview requests"""
-        from tldw_chatbook.Widgets.chapter_editor_widget import ChapterPreviewEvent
+        from tldw_chatbook.Widgets.TTS.chapter_editor_widget import ChapterPreviewEvent
         if isinstance(event, ChapterPreviewEvent):
             if event.preview_type == "audio":
                 self._preview_chapter_audio(event.chapter)
     
     def on_character_detection_event(self, event) -> None:
         """Handle character detection requests"""
-        from tldw_chatbook.Widgets.character_voice_widget import CharacterDetectionEvent, CharacterVoiceWidget
+        from tldw_chatbook.Widgets.TTS.character_voice_widget import CharacterDetectionEvent, CharacterVoiceWidget
         if isinstance(event, CharacterDetectionEvent):
             # Detect characters from current content
             if self.content_text:
@@ -3724,7 +3720,7 @@ class AudioBookGenerationWidget(Widget):
     
     def on_character_voice_assign_event(self, event) -> None:
         """Handle character voice assignments"""
-        from tldw_chatbook.Widgets.character_voice_widget import CharacterVoiceAssignEvent
+        from tldw_chatbook.Widgets.TTS.character_voice_widget import CharacterVoiceAssignEvent
         if isinstance(event, CharacterVoiceAssignEvent):
             logger.info(f"Voice assigned: {event.character_name} → {event.voice_id}")
     
@@ -3735,7 +3731,7 @@ class AudioBookGenerationWidget(Widget):
         
         try:
             from tldw_chatbook.TTS.audiobook_generator import ChapterDetector
-            from tldw_chatbook.Widgets.chapter_editor_widget import ChapterEditorWidget
+            from tldw_chatbook.Widgets.TTS.chapter_editor_widget import ChapterEditorWidget
             
             # Detect chapters
             self.detected_chapters = ChapterDetector.detect_chapters(self.content_text)
@@ -3786,7 +3782,7 @@ class AudioBookGenerationWidget(Widget):
         
         # Get chapters from the chapter editor widget
         try:
-            from tldw_chatbook.Widgets.chapter_editor_widget import ChapterEditorWidget
+            from tldw_chatbook.Widgets.TTS.chapter_editor_widget import ChapterEditorWidget
             chapter_editor = self.query_one("#chapter-editor-widget", ChapterEditorWidget)
             chapters = chapter_editor.get_chapters()
         except Exception as e:
@@ -3806,7 +3802,7 @@ class AudioBookGenerationWidget(Widget):
         character_voices = {}
         if multi_voice:
             try:
-                from tldw_chatbook.Widgets.character_voice_widget import CharacterVoiceWidget
+                from tldw_chatbook.Widgets.TTS.character_voice_widget import CharacterVoiceWidget
                 voice_widget = self.query_one("#character-voice-widget", CharacterVoiceWidget)
                 character_voices = voice_widget.get_voice_assignments()
                 logger.info(f"Using character voices: {character_voices}")

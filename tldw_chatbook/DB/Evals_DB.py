@@ -34,7 +34,7 @@ from .sql_validation import validate_table_name, validate_column_name
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 # Database Schema Version
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 class EvalsDBError(Exception):
     """Base exception for EvalsDB related errors."""
@@ -304,6 +304,53 @@ class EvalsDB:
             END
         """)
         
+        # A/B Testing tables
+        conn.execute("""
+            CREATE TABLE ab_tests (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                test_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                task_id TEXT NOT NULL,
+                model_a_id TEXT NOT NULL,
+                model_b_id TEXT NOT NULL,
+                config TEXT NOT NULL, -- JSON configuration
+                status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')) DEFAULT 'pending',
+                winner TEXT CHECK (winner IN ('model_a', 'model_b', 'tie', NULL)),
+                result_data TEXT, -- JSON result data
+                started_at TEXT,
+                completed_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                version INTEGER NOT NULL DEFAULT 1,
+                client_id TEXT NOT NULL,
+                deleted_at TEXT,
+                FOREIGN KEY (task_id) REFERENCES eval_tasks (id),
+                FOREIGN KEY (model_a_id) REFERENCES eval_models (id),
+                FOREIGN KEY (model_b_id) REFERENCES eval_models (id)
+            )
+        """)
+        
+        conn.execute("""
+            CREATE TABLE ab_test_runs (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                ab_test_id TEXT NOT NULL,
+                run_a_id TEXT NOT NULL,
+                run_b_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                client_id TEXT NOT NULL,
+                FOREIGN KEY (ab_test_id) REFERENCES ab_tests (id),
+                FOREIGN KEY (run_a_id) REFERENCES eval_runs (id),
+                FOREIGN KEY (run_b_id) REFERENCES eval_runs (id)
+            )
+        """)
+        
+        # Create indexes for A/B tests
+        conn.execute("CREATE INDEX idx_ab_tests_status ON ab_tests (status)")
+        conn.execute("CREATE INDEX idx_ab_tests_task ON ab_tests (task_id)")
+        conn.execute("CREATE INDEX idx_ab_tests_models ON ab_tests (model_a_id, model_b_id)")
+        conn.execute("CREATE INDEX idx_ab_test_runs_test ON ab_test_runs (ab_test_id)")
+        
         # Set schema version
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         
@@ -312,7 +359,58 @@ class EvalsDB:
     def _migrate_schema(self, conn: sqlite3.Connection, current_version: int):
         """Migrate schema from current_version to SCHEMA_VERSION."""
         logger.info(f"Migrating EvalsDB schema from version {current_version} to {SCHEMA_VERSION}")
-        # Future migrations would go here
+        
+        # Migrate from version 1 to 2
+        if current_version == 1 and SCHEMA_VERSION >= 2:
+            logger.info("Migrating to version 2: Adding A/B testing tables")
+            
+            # A/B Testing tables
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ab_tests (
+                    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                    test_id TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    task_id TEXT NOT NULL,
+                    model_a_id TEXT NOT NULL,
+                    model_b_id TEXT NOT NULL,
+                    config TEXT NOT NULL, -- JSON configuration
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')) DEFAULT 'pending',
+                    winner TEXT CHECK (winner IN ('model_a', 'model_b', 'tie', NULL)),
+                    result_data TEXT, -- JSON result data
+                    started_at TEXT,
+                    completed_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                    version INTEGER NOT NULL DEFAULT 1,
+                    client_id TEXT NOT NULL,
+                    deleted_at TEXT,
+                    FOREIGN KEY (task_id) REFERENCES eval_tasks (id),
+                    FOREIGN KEY (model_a_id) REFERENCES eval_models (id),
+                    FOREIGN KEY (model_b_id) REFERENCES eval_models (id)
+                )
+            """)
+            
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ab_test_runs (
+                    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                    ab_test_id TEXT NOT NULL,
+                    run_a_id TEXT NOT NULL,
+                    run_b_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+                    client_id TEXT NOT NULL,
+                    FOREIGN KEY (ab_test_id) REFERENCES ab_tests (id),
+                    FOREIGN KEY (run_a_id) REFERENCES eval_runs (id),
+                    FOREIGN KEY (run_b_id) REFERENCES eval_runs (id)
+                )
+            """)
+            
+            # Create indexes for A/B tests
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ab_tests_status ON ab_tests (status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ab_tests_task ON ab_tests (task_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ab_tests_models ON ab_tests (model_a_id, model_b_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ab_test_runs_test ON ab_test_runs (ab_test_id)")
+        
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     
     # --- Task Management ---
@@ -1038,6 +1136,189 @@ class EvalsDB:
             }
         
         return comparison
+    
+    # --- A/B Testing Methods ---
+    
+    def create_ab_test(self, test_id: str, name: str, description: str, task_id: str,
+                      model_a_id: str, model_b_id: str, config: Dict[str, Any]) -> str:
+        """Create a new A/B test."""
+        if not all([test_id.strip(), name.strip(), task_id.strip(), 
+                   model_a_id.strip(), model_b_id.strip()]):
+            raise InputError("Required fields cannot be empty")
+        
+        # Verify task and models exist
+        if not self.get_task(task_id):
+            raise InputError(f"Task {task_id} not found")
+        if not self.get_model(model_a_id):
+            raise InputError(f"Model {model_a_id} not found")
+        if not self.get_model(model_b_id):
+            raise InputError(f"Model {model_b_id} not found")
+        
+        ab_id = str(uuid.uuid4())
+        config_json = json.dumps(config)
+        
+        conn = self._get_connection()
+        try:
+            with conn:
+                conn.execute("""
+                    INSERT INTO ab_tests 
+                    (id, test_id, name, description, task_id, model_a_id, model_b_id, 
+                     config, client_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (ab_id, test_id, name.strip(), description, task_id, 
+                     model_a_id, model_b_id, config_json, self.client_id))
+                
+                logger.info(f"Created A/B test: {name} ({ab_id})")
+                return ab_id
+                
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                raise ConflictError(f"A/B test with ID '{test_id}' already exists", 
+                                  "ab_tests", test_id)
+            raise EvalsDBError(f"Failed to create A/B test: {e}")
+    
+    def update_ab_test_status(self, test_id: str, status: str, error_message: str = None):
+        """Update A/B test status."""
+        if status not in ['pending', 'running', 'completed', 'failed', 'cancelled']:
+            raise InputError(f"Invalid status: {status}")
+        
+        conn = self._get_connection()
+        now = datetime.now(timezone.utc).isoformat()
+        
+        with conn:
+            if status == 'running':
+                conn.execute("""
+                    UPDATE ab_tests 
+                    SET status = ?, started_at = ?, updated_at = ?
+                    WHERE test_id = ?
+                """, (status, now, now, test_id))
+            elif status in ['completed', 'failed', 'cancelled']:
+                conn.execute("""
+                    UPDATE ab_tests 
+                    SET status = ?, completed_at = ?, updated_at = ?
+                    WHERE test_id = ?
+                """, (status, now, now, test_id))
+    
+    def update_ab_test_results(self, test_id: str, result: 'ABTestResult'):
+        """Update A/B test with results."""
+        from ..Evals.ab_testing import ABTestResult
+        
+        conn = self._get_connection()
+        result_data = {
+            'model_a_metrics': result.model_a_metrics,
+            'model_b_metrics': result.model_b_metrics,
+            'statistical_tests': result.statistical_tests,
+            'winner': result.winner,
+            'confidence_intervals': result.confidence_intervals,
+            'model_a_latency': result.model_a_latency,
+            'model_b_latency': result.model_b_latency,
+            'model_a_cost': result.model_a_cost,
+            'model_b_cost': result.model_b_cost,
+            'sample_size': result.sample_size
+        }
+        
+        winner = result.winner if result.winner else 'tie'
+        
+        with conn:
+            conn.execute("""
+                UPDATE ab_tests 
+                SET result_data = ?, winner = ?, status = 'completed', 
+                    completed_at = ?, updated_at = ?
+                WHERE test_id = ?
+            """, (json.dumps(result_data), winner, 
+                 result.completed_at.isoformat() if result.completed_at else datetime.now(timezone.utc).isoformat(),
+                 datetime.now(timezone.utc).isoformat(), test_id))
+            
+            logger.info(f"Updated A/B test results: {test_id}, winner: {winner}")
+    
+    def get_ab_test(self, test_id: str) -> Optional[Dict[str, Any]]:
+        """Get A/B test by test_id."""
+        conn = self._get_connection()
+        cursor = conn.execute("""
+            SELECT a.*, 
+                   t.name as task_name,
+                   ma.name as model_a_name,
+                   mb.name as model_b_name
+            FROM ab_tests a
+            JOIN eval_tasks t ON a.task_id = t.id
+            JOIN eval_models ma ON a.model_a_id = ma.id
+            JOIN eval_models mb ON a.model_b_id = mb.id
+            WHERE a.test_id = ? AND a.deleted_at IS NULL
+        """, (test_id,))
+        
+        row = cursor.fetchone()
+        if row:
+            test = dict(row)
+            test['config'] = json.loads(test['config'])
+            if test['result_data']:
+                test['result_data'] = json.loads(test['result_data'])
+            return test
+        return None
+    
+    def get_ab_test_status(self, test_id: str) -> Dict[str, Any]:
+        """Get the status of an A/B test."""
+        test = self.get_ab_test(test_id)
+        if test:
+            return {
+                'status': test['status'],
+                'started_at': test['started_at'],
+                'completed_at': test['completed_at'],
+                'winner': test['winner'],
+                'result_data': test.get('result_data')
+            }
+        return {'status': 'not_found'}
+    
+    def list_ab_tests(self, status: str = None, task_id: str = None,
+                     limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """List A/B tests with optional filtering."""
+        conn = self._get_connection()
+        
+        query = """
+            SELECT a.*, 
+                   t.name as task_name,
+                   ma.name as model_a_name,
+                   mb.name as model_b_name
+            FROM ab_tests a
+            JOIN eval_tasks t ON a.task_id = t.id
+            JOIN eval_models ma ON a.model_a_id = ma.id
+            JOIN eval_models mb ON a.model_b_id = mb.id
+            WHERE a.deleted_at IS NULL
+        """
+        params = []
+        
+        if status:
+            query += " AND a.status = ?"
+            params.append(status)
+        if task_id:
+            query += " AND a.task_id = ?"
+            params.append(task_id)
+        
+        query += " ORDER BY a.created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        cursor = conn.execute(query, params)
+        tests = []
+        for row in cursor.fetchall():
+            test = dict(row)
+            test['config'] = json.loads(test['config'])
+            if test['result_data']:
+                test['result_data'] = json.loads(test['result_data'])
+            tests.append(test)
+        
+        return tests
+    
+    def create_ab_test_runs(self, ab_test_id: str, run_a_id: str, run_b_id: str) -> str:
+        """Link evaluation runs to an A/B test."""
+        run_link_id = str(uuid.uuid4())
+        
+        conn = self._get_connection()
+        with conn:
+            conn.execute("""
+                INSERT INTO ab_test_runs (id, ab_test_id, run_a_id, run_b_id, client_id)
+                VALUES (?, ?, ?, ?, ?)
+            """, (run_link_id, ab_test_id, run_a_id, run_b_id, self.client_id))
+        
+        return run_link_id
     
     def close(self):
         """Close database connection."""

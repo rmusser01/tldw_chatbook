@@ -3,7 +3,6 @@
 #
 # Imports
 from typing import TYPE_CHECKING, Optional
-from pathlib import Path
 #
 # 3rd-Party Imports
 from loguru import logger
@@ -14,15 +13,14 @@ from textual.reactive import reactive
 #
 # Local Imports
 from ..Widgets.settings_sidebar import create_settings_sidebar
-from ..Widgets.chat_right_sidebar import create_chat_right_sidebar
+from tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar import create_chat_right_sidebar
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
-from ..Widgets.chat_tab_container import ChatTabContainer
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ..Widgets.voice_input_widget import VoiceInputWidget, VoiceInputMessage
 from ..config import get_cli_setting
 from ..Constants import TAB_CHAT
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE, EMOJI_SEND, FALLBACK_SEND, \
     EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON, EMOJI_STOP, FALLBACK_STOP
-from ..Event_Handlers.Audio_Events import DictationStartedEvent, DictationStoppedEvent
 
 # Configure logger with context
 logger = logger.bind(module="Chat_Window_Enhanced")
@@ -694,8 +692,8 @@ class ChatWindowEnhanced(Container):
             focused_widget = self.app_instance.focused
             
             # Check if the focused widget is a ChatMessage or if we need to find one
-            from ..Widgets.chat_message import ChatMessage
-            from ..Widgets.chat_message_enhanced import ChatMessageEnhanced
+            from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+            from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
             
             if isinstance(focused_widget, (ChatMessage, ChatMessageEnhanced)):
                 message_widget = focused_widget

@@ -12,6 +12,7 @@ from loguru import logger
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Container
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Label, Button
 
@@ -58,7 +59,7 @@ else:
 class EmbeddingsCreationWizard(WizardContainer):
     """Main embeddings creation wizard with improved UX."""
     
-    def __init__(self, on_complete: Optional[callable] = None, on_cancel: Optional[callable] = None):
+    def __init__(self, app_instance, on_complete: Optional[callable] = None, on_cancel: Optional[callable] = None):
         # Initialize steps
         self.content_type_step = ContentSelectionStep()
         self.content_selection_step = None  # Created dynamically based on content type
@@ -69,6 +70,7 @@ class EmbeddingsCreationWizard(WizardContainer):
         steps = [self.content_type_step]
         
         super().__init__(
+            app_instance=app_instance,
             steps=steps,
             title="Create Search Collection",
             on_complete=on_complete or self.handle_completion,
@@ -78,7 +80,7 @@ class EmbeddingsCreationWizard(WizardContainer):
     def validate_current_step(self, old_value: int) -> None:
         """Override to handle Textual's reactive system expecting this signature."""
         # Just call the parent's method without the argument
-        super().validate_current_step()
+        super().validate_step()
         
     def show_step(self, step_index: int) -> None:
         """Override to handle dynamic step creation."""
@@ -230,8 +232,9 @@ class EmbeddingsWizardScreen(ModalScreen):
 class SimpleEmbeddingsWizard(Container):
     """Simplified embeddings wizard for integration into existing windows."""
     
-    def __init__(self):
+    def __init__(self, app_instance=None):
         super().__init__()
+        self.app_instance = app_instance
         self.wizard = None
         
     def compose(self) -> ComposeResult:
@@ -251,6 +254,7 @@ class SimpleEmbeddingsWizard(Container):
         else:
             # Create the wizard
             self.wizard = EmbeddingsCreationWizard(
+                app_instance=self.app_instance,
                 on_complete=self.handle_completion,
                 on_cancel=self.handle_cancellation
             )
@@ -277,13 +281,16 @@ class SimpleEmbeddingsWizard(Container):
 #
 ########################################################################################################################
 
-class EmbeddingsCreatedMessage:
+class EmbeddingsCreatedMessage(Message):
     """Message sent when embeddings are created."""
     
     def __init__(self, data: Dict[str, Any]):
+        super().__init__()
         self.data = data
         
 
-class EmbeddingsCancelledMessage:
+class EmbeddingsCancelledMessage(Message):
     """Message sent when wizard is cancelled."""
-    pass
+    
+    def __init__(self):
+        super().__init__()

@@ -192,6 +192,7 @@ class MindmapViewerWindow(Screen):
                 
                 yield Button("Create Mindmap", id="create-mindmap", variant="primary")
                 yield Button("Clear Selection", id="clear-selection", variant="default")
+                yield Button("Import Canvas", id="import-canvas", variant="default", tooltip="Import from Obsidian JSON Canvas")
             
             # Mindmap display
             with Vertical(id="mindmap-display-container"):
@@ -239,6 +240,7 @@ class MindmapViewerWindow(Screen):
                     yield Button("🌐 HTML", id="export-html", classes="export-button", variant="default")
                     yield Button("📊 GraphViz", id="export-graphviz", classes="export-button", variant="default")
                     yield Button("📋 JSON", id="export-json", classes="export-button", variant="default")
+                    yield Button("🗺️ Canvas", id="export-canvas", classes="export-button", variant="default", tooltip="Export to Obsidian JSON Canvas")
     
     def _load_content(self) -> Dict[ContentType, List[Any]]:
         """Load available content
@@ -365,6 +367,52 @@ class MindmapViewerWindow(Screen):
             content_tree.clear_selections()
             self.notify("Cleared all selections")
     
+    @on(Button.Pressed, "#import-canvas")
+    @work(exclusive=True)
+    async def import_canvas_file(self) -> None:
+        """Import mindmap from JSON Canvas file"""
+        if not self.mindmap_available or not MindmapViewer:
+            self.notify("Mindmap features not available", severity="error")
+            return
+        
+        try:
+            # Use file dialog if available
+            from pathlib import Path
+            import json
+            
+            # For now, use a hardcoded path - in production would use file picker
+            # TODO: Integrate with proper file picker when available
+            import_path = Path.home() / "Documents" / "tldw_exports"
+            canvas_files = list(import_path.glob("*.canvas"))
+            
+            if not canvas_files:
+                self.notify("No .canvas files found in Documents/tldw_exports", severity="warning")
+                return
+            
+            # Use the most recent canvas file
+            latest_file = max(canvas_files, key=lambda p: p.stat().st_mtime)
+            
+            with open(latest_file, 'r', encoding='utf-8') as f:
+                canvas_data = f.read()
+            
+            # Import the canvas
+            root = MindmapExporter.from_json_canvas(canvas_data)
+            self.current_mindmap_root = root
+            
+            # Update mindmap viewer
+            viewer = self.query_one("#mindmap-viewer", MindmapViewer)
+            viewer.model.root = root
+            viewer.model.selected_node = root
+            viewer.model.expanded_nodes = {root}
+            viewer.refresh_display()
+            
+            self.mindmap_loaded = True
+            self.notify(f"Imported mindmap from {latest_file.name}")
+            
+        except Exception as e:
+            logger.error(f"Error importing canvas: {e}")
+            self.notify(f"Error importing canvas: {str(e)}", severity="error")
+    
     @on(ContentSelectionChanged)
     def handle_selection_change(self, event: ContentSelectionChanged) -> None:
         """Update UI when content selection changes"""
@@ -402,6 +450,11 @@ class MindmapViewerWindow(Screen):
     async def export_to_json(self) -> None:
         """Export mindmap to JSON"""
         await self._export_mindmap("json")
+    
+    @on(Button.Pressed, "#export-canvas")
+    async def export_to_canvas(self) -> None:
+        """Export mindmap to Obsidian JSON Canvas format"""
+        await self._export_mindmap("canvas")
     
     async def _export_mindmap(self, format_type: str) -> None:
         """Export mindmap in specified format
@@ -458,6 +511,15 @@ class MindmapViewerWindow(Screen):
             elif format_type == "json":
                 content = MindmapExporter.to_json(self.current_mindmap_root, pretty=True)
                 filename = f"mindmap_{timestamp}.json"
+            
+            elif format_type == "canvas":
+                content = MindmapExporter.to_json_canvas(
+                    self.current_mindmap_root,
+                    layout="hierarchical",
+                    include_metadata=True
+                )
+                filename = f"mindmap_{timestamp}.canvas"
+                self.notify("Exported to Obsidian JSON Canvas format")
             
             else:
                 self.notify(f"Unknown export format: {format_type}", severity="error")

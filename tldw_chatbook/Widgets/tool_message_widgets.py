@@ -7,11 +7,11 @@ import json
 from typing import List, Dict, Any, Optional
 
 from rich.text import Text
-from textual.widgets import Static, Label
-from textual.containers import Vertical, Horizontal
+from textual.widgets import Static
+from textual.containers import Vertical
 from textual.css.query import QueryError
 
-from .chat_message import ChatMessage
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 
 
 class ToolCallMessage(ChatMessage):

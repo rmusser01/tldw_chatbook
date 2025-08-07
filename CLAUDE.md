@@ -23,6 +23,8 @@ python3 -m tldw_chatbook.app
 pytest  # All tests
 pytest Tests/Chat/  # Specific module
 pytest --cov=tldw_chatbook  # With coverage
+
+# Note: The 'timeout' command is not available in this environment
 ```
 
 ## Architecture
@@ -36,13 +38,14 @@ pytest --cov=tldw_chatbook  # With coverage
 ### UI Layer (`UI/` and `Widgets/`)
 
 **Main Windows** (all extend Screen):
-- `Chat_Window_Enhanced.py` - Streaming chat, images, RAG
+- `Chat_Window_Enhanced.py` - Streaming chat, images, RAG, tool calling
 - `Conv_Char_Window.py` - Conversation/character CRUD
 - `Notes_Window.py` - Notes with templates and sync
 - `SearchRAGWindow.py` - RAG search interface
-- `Evals_Window.py` - LLM benchmarking
+- `Evals_Window_v3.py` - LLM benchmarking
 - `MediaWindow.py` - Media management hub
-- Other windows follow similar patterns
+- `Coding_Window.py` - Code-focused chat interface
+- `IngestTldwApiWindow.py` - Media ingestion forms
 
 **Key Widgets**:
 - `chat_message_enhanced.py` - Rich messages with actions

@@ -28,7 +28,6 @@ from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.task_loader import TaskConfig, TaskLoader
 from tldw_chatbook.Evals.eval_runner import EvalRunner, EvalSampleResult
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
-from tldw_chatbook.Evals.llm_interface import LLMInterface
 
 # --- Database Fixtures ---
 
@@ -133,7 +132,7 @@ def sample_eval_results():
 @pytest.fixture
 def mock_llm_interface():
     """Create a mock LLM interface."""
-    mock = AsyncMock(spec=LLMInterface)
+    mock = AsyncMock()
     
     # Configure default responses
     async def mock_generate(prompt, **kwargs):
@@ -155,7 +154,7 @@ def mock_llm_interface():
 @pytest.fixture
 def mock_successful_llm():
     """Create a mock LLM that always succeeds."""
-    mock = AsyncMock(spec=LLMInterface)
+    mock = AsyncMock()
     mock.generate.return_value = "Successful response"
     mock.provider = "mock_success"
     mock.model_id = "success-model"
@@ -164,7 +163,7 @@ def mock_successful_llm():
 @pytest.fixture
 def mock_failing_llm():
     """Create a mock LLM that always fails."""
-    mock = AsyncMock(spec=LLMInterface)
+    mock = AsyncMock()
     mock.generate.side_effect = Exception("Mock LLM failure")
     mock.provider = "mock_fail"
     mock.model_id = "fail-model"

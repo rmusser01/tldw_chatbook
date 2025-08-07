@@ -193,3 +193,79 @@ def get_safe_relative_path(full_path: Union[str, Path], base_directory: Union[st
         return full_path.relative_to(base_directory)
     except ValueError:
         return None
+
+
+def validate_path_simple(user_path: Union[str, Path], require_exists: bool = False) -> Path:
+    """
+    Simple path validation that checks for common security issues without requiring a base directory.
+    
+    Args:
+        user_path: The path to validate
+        require_exists: Whether to require the path exists
+        
+    Returns:
+        Path: The validated path
+        
+    Raises:
+        ValueError: If the path contains security risks
+    """
+    start_time = time.time()
+    log_counter("path_validation_validate_path_simple_attempt")
+    
+    try:
+        path_str = str(user_path)
+        
+        # Check for null bytes
+        if '\x00' in path_str:
+            log_counter("path_validation_security_violation", labels={"type": "null_byte"})
+            raise ValueError("Path cannot contain null bytes")
+        
+        # Check for obvious traversal attempts
+        dangerous_patterns = [
+            '../..',  # Multiple parent refs
+            '..\\',   # Windows parent ref
+            '~/',     # Home directory expansion
+            '~\\',    # Windows home
+            '\x00',   # Null byte
+            '|',      # Pipe (command injection)
+            ';',      # Command separator
+            '&&',     # Command chaining
+            '||',     # Command chaining
+            '`',      # Command substitution
+            '$(',     # Command substitution
+            '${',     # Variable expansion
+        ]
+        
+        for pattern in dangerous_patterns:
+            if pattern in path_str:
+                log_counter("path_validation_security_violation", labels={"type": "dangerous_pattern", "pattern": pattern})
+                raise ValueError(f"Path contains dangerous pattern: {pattern}")
+        
+        # Convert to Path object and check basic validity
+        path = Path(user_path)
+        
+        # If path exists, resolve it to catch symlink attacks
+        if path.exists():
+            resolved = path.resolve()
+            # Check if resolution changed the path significantly (possible symlink attack)
+            if path.is_absolute() and resolved != path:
+                logger.warning(f"Path resolution changed: {path} -> {resolved}")
+        elif require_exists:
+            raise ValueError(f"Path does not exist: {path}")
+        
+        # Log success
+        duration = time.time() - start_time
+        log_histogram("path_validation_validate_path_simple_duration", duration)
+        log_counter("path_validation_validate_path_simple_success")
+        
+        return path
+        
+    except Exception as e:
+        # Log error
+        duration = time.time() - start_time
+        log_histogram("path_validation_validate_path_simple_duration", duration, labels={"status": "error"})
+        log_counter("path_validation_validate_path_simple_error", labels={"error_type": type(e).__name__})
+        
+        if isinstance(e, ValueError):
+            raise
+        raise ValueError(f"Invalid path: {user_path}")

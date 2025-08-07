@@ -1,0 +1,38 @@
+# Simple Question-Answer Task Example
+# This shows a basic Q&A evaluation without multiple choice
+
+task: simple_qa_example
+dataset_path: qa_dataset.csv
+output_type: generate_until
+num_fewshot: 0
+
+# Simple prompt template
+doc_to_text: |
+  Question: {{question}}
+  Answer:
+
+# Extract the expected answer
+doc_to_target: answer
+
+# Generation parameters
+generation_kwargs:
+  max_gen_toks: 50
+  temperature: 0.7
+  until:
+    - "\n"
+    - "."
+    - "Question:"
+
+# Metrics for open-ended QA
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+  - metric: f1_score
+    aggregation: mean
+  - metric: bleu
+    aggregation: mean
+
+# Optional preprocessing
+preprocessing:
+  lowercase: true
+  strip_punctuation: true

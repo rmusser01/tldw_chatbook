@@ -4,13 +4,12 @@ Property-based tests for repository tree operations.
 Uses Hypothesis to generate random tree structures and test invariants.
 """
 
-import pytest
-from hypothesis import given, strategies as st, assume, settings
+from hypothesis import given, strategies as st, settings
 from hypothesis.stateful import RuleBasedStateMachine, rule, invariant, initialize
-from typing import Dict, Set, List, Optional
+from typing import Dict, Set, List
 import random
 
-from tldw_chatbook.Widgets.repo_tree_widgets import TreeView, TreeNode
+from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeView, TreeNode
 
 
 # Strategies for generating tree data

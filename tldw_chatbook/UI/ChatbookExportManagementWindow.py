@@ -118,7 +118,6 @@ class ChatbookExportManagementWindow(ModalScreen):
     
     .list-subtitle {
         color: $text-muted;
-        font-size: 90%;
         margin-top: 0;
     }
     

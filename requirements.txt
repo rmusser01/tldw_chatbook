@@ -36,6 +36,7 @@ markdownify
 prometheus_client
 aiofiles
 yt_dlp
+anytree
 #pytest  # In dev group
 
 # Optional Dependencies (install via pip install -e ".[group_name]")

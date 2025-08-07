@@ -60,32 +60,32 @@ class EvalTemplateManager:
             'code_explanation': self._code_explanation_template(),
             'sql_generation': self._sql_generation_template(),
             
-            # Multilingual and Translation - TODO: Implement these templates
-            # 'translation_quality': self._translation_quality_template(),
-            # 'cross_lingual_qa': self._cross_lingual_qa_template(),
-            # 'multilingual_sentiment': self._multilingual_sentiment_template(),
-            # 'code_switching': self._code_switching_template(),
+            # Multilingual and Translation
+            'translation_quality': self._translation_quality_template(),
+            'cross_lingual_qa': self._cross_lingual_qa_template(),
+            'multilingual_sentiment': self._multilingual_sentiment_template(),
+            'code_switching': self._code_switching_template(),
             
-            # Domain-Specific Knowledge - TODO: Implement these templates
-            # 'medical_qa': self._medical_qa_template(),
-            # 'legal_reasoning': self._legal_reasoning_template(),
-            # 'scientific_reasoning': self._scientific_reasoning_template(),
-            # 'financial_analysis': self._financial_analysis_template(),
-            # 'historical_knowledge': self._historical_knowledge_template(),
+            # Domain-Specific Knowledge
+            'mmlu_physics': self._mmlu_physics_template(),
+            'mmlu_history': self._mmlu_history_template(),
+            'mmlu_biology': self._mmlu_biology_template(),
+            'mmlu_mathematics': self._mmlu_mathematics_template(),
+            'medical_qa': self._medical_qa_template(),
             
-            # Robustness and Adversarial - TODO: Implement these templates
-            # 'adversarial_qa': self._adversarial_qa_template(),
-            # 'input_perturbation': self._input_perturbation_template(),
-            # 'context_length_stress': self._context_length_stress_template(),
-            # 'instruction_following': self._instruction_following_template(),
-            # 'format_robustness': self._format_robustness_template(),
+            # Robustness and Adversarial
+            'adversarial_qa': self._adversarial_qa_template(),
+            'input_perturbation': self._input_perturbation_template(),
+            'context_length_stress': self._context_length_stress_template(),
+            'instruction_following': self._instruction_following_template(),
+            'format_robustness': self._format_robustness_template(),
             
-            # Creative and Open-ended - TODO: Implement these templates
-            # 'creative_writing': self._creative_writing_template(),
-            # 'story_completion': self._story_completion_template(),
-            # 'dialogue_generation': self._dialogue_generation_template(),
-            # 'summarization_quality': self._summarization_quality_template(),
-            # 'open_ended_qa': self._open_ended_qa_template(),
+            # Creative and Open-ended
+            'creative_writing': self._creative_writing_template(),
+            'story_completion': self._story_completion_template(),
+            'dialogue_generation': self._dialogue_generation_template(),
+            'summarization_quality': self._summarization_quality_template(),
+            'open_ended_qa': self._open_ended_qa_template(),
         }
     
     # === REASONING AND MATHEMATICAL TEMPLATES ===
@@ -483,6 +483,308 @@ class EvalTemplateManager:
             }
         }
     
+    # === MULTILINGUAL AND TRANSLATION TEMPLATES ===
+    
+    def _translation_quality_template(self) -> Dict[str, Any]:
+        """Translation quality evaluation template."""
+        return {
+            'name': 'Translation Quality',
+            'description': 'Evaluate the quality and accuracy of translations between languages',
+            'task_type': 'generation',
+            'dataset_name': 'custom_translation',
+            'metric': 'semantic_similarity',
+            'generation_kwargs': {
+                'temperature': 0.3,
+                'max_tokens': 512
+            },
+            'prompt_template': 'Translate the following text from {source_lang} to {target_lang}:\n\n{text}\n\nTranslation:',
+            'metadata': {
+                'category': 'multilingual',
+                'subcategory': 'translation',
+                'difficulty': 'intermediate',
+                'languages': ['en', 'es', 'fr', 'de', 'zh', 'ja', 'ar', 'ru']
+            }
+        }
+    
+    def _cross_lingual_qa_template(self) -> Dict[str, Any]:
+        """Cross-lingual question answering template."""
+        return {
+            'name': 'Cross-Lingual QA',
+            'description': 'Answer questions in one language based on context in another language',
+            'task_type': 'question_answer',
+            'dataset_name': 'xquad',  # Cross-lingual Question Answering Dataset
+            'metric': 'f1',
+            'generation_kwargs': {
+                'temperature': 0.1,
+                'max_tokens': 128
+            },
+            'prompt_template': 'Context ({context_lang}): {context}\n\nQuestion ({question_lang}): {question}\n\nAnswer in {answer_lang}:',
+            'metadata': {
+                'category': 'multilingual',
+                'subcategory': 'cross_lingual_qa',
+                'difficulty': 'advanced',
+                'requires_multilingual': True
+            }
+        }
+    
+    def _multilingual_sentiment_template(self) -> Dict[str, Any]:
+        """Multilingual sentiment analysis template."""
+        return {
+            'name': 'Multilingual Sentiment Analysis',
+            'description': 'Analyze sentiment across multiple languages',
+            'task_type': 'classification',
+            'dataset_name': 'custom_multilingual_sentiment',
+            'metric': 'accuracy',
+            'generation_kwargs': {
+                'temperature': 0.0,
+                'max_tokens': 10
+            },
+            'prompt_template': 'Analyze the sentiment of the following {language} text as positive, negative, or neutral:\n\n{text}\n\nSentiment:',
+            'doc_to_choice': ['positive', 'negative', 'neutral'],
+            'metadata': {
+                'category': 'multilingual',
+                'subcategory': 'sentiment',
+                'difficulty': 'basic',
+                'languages': ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl']
+            }
+        }
+    
+    def _code_switching_template(self) -> Dict[str, Any]:
+        """Code-switching (mixed language) understanding template."""
+        return {
+            'name': 'Code-Switching Understanding',
+            'description': 'Understand and respond to mixed-language inputs',
+            'task_type': 'generation',
+            'dataset_name': 'custom_code_switching',
+            'metric': 'semantic_similarity',
+            'generation_kwargs': {
+                'temperature': 0.5,
+                'max_tokens': 256
+            },
+            'prompt_template': 'The following message contains mixed languages. Please understand and respond appropriately:\n\n{mixed_text}\n\nResponse:',
+            'metadata': {
+                'category': 'multilingual',
+                'subcategory': 'code_switching',
+                'difficulty': 'advanced',
+                'common_pairs': ['en-es', 'en-zh', 'en-hi', 'en-ar']
+            }
+        }
+    
+    # === ROBUSTNESS AND ADVERSARIAL TEMPLATES ===
+    
+    def _adversarial_qa_template(self) -> Dict[str, Any]:
+        """Adversarial question answering template."""
+        return {
+            'name': 'Adversarial QA',
+            'description': 'Handle misleading or tricky questions designed to cause errors',
+            'task_type': 'question_answer',
+            'dataset_name': 'adversarial_qa',
+            'metric': 'exact_match',
+            'generation_kwargs': {
+                'temperature': 0.1,
+                'max_tokens': 128
+            },
+            'prompt_template': 'Answer the following question based on the context. Be careful of misleading information:\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:',
+            'metadata': {
+                'category': 'robustness',
+                'subcategory': 'adversarial',
+                'difficulty': 'advanced',
+                'attack_types': ['distraction', 'negation', 'entity_swap', 'paraphrase']
+            }
+        }
+    
+    def _input_perturbation_template(self) -> Dict[str, Any]:
+        """Input perturbation robustness template."""
+        return {
+            'name': 'Input Perturbation Robustness',
+            'description': 'Test model robustness to typos, character swaps, and minor perturbations',
+            'task_type': 'classification',
+            'dataset_name': 'custom_perturbation',
+            'metric': 'accuracy',
+            'generation_kwargs': {
+                'temperature': 0.0,
+                'max_tokens': 64
+            },
+            'prompt_template': 'Despite any typos or errors, classify the following text:\n\n{perturbed_text}\n\nClassification:',
+            'perturbation_types': ['typo', 'char_swap', 'word_swap', 'case_change'],
+            'metadata': {
+                'category': 'robustness',
+                'subcategory': 'perturbation',
+                'difficulty': 'intermediate'
+            }
+        }
+    
+    def _context_length_stress_template(self) -> Dict[str, Any]:
+        """Context length stress testing template."""
+        return {
+            'name': 'Context Length Stress Test',
+            'description': 'Test model performance with very long contexts',
+            'task_type': 'question_answer',
+            'dataset_name': 'custom_long_context',
+            'metric': 'f1',
+            'generation_kwargs': {
+                'temperature': 0.1,
+                'max_tokens': 256
+            },
+            'context_lengths': [1000, 2000, 4000, 8000, 16000, 32000],
+            'prompt_template': '{long_context}\n\nBased on the above text, {question}\n\nAnswer:',
+            'metadata': {
+                'category': 'robustness',
+                'subcategory': 'context_length',
+                'difficulty': 'advanced',
+                'requires_long_context': True
+            }
+        }
+    
+    def _instruction_following_template(self) -> Dict[str, Any]:
+        """Instruction following robustness template."""
+        return {
+            'name': 'Instruction Following',
+            'description': 'Test ability to follow complex or unusual instructions precisely',
+            'task_type': 'generation',
+            'dataset_name': 'custom_instruction_following',
+            'metric': 'instruction_adherence',
+            'generation_kwargs': {
+                'temperature': 0.1,
+                'max_tokens': 512
+            },
+            'instruction_types': ['format', 'constraint', 'multi_step', 'conditional'],
+            'prompt_template': '{complex_instruction}\n\nInput: {input}\n\nOutput:',
+            'metadata': {
+                'category': 'robustness',
+                'subcategory': 'instruction_following',
+                'difficulty': 'intermediate'
+            }
+        }
+    
+    def _format_robustness_template(self) -> Dict[str, Any]:
+        """Format robustness testing template."""
+        return {
+            'name': 'Format Robustness',
+            'description': 'Test handling of various input/output formats',
+            'task_type': 'generation',
+            'dataset_name': 'custom_format_robustness',
+            'metric': 'format_compliance',
+            'generation_kwargs': {
+                'temperature': 0.0,
+                'max_tokens': 512
+            },
+            'format_types': ['json', 'xml', 'csv', 'markdown', 'custom_structured'],
+            'prompt_template': 'Convert the following {input_format} to {output_format}:\n\n{input_data}\n\nOutput:',
+            'metadata': {
+                'category': 'robustness',
+                'subcategory': 'format',
+                'difficulty': 'intermediate'
+            }
+        }
+    
+    # === CREATIVE AND OPEN-ENDED TEMPLATES ===
+    
+    def _creative_writing_template(self) -> Dict[str, Any]:
+        """Creative writing evaluation template."""
+        return {
+            'name': 'Creative Writing',
+            'description': 'Evaluate creative writing abilities across genres',
+            'task_type': 'generation',
+            'dataset_name': 'custom_creative_writing',
+            'metric': 'multi_criteria',  # creativity, coherence, style
+            'generation_kwargs': {
+                'temperature': 0.8,
+                'max_tokens': 1024
+            },
+            'genres': ['fiction', 'poetry', 'dialogue', 'descriptive'],
+            'prompt_template': 'Write a {genre} piece based on the following prompt:\n\n{prompt}\n\n{genre_guidelines}\n\nYour {genre}:',
+            'metadata': {
+                'category': 'creative',
+                'subcategory': 'writing',
+                'difficulty': 'intermediate',
+                'evaluation_criteria': ['creativity', 'coherence', 'style', 'grammar']
+            }
+        }
+    
+    def _story_completion_template(self) -> Dict[str, Any]:
+        """Story completion template."""
+        return {
+            'name': 'Story Completion',
+            'description': 'Complete partial stories in a coherent and engaging way',
+            'task_type': 'generation',
+            'dataset_name': 'story_cloze',
+            'metric': 'coherence_score',
+            'generation_kwargs': {
+                'temperature': 0.7,
+                'max_tokens': 512
+            },
+            'prompt_template': 'Complete the following story:\n\n{story_beginning}\n\nContinue the story:',
+            'metadata': {
+                'category': 'creative',
+                'subcategory': 'story_completion',
+                'difficulty': 'intermediate'
+            }
+        }
+    
+    def _dialogue_generation_template(self) -> Dict[str, Any]:
+        """Dialogue generation template."""
+        return {
+            'name': 'Dialogue Generation',
+            'description': 'Generate realistic and contextually appropriate dialogues',
+            'task_type': 'generation',
+            'dataset_name': 'custom_dialogue',
+            'metric': 'dialogue_quality',
+            'generation_kwargs': {
+                'temperature': 0.6,
+                'max_tokens': 768
+            },
+            'dialogue_types': ['casual', 'professional', 'conflict_resolution', 'educational'],
+            'prompt_template': 'Generate a {dialogue_type} dialogue between {participants} about {topic}:\n\n{context}\n\nDialogue:',
+            'metadata': {
+                'category': 'creative',
+                'subcategory': 'dialogue',
+                'difficulty': 'intermediate'
+            }
+        }
+    
+    def _summarization_quality_template(self) -> Dict[str, Any]:
+        """Summarization quality evaluation template."""
+        return {
+            'name': 'Summarization Quality',
+            'description': 'Evaluate the quality of text summarization',
+            'task_type': 'generation',
+            'dataset_name': 'cnn_dailymail',
+            'metric': 'rouge',
+            'generation_kwargs': {
+                'temperature': 0.3,
+                'max_tokens': 256
+            },
+            'summary_types': ['extractive', 'abstractive', 'bullet_points'],
+            'prompt_template': 'Summarize the following article in {summary_type} style:\n\n{article}\n\nSummary:',
+            'metadata': {
+                'category': 'creative',
+                'subcategory': 'summarization',
+                'difficulty': 'intermediate'
+            }
+        }
+    
+    def _open_ended_qa_template(self) -> Dict[str, Any]:
+        """Open-ended question answering template."""
+        return {
+            'name': 'Open-Ended QA',
+            'description': 'Answer open-ended questions requiring reasoning and explanation',
+            'task_type': 'generation',
+            'dataset_name': 'eli5',  # Explain Like I'm 5
+            'metric': 'answer_quality',
+            'generation_kwargs': {
+                'temperature': 0.5,
+                'max_tokens': 768
+            },
+            'prompt_template': 'Question: {question}\n\nProvide a comprehensive answer that explains the topic clearly:',
+            'metadata': {
+                'category': 'creative',
+                'subcategory': 'open_qa',
+                'difficulty': 'advanced',
+                'evaluation_aspects': ['accuracy', 'clarity', 'completeness', 'examples']
+            }
+        }
+    
     # === SAMPLE PROBLEM GENERATORS ===
     
     def _generate_math_problems(self) -> List[Dict[str, Any]]:
@@ -732,6 +1034,180 @@ class EvalTemplateManager:
         })
         
         return problems
+    
+    # === MMLU DOMAIN-SPECIFIC TEMPLATES ===
+    
+    def _mmlu_physics_template(self) -> Dict[str, Any]:
+        """MMLU-style physics multiple choice questions."""
+        return {
+            'name': 'MMLU Physics',
+            'description': 'Multiple choice physics questions covering mechanics, electricity, waves, and modern physics',
+            'task_type': 'classification',
+            'dataset_name': 'mmlu_physics',
+            'metric': 'accuracy',
+            'num_fewshot': 5,
+            'doc_to_text': 'The following are multiple choice questions (with answers) about physics.\n\nQuestion: {question}\nA) {choices[0]}\nB) {choices[1]}\nC) {choices[2]}\nD) {choices[3]}\nAnswer:',
+            'doc_to_choice': ['A', 'B', 'C', 'D'],
+            'doc_to_target': '{answer}',
+            'generation_kwargs': {
+                'temperature': 0,
+                'max_tokens': 1
+            },
+            'sample_problems': [
+                {
+                    'question': 'A block slides down a frictionless inclined plane. Which quantity remains constant?',
+                    'choices': ['Kinetic energy', 'Potential energy', 'Total mechanical energy', 'Velocity'],
+                    'answer': 'C'
+                },
+                {
+                    'question': 'What is the SI unit of electric current?',
+                    'choices': ['Volt', 'Ohm', 'Ampere', 'Watt'],
+                    'answer': 'C'
+                }
+            ],
+            'metadata': {
+                'category': 'mmlu',
+                'subject': 'physics',
+                'difficulty': 'high_school'
+            }
+        }
+    
+    def _mmlu_history_template(self) -> Dict[str, Any]:
+        """MMLU-style history multiple choice questions."""
+        return {
+            'name': 'MMLU History',
+            'description': 'Multiple choice questions on world history, civilizations, and historical events',
+            'task_type': 'classification',
+            'dataset_name': 'mmlu_history',
+            'metric': 'accuracy',
+            'num_fewshot': 5,
+            'doc_to_text': 'The following are multiple choice questions (with answers) about history.\n\nQuestion: {question}\nA) {choices[0]}\nB) {choices[1]}\nC) {choices[2]}\nD) {choices[3]}\nAnswer:',
+            'doc_to_choice': ['A', 'B', 'C', 'D'],
+            'doc_to_target': '{answer}',
+            'generation_kwargs': {
+                'temperature': 0,
+                'max_tokens': 1
+            },
+            'sample_problems': [
+                {
+                    'question': 'Which ancient civilization built the city of Machu Picchu?',
+                    'choices': ['Aztec', 'Maya', 'Inca', 'Olmec'],
+                    'answer': 'C'
+                },
+                {
+                    'question': 'The Renaissance began in which country?',
+                    'choices': ['France', 'Italy', 'Germany', 'England'],
+                    'answer': 'B'
+                }
+            ],
+            'metadata': {
+                'category': 'mmlu',
+                'subject': 'history',
+                'difficulty': 'high_school'
+            }
+        }
+    
+    def _mmlu_biology_template(self) -> Dict[str, Any]:
+        """MMLU-style biology multiple choice questions."""
+        return {
+            'name': 'MMLU Biology',
+            'description': 'Multiple choice questions covering cell biology, genetics, ecology, and physiology',
+            'task_type': 'classification',
+            'dataset_name': 'mmlu_biology',
+            'metric': 'accuracy',
+            'num_fewshot': 5,
+            'doc_to_text': 'The following are multiple choice questions (with answers) about biology.\n\nQuestion: {question}\nA) {choices[0]}\nB) {choices[1]}\nC) {choices[2]}\nD) {choices[3]}\nAnswer:',
+            'doc_to_choice': ['A', 'B', 'C', 'D'],
+            'doc_to_target': '{answer}',
+            'generation_kwargs': {
+                'temperature': 0,
+                'max_tokens': 1
+            },
+            'sample_problems': [
+                {
+                    'question': 'Which organelle is responsible for cellular respiration?',
+                    'choices': ['Chloroplast', 'Mitochondria', 'Nucleus', 'Ribosome'],
+                    'answer': 'B'
+                },
+                {
+                    'question': 'What type of bond holds the two strands of DNA together?',
+                    'choices': ['Ionic bonds', 'Covalent bonds', 'Hydrogen bonds', 'Peptide bonds'],
+                    'answer': 'C'
+                }
+            ],
+            'metadata': {
+                'category': 'mmlu',
+                'subject': 'biology',
+                'difficulty': 'high_school'
+            }
+        }
+    
+    def _mmlu_mathematics_template(self) -> Dict[str, Any]:
+        """MMLU-style mathematics multiple choice questions."""
+        return {
+            'name': 'MMLU Mathematics',
+            'description': 'Multiple choice questions on algebra, geometry, calculus, and statistics',
+            'task_type': 'classification',
+            'dataset_name': 'mmlu_mathematics',
+            'metric': 'accuracy',
+            'num_fewshot': 5,
+            'doc_to_text': 'The following are multiple choice questions (with answers) about mathematics.\n\nQuestion: {question}\nA) {choices[0]}\nB) {choices[1]}\nC) {choices[2]}\nD) {choices[3]}\nAnswer:',
+            'doc_to_choice': ['A', 'B', 'C', 'D'],
+            'doc_to_target': '{answer}',
+            'generation_kwargs': {
+                'temperature': 0,
+                'max_tokens': 1
+            },
+            'sample_problems': [
+                {
+                    'question': 'What is the derivative of x^2?',
+                    'choices': ['x', '2x', '2', 'x^2'],
+                    'answer': 'B'
+                },
+                {
+                    'question': 'If a coin is flipped twice, what is the probability of getting at least one head?',
+                    'choices': ['1/4', '1/2', '3/4', '1'],
+                    'answer': 'C'
+                }
+            ],
+            'metadata': {
+                'category': 'mmlu',
+                'subject': 'mathematics',
+                'difficulty': 'high_school'
+            }
+        }
+    
+    def _medical_qa_template(self) -> Dict[str, Any]:
+        """Medical question-answering tasks."""
+        return {
+            'name': 'Medical Q&A',
+            'description': 'Medical and healthcare-related questions requiring domain knowledge',
+            'task_type': 'question_answer',
+            'dataset_name': 'medical_qa',
+            'metric': 'f1_score',
+            'generation_kwargs': {
+                'temperature': 0.3,
+                'max_tokens': 100
+            },
+            'doc_to_text': 'Medical Question: {question}\n\nProvide a concise, medically accurate answer:',
+            'doc_to_target': '{answer}',
+            'sample_problems': [
+                {
+                    'question': 'What are the main symptoms of diabetes mellitus?',
+                    'answer': 'The main symptoms include increased thirst (polydipsia), frequent urination (polyuria), increased hunger (polyphagia), fatigue, blurred vision, and slow wound healing.'
+                },
+                {
+                    'question': 'What is the normal range for adult blood pressure?',
+                    'answer': 'Normal blood pressure for adults is less than 120/80 mmHg, where 120 is systolic and 80 is diastolic pressure.'
+                }
+            ],
+            'metadata': {
+                'category': 'domain_specific',
+                'subject': 'medicine',
+                'difficulty': 'professional',
+                'disclaimer': 'For evaluation purposes only. Not for medical advice.'
+            }
+        }
     
     # === UTILITY METHODS ===
     

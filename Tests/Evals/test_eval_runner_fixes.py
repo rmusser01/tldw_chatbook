@@ -68,8 +68,9 @@ print("""
    sample = EvalSample(id="1", input_text="Q?", expected_output="A")
 
 3. Add LLMInterface mocking:
-   with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
-       mock_llm_class.return_value = mock_llm_interface
+   with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+       # Mock chat_api_call to return expected responses
+            mock_llm_class.return_value = \"Mocked response\"_interface
        runner = create_test_runner()
        # ... rest of test
 

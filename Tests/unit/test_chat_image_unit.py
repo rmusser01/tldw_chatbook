@@ -8,18 +8,16 @@
 import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
-import asyncio
+from unittest.mock import Mock, patch, AsyncMock
 from io import BytesIO
 
 # 3rd-party Libraries
 from PIL import Image as PILImage
-from textual.app import App
 from textual.widgets import Input, Button
 
 # Local Imports
 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
-from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
 
 # Test marker for unit tests
@@ -58,7 +56,6 @@ def chat_window(mock_app_instance):
 @pytest.fixture
 def temp_test_image():
     """Create a temporary test image."""
-    import os
     # Create test image using tempfile with delete=False to control cleanup
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
         temp_path = Path(f.name)

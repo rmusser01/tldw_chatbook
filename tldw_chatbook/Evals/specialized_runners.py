@@ -18,6 +18,7 @@ evaluation logic and metrics.
 
 import ast
 import re
+import json
 import subprocess
 import tempfile
 import time
@@ -205,7 +206,20 @@ class CodeExecutionRunner(BaseEvalRunner):
         return response.strip()
     
     def _execute_code(self, code: str, sample: EvalSample) -> Dict[str, Any]:
-        """Execute code and run test cases."""
+        """Execute code and run test cases.
+        
+        Security measures implemented:
+        - Resource limits (CPU, memory, processes, file descriptors)
+        - Dangerous builtins disabled (eval, exec, compile, etc.)
+        - Restricted environment with minimal PATH
+        - Execution timeout
+        - Runs in temporary directory with restricted HOME
+        
+        Future improvements:
+        - Consider using Docker/Podman for true isolation
+        - Add network isolation
+        - Use seccomp filters for syscall restrictions
+        """
         execution_start = time.time()
         results = {
             'syntax_valid': False,
@@ -293,6 +307,36 @@ class CodeExecutionRunner(BaseEvalRunner):
     def _create_test_code(self, code: str, test_cases: List[Dict[str, Any]]) -> str:
         """Create test code that executes the function with test cases."""
         test_code_parts = [
+            "# Import required modules first",
+            "import json",
+            "import sys",
+            "import traceback",
+            "",
+            "# Security: Set resource limits",
+            "import resource",
+            "import signal",
+            "",
+            "# CPU time limit (5 seconds)",
+            "resource.setrlimit(resource.RLIMIT_CPU, (5, 5))",
+            "",
+            "# Memory limit (256MB) - only on systems that support it",
+            "try:",
+            "    resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))",
+            "except (ValueError, OSError):",
+            "    pass  # Some systems don't support RLIMIT_AS or have different limits",
+            "",
+            "# Limit number of processes/threads",
+            "try:",
+            "    resource.setrlimit(resource.RLIMIT_NPROC, (10, 10))",
+            "except:",
+            "    pass  # May not be available on all systems",
+            "",
+            "# Limit file descriptors",
+            "resource.setrlimit(resource.RLIMIT_NOFILE, (50, 50))",
+            "",
+            "# Disable file operations",
+            "resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))",
+            "",
             "# Disable certain dangerous builtins for safety",
             "import builtins",
             "dangerous_builtins = ['eval', 'exec', 'compile', '__import__', 'open', 'input']",
@@ -300,52 +344,65 @@ class CodeExecutionRunner(BaseEvalRunner):
             "    if hasattr(builtins, name):",
             "        setattr(builtins, name, lambda *args, **kwargs: None)",
             "",
+            "# User-provided code",
             code,
-            "\n# Test execution",
-            "import json",
-            "import sys",
-            "results = []"
+            "",
+            "# Test execution",
+            "results = []",
+            ""
         ]
         
+        # Extract function name
+        function_name = self._extract_function_name(code)
+        if not function_name:
+            # If no function found, report error
+            test_code_parts.extend([
+                "results.append({",
+                "    'test': 0,",
+                "    'passed': False,",
+                "    'error': 'No function definition found in code'",
+                "})",
+                "print(json.dumps(results))",
+                "sys.exit(0)"
+            ])
+            return '\n'.join(test_code_parts)
+        
+        # Generate test execution code
         for i, test_case in enumerate(test_cases):
             test_input = test_case.get('input', test_case.get('inputs'))
             expected = test_case.get('expected', test_case.get('output'))
             
-            # Try to determine function name from code
-            function_name = self._extract_function_name(code)
-            
-            if function_name and test_input is not None:
-                test_code_parts.extend([
-                    f"try:",
-                    f"    # Prepare input",
-                    f"    test_input = {repr(test_input)}",
-                    f"    expected = {repr(expected)}",
-                    f"    ",
-                    f"    # Call function based on input type",
-                    f"    if isinstance(test_input, dict):",
-                    f"        result = {function_name}(**test_input)",
-                    f"    elif isinstance(test_input, (list, tuple)) and len(test_input) > 0 and all(isinstance(arg, (int, float, str, bool, type(None))) for arg in test_input):",
-                    f"        result = {function_name}(*test_input)",
-                    f"    else:",
-                    f"        result = {function_name}(test_input)",
-                    f"    ",
-                    f"    # Check result",
-                    f"    passed = result == expected",
-                    f"    results.append({{",
-                    f"        'test': {i},",
-                    f"        'passed': passed,",
-                    f"        'result': result,",
-                    f"        'expected': expected",
-                    f"    }})",
-                    f"except Exception as e:",
-                    f"    import traceback",
-                    f"    results.append({{",
-                    f"        'test': {i},",
-                    f"        'passed': False,",
-                    f"        'error': str(e),",
-                    f"        'traceback': traceback.format_exc()",
-                    f"    }})"
-                ])
+            test_code_parts.extend([
+                f"# Test case {i}",
+                f"try:",
+                f"    test_input = {repr(test_input)}",
+                f"    expected = {repr(expected)}",
+                f"    ",
+                f"    # Call function based on input type",
+                f"    if isinstance(test_input, dict):",
+                f"        result = {function_name}(**test_input)",
+                f"    elif isinstance(test_input, (list, tuple)):",
+                f"        result = {function_name}(*test_input)",
+                f"    else:",
+                f"        result = {function_name}(test_input)",
+                f"    ",
+                f"    # Check result",
+                f"    passed = result == expected",
+                f"    results.append({{",
+                f"        'test': {i},",
+                f"        'passed': passed,",
+                f"        'result': result,",
+                f"        'expected': expected",
+                f"    }})",
+                f"except Exception as e:",
+                f"    results.append({{",
+                f"        'test': {i},",
+                f"        'passed': False,",
+                f"        'error': str(e),",
+                f"        'traceback': traceback.format_exc()",
+                f"    }})",
+                f""
+            ])
         
         test_code_parts.extend([
             "",
@@ -800,66 +857,207 @@ class MultilingualEvaluationRunner(BaseEvalRunner):
             'contains_target_language': False,
             'contains_source_language': False,
             'mixed_language': False,
-            'fluency_indicators': {}
+            'fluency_indicators': {},
+            'script_analysis': {},
+            'language_confidence': 0.0
         }
         
-        # Simple language detection based on character patterns
-        # This is a basic implementation - in production, you'd use proper language detection
+        # Enhanced script detection with Unicode ranges
+        script_checks = {
+            'latin': (r'[a-zA-Z]', 0),
+            'chinese': (r'[\u4e00-\u9fff]', 0),
+            'japanese_hiragana': (r'[\u3040-\u309f]', 0),
+            'japanese_katakana': (r'[\u30a0-\u30ff]', 0),
+            'arabic': (r'[\u0600-\u06ff]', 0),
+            'cyrillic': (r'[\u0400-\u04ff]', 0),
+            'hebrew': (r'[\u0590-\u05ff]', 0),
+            'devanagari': (r'[\u0900-\u097f]', 0),
+            'korean': (r'[\uac00-\ud7af]', 0),
+            'thai': (r'[\u0e00-\u0e7f]', 0)
+        }
         
-        # Check for common language indicators
-        if re.search(r'[a-zA-Z]', response):
-            analysis['contains_latin_script'] = True
+        # Count characters for each script
+        total_chars = len(response)
+        if total_chars > 0:
+            for script, (pattern, _) in script_checks.items():
+                matches = len(re.findall(pattern, response))
+                confidence = matches / total_chars
+                script_checks[script] = (pattern, confidence)
+                if confidence > 0:
+                    analysis[f'contains_{script}'] = True
+                    analysis['script_analysis'][script] = confidence
         
-        if re.search(r'[\u4e00-\u9fff]', response):
-            analysis['contains_chinese'] = True
+        # Language-specific common words for detection
+        language_markers = {
+            'english': {'the', 'is', 'and', 'to', 'of', 'in', 'that', 'for', 'it', 'with'},
+            'french': {'le', 'la', 'les', 'de', 'un', 'une', 'et', 'pour', 'dans', 'que'},
+            'spanish': {'el', 'la', 'los', 'las', 'de', 'un', 'una', 'para', 'que', 'en'},
+            'german': {'der', 'die', 'das', 'und', 'ist', 'für', 'mit', 'auf', 'den', 'ein'},
+            'italian': {'il', 'la', 'di', 'e', 'un', 'una', 'per', 'che', 'con', 'non'},
+            'portuguese': {'o', 'a', 'os', 'as', 'de', 'um', 'uma', 'para', 'que', 'com'},
+            'chinese': {'的', '是', '了', '在', '和', '有', '我', '这', '他', '们'},
+            'japanese': {'の', 'は', 'を', 'が', 'に', 'で', 'と', 'です', 'ます', 'た'},
+            'arabic': {'في', 'من', 'على', 'إلى', 'هذا', 'ما', 'كان', 'أن', 'هو', 'هي'}
+        }
         
-        if re.search(r'[\u3040-\u309f\u30a0-\u30ff]', response):
-            analysis['contains_japanese'] = True
+        # Detect language based on common words
+        words_lower = response.lower().split()
+        word_set = set(words_lower)
         
-        if re.search(r'[\u0600-\u06ff]', response):
-            analysis['contains_arabic'] = True
+        language_scores = {}
+        for lang, markers in language_markers.items():
+            common_found = len(word_set & markers)
+            if common_found > 0:
+                # Score based on percentage of markers found and their frequency
+                score = common_found / len(markers)
+                frequency_score = sum(1 for w in words_lower if w in markers) / len(words_lower) if words_lower else 0
+                language_scores[lang] = (score + frequency_score) / 2
         
-        # Basic fluency indicators
-        word_count = len(response.split())
-        sentence_count = len(re.findall(r'[.!?]+', response))
+        # Determine most likely language
+        if language_scores:
+            best_lang = max(language_scores.items(), key=lambda x: x[1])
+            analysis['language_detected'] = best_lang[0]
+            analysis['language_confidence'] = best_lang[1]
+            
+            # Check if target language is present
+            if self.target_language.lower() in language_scores:
+                analysis['contains_target_language'] = language_scores[self.target_language.lower()] > 0.1
+        
+        # Check for mixed languages
+        significant_scripts = sum(1 for _, conf in analysis['script_analysis'].items() if conf > 0.05)
+        significant_languages = sum(1 for score in language_scores.values() if score > 0.1)
+        analysis['mixed_language'] = significant_scripts > 1 or significant_languages > 1
+        
+        # Enhanced fluency analysis
+        sentences = re.split(r'[.!?]+', response)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        words = response.split()
+        
+        # Calculate sentence length statistics
+        sentence_lengths = [len(s.split()) for s in sentences]
         
         analysis['fluency_indicators'] = {
-            'word_count': word_count,
-            'sentence_count': sentence_count,
-            'avg_words_per_sentence': word_count / max(sentence_count, 1),
-            'has_punctuation': bool(re.search(r'[.!?]', response))
+            'word_count': len(words),
+            'sentence_count': len(sentences),
+            'avg_words_per_sentence': sum(sentence_lengths) / len(sentence_lengths) if sentence_lengths else 0,
+            'sentence_length_std': self._calculate_std_dev(sentence_lengths) if len(sentence_lengths) > 1 else 0,
+            'has_punctuation': bool(re.search(r'[.!?,;:]', response)),
+            'capitalization_ratio': sum(1 for w in words if w and w[0].isupper()) / len(words) if words else 0,
+            'unique_word_ratio': len(set(words)) / len(words) if words else 0,
+            'avg_word_length': sum(len(w) for w in words) / len(words) if words else 0,
+            'paragraph_count': len(re.split(r'\n\n+', response.strip()))
         }
         
+        # Add the response as translated text
+        analysis['translated_text'] = response
+        
         return analysis
+    
+    def _calculate_std_dev(self, values: List[float]) -> float:
+        """Calculate standard deviation of a list of values."""
+        if len(values) < 2:
+            return 0.0
+        mean = sum(values) / len(values)
+        variance = sum((x - mean) ** 2 for x in values) / len(values)
+        return variance ** 0.5
     
     def _calculate_multilingual_metrics(self, analysis: Dict[str, Any], sample: EvalSample) -> Dict[str, float]:
         """Calculate multilingual metrics."""
         metrics = {}
         
-        # Language appropriateness
+        # Basic text statistics
         fluency = analysis['fluency_indicators']
-        
         metrics['word_count'] = float(fluency['word_count'])
         metrics['sentence_count'] = float(fluency['sentence_count'])
         metrics['avg_words_per_sentence'] = fluency['avg_words_per_sentence']
+        metrics['unique_word_ratio'] = fluency['unique_word_ratio']
         
-        # Fluency score (basic heuristic)
-        fluency_score = 0.0
-        if fluency['has_punctuation']:
-            fluency_score += 0.3
-        if 3 <= fluency['avg_words_per_sentence'] <= 25:  # Reasonable sentence length
-            fluency_score += 0.4
-        if fluency['word_count'] >= 5:  # Minimum reasonable response length
-            fluency_score += 0.3
+        # Language detection confidence
+        metrics['language_confidence'] = analysis['language_confidence']
+        metrics['target_language_detected'] = 1.0 if analysis['contains_target_language'] else 0.0
+        metrics['mixed_language'] = 1.0 if analysis['mixed_language'] else 0.0
         
-        metrics['fluency_score'] = fluency_score
+        # Enhanced fluency score with multiple components
+        fluency_components = {
+            'punctuation': 0.15 if fluency['has_punctuation'] else 0,
+            'sentence_length': 0.25 if 5 <= fluency['avg_words_per_sentence'] <= 20 else 0,
+            'sentence_variation': 0.15 if fluency['sentence_length_std'] > 2 else 0,
+            'word_diversity': 0.15 * min(fluency['unique_word_ratio'] / 0.7, 1.0),
+            'capitalization': 0.15 if 0.1 <= fluency['capitalization_ratio'] <= 0.3 else 0,
+            'response_length': 0.15 if fluency['word_count'] >= 10 else 0.05 if fluency['word_count'] >= 5 else 0
+        }
         
-        # Translation quality (if reference available)
+        metrics['fluency_score'] = sum(fluency_components.values())
+        
+        # Add component scores for debugging
+        for component, score in fluency_components.items():
+            metrics[f'fluency_{component}'] = score
+        
+        # Script consistency score
+        if analysis['script_analysis']:
+            dominant_script_ratio = max(analysis['script_analysis'].values())
+            metrics['script_consistency'] = dominant_script_ratio
+        else:
+            metrics['script_consistency'] = 0.0
+        
+        # Translation-specific metrics
+        if self.task_config.metadata.get('subcategory') == 'translation':
+            # Check if the response appears to be a translation (different from input)
+            input_words = set(sample.input_text.lower().split())
+            output_words = set(analysis['translated_text'].lower().split())
+            
+            # Translation should have different words
+            overlap_ratio = len(input_words & output_words) / len(input_words) if input_words else 0
+            metrics['translation_difference'] = 1.0 - overlap_ratio
+            
+            # Length ratio (translations often have similar lengths)
+            input_length = len(sample.input_text.split())
+            output_length = fluency['word_count']
+            if input_length > 0:
+                length_ratio = min(input_length, output_length) / max(input_length, output_length)
+                metrics['length_preservation'] = length_ratio
+            else:
+                metrics['length_preservation'] = 0.0
+        
+        # If we have expected output, calculate translation quality metrics
         if sample.expected_output:
-            metrics.update(self.calculate_metrics(
+            # Get base metrics (BLEU, exact match, etc.)
+            base_metrics = self.calculate_metrics(
                 analysis.get('translated_text', ''), 
                 sample.expected_output
-            ))
+            )
+            metrics.update(base_metrics)
+            
+            # Calculate semantic similarity if both are in same language
+            if analysis['contains_target_language']:
+                # Simple semantic similarity based on word overlap
+                expected_words = set(sample.expected_output.lower().split())
+                actual_words = set(analysis['translated_text'].lower().split())
+                
+                if expected_words:
+                    jaccard = len(expected_words & actual_words) / len(expected_words | actual_words)
+                    metrics['semantic_similarity'] = jaccard
+        
+        # Overall multilingual quality score
+        quality_components = []
+        
+        # Language accuracy component
+        if analysis['contains_target_language']:
+            quality_components.append(0.3)
+        
+        # Fluency component
+        quality_components.append(0.3 * metrics['fluency_score'])
+        
+        # Translation quality component (if applicable)
+        if 'bleu' in metrics:
+            quality_components.append(0.2 * metrics['bleu'])
+        elif 'exact_match' in metrics:
+            quality_components.append(0.2 * metrics['exact_match'])
+        
+        # Consistency component
+        quality_components.append(0.2 * metrics['script_consistency'])
+        
+        metrics['multilingual_quality'] = sum(quality_components)
         
         return metrics
 
@@ -1070,6 +1268,330 @@ class CreativeEvaluationRunner(BaseEvalRunner):
             quality_score += 0.2
         
         metrics['quality_score'] = quality_score
+        
+        return metrics
+
+class RobustnessEvaluationRunner(BaseEvalRunner):
+    """Runner for robustness and adversarial evaluation tasks."""
+    
+    def __init__(self, task_config: TaskConfig, model_config: Dict[str, Any]):
+        super().__init__(task_config, model_config)
+        self.robustness_type = task_config.metadata.get('robustness_type', 'general')
+        self.perturbation_types = task_config.metadata.get('perturbation_types', [
+            'typos', 'character_swap', 'case_change', 'punctuation'
+        ])
+    
+    async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
+        """Run robustness evaluation on a single sample."""
+        start_time = time.time()
+        
+        # Log specialized runner start
+        log_counter("eval_specialized_runner_started", labels={
+            "runner_type": "robustness_evaluation",
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown'),
+            "robustness_type": self.robustness_type
+        })
+        
+        try:
+            # Generate response for original input
+            prompt = self._format_robustness_prompt(sample)
+            generation_start = time.time()
+            original_response = await self.llm_interface.generate(
+                prompt=prompt,
+                **self.task_config.generation_kwargs
+            )
+            generation_duration = time.time() - generation_start
+            
+            # Log generation metrics
+            log_histogram("eval_robustness_generation_duration", generation_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "robustness_type": self.robustness_type
+            })
+            
+            # Test robustness with perturbations
+            robustness_results = await self._test_robustness(sample, original_response)
+            
+            # Calculate metrics
+            metrics = self._calculate_robustness_metrics(
+                original_response, 
+                robustness_results, 
+                sample
+            )
+            
+            # Log robustness metrics
+            log_histogram("eval_robustness_score", metrics.get('robustness_score', 0), labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "robustness_type": self.robustness_type
+            })
+            
+            duration = time.time() - start_time
+            log_histogram("eval_robustness_total_duration", duration, labels={
+                "provider": self.model_config.get('provider', 'unknown')
+            })
+            
+            return EvalSampleResult(
+                sample_id=sample.id,
+                input_text=prompt,
+                expected_output=sample.expected_output,
+                actual_output=original_response,
+                metrics=metrics,
+                metadata={
+                    'robustness_type': self.robustness_type,
+                    'perturbation_results': robustness_results,
+                    'success': metrics.get('robustness_score', 0) > 0.7
+                },
+                processing_time=time.time() - start_time
+            )
+            
+        except Exception as e:
+            logger.error(f"Robustness evaluation failed: {e}")
+            return EvalSampleResult(
+                sample_id=sample.id,
+                input_text=sample.input_text,
+                expected_output=sample.expected_output,
+                actual_output=f"ERROR: {str(e)}",
+                metrics={'error': 1.0},
+                error_info={'error': str(e), 'type': type(e).__name__},
+                processing_time=time.time() - start_time
+            )
+    
+    def _format_robustness_prompt(self, sample: EvalSample) -> str:
+        """Format prompt for robustness evaluation."""
+        if self.robustness_type == 'adversarial_qa':
+            # For adversarial QA, include misleading context
+            context = sample.metadata.get('adversarial_context', '')
+            return f"{context}\n\nQuestion: {sample.input_text}"
+        elif self.robustness_type == 'instruction_following':
+            # For instruction following, include complex instructions
+            instructions = sample.metadata.get('instructions', '')
+            return f"Instructions: {instructions}\n\nInput: {sample.input_text}"
+        else:
+            # Default format
+            return sample.input_text
+    
+    async def _test_robustness(self, sample: EvalSample, original_response: str) -> Dict[str, Any]:
+        """Test model robustness with various perturbations."""
+        results = {
+            'perturbation_responses': {},
+            'consistency_scores': {},
+            'error_count': 0
+        }
+        
+        # Apply different perturbations based on robustness type
+        if self.robustness_type == 'input_perturbation':
+            perturbations = self._generate_perturbations(sample.input_text)
+            
+            for pert_type, perturbed_input in perturbations.items():
+                try:
+                    # Test with perturbed input
+                    perturbed_response = await self.llm_interface.generate(
+                        prompt=perturbed_input,
+                        **self.task_config.generation_kwargs
+                    )
+                    
+                    results['perturbation_responses'][pert_type] = perturbed_response
+                    
+                    # Calculate consistency with original
+                    consistency = self._calculate_consistency(
+                        original_response, 
+                        perturbed_response
+                    )
+                    results['consistency_scores'][pert_type] = consistency
+                    
+                except Exception as e:
+                    logger.warning(f"Perturbation test failed for {pert_type}: {e}")
+                    results['error_count'] += 1
+        
+        elif self.robustness_type == 'format_robustness':
+            # Test different input/output formats
+            format_tests = self._generate_format_variations(sample)
+            
+            for format_type, formatted_input in format_tests.items():
+                try:
+                    formatted_response = await self.llm_interface.generate(
+                        prompt=formatted_input,
+                        **self.task_config.generation_kwargs
+                    )
+                    
+                    # Check if response maintains expected format
+                    format_valid = self._validate_format(
+                        formatted_response,
+                        sample.metadata.get('expected_format', {})
+                    )
+                    results['perturbation_responses'][format_type] = {
+                        'response': formatted_response,
+                        'format_valid': format_valid
+                    }
+                    
+                except Exception as e:
+                    logger.warning(f"Format test failed for {format_type}: {e}")
+                    results['error_count'] += 1
+        
+        return results
+    
+    def _generate_perturbations(self, text: str) -> Dict[str, str]:
+        """Generate various perturbations of input text."""
+        perturbations = {}
+        
+        if 'typos' in self.perturbation_types:
+            # Add random typos
+            perturbed = list(text)
+            if len(perturbed) > 10:
+                # Swap adjacent characters
+                idx = len(perturbed) // 2
+                perturbed[idx], perturbed[idx+1] = perturbed[idx+1], perturbed[idx]
+            perturbations['typos'] = ''.join(perturbed)
+        
+        if 'case_change' in self.perturbation_types:
+            # Random case changes
+            perturbations['case_change'] = ''.join(
+                c.upper() if i % 3 == 0 else c.lower() 
+                for i, c in enumerate(text)
+            )
+        
+        if 'punctuation' in self.perturbation_types:
+            # Remove or add punctuation
+            perturbations['punctuation'] = text.replace('.', '').replace('?', '.')
+        
+        if 'character_swap' in self.perturbation_types:
+            # Unicode lookalikes
+            swap_map = {'a': 'а', 'e': 'е', 'o': 'о', 'i': 'і'}  # Latin to Cyrillic
+            perturbed = text
+            for orig, swap in swap_map.items():
+                perturbed = perturbed.replace(orig, swap, 1)  # Only first occurrence
+            perturbations['character_swap'] = perturbed
+        
+        return perturbations
+    
+    def _generate_format_variations(self, sample: EvalSample) -> Dict[str, str]:
+        """Generate format variations for testing."""
+        base_input = sample.input_text
+        variations = {}
+        
+        # JSON format
+        variations['json'] = json.dumps({
+            "input": base_input,
+            "format": "json"
+        })
+        
+        # XML-like format
+        variations['xml'] = f"<input>{base_input}</input>"
+        
+        # Markdown format
+        variations['markdown'] = f"## Input\n\n{base_input}\n\n---"
+        
+        # Custom delimiter format
+        variations['custom'] = f"<<<START>>>{base_input}<<<END>>>"
+        
+        return variations
+    
+    def _calculate_consistency(self, response1: str, response2: str) -> float:
+        """Calculate consistency between two responses."""
+        if not response1 or not response2:
+            return 0.0
+        
+        # Simple approach: normalized edit distance
+        from difflib import SequenceMatcher
+        return SequenceMatcher(None, response1.lower(), response2.lower()).ratio()
+    
+    def _validate_format(self, response: str, expected_format: Dict[str, Any]) -> bool:
+        """Validate if response matches expected format."""
+        format_type = expected_format.get('type', 'text')
+        
+        if format_type == 'json':
+            try:
+                json.loads(response)
+                return True
+            except:
+                return False
+        
+        elif format_type == 'list':
+            # Check if response contains list markers
+            lines = response.strip().split('\n')
+            list_patterns = [r'^\d+\.', r'^-', r'^\*', r'^•']
+            return any(
+                any(re.match(pattern, line.strip()) for pattern in list_patterns)
+                for line in lines
+            )
+        
+        elif format_type == 'structured':
+            # Check for key-value pairs or sections
+            required_sections = expected_format.get('sections', [])
+            response_lower = response.lower()
+            return all(section.lower() in response_lower for section in required_sections)
+        
+        return True  # Default to valid
+    
+    def _calculate_robustness_metrics(
+        self, 
+        original_response: str,
+        robustness_results: Dict[str, Any],
+        sample: EvalSample
+    ) -> Dict[str, float]:
+        """Calculate robustness metrics."""
+        metrics = {}
+        
+        # Overall robustness score
+        if self.robustness_type == 'input_perturbation':
+            # Average consistency across perturbations
+            consistency_scores = robustness_results.get('consistency_scores', {})
+            if consistency_scores:
+                metrics['robustness_score'] = sum(consistency_scores.values()) / len(consistency_scores)
+                metrics['min_consistency'] = min(consistency_scores.values())
+                metrics['max_consistency'] = max(consistency_scores.values())
+                
+                # Individual perturbation scores
+                for pert_type, score in consistency_scores.items():
+                    metrics[f'consistency_{pert_type}'] = score
+            else:
+                metrics['robustness_score'] = 0.0
+        
+        elif self.robustness_type == 'format_robustness':
+            # Percentage of format tests passed
+            format_results = robustness_results.get('perturbation_responses', {})
+            if format_results:
+                valid_count = sum(
+                    1 for result in format_results.values()
+                    if isinstance(result, dict) and result.get('format_valid', False)
+                )
+                metrics['robustness_score'] = valid_count / len(format_results)
+                metrics['format_compliance_rate'] = metrics['robustness_score']
+            else:
+                metrics['robustness_score'] = 0.0
+        
+        elif self.robustness_type == 'adversarial_qa':
+            # Check if model avoided adversarial traps
+            if sample.expected_output and original_response:
+                # Simple exact match for adversarial QA
+                metrics['robustness_score'] = float(
+                    sample.expected_output.lower() in original_response.lower()
+                )
+                metrics['avoided_trap'] = metrics['robustness_score']
+            else:
+                metrics['robustness_score'] = 0.0
+        
+        else:
+            # Default robustness based on response validity
+            metrics['robustness_score'] = 1.0 if original_response else 0.0
+        
+        # Error rate
+        total_tests = len(robustness_results.get('perturbation_responses', {})) + 1
+        error_count = robustness_results.get('error_count', 0)
+        metrics['error_rate'] = error_count / total_tests if total_tests > 0 else 0.0
+        
+        # Response length stability
+        if robustness_results.get('perturbation_responses'):
+            original_len = len(original_response)
+            perturbed_lens = [
+                len(resp) if isinstance(resp, str) else len(resp.get('response', ''))
+                for resp in robustness_results['perturbation_responses'].values()
+            ]
+            if perturbed_lens:
+                avg_len_diff = sum(abs(l - original_len) for l in perturbed_lens) / len(perturbed_lens)
+                metrics['length_stability'] = 1.0 - min(avg_len_diff / original_len, 1.0) if original_len > 0 else 0.0
         
         return metrics
 
@@ -1671,6 +2193,9 @@ SPECIALIZED_RUNNER_REGISTRY = {
     'creative_evaluation': CreativeEvaluationRunner,
     'creative': CreativeEvaluationRunner,  # Alias
     'creative_writing': CreativeEvaluationRunner,  # Alias
+    'robustness_evaluation': RobustnessEvaluationRunner,
+    'robustness': RobustnessEvaluationRunner,  # Alias
+    'adversarial': RobustnessEvaluationRunner,  # Alias
     'math_reasoning': MathReasoningRunner,
     'math': MathReasoningRunner,  # Alias
     'mathematical': MathReasoningRunner,  # Alias

@@ -3,30 +3,20 @@
 
 import pytest
 import pytest_asyncio
-import tempfile
 import os
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from textual.widgets import Button, Input, TextArea, Static, Select, ListView
+from textual.widgets import Button, TextArea
 from textual.containers import VerticalScroll
 
 # Local imports
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-from tldw_chatbook.Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
 
 # Event handlers to test
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
-    handle_chat_send_button_pressed,
-    handle_chat_action_button_pressed,
-    handle_chat_new_conversation_button_pressed,
-    handle_chat_save_current_chat_button_pressed,
-    handle_chat_load_character_button_pressed,
-    handle_chat_clear_active_character_button_pressed,
-)
 
 # Test marker for integration tests
 pytestmark = [pytest.mark.integration, pytest.mark.skip(reason="Integration tests need refactoring for proper Textual app testing")]

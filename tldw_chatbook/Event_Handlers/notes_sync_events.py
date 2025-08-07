@@ -2,19 +2,18 @@
 # Description: Event handlers for note synchronization
 #
 # Imports
-import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Dict, Any
+from typing import TYPE_CHECKING, Optional
 #
 # Third-Party Imports
 from loguru import logger
-from textual.widgets import Button, Input, Select, ListView, ListItem, Static
+from textual.widgets import Button, Input, Select, ListView
 from textual.css.query import QueryError
 #
 # Local Imports
 from ..Notes.sync_service import NotesSyncService, SyncDirection, ConflictResolution
 from ..Notes.sync_engine import SyncProgress
-from ..Widgets.notes_sync_widget import NotesSyncWidget, SyncProgressWidget
+from tldw_chatbook.Widgets.Note_Widgets.notes_sync_widget import NotesSyncWidget, SyncProgressWidget
 from ..Third_Party.textual_fspicker import SelectDirectory
 #
 if TYPE_CHECKING:

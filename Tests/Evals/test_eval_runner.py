@@ -24,7 +24,7 @@ from tldw_chatbook.Evals.eval_runner import EvalRunner
 # Import the evaluation classes
 from tldw_chatbook.Evals.eval_runner import EvalSampleResult, EvalProgress, EvalError, EvalSample
 from tldw_chatbook.Evals.task_loader import TaskConfig
-from tldw_chatbook.Evals.llm_interface import LLMInterface
+# LLMInterface removed - using existing chat infrastructure
 
 # Helper function to convert dict to EvalSample
 def dict_to_sample(sample_dict):
@@ -164,7 +164,8 @@ class TestBasicEvaluation:
         from tldw_chatbook.Evals.eval_runner import EvalSample
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             runner = create_test_runner()
@@ -188,7 +189,8 @@ class TestBasicEvaluation:
         from tldw_chatbook.Evals.eval_runner import EvalSample
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             runner = create_test_runner()
@@ -216,7 +218,8 @@ class TestBasicEvaluation:
         from tldw_chatbook.Evals.eval_runner import EvalSample
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             runner = create_test_runner()
@@ -272,7 +275,8 @@ class TestDifferentTaskTypes:
         mock_llm_interface.generate.return_value = "Paris"
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             runner = create_test_runner()
@@ -306,7 +310,8 @@ class TestDifferentTaskTypes:
         mock_llm_interface.generate.side_effect = mock_generate_mc
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             # Create runner with classification task config
@@ -351,7 +356,8 @@ class TestDifferentTaskTypes:
         mock_llm_interface.generate.side_effect = mock_generate_gen
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             # Create runner with generation task config
@@ -405,7 +411,8 @@ class TestDifferentTaskTypes:
         mock_llm_interface.generate.side_effect = mock_generate_code
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             # Create runner with generation task config  
@@ -525,7 +532,7 @@ class TestErrorHandling:
         )
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
             mock_llm_class.return_value = mock_failing_llm
             
             runner = create_test_runner()
@@ -560,7 +567,8 @@ class TestErrorHandling:
         )
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm
             
             runner = create_test_runner()
@@ -590,7 +598,8 @@ class TestErrorHandling:
         ]
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm
             
             runner = create_test_runner()
@@ -642,7 +651,8 @@ class TestConcurrencyAndPerformance:
         start_time = asyncio.get_event_loop().time()
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm
             
             runner = create_test_runner()
@@ -673,7 +683,8 @@ class TestConcurrencyAndPerformance:
         ]
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             runner = create_test_runner()
@@ -760,7 +771,8 @@ class TestAdvancedFeatures:
         )
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             runner = create_test_runner()
@@ -811,7 +823,8 @@ class TestAdvancedFeatures:
         )
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             runner = create_test_runner()
@@ -865,7 +878,8 @@ class TestSpecializedEvaluations:
         mock_llm_interface.generate.side_effect = multilingual_generate
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             runner = create_test_runner()
@@ -904,10 +918,11 @@ class TestSpecializedEvaluations:
         )
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
             # Clear any existing side_effect and set return_value
             mock_llm_interface.generate.side_effect = None
             mock_llm_interface.generate.return_value = "John has 3 apples left."
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             runner = create_test_runner()
@@ -938,10 +953,11 @@ class TestSpecializedEvaluations:
         )
         
         # Mock the LLMInterface class to return our mock instance
-        with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
+        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_llm_class:
             # Clear any existing side_effect and set return_value
             mock_llm_interface.generate.side_effect = None
             mock_llm_interface.generate.return_value = "I can't help with that request."
+            # Mock chat_api_call to return expected responses
             mock_llm_class.return_value = mock_llm_interface
             
             runner = create_test_runner()

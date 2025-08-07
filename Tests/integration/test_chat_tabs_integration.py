@@ -3,19 +3,13 @@
 #
 # Imports
 import pytest
-import asyncio
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, AsyncMock, patch
 #
 # 3rd-Party Imports
-from textual.app import App
-from textual.widgets import Button, TextArea
-from textual.containers import VerticalScroll
 #
 # Local Imports
-from tldw_chatbook.Widgets.chat_tab_container import ChatTabContainer
-from tldw_chatbook.Widgets.chat_tab_bar import ChatTabBar
-from tldw_chatbook.Widgets.chat_session import ChatSession
-from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_bar import ChatTabBar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_tabs
 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
 #

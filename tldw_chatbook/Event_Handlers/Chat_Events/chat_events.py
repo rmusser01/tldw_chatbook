@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 # 3rd-Party Imports
 from loguru import logger as loguru_logger
 from rich.text import Text
-from rich.markup import escape as escape_markup
 from textual.widgets import (
     Button, Input, TextArea, Static, Select, Checkbox, ListView, ListItem, Label, Markdown
 )
@@ -27,13 +26,13 @@ from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_worldbooks
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_dictionaries
 from tldw_chatbook.Utils.Utils import safe_float, safe_int
 from tldw_chatbook.Utils.input_validation import validate_text_input, validate_number_range, sanitize_string
-from tldw_chatbook.Widgets.chat_message import ChatMessage
-from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 from tldw_chatbook.Widgets.titlebar import TitleBar
 from tldw_chatbook.Utils.Emoji_Handling import (
     get_char, EMOJI_THINKING, FALLBACK_THINKING, EMOJI_EDIT, FALLBACK_EDIT,
     EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT, EMOJI_COPIED, FALLBACK_COPIED, EMOJI_COPY, FALLBACK_COPY,
-    EMOJI_SEND, FALLBACK_SEND, EMOJI_STOP, FALLBACK_STOP
+    EMOJI_SEND, FALLBACK_SEND
 )
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import load_character_and_image
@@ -1680,7 +1679,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         ai_display_name_regen = active_char_data_regen.get('name', 'AI') if active_char_data_regen else 'AI'
         
         if use_enhanced_chat:
-            from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
+            from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
             ai_placeholder_widget_regen = ChatMessageEnhanced(
                 message=f"{ai_display_name_regen} {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
                 role=ai_display_name_regen, generation_complete=False
@@ -3355,7 +3354,7 @@ async def handle_chat_copy_user_prompt_button_pressed(app: 'TldwCli', event: But
 
 async def handle_chat_template_search_input_changed(app: 'TldwCli', event_value: str) -> None:
     """Handle changes to the template search input in the Chat tab."""
-    from tldw_chatbook.Chat.prompt_template_manager import get_available_templates, load_template
+    from tldw_chatbook.Chat.prompt_template_manager import get_available_templates
 
     logger = getattr(app, 'loguru_logger', logging)
     search_term = event_value.strip().lower()
@@ -4174,8 +4173,7 @@ async def generate_document_with_llm(app: 'TldwCli', document_type: str,
         message_content: The specific message content
         conversation_context: Additional context about the conversation
     """
-    import asyncio
-    
+
     try:
         # Get provider info from context
         provider = conversation_context.get("current_provider")

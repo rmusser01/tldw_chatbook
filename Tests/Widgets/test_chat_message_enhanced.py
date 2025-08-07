@@ -6,14 +6,13 @@
 # Standard Library
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
+from unittest.mock import Mock, patch
 from io import BytesIO
 
 # 3rd-party Libraries
 from PIL import Image as PILImage
-from textual.widgets import Button, Label, Static, TextArea, Markdown
+from textual.widgets import Button, Label, Static, Markdown
 from textual.containers import Container, Horizontal, Vertical
-from textual.events import Click
 
 # Test utilities
 import sys
@@ -22,7 +21,7 @@ from textual_test_utils import widget_pilot, app_pilot
 from textual_test_harness import TestApp, IsolatedWidgetTestApp, isolated_widget_pilot
 
 # Local Imports
-from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 
 #
 #######################################################################################################################

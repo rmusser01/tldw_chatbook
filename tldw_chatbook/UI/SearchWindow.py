@@ -240,32 +240,38 @@ class SearchWindow(Container):
                         yield Markdown("### Web Search/Scraping Is Not Currently Installed\n\n...")
                         
             # Embeddings views
-            # Create Embeddings View
+            # Create Embeddings View - Now using new SearchEmbeddingsWindow
             with Container(id=SEARCH_VIEW_EMBEDDINGS_CREATE, classes="search-view-area"):
                 try:
-                    # Force check dependencies before importing
-                    from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE, force_recheck_embeddings
-                    embeddings_available = force_recheck_embeddings()
-                    logger.info(f"Embeddings dependencies check in SearchWindow: {embeddings_available}")
-                    
-                    if embeddings_available:
-                        from ..UI.Embeddings_Creation_Content import EmbeddingsCreationContent
-                        yield EmbeddingsCreationContent(app_instance=self.app_instance)
-                    else:
+                    # Use the new SearchEmbeddingsWindow for improved UX
+                    from .SearchEmbeddingsWindow import SearchEmbeddingsWindow
+                    yield SearchEmbeddingsWindow(app_instance=self.app_instance)
+                    logger.info("Using new SearchEmbeddingsWindow for embeddings creation")
+                except ImportError as e:
+                    logger.error(f"Failed to import SearchEmbeddingsWindow, falling back to wizard: {e}")
+                    # Fallback to the original wizard if new window fails
+                    try:
+                        from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE, force_recheck_embeddings
+                        embeddings_available = force_recheck_embeddings()
+                        logger.info(f"Embeddings dependencies check in SearchWindow: {embeddings_available}")
+                        
+                        if embeddings_available:
+                            from ..UI.Wizards.EmbeddingsWizard import SimpleEmbeddingsWizard
+                            yield SimpleEmbeddingsWizard(app_instance=self.app_instance)
+                        else:
+                            yield Static(
+                                "⚠️ Embeddings Creation functionality is not available.\n\n"
+                                "Required dependencies are not properly detected.\n"
+                                "Please restart the application.",
+                                classes="embeddings-unavailable-message"
+                            )
+                    except ImportError as fallback_error:
+                        logger.error(f"Fallback also failed: {fallback_error}")
                         yield Static(
-                            "⚠️ Embeddings Creation functionality is not available.\n\n"
-                            "Required dependencies are not properly detected.\n"
-                            "Please restart the application.",
+                            "⚠️ Embeddings creation view is not available.\n\n"
+                            f"Error: {str(e)}",
                             classes="embeddings-unavailable-message"
                         )
-                except ImportError as e:
-                    logger.error(f"Failed to import EmbeddingsCreationContent: {e}")
-                    # If the refactored component doesn't exist yet, show a placeholder
-                    yield Static(
-                        "⚠️ Embeddings creation view is being migrated.\n\n"
-                        f"Import error: {str(e)}",
-                        classes="embeddings-unavailable-message"
-                    )
                     
             # Manage Embeddings View
             with Container(id=SEARCH_VIEW_EMBEDDINGS_MANAGE, classes="search-view-area"):
@@ -362,6 +368,32 @@ class SearchWindow(Container):
                                 logger.debug("SearchWindow.handle_nav: Focused search input in SearchRAGWindow")
                         except Exception as focus_error:
                             logger.warning(f"SearchWindow.handle_nav: Could not focus search input: {focus_error}")
+            
+            # Special handling for embeddings create view to reactivate wizard
+            elif target_view_id == SEARCH_VIEW_EMBEDDINGS_CREATE:
+                for child in target_view.children:
+                    # Make sure the child is visible
+                    child.display = True
+                    
+                    # If it's a SimpleEmbeddingsWizard, reactivate the current step
+                    if child.__class__.__name__ == "SimpleEmbeddingsWizard":
+                        try:
+                            # Find the actual wizard inside the SimpleEmbeddingsWizard
+                            if hasattr(child, 'wizard') and child.wizard:
+                                wizard = child.wizard
+                                # Reactivate the current step
+                                if hasattr(wizard, 'steps') and wizard.steps and hasattr(wizard, 'current_step'):
+                                    current_step_index = wizard.current_step or 0
+                                    if 0 <= current_step_index < len(wizard.steps):
+                                        current_step = wizard.steps[current_step_index]
+                                        current_step.add_class("active")
+                                        current_step.remove_class("hidden")
+                                        # Call on_show to fully reactivate the step
+                                        if hasattr(current_step, 'on_show'):
+                                            current_step.on_show()
+                                        logger.debug(f"SearchWindow.handle_nav: Reactivated wizard step {current_step_index}")
+                        except Exception as wizard_error:
+                            logger.warning(f"SearchWindow.handle_nav: Could not reactivate wizard step: {wizard_error}")
             
             # Notify the app that the view has changed
             if hasattr(self.app_instance, 'notify'):
