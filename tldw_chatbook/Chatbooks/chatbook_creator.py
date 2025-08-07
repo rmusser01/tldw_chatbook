@@ -41,14 +41,17 @@ class ChatbookCreator:
         Args:
             db_paths: Dictionary mapping database names to their paths
         """
+        logger.info(f"ChatbookCreator.__init__: Initializing with db_paths={db_paths}")
         self.db_paths = db_paths
         # Use cross-platform user data directory
         user_data_dir = get_user_data_dir()
         self.temp_dir = user_data_dir / "temp" / "chatbooks"
+        logger.info(f"ChatbookCreator.__init__: Creating temp directory at {self.temp_dir}")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.missing_dependencies: Set[int] = set()
         self.auto_included_characters: Set[int] = set()
         self._selected_characters: Set[str] = set()  # Track explicitly selected characters
+        logger.info("ChatbookCreator.__init__: Initialization complete")
         
     def create_chatbook(
         self,
@@ -86,18 +89,25 @@ class ChatbookCreator:
                 - missing_dependencies: List of character IDs that were referenced but not included
                 - auto_included: List of character IDs that were automatically included
         """
+        logger.info(f"ChatbookCreator.create_chatbook: Starting creation of '{name}'")
+        logger.info(f"ChatbookCreator.create_chatbook: Options - include_media={include_media}, media_quality={media_quality}, include_embeddings={include_embeddings}, auto_include_dependencies={auto_include_dependencies}")
+        logger.info(f"ChatbookCreator.create_chatbook: Content selections - {[(t.value, len(ids)) for t, ids in content_selections.items()]}")
+        
         try:
             # Reset dependency tracking
             self.missing_dependencies.clear()
             self.auto_included_characters.clear()
             self._selected_characters = set(content_selections.get(ContentType.CHARACTER, []))
+            logger.info(f"ChatbookCreator.create_chatbook: Tracking {len(self._selected_characters)} explicitly selected characters")
             
             # Create temporary working directory
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             work_dir = self.temp_dir / f"chatbook_{timestamp}"
             work_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"ChatbookCreator.create_chatbook: Working directory created at {work_dir}")
             
             # Initialize manifest
+            logger.info("ChatbookCreator.create_chatbook: Initializing manifest")
             manifest = ChatbookManifest(
                 version=ChatbookVersion.V1,
                 name=name,
@@ -109,15 +119,17 @@ class ChatbookCreator:
                 tags=tags or [],
                 categories=categories or []
             )
+            logger.info(f"ChatbookCreator.create_chatbook: Manifest created - version {manifest.version}, media={include_media}, embeddings={include_embeddings}")
             
             # Initialize content container
             content = ChatbookContent()
             
             # Process each content type
-            logger.info(f"Creating chatbook '{name}' with selections: {content_selections}")
+            logger.info(f"ChatbookCreator.create_chatbook: Processing content types")
             
             # Collect conversations
             if ContentType.CONVERSATION in content_selections:
+                logger.info(f"ChatbookCreator.create_chatbook: Collecting {len(content_selections[ContentType.CONVERSATION])} conversations")
                 self._collect_conversations(
                     content_selections[ContentType.CONVERSATION],
                     work_dir,
@@ -128,6 +140,7 @@ class ChatbookCreator:
             
             # Collect notes
             if ContentType.NOTE in content_selections:
+                logger.info(f"ChatbookCreator.create_chatbook: Collecting {len(content_selections[ContentType.NOTE])} notes")
                 self._collect_notes(
                     content_selections[ContentType.NOTE],
                     work_dir,
@@ -137,6 +150,7 @@ class ChatbookCreator:
             
             # Collect characters
             if ContentType.CHARACTER in content_selections:
+                logger.info(f"ChatbookCreator.create_chatbook: Collecting {len(content_selections[ContentType.CHARACTER])} characters")
                 self._collect_characters(
                     content_selections[ContentType.CHARACTER],
                     work_dir,
@@ -146,6 +160,7 @@ class ChatbookCreator:
             
             # Collect media (if enabled)
             if include_media and ContentType.MEDIA in content_selections:
+                logger.info(f"ChatbookCreator.create_chatbook: Collecting {len(content_selections[ContentType.MEDIA])} media items (quality={media_quality})")
                 self._collect_media(
                     content_selections[ContentType.MEDIA],
                     work_dir,
@@ -156,6 +171,7 @@ class ChatbookCreator:
             
             # Collect prompts
             if ContentType.PROMPT in content_selections:
+                logger.info(f"ChatbookCreator.create_chatbook: Collecting {len(content_selections[ContentType.PROMPT])} prompts")
                 self._collect_prompts(
                     content_selections[ContentType.PROMPT],
                     work_dir,
@@ -164,6 +180,7 @@ class ChatbookCreator:
                 )
             
             # Auto-discover relationships
+            logger.info("ChatbookCreator.create_chatbook: Discovering relationships")
             self._discover_relationships(manifest, content)
             
             # Update statistics
@@ -171,27 +188,34 @@ class ChatbookCreator:
             manifest.total_notes = len(content.notes)
             manifest.total_characters = len(content.characters)
             manifest.total_media_items = len(content.media_items)
+            logger.info(f"ChatbookCreator.create_chatbook: Final stats - conversations={manifest.total_conversations}, notes={manifest.total_notes}, characters={manifest.total_characters}, media={manifest.total_media_items}")
             
             # Write manifest
             manifest_path = work_dir / "manifest.json"
+            logger.info(f"ChatbookCreator.create_chatbook: Writing manifest to {manifest_path}")
             with open(manifest_path, 'w', encoding='utf-8') as f:
                 json.dump(manifest.to_dict(), f, indent=2, ensure_ascii=False)
             
             # Create README
+            logger.info("ChatbookCreator.create_chatbook: Creating README")
             self._create_readme(work_dir, manifest)
             
             # Package into archive
             if output_path.suffix == '.zip':
+                logger.info(f"ChatbookCreator.create_chatbook: Creating ZIP archive at {output_path}")
                 self._create_zip_archive(work_dir, output_path)
             else:
                 # Default to ZIP if no extension specified
                 output_path = output_path.with_suffix('.zip')
+                logger.info(f"ChatbookCreator.create_chatbook: Creating ZIP archive at {output_path} (defaulted to .zip)")
                 self._create_zip_archive(work_dir, output_path)
             
             # Calculate final size
             manifest.total_size_bytes = output_path.stat().st_size
+            logger.info(f"ChatbookCreator.create_chatbook: Archive size: {manifest.total_size_bytes} bytes")
             
             # Cleanup temp directory
+            logger.info(f"ChatbookCreator.create_chatbook: Cleaning up temporary directory {work_dir}")
             shutil.rmtree(work_dir)
             
             # Prepare dependency info
@@ -207,10 +231,11 @@ class ChatbookCreator:
             if self.missing_dependencies:
                 message += f". Warning: {len(self.missing_dependencies)} character dependencies are missing"
             
+            logger.info(f"ChatbookCreator.create_chatbook: Success - {message}")
             return True, message, dependency_info
             
         except Exception as e:
-            logger.error(f"Error creating chatbook: {e}")
+            logger.error(f"ChatbookCreator.create_chatbook: Error - {e}", exc_info=True)
             dependency_info = {
                 "missing_dependencies": list(self.missing_dependencies),
                 "auto_included": list(self.auto_included_characters)
@@ -226,23 +251,29 @@ class ChatbookCreator:
         auto_include_dependencies: bool
     ) -> None:
         """Collect conversations and their messages."""
+        logger.info(f"ChatbookCreator._collect_conversations: Collecting {len(conversation_ids)} conversations")
         db_path = self.db_paths.get("ChaChaNotes")
         if not db_path:
+            logger.warning("ChatbookCreator._collect_conversations: ChaChaNotes database path not configured")
             return
             
         db = CharactersRAGDB(db_path, "chatbook_creator")
         conv_dir = work_dir / "content" / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"ChatbookCreator._collect_conversations: Created conversations directory at {conv_dir}")
         
         for conv_id in conversation_ids:
+            logger.debug(f"ChatbookCreator._collect_conversations: Processing conversation {conv_id}")
             try:
                 # Get conversation details
                 conv = db.get_conversation_by_id(conv_id)
                 if not conv:
+                    logger.warning(f"ChatbookCreator._collect_conversations: Conversation {conv_id} not found")
                     continue
                 
                 # Get all messages
                 messages = db.get_messages_for_conversation(conv_id)
+                logger.debug(f"ChatbookCreator._collect_conversations: Found {len(messages) if messages else 0} messages for conversation {conv_id}")
                 
                 # Create conversation data
                 # Convert datetime to string if needed

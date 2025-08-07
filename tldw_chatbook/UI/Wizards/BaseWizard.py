@@ -477,6 +477,7 @@ class WizardContainer(Container):
             
     def compose(self) -> ComposeResult:
         """Compose the wizard UI."""
+        logger.info(f"BaseWizard.compose() called with {len(self.steps)} steps, current_step={self.current_step}")
         # Title
         yield Label(self.title, classes="wizard-title")
         
@@ -494,19 +495,28 @@ class WizardContainer(Container):
                 yield step
                 
         # Navigation - Don't set reactive values here as it triggers watchers before mount
+        logger.info("BaseWizard.compose: Creating WizardNavigation widget")
         yield WizardNavigation(classes="wizard-navigation")
         
     def on_mount(self) -> None:
         """Initialize wizard on mount."""
+        logger.info(f"BaseWizard.on_mount: Starting, current_step={self.current_step}, total_steps={self.total_steps}")
         # Set navigation values after mount to avoid warnings
-        nav = self.query_one(".wizard-navigation", WizardNavigation)
-        nav.current_step = self.current_step + 1
-        nav.total_steps = self.total_steps
-        nav.can_go_back = self.current_step > 0
-        nav.can_go_forward = self.can_proceed
+        try:
+            nav = self.query_one(".wizard-navigation", WizardNavigation)
+            logger.info(f"BaseWizard.on_mount: Found WizardNavigation, setting values")
+            nav.current_step = self.current_step + 1
+            nav.total_steps = self.total_steps
+            nav.can_go_back = self.current_step > 0
+            nav.can_go_forward = self.can_proceed
+            logger.info(f"BaseWizard.on_mount: Navigation configured - current_step={nav.current_step}, can_go_forward={nav.can_go_forward}")
+        except NoMatches as e:
+            logger.error(f"BaseWizard.on_mount: Could not find WizardNavigation - {e}")
         
+        logger.info("BaseWizard.on_mount: Calling show_step(0)")
         self.show_step(0)
         # Trigger initial validation after a short delay to allow step to fully initialize
+        logger.info("BaseWizard.on_mount: Setting timer for initial validation")
         self.set_timer(0.1, self.validate_step)
         
     def show_step(self, step_index: int) -> None:
@@ -537,12 +547,12 @@ class WizardContainer(Container):
         try:
             # Update progress bar
             progress = self.query_one(".wizard-progress", WizardProgress)
-            progress.current_step = self.current_step + 1
+            progress.current_step = (self.current_step or 0) + 1
             
             # Update navigation
             nav = self.query_one(".wizard-navigation", WizardNavigation)
-            nav.current_step = self.current_step + 1
-            nav.can_go_back = self.current_step > 0
+            nav.current_step = (self.current_step or 0) + 1
+            nav.can_go_back = (self.current_step or 0) > 0
             nav.can_go_forward = self.can_proceed
         except NoMatches:
             pass
@@ -551,8 +561,9 @@ class WizardContainer(Container):
         """Validate the current step and update navigation."""
         logger.debug(f"WizardContainer.validate_step called for step {self.current_step}")
         
-        if 0 <= self.current_step < len(self.steps):
-            step = self.steps[self.current_step]
+        current_step_index = self.current_step or 0
+        if 0 <= current_step_index < len(self.steps):
+            step = self.steps[current_step_index]
             is_valid, errors = step.validate()
             step.is_valid = is_valid
             step.validation_errors = errors
@@ -564,10 +575,11 @@ class WizardContainer(Container):
             # Update navigation
             try:
                 nav = self.query_one(".wizard-navigation", WizardNavigation)
+                logger.info(f"BaseWizard.validate_step: Setting nav.can_go_forward={is_valid}")
                 nav.can_go_forward = is_valid
-                logger.debug(f"Updated navigation can_go_forward to {is_valid}")
-            except NoMatches:
-                logger.warning("Could not find wizard navigation to update")
+                logger.info(f"BaseWizard.validate_step: Navigation updated successfully")
+            except NoMatches as e:
+                logger.error(f"BaseWizard.validate_step: Could not find navigation to update - {e}")
             
             # Allow proceeding if this is a special step (like ProgressStep)
             if hasattr(step, 'can_proceed'):

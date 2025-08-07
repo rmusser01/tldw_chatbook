@@ -34,6 +34,17 @@ SplashScreen, .splash-screen {
     margin: 0;
 }
 
+/* Splash display widget - the actual content display area */
+#splash-display, .splash-display {
+    width: 100%;
+    height: 100%;
+    content-align: center middle;
+    text-align: center;
+    align: center middle;
+    padding: 0;
+    margin: 0;
+}
+
 /* Progress text */
 #splash-progress-text, .splash-progress-text {
     width: 100%;

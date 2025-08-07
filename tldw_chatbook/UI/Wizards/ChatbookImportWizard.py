@@ -64,7 +64,9 @@ class FileSelectionStep(WizardStep):
     
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
+        logger.info(f"FileSelectionStep.on_button_pressed: button_id={event.button.id}")
         if event.button.id == "browse-file":
+            logger.info("FileSelectionStep.on_button_pressed: Browse button clicked, calling _browse_for_file")
             await self._browse_for_file()
     
     async def _browse_for_file(self) -> None:
@@ -80,13 +82,16 @@ class FileSelectionStep(WizardStep):
             file_path = await self.wizard.app_instance.push_screen(file_dialog, wait_for_dismiss=True)
             
             if file_path:
+                logger.info(f"FileSelectionStep._browse_for_file: File selected: {file_path}")
                 self.selected_file = Path(file_path)
                 self._update_file_display()
                 # Notify wizard that we can proceed
                 self.wizard.refresh_current_step()
+            else:
+                logger.info("FileSelectionStep._browse_for_file: No file selected")
                 
         except Exception as e:
-            logger.error(f"Error selecting file: {e}")
+            logger.error(f"FileSelectionStep._browse_for_file: Error selecting file: {e}", exc_info=True)
             self.wizard.app_instance.notify(f"Error selecting file: {str(e)}", severity="error")
     
     def _update_file_display(self) -> None:

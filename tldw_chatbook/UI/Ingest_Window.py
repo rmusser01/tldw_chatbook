@@ -121,9 +121,6 @@ class IngestWindow(Container):
             if not self._web_scraping_worker.is_finished:
                 logger.info("Cancelling active web scraping")
                 self._web_scraping_worker.cancel()
-        
-        # Call parent unmount
-        super().on_unmount()
     
     def get_default_model_for_provider(self, provider: str) -> str:
         """Get default model for a transcription provider."""

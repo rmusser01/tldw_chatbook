@@ -144,6 +144,8 @@ class ChatbookImporter:
         Returns:
             Tuple of (success, message)
         """
+        logger.info(f"ChatbookImporter.import_chatbook: Starting import of {chatbook_path}")
+        logger.info(f"ChatbookImporter.import_chatbook: Options - conflict_resolution={conflict_resolution}, prefix_imported={prefix_imported}, import_media={import_media}, import_embeddings={import_embeddings}")
         status = import_status if import_status else ImportStatus()
         
         try:
@@ -163,15 +165,19 @@ class ChatbookImporter:
             
             # Load manifest
             manifest_path = extract_dir / "manifest.json"
+            logger.info(f"ChatbookImporter.import_chatbook: Looking for manifest at {manifest_path}")
             if not manifest_path.exists():
+                logger.error(f"ChatbookImporter.import_chatbook: manifest.json not found")
                 status.add_error("Invalid chatbook: manifest.json not found")
                 shutil.rmtree(extract_dir)
                 return False, status
             
             with open(manifest_path, 'r', encoding='utf-8') as f:
                 manifest_data = json.load(f)
+            logger.info(f"ChatbookImporter.import_chatbook: Loaded manifest with {len(manifest_data.get('content', {}))} content types")
             
             manifest = ChatbookManifest.from_dict(manifest_data)
+            logger.info(f"ChatbookImporter.import_chatbook: Manifest - version {manifest.version}, {manifest.total_conversations} conversations, {manifest.total_notes} notes, {manifest.total_characters} characters, {manifest.total_media_items} media")
             
             # Check version compatibility
             if manifest.version != ChatbookVersion.V1:
@@ -271,21 +277,26 @@ class ChatbookImporter:
         status: ImportStatus
     ) -> None:
         """Import conversations."""
+        logger.info(f"ChatbookImporter._import_conversations: Starting import of {len(conversation_ids)} conversations")
         db_path = self.db_paths.get("ChaChaNotes")
         if not db_path:
+            logger.error("ChatbookImporter._import_conversations: ChaChaNotes database path not configured")
             status.add_error("ChaChaNotes database path not configured")
             return
             
         db = CharactersRAGDB(db_path, "chatbook_importer")
         conv_dir = extract_dir / "content" / "conversations"
+        logger.info(f"ChatbookImporter._import_conversations: Looking for conversations in {conv_dir}")
         
         for conv_id in conversation_ids:
             status.processed_items += 1
+            logger.info(f"ChatbookImporter._import_conversations: Processing conversation {conv_id} ({status.processed_items}/{len(conversation_ids)})")
             
             try:
                 # Find conversation file
                 conv_file = conv_dir / f"conversation_{conv_id}.json"
                 if not conv_file.exists():
+                    logger.warning(f"ChatbookImporter._import_conversations: Conversation file not found: {conv_file.name}")
                     status.add_warning(f"Conversation file not found: {conv_file.name}")
                     status.failed_items += 1
                     continue
@@ -301,6 +312,7 @@ class ChatbookImporter:
                 
                 # Check for existing conversations with same name
                 existing_conversations = db.get_conversation_by_name(conv_name)
+                logger.info(f"ChatbookImporter._import_conversations: Found {len(existing_conversations) if existing_conversations else 0} existing conversations with name '{conv_name}'")
                 
                 if existing_conversations:
                     # Handle conflict - use the first (most recent) conversation
@@ -312,10 +324,13 @@ class ChatbookImporter:
                     )
                     
                     if resolution == ConflictResolution.SKIP:
+                        logger.info(f"ChatbookImporter._import_conversations: Skipping conversation due to conflict resolution")
                         status.skipped_items += 1
                         continue
                     elif resolution == ConflictResolution.RENAME:
+                        old_name = conv_name
                         conv_name = self._generate_unique_name(conv_name, db)
+                        logger.info(f"ChatbookImporter._import_conversations: Renamed conversation from '{old_name}' to '{conv_name}'")
                 
                 # Create conversation
                 character_id = conv_data.get('character_id')
@@ -327,9 +342,11 @@ class ChatbookImporter:
                     'root_id': f"imported_{conv_data.get('id', 'unknown')}"
                 }
                 new_conv_id = db.add_conversation(conv_dict)
+                logger.info(f"ChatbookImporter._import_conversations: Created conversation with ID {new_conv_id}")
                 
                 if new_conv_id:
                     # Import messages
+                    logger.info(f"ChatbookImporter._import_conversations: Importing {len(conv_data.get('messages', []))} messages")
                     for msg in conv_data.get('messages', []):
                         msg_dict = {
                             'conversation_id': new_conv_id,
@@ -340,15 +357,16 @@ class ChatbookImporter:
                         db.add_message(msg_dict)
                     
                     status.successful_items += 1
-                    logger.info(f"Imported conversation: {conv_name}")
+                    logger.info(f"ChatbookImporter._import_conversations: Successfully imported conversation: {conv_name}")
                 else:
                     status.failed_items += 1
                     status.add_error(f"Failed to create conversation: {conv_name}")
+                    logger.error(f"ChatbookImporter._import_conversations: Failed to create conversation: {conv_name}")
                     
             except Exception as e:
                 status.failed_items += 1
                 status.add_error(f"Error importing conversation {conv_id}: {str(e)}")
-                logger.error(f"Error importing conversation {conv_id}: {e}")
+                logger.error(f"ChatbookImporter._import_conversations: Error importing conversation {conv_id}: {e}", exc_info=True)
     
     def _import_notes(
         self,
@@ -360,16 +378,20 @@ class ChatbookImporter:
         status: ImportStatus
     ) -> None:
         """Import notes."""
+        logger.info(f"ChatbookImporter._import_notes: Starting import of {len(note_ids)} notes")
         db_path = self.db_paths.get("ChaChaNotes")
         if not db_path:
+            logger.error("ChatbookImporter._import_notes: ChaChaNotes database path not configured")
             status.add_error("ChaChaNotes database path not configured")
             return
             
         db = CharactersRAGDB(db_path, "chatbook_importer")
         notes_dir = extract_dir / "content" / "notes"
+        logger.info(f"ChatbookImporter._import_notes: Looking for notes in {notes_dir}")
         
         for note_id in note_ids:
             status.processed_items += 1
+            logger.info(f"ChatbookImporter._import_notes: Processing note {note_id} ({status.processed_items}/{len(note_ids)})")
             
             try:
                 # Find note item in manifest
@@ -380,13 +402,16 @@ class ChatbookImporter:
                         break
                 
                 if not note_item or not note_item.file_path:
+                    logger.warning(f"ChatbookImporter._import_notes: Note metadata not found for ID: {note_id}")
                     status.add_warning(f"Note metadata not found for ID: {note_id}")
                     status.failed_items += 1
                     continue
                 
                 # Load note file
                 note_file = extract_dir / note_item.file_path
+                logger.info(f"ChatbookImporter._import_notes: Loading note file from {note_file}")
                 if not note_file.exists():
+                    logger.warning(f"ChatbookImporter._import_notes: Note file not found: {note_file}")
                     status.add_warning(f"Note file not found: {note_file}")
                     status.failed_items += 1
                     continue
@@ -446,7 +471,7 @@ class ChatbookImporter:
             except Exception as e:
                 status.failed_items += 1
                 status.add_error(f"Error importing note {note_id}: {str(e)}")
-                logger.error(f"Error importing note {note_id}: {e}")
+                logger.error(f"ChatbookImporter._import_notes: Error importing note {note_id}: {e}", exc_info=True)
     
     def _import_characters(
         self,
@@ -458,21 +483,26 @@ class ChatbookImporter:
         status: ImportStatus
     ) -> None:
         """Import characters."""
+        logger.info(f"ChatbookImporter._import_characters: Starting import of {len(character_ids)} characters")
         db_path = self.db_paths.get("ChaChaNotes")
         if not db_path:
+            logger.error("ChatbookImporter._import_characters: ChaChaNotes database path not configured")
             status.add_error("ChaChaNotes database path not configured")
             return
             
         db = CharactersRAGDB(db_path, "chatbook_importer")
         chars_dir = extract_dir / "content" / "characters"
+        logger.info(f"ChatbookImporter._import_characters: Looking for characters in {chars_dir}")
         
         for char_id in character_ids:
             status.processed_items += 1
+            logger.info(f"ChatbookImporter._import_characters: Processing character {char_id} ({status.processed_items}/{len(character_ids)})")
             
             try:
                 # Find character file
                 char_file = chars_dir / f"character_{char_id}.json"
                 if not char_file.exists():
+                    logger.warning(f"ChatbookImporter._import_characters: Character file not found: {char_file.name}")
                     status.add_warning(f"Character file not found: {char_file.name}")
                     status.failed_items += 1
                     continue
@@ -483,13 +513,15 @@ class ChatbookImporter:
                 
                 # Detect and parse character card format
                 parsed_card, format_name = detect_and_parse_character_card(raw_char_data)
+                logger.info(f"ChatbookImporter._import_characters: Detected format '{format_name}' for character {char_id}")
                 if not parsed_card:
+                    logger.error(f"ChatbookImporter._import_characters: Failed to parse character card for {char_id} (format: {format_name})")
                     status.add_error(f"Failed to parse character card for {char_id} (format: {format_name})")
                     status.failed_items += 1
                     continue
                 
                 # Log the detected format
-                logger.info(f"Importing character {char_id} from {format_name} format")
+                logger.info(f"ChatbookImporter._import_characters: Successfully parsed character {char_id} from {format_name} format")
                 
                 # Extract character data from parsed V2 format
                 char_data = parsed_card.get('data', parsed_card)
@@ -501,6 +533,7 @@ class ChatbookImporter:
                 
                 # Check for existing character
                 existing = db.get_character_card_by_name(char_name)
+                logger.info(f"ChatbookImporter._import_characters: Found existing character: {True if existing else False}")
                 
                 if existing:
                     # Handle conflict
@@ -511,10 +544,13 @@ class ChatbookImporter:
                     )
                     
                     if resolution == ConflictResolution.SKIP:
+                        logger.info(f"ChatbookImporter._import_characters: Skipping character due to conflict resolution")
                         status.skipped_items += 1
                         continue
                     elif resolution == ConflictResolution.RENAME:
+                        old_name = char_name
                         char_name = self._generate_unique_character_name(char_name, db)
+                        logger.info(f"ChatbookImporter._import_characters: Renamed character from '{old_name}' to '{char_name}'")
                 
                 # Create character with V2 formatted data
                 # Map V2 fields to database fields
@@ -546,18 +582,20 @@ class ChatbookImporter:
                             card_data[key] = value
                 
                 new_char_id = db.add_character_card(card_data)
+                logger.info(f"ChatbookImporter._import_characters: Created character with ID {new_char_id}")
                 
                 if new_char_id:
                     status.successful_items += 1
-                    logger.info(f"Imported character: {char_name}")
+                    logger.info(f"ChatbookImporter._import_characters: Successfully imported character: {char_name}")
                 else:
                     status.failed_items += 1
                     status.add_error(f"Failed to create character: {char_name}")
+                    logger.error(f"ChatbookImporter._import_characters: Failed to create character: {char_name}")
                     
             except Exception as e:
                 status.failed_items += 1
                 status.add_error(f"Error importing character {char_id}: {str(e)}")
-                logger.error(f"Error importing character {char_id}: {e}")
+                logger.error(f"ChatbookImporter._import_characters: Error importing character {char_id}: {e}", exc_info=True)
     
     def _import_prompts(
         self,

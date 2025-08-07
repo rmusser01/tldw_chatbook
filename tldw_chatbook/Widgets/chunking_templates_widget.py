@@ -235,7 +235,14 @@ class ChunkingTemplatesWidget(Container):
             
             # Format data for display
             template_type = "System" if template['is_system'] else "Custom"
-            created_date = datetime.fromisoformat(template['created_at']).strftime("%Y-%m-%d %H:%M")
+            # Handle created_at whether it's a string or datetime object
+            created_at = template['created_at']
+            if isinstance(created_at, str):
+                created_date = datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M")
+            elif isinstance(created_at, datetime):
+                created_date = created_at.strftime("%Y-%m-%d %H:%M")
+            else:
+                created_date = "Unknown"
             
             # Add row with styled type
             if template['is_system']:

@@ -61,10 +61,21 @@ class ContentTypeCard(Container):
         
     def on_click(self) -> None:
         """Handle card click."""
-        # Notify parent step
-        parent_step = self.ancestors[1]  # Get parent step
-        if hasattr(parent_step, 'select_content_type'):
+        logger.debug(f"ContentTypeCard.on_click: {self.content_type} card clicked")
+        
+        # Find the parent step by walking up ancestors
+        parent_step = None
+        for i, ancestor in enumerate(self.ancestors):
+            logger.debug(f"ContentTypeCard.on_click: ancestor[{i}] = {ancestor.__class__.__name__}")
+            if hasattr(ancestor, 'select_content_type'):
+                parent_step = ancestor
+                logger.debug(f"ContentTypeCard.on_click: Found parent step: {parent_step.__class__.__name__}")
+                break
+                
+        if parent_step:
             parent_step.select_content_type(self.content_type)
+        else:
+            logger.warning("ContentTypeCard.on_click: Could not find parent step with select_content_type method")
             
     def watch_is_selected(self, is_selected: bool) -> None:
         """React to selection changes."""
@@ -118,6 +129,8 @@ class ContentSelectionStep(WizardStep):
                 
     def select_content_type(self, content_type: str) -> None:
         """Select a content type."""
+        logger.debug(f"ContentSelectionStep.select_content_type called with: {content_type}")
+        
         # Deselect all cards
         for card in self.content_cards.values():
             card.is_selected = False
@@ -126,9 +139,43 @@ class ContentSelectionStep(WizardStep):
         if content_type in self.content_cards:
             self.content_cards[content_type].is_selected = True
             self.selected_content_type = content_type
+            logger.debug(f"Selected content type set to: {self.selected_content_type}")
             
-        # Trigger validation
+        # Trigger validation and notify parent wizard
         self.validate()
+        
+        # Find parent wizard and trigger its validation
+        try:
+            from .BaseWizard import WizardContainer
+            # Walk up the ancestor tree to find WizardContainer
+            found_wizard = False
+            for ancestor in self.ancestors:
+                logger.debug(f"Checking ancestor: {ancestor.__class__.__name__}")
+                if isinstance(ancestor, WizardContainer):
+                    logger.debug("Found WizardContainer, calling validate_step()")
+                    ancestor.validate_step()
+                    found_wizard = True
+                    break
+                    
+            if not found_wizard:
+                logger.warning("Could not find WizardContainer ancestor")
+                # Try to find any widget with validate_step method as fallback
+                for ancestor in self.ancestors:
+                    if hasattr(ancestor, 'validate_step'):
+                        logger.debug(f"Found ancestor with validate_step: {ancestor.__class__.__name__}")
+                        ancestor.validate_step()
+                        found_wizard = True
+                        break
+                        
+            if found_wizard:
+                logger.info("Successfully triggered wizard validation")
+            else:
+                logger.warning("Could not find any ancestor with validate_step method")
+                
+        except Exception as e:
+            logger.error(f"Exception while finding wizard to trigger validation: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
         
     def validate(self) -> tuple[bool, List[str]]:
         """Validate that a content type is selected."""

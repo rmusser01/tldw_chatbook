@@ -23,6 +23,8 @@ python3 -m tldw_chatbook.app
 pytest  # All tests
 pytest Tests/Chat/  # Specific module
 pytest --cov=tldw_chatbook  # With coverage
+
+# Note: The 'timeout' command is not available in this environment
 ```
 
 ## Architecture

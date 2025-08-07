@@ -17,6 +17,7 @@ from typing import List, Optional, Set, Dict, Any
 from loguru import logger
 
 from .mermaid_parser import MermaidMindmapParser, ExtendedMermaidParser, NodeShape
+from .jsoncanvas_handler import JSONCanvasHandler
 
 
 class MindmapModel:
@@ -48,6 +49,24 @@ class MindmapModel:
             logger.error(f"Failed to load mindmap: {e}")
             raise
         
+    def load_from_json_canvas(self, canvas_data: str) -> None:
+        """Load mindmap from JSON Canvas format
+        
+        Args:
+            canvas_data: JSON Canvas format string
+            
+        Raises:
+            ValueError: If parsing fails
+        """
+        try:
+            self.root = JSONCanvasHandler.from_json_canvas(canvas_data)
+            self.selected_node = self.root
+            self.expanded_nodes = {self.root}
+            logger.info(f"Loaded JSON Canvas mindmap with root: {self.root.text}")
+        except Exception as e:
+            logger.error(f"Failed to load JSON Canvas: {e}")
+            raise
+    
     def load_from_database(self, mindmap_id: str, db) -> None:
         """Load mindmap from database
         

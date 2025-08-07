@@ -3149,12 +3149,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             new_window.display = True
             loguru_logger.debug(f"Set display=True for window: {new_window.__class__.__name__} (id={new_tab}-window)")
             
-            # Special handling for ChatbooksWindow to ensure it initializes
-            if new_tab == "chatbooks" and hasattr(new_window, '_ensure_initialized'):
-                loguru_logger.debug("Triggering ChatbooksWindow initialization...")
-                # Call the async method directly, not as a worker
-                self.call_after_refresh(new_window._ensure_initialized)
-            
             # Update word count and token count in footer based on tab
             try:
                 footer = self.query_one("AppFooterStatus")
