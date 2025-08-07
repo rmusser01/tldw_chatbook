@@ -734,6 +734,38 @@ pip install -e .  # or with optional features
 ```
 </details>
 
+### Local Models I recommend
+<details>
+<summary>**Local Models I Can Recommend - Click-Here**</summary>
+
+### Local Models I recommend
+- These are just the 'standard smaller' models I recommend, there are many more out there, and you can use any of them with this project.
+  - One should also be aware that people create 'fine-tunes' and 'merges' of existing models, to create new models that are more suited to their needs.
+  - This can result in models that may be better at some tasks but worse at others, so it's important to test and see what works best for you.
+- Llama 3.1 - The native llamas will give you censored output by default, but you can jailbreak them, or use a finetune which has attempted to tune out their refusals. 
+
+For commercial API usage for use with this project: Claude Sonnet 3.5, Cohere Command R+, DeepSeek, gpt4o. 
+Flipside I would say none, honestly. The (largest players) will gaslight you and charge you money for it. Fun.
+That being said they obviously can provide help/be useful(helped me make this app), but it's important to remember that they're not your friend, and they're not there to help you. They are there to make money not off you, but off large institutions and your data.
+You are just a stepping stone to their goals.
+
+From @nrose 05/08/2024 on Threads:
+```
+No, it’s a design. First they train it, then they optimize it. Optimize it for what- better answers?
+  No. For efficiency. 
+Per watt. Because they need all the compute they can get to train the next model.So it’s a sawtooth. 
+The model declines over time, then the optimization makes it somewhat better, then in a sort of 
+  reverse asymptote, they dedicate all their “good compute” to the next bigger model.Which they then 
+  trim down over time, so they can train the next big model… etc etc.
+None of these companies exist to provide AI services in 2024. They’re only doing it to finance the 
+ things they want to build in 2025 and 2026 and so on, and the goal is to obsolete computing in general
+  and become a hidden monopoly like the oil and electric companies. 
+2024 service quality is not a metric they want to optimize, they’re forced to, only to maintain some 
+  directional income
+```
+</details>
+
+
 ### Inspiration
 - https://github.com/darrenburns/elia
 - https://github.com/paulrobello/parllama
