@@ -1743,8 +1743,9 @@ class LogProbRunner(BaseEvalRunner):
                 }
                 
                 # Call LLM using the unified interface with logprobs
+                config = self.task_config.generation_kwargs
                 response = await self._call_llm(
-                    prompt=prompt,
+                    prompt=text,
                     temperature=config.get('temperature', 0.0),
                     max_tokens=config.get('max_tokens', 1),
                     logprobs=True,  # Request log probabilities
