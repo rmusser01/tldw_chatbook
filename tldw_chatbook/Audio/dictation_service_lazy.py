@@ -13,9 +13,17 @@ import weakref
 from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass
 from datetime import datetime
-import numpy as np
 from loguru import logger
 from contextlib import contextmanager
+
+# Optional numpy import for audio level calculation
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    np = None
+    NUMPY_AVAILABLE = False
+    logger.warning("NumPy not available. Audio level monitoring will use fallback method. Install with: pip install numpy")
 
 # Local imports
 from ..config import get_cli_setting, save_setting_to_cli_config
@@ -357,13 +365,28 @@ class LazyLiveDictationService:
         try:
             # Calculate audio level (RMS)
             try:
-                import numpy as np
-                audio_array = np.frombuffer(audio_chunk, dtype=np.int16)
-                if len(audio_array) > 0:
-                    rms = np.sqrt(np.mean(audio_array.astype(float)**2))
-                    # Normalize to 0.0-1.0 range (assuming 16-bit audio)
-                    self._current_audio_level = min(1.0, rms / 32768.0)
-            except:
+                if NUMPY_AVAILABLE and np is not None:
+                    # Use numpy for efficient calculation if available
+                    audio_array = np.frombuffer(audio_chunk, dtype=np.int16)
+                    if len(audio_array) > 0:
+                        rms = np.sqrt(np.mean(audio_array.astype(float)**2))
+                        # Normalize to 0.0-1.0 range (assuming 16-bit audio)
+                        self._current_audio_level = min(1.0, rms / 32768.0)
+                else:
+                    # Fallback: simple RMS calculation without numpy
+                    import struct
+                    # Unpack 16-bit samples
+                    samples = struct.unpack(f'{len(audio_chunk)//2}h', audio_chunk)
+                    if samples:
+                        # Calculate RMS manually
+                        sum_squares = sum(s * s for s in samples)
+                        rms = (sum_squares / len(samples)) ** 0.5
+                        # Normalize to 0.0-1.0 range (assuming 16-bit audio)
+                        self._current_audio_level = min(1.0, rms / 32768.0)
+                    else:
+                        self._current_audio_level = 0.0
+            except Exception as e:
+                logger.debug(f"Could not calculate audio level: {e}")
                 self._current_audio_level = 0.0
             
             # Add to buffer
