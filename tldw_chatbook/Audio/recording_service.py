@@ -16,14 +16,15 @@ from pathlib import Path
 from contextlib import contextmanager
 from loguru import logger
 
-# Try to import numpy as required dependency for audio functionality
+# Try to import numpy as optional dependency for audio functionality
 try:
     import numpy as np
     NUMPY_AVAILABLE = True
 except ImportError:
+    np = None
     NUMPY_AVAILABLE = False
-    logger.error("NumPy not available. Audio recording functionality is disabled.")
-    logger.error("To enable audio features, install numpy: pip install numpy")
+    logger.warning("NumPy not available. Audio recording will use fallback methods.")
+    logger.info("For better performance, install numpy: pip install numpy")
 
 # Try to import audio backends
 PYAUDIO_AVAILABLE = False
@@ -346,8 +347,17 @@ class AudioRecordingService:
                 logger.warning(f"Sounddevice status: {status}")
             
             if self.is_recording:
-                # Convert float32 to int16 (numpy is required)
-                audio_data = (indata * 32767).astype(np.int16).tobytes()
+                # Convert float32 to int16
+                if NUMPY_AVAILABLE and np is not None:
+                    audio_data = (indata * 32767).astype(np.int16).tobytes()
+                else:
+                    # Fallback: manual conversion
+                    import struct
+                    samples = struct.unpack(f'{frames * self.channels}f', indata.tobytes())
+                    audio_data = b''.join(
+                        struct.pack('h', int(min(32767, max(-32768, sample * 32767))))
+                        for sample in samples
+                    )
                 self._process_audio_chunk(audio_data)
         
         try:
@@ -471,9 +481,20 @@ class AudioRecordingService:
             for chunk in recent_chunks:
                 self.audio_queue.put(chunk)
             
-            # Calculate RMS (numpy is required)
-            audio_data = np.frombuffer(b''.join(recent_chunks), dtype=np.int16)
-            rms = np.sqrt(np.mean(audio_data**2))
+            # Calculate RMS
+            combined_audio = b''.join(recent_chunks)
+            if NUMPY_AVAILABLE and np is not None:
+                audio_data = np.frombuffer(combined_audio, dtype=np.int16)
+                rms = np.sqrt(np.mean(audio_data**2))
+            else:
+                # Fallback: manual RMS calculation
+                import struct
+                samples = struct.unpack(f'{len(combined_audio)//2}h', combined_audio)
+                if samples:
+                    sum_squares = sum(s * s for s in samples)
+                    rms = (sum_squares / len(samples)) ** 0.5
+                else:
+                    rms = 0
             
             # Normalize (16-bit max is 32767)
             level = min(1.0, rms / 32767.0)

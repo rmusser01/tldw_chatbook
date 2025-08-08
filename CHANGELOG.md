@@ -10,6 +10,11 @@ and this project adheres to Some kind of Versioning
 ### Added
 - Initial features pending documentation
 
+## [0.1.7.2] - 2025-08-7
+### Fixed 
+- Numpy requirement in base install
+
+
 ## [0.1.7.1] - 2025-08-7
 ### Fixed 
 - Chatbook import logging
