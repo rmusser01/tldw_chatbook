@@ -10,6 +10,11 @@ and this project adheres to Some kind of Versioning
 ### Added
 - Initial features pending documentation
 
+## [0.1.7.1] - 2025-08-7
+### Fixed 
+- Chatbook import logging
+
+
 ## [0.1.7.0] - 2025-08-7
 ### Added 
 - Chat swiping/forking + multiple responses
