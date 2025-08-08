@@ -249,11 +249,19 @@ class ChatbookImporter:
             # Cleanup
             shutil.rmtree(extract_dir)
             
-            # Success if we imported at least some items
-            success = status.successful_items > 0
+            # Success if we processed items without fatal errors
+            # This includes both imported and skipped items
+            success = (status.successful_items + status.skipped_items) > 0 or status.total_items == 0
             
             if success:
-                message = f"Successfully imported {status.successful_items}/{status.total_items} items"
+                if status.successful_items > 0:
+                    message = f"Successfully imported {status.successful_items}/{status.total_items} items"
+                    if status.skipped_items > 0:
+                        message += f" ({status.skipped_items} skipped)"
+                elif status.skipped_items > 0:
+                    message = f"Skipped all {status.skipped_items} items due to conflicts"
+                else:
+                    message = "No items to import"
                 logger.info(message)
             else:
                 message = f"Failed to import any items from chatbook"

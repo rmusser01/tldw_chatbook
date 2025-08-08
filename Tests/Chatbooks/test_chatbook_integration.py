@@ -380,8 +380,9 @@ New content from import""".format(datetime.now().isoformat(), datetime.now().iso
         
         # Should complete successfully
         assert success is True
-        # Since there's no duplicate detection for notes yet, it will import the note
-        assert status.successful_items == 1
+        # With SKIP resolution, the duplicate note should be skipped
+        assert status.skipped_items == 1
+        assert status.successful_items == 0
         
         # Verify original note is unchanged
         original_note = chacha_db.get_note_by_id(existing_note_id)
@@ -399,15 +400,16 @@ New content from import""".format(datetime.now().isoformat(), datetime.now().iso
         assert success is True
         assert status2.successful_items > 0
         
-        # Check that we now have three notes (original + 2 imports)
-        # This is because the importer doesn't currently check for duplicate titles
+        # Check that we now have 2 notes (original + 1 renamed import)
         all_notes = chacha_db.list_notes(limit=100)
-        assert len(all_notes) == 3
+        assert len(all_notes) == 2
         titles = [n['title'] for n in all_notes]
-        # Count how many "Existing Note" titles we have
+        # Should have one "Existing Note" and one renamed version
         existing_note_count = sum(1 for title in titles if title == "Existing Note")
-        # Since rename isn't implemented, all notes have the same title
-        assert existing_note_count == 3
+        assert existing_note_count == 1
+        # Should have one renamed note
+        renamed_count = sum(1 for title in titles if "Existing Note (" in title)
+        assert renamed_count == 1
     
     def test_large_chatbook_performance(self, tmp_path):
         """Test performance with larger chatbooks."""
