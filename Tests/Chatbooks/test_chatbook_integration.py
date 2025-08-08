@@ -9,6 +9,7 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import MagicMock, patch, Mock
+from loguru import logger
 
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -405,7 +406,8 @@ New content from import""".format(datetime.now().isoformat(), datetime.now().iso
         titles = [n['title'] for n in all_notes]
         # Count how many "Existing Note" titles we have
         existing_note_count = sum(1 for title in titles if title == "Existing Note")
-        assert existing_note_count == 3  # All have same title since rename isn't implemented
+        # Since rename isn't implemented, all notes have the same title
+        assert existing_note_count == 3
     
     def test_large_chatbook_performance(self, tmp_path):
         """Test performance with larger chatbooks."""

@@ -851,6 +851,15 @@ class ErrorHandler:
 class BaseEvalRunner(ABC):
     """Base class for evaluation runners."""
     
+    class LLMInterface:
+        """Wrapper to provide llm_interface.generate() compatibility."""
+        def __init__(self, runner):
+            self.runner = runner
+        
+        async def generate(self, prompt: str, **kwargs) -> str:
+            """Generate text using the runner's LLM."""
+            return await self.runner._call_llm(prompt, **kwargs)
+    
     def __init__(self, task_config: TaskConfig, model_config: Dict[str, Any]):
         self.task_config = task_config
         self.model_config = model_config
@@ -862,6 +871,9 @@ class BaseEvalRunner(ABC):
             max_retries=task_config.metadata.get('max_retries', 3),
             retry_delay=task_config.metadata.get('retry_delay', 1.0)
         )
+        
+        # Create llm_interface for compatibility with specialized runners
+        self.llm_interface = self.LLMInterface(self)
     
     async def _call_llm(self, prompt: str, system_prompt: Optional[str] = None, **kwargs) -> str:
         """Call LLM using existing chat infrastructure."""

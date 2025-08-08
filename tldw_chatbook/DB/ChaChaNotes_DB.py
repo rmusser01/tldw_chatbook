@@ -3588,7 +3588,7 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database errors during fetching.
         """
         start_time = time.time()
-        query = "SELECT * FROM conversations WHERE conversation_name = ? AND deleted = 0 ORDER BY created_at DESC"
+        query = "SELECT * FROM conversations WHERE title = ? AND deleted = 0 ORDER BY created_at DESC"
         try:
             cursor = self.execute_query(query, (conversation_name,))
             rows = cursor.fetchall()
