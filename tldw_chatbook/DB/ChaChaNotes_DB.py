@@ -4448,7 +4448,7 @@ UPDATE db_schema_version
             with self.transaction() as conn:
                 # Get the original message details
                 cursor = conn.execute("""
-                    SELECT conversation_id, parent_message_id, sender, role, tool_call_id,
+                    SELECT conversation_id, parent_message_id, sender, role,
                            image_data, image_mime_type
                     FROM messages 
                     WHERE id = ? AND deleted = 0
@@ -4491,13 +4491,13 @@ UPDATE db_schema_version
                 conn.execute("""
                     INSERT INTO messages (
                         id, conversation_id, parent_message_id, sender, content, 
-                        role, tool_call_id, image_data, image_mime_type,
+                        role, image_data, image_mime_type,
                         variant_of, variant_number, is_selected_variant, total_variants,
                         timestamp, last_modified, version, client_id, deleted
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0)
                 """, (
                     new_msg_id, original['conversation_id'], original['parent_message_id'],
-                    original['sender'], variant_content, original['role'], original['tool_call_id'],
+                    original['sender'], variant_content, original['role'],
                     original['image_data'], original['image_mime_type'],
                     root_variant_id, variant_number, int(is_selected), variant_stats['count'] + 1,
                     now, now, self.client_id

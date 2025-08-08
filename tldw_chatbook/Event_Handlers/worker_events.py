@@ -516,6 +516,98 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                                         
                                         # Clear pending variants
                                         delattr(app, '_pending_response_variants')
+                                    
+                                    # Check if this is a regeneration - create variant relationship
+                                    elif hasattr(app, 'regenerating_message_widget') and app.regenerating_message_widget:
+                                        original_widget = app.regenerating_message_widget
+                                        original_id = getattr(app, 'regenerating_original_id', None)
+                                        
+                                        # For ephemeral chats (no original_id), content was already replaced in the original widget
+                                        if original_id is None:
+                                            # The non-streaming already updated the original widget (ai_message_widget == original_widget)
+                                            logger.info("Regenerate: Content replaced in original widget (ephemeral chat, non-streaming)")
+                                            
+                                            # Clear regeneration tracking
+                                            delattr(app, 'regenerating_message_widget')
+                                            if hasattr(app, 'regenerating_original_id'):
+                                                delattr(app, 'regenerating_original_id')
+                                        elif original_id and ai_msg_db_id_ns_version:
+                                            try:
+                                                # Get all existing variants to determine the variant number
+                                                existing_variants = app.chachanotes_db.get_message_variants(original_id)
+                                                variant_count = len(existing_variants) + 1  # +1 for this new variant
+                                                
+                                                # Update database to mark this as a variant
+                                                # Note: The new message is already saved, we just need to update its variant fields
+                                                app.chachanotes_db.execute_query(
+                                                    """UPDATE messages SET 
+                                                       variant_of = ?, 
+                                                       variant_number = ?, 
+                                                       is_selected_variant = 1,
+                                                       total_variants = ?
+                                                       WHERE id = ?""",
+                                                    (original_id, variant_count, variant_count, ai_msg_db_id_ns_version)
+                                                )
+                                                
+                                                # Update original message to mark it has variants and is not selected
+                                                app.chachanotes_db.execute_query(
+                                                    """UPDATE messages SET 
+                                                       is_selected_variant = 0,
+                                                       total_variants = ?
+                                                       WHERE id = ?""",
+                                                    (variant_count, original_id)
+                                                )
+                                                
+                                                # Update all other variants' total count
+                                                for variant in existing_variants:
+                                                    if variant['id'] != original_id:
+                                                        app.chachanotes_db.execute_query(
+                                                            """UPDATE messages SET 
+                                                               total_variants = ?,
+                                                               is_selected_variant = 0
+                                                               WHERE id = ?""",
+                                                            (variant_count, variant['id'])
+                                                        )
+                                                
+                                                # Update the new message widget with variant info
+                                                ai_message_widget.variant_of = original_id
+                                                ai_message_widget.variant_id = ai_msg_db_id_ns_version
+                                                ai_message_widget.variant_number = variant_count
+                                                ai_message_widget.total_variants = variant_count
+                                                ai_message_widget.is_selected_variant = True
+                                                ai_message_widget.has_variants = True
+                                                
+                                                # Update the new widget to show variant navigation
+                                                if hasattr(ai_message_widget, 'update_variant_info'):
+                                                    ai_message_widget.update_variant_info(variant_count, variant_count, True)
+                                                
+                                                # Update original widget with variant info
+                                                if hasattr(original_widget, 'has_variants'):
+                                                    original_widget.has_variants = True
+                                                    original_widget.variant_id = original_id
+                                                    original_widget.variant_number = 1
+                                                    original_widget.total_variants = variant_count
+                                                    original_widget.is_selected_variant = False
+                                                    original_widget.display = False  # Hide original
+                                                    
+                                                    # Update original widget to show variant navigation
+                                                    if hasattr(original_widget, 'update_variant_info'):
+                                                        original_widget.update_variant_info(1, variant_count, False)
+                                                
+                                                logger.info(f"Created regeneration variant {variant_count} of original message {original_id}")
+                                                app.notify(
+                                                    f"Regenerated response (variant {variant_count} of {variant_count}). Use ◀/▶ to navigate between variants.",
+                                                    severity="information",
+                                                    timeout=4
+                                                )
+                                                
+                                            except Exception as e:
+                                                logger.error(f"Failed to create regeneration variant: {e}", exc_info=True)
+                                        
+                                        # Clear regeneration tracking
+                                        delattr(app, 'regenerating_message_widget')
+                                        if hasattr(app, 'regenerating_original_id'):
+                                            delattr(app, 'regenerating_original_id')
                                 else:
                                     logger.error(
                                         f"Failed to retrieve saved non-streamed AI message details from DB for ID {ai_msg_db_id_ns_version}.")

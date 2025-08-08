@@ -307,7 +307,17 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                             original_widget = self.regenerating_message_widget
                             original_id = getattr(self, 'regenerating_original_id', None)
                             
-                            if original_id and ai_msg_db_id:
+                            # For ephemeral chats (no original_id), content was already replaced in the original widget
+                            if original_id is None:
+                                # The streaming already updated the original widget (ai_widget == original_widget)
+                                # No need to do anything else, the widget was reused
+                                logger.info("Regenerate: Content replaced in original widget (ephemeral chat)")
+                                
+                                # Clear regeneration tracking
+                                delattr(self, 'regenerating_message_widget')
+                                if hasattr(self, 'regenerating_original_id'):
+                                    delattr(self, 'regenerating_original_id')
+                            elif original_id and ai_msg_db_id:
                                 try:
                                     # Create variant in database
                                     variant_id = self.chachanotes_db.create_message_variant(
@@ -328,12 +338,24 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                                         
                                         # Update both widgets with variant info
                                         if hasattr(original_widget, 'update_variant_info'):
+                                            original_widget.has_variants = True
+                                            original_widget.variant_id = original_id
+                                            original_widget.variant_number = 1
+                                            original_widget.total_variants = variant_count
+                                            original_widget.is_selected_variant = False
                                             original_widget.update_variant_info(1, variant_count, False)  # Original is now variant 1, not selected
+                                        
                                         if hasattr(ai_widget, 'update_variant_info'):
+                                            ai_widget.has_variants = True
+                                            ai_widget.variant_of = original_id
+                                            ai_widget.variant_id = variant_id
+                                            ai_widget.variant_number = current_variant_num
+                                            ai_widget.total_variants = variant_count
+                                            ai_widget.is_selected_variant = True
                                             ai_widget.update_variant_info(current_variant_num, variant_count, True)  # New is selected
                                         
-                                        # Show original widget again with variant navigation
-                                        original_widget.display = True
+                                        # Hide original widget (the new variant is shown instead)
+                                        original_widget.display = False
                                         
                                         logger.info(f"Created variant {variant_id} (#{current_variant_num} of {variant_count}) for message {original_id}")
                                         self.notify(f"Response variant {current_variant_num} of {variant_count} generated", severity="information")

@@ -858,14 +858,84 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             should_stream = False
             loguru_logger.info(f"Disabled streaming because n={llm_n_value} (multiple responses requested)")
         
-        # Warn about increased costs
-        cost_multiplier = llm_n_value
+        # Show cost warning dialog and get confirmation
+        from textual.containers import Container, Horizontal, Vertical
+        from textual.widgets import Button, Label, Static
+        from textual.screen import ModalScreen
+        
+        class CostWarningDialog(ModalScreen):
+            """Modal dialog to warn about increased costs for multiple responses."""
+            
+            DEFAULT_CSS = """
+            CostWarningDialog {
+                align: center middle;
+            }
+            
+            CostWarningDialog > Container {
+                width: 60;
+                height: auto;
+                border: thick $warning;
+                background: $surface;
+                padding: 1 2;
+            }
+            
+            CostWarningDialog .dialog-title {
+                text-align: center;
+                text-style: bold;
+                color: $warning;
+                margin-bottom: 1;
+            }
+            
+            CostWarningDialog .dialog-message {
+                margin-bottom: 1;
+            }
+            
+            CostWarningDialog .dialog-buttons {
+                align: center middle;
+                margin-top: 1;
+            }
+            
+            CostWarningDialog Button {
+                margin: 0 1;
+            }
+            """
+            
+            def __init__(self, n_responses: int):
+                super().__init__()
+                self.n_responses = n_responses
+            
+            def compose(self):
+                with Container():
+                    yield Static("⚠️ Cost Warning", classes="dialog-title")
+                    yield Static(
+                        f"You've requested {self.n_responses} response variants.\n\n"
+                        f"This will cost approximately {self.n_responses}x the normal API cost.\n"
+                        f"For example, if a single response costs $0.01, this will cost ~${0.01 * self.n_responses:.2f}.\n\n"
+                        f"Do you want to continue?",
+                        classes="dialog-message"
+                    )
+                    with Horizontal(classes="dialog-buttons"):
+                        yield Button("Continue", id="continue", variant="warning")
+                        yield Button("Cancel", id="cancel", variant="primary")
+            
+            def on_button_pressed(self, event: Button.Pressed) -> None:
+                self.dismiss(event.button.id == "continue")
+        
+        # Show the dialog and wait for user confirmation
+        confirmed = await app.push_screen_wait(CostWarningDialog(llm_n_value))
+        
+        if not confirmed:
+            loguru_logger.info(f"User cancelled multiple response generation (n={llm_n_value})")
+            app.notify("Multiple response generation cancelled.", severity="information")
+            return
+        
+        # User confirmed, proceed with generation
         app.notify(
-            f"🔔 Generating {llm_n_value} response variants. Cost will be ~{cost_multiplier}x normal. Use ◀/▶ to navigate between variants.",
+            f"Generating {llm_n_value} response variants. Use ◀/▶ to navigate between them.",
             severity="information",
-            timeout=6
+            timeout=4
         )
-        loguru_logger.info(f"User requested {llm_n_value} response variants")
+        loguru_logger.info(f"User confirmed generation of {llm_n_value} response variants")
     
     # Set current_chat_is_streaming before running the worker using thread-safe method
     app.set_current_chat_is_streaming(should_stream)
@@ -1532,6 +1602,10 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         found_target_ai_message_for_regen = False
         original_message_widget = action_widget  # Keep reference to original
 
+        # Import here to avoid any scoping issues
+        from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+        from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+        
         all_message_widgets_in_log = list(chat_container.query(ChatMessage)) + list(chat_container.query(ChatMessageEnhanced))
 
         for msg_widget_iter in all_message_widgets_in_log:
@@ -1580,9 +1654,19 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         app.regenerating_message_widget = original_message_widget
         app.regenerating_original_id = original_message_id
         
-        # Clear current AI widget
-        if app.current_ai_message_widget in [original_message_widget] + widgets_after_target:
-            app.current_ai_message_widget = None
+        # For ephemeral chats (no message ID), we'll reuse the existing widget
+        if original_message_id is None:
+            # Clear the current content and mark as generating
+            original_message_widget.message_text = ""
+            original_message_widget._generation_complete_internal = False  # Mark as generating
+            original_message_widget.refresh()  # Update the display
+            # Set this as the current AI widget so streaming/non-streaming updates it
+            app.current_ai_message_widget = original_message_widget
+            loguru_logger.info("Regenerate: Reusing original widget for ephemeral chat")
+        else:
+            # Clear current AI widget for saved conversations (will create variants)
+            if app.current_ai_message_widget in [original_message_widget] + widgets_after_target:
+                app.current_ai_message_widget = None
 
         # Fetch current chat settings (same as send-chat button logic)
         try:
@@ -1721,28 +1805,36 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                 role="System", classes="-error"))
             return
 
-        # Use the correct widget type based on which chat window is active
-        from tldw_chatbook.config import get_cli_setting
-        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
-        
-        # Get AI display name from active character for regeneration
-        ai_display_name_regen = active_char_data_regen.get('name', 'AI') if active_char_data_regen else 'AI'
-        
-        if use_enhanced_chat:
-            from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
-            ai_placeholder_widget_regen = ChatMessageEnhanced(
-                message=f"{ai_display_name_regen} {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
-                role=ai_display_name_regen, generation_complete=False
-            )
+        # For ephemeral chats, we've already set app.current_ai_message_widget to the original widget
+        # For saved conversations, we need to create a new widget
+        if original_message_id is not None:  # Saved conversation - create new widget
+            # Use the correct widget type based on which chat window is active
+            from tldw_chatbook.config import get_cli_setting
+            use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+            
+            # Get AI display name from active character for regeneration
+            ai_display_name_regen = active_char_data_regen.get('name', 'AI') if active_char_data_regen else 'AI'
+            
+            if use_enhanced_chat:
+                from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+                ai_placeholder_widget_regen = ChatMessageEnhanced(
+                    message=f"{ai_display_name_regen} {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
+                    role=ai_display_name_regen, generation_complete=False
+                )
+            else:
+                ai_placeholder_widget_regen = ChatMessage(
+                    message=f"{ai_display_name_regen} {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
+                    role=ai_display_name_regen, generation_complete=False
+                )
+            
+            await chat_container.mount(ai_placeholder_widget_regen)
+            chat_container.scroll_end(animate=False)
+            app.current_ai_message_widget = ai_placeholder_widget_regen
         else:
-            ai_placeholder_widget_regen = ChatMessage(
-                message=f"{ai_display_name_regen} {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
-                role=ai_display_name_regen, generation_complete=False
-            )
-        
-        await chat_container.mount(ai_placeholder_widget_regen)
-        chat_container.scroll_end(animate=False)
-        app.current_ai_message_widget = ai_placeholder_widget_regen
+            # Ephemeral chat - app.current_ai_message_widget already set to original widget
+            # Just scroll to the end to ensure visibility
+            chat_container.scroll_end(animate=False)
+            loguru_logger.debug("Regenerate: Using existing widget for ephemeral chat streaming")
 
         # The "message" to chat_wrapper is empty because we're using the history
         worker_target_regen = lambda: app.chat_wrapper(
