@@ -301,6 +301,51 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                                     f"Failed to retrieve saved streamed AI message details (ID: {ai_msg_db_id}) from DB.")
                         else:
                             logger.error("Failed to save streamed AI message to DB (no ID returned).")
+                        
+                        # NEW: Check if this is a regeneration - create variant
+                        if hasattr(self, 'regenerating_message_widget') and self.regenerating_message_widget:
+                            original_widget = self.regenerating_message_widget
+                            original_id = getattr(self, 'regenerating_original_id', None)
+                            
+                            if original_id and ai_msg_db_id:
+                                try:
+                                    # Create variant in database
+                                    variant_id = self.chachanotes_db.create_message_variant(
+                                        original_message_id=original_id,
+                                        variant_content=event.full_text,
+                                        is_selected=True  # New regeneration becomes selected
+                                    )
+                                    
+                                    if variant_id:
+                                        # Update new widget with variant info
+                                        ai_widget.variant_of = original_id
+                                        ai_widget.variant_id = variant_id
+                                        
+                                        # Get all variants to update counts
+                                        variants = self.chachanotes_db.get_message_variants(original_id)
+                                        variant_count = len(variants)
+                                        current_variant_num = next((i + 1 for i, v in enumerate(variants) if v['id'] == variant_id), variant_count)
+                                        
+                                        # Update both widgets with variant info
+                                        if hasattr(original_widget, 'update_variant_info'):
+                                            original_widget.update_variant_info(1, variant_count, False)  # Original is now variant 1, not selected
+                                        if hasattr(ai_widget, 'update_variant_info'):
+                                            ai_widget.update_variant_info(current_variant_num, variant_count, True)  # New is selected
+                                        
+                                        # Show original widget again with variant navigation
+                                        original_widget.display = True
+                                        
+                                        logger.info(f"Created variant {variant_id} (#{current_variant_num} of {variant_count}) for message {original_id}")
+                                        self.notify(f"Response variant {current_variant_num} of {variant_count} generated", severity="information")
+                                    else:
+                                        logger.error(f"Failed to create variant for message {original_id}")
+                                except Exception as e:
+                                    logger.error(f"Error creating message variant: {e}", exc_info=True)
+                            
+                            # Clear regeneration tracking
+                            delattr(self, 'regenerating_message_widget')
+                            if hasattr(self, 'regenerating_original_id'):
+                                delattr(self, 'regenerating_original_id')
                     except (CharactersRAGDBError, InputError) as e_save_ai_stream:
                         logger.error(f"DB Error saving streamed AI message: {e_save_ai_stream}", exc_info=True)
                         self.notify(f"DB error saving message: {e_save_ai_stream}", severity="error")

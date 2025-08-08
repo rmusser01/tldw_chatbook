@@ -156,6 +156,32 @@ class ChatMessageEnhanced(Widget):
     .tts-stop-button:hover {
         background: $error;
     }
+    .variant-navigation {
+        layout: horizontal;
+        height: 3;
+        width: 100%;
+        padding: 0 1;
+        align: center middle;
+        background: $surface-darken-2;
+        border-top: solid $surface-lighten-1;
+        border-bottom: solid $surface-lighten-1;
+    }
+    .variant-nav-button {
+        min-width: 3;
+        height: 3;
+        margin: 0 1;
+    }
+    .variant-indicator {
+        margin: 0 2;
+        color: $text-muted;
+    }
+    .variant-select-button {
+        margin: 0 1 0 2;
+        background: $success-darken-1;
+    }
+    .variant-select-button:hover {
+        background: $success;
+    }
     """
     
     # Reactive properties
@@ -179,6 +205,14 @@ class ChatMessageEnhanced(Widget):
     tts_state: reactive[str] = reactive("idle")  # "idle", "generating", "ready", "playing", "paused"
     tts_audio_file: reactive[Optional[Path]] = reactive(None)
     tts_progress: reactive[float] = reactive(0.0)
+    
+    # Variant tracking
+    variant_of: reactive[Optional[str]] = reactive(None)  # Original message ID if this is a variant
+    variant_id: reactive[Optional[str]] = reactive(None)  # This variant's ID
+    variant_number: reactive[int] = reactive(1)  # Position in variant list
+    total_variants: reactive[int] = reactive(1)  # Total number of variants
+    is_selected_variant: reactive[bool] = reactive(True)  # Whether this variant is selected
+    has_variants: reactive[bool] = reactive(False)  # Whether this message has variants
     
     def __init__(
         self,
@@ -225,6 +259,21 @@ class ChatMessageEnhanced(Widget):
             if self.timestamp:
                 header_text += f" - {self.timestamp}"
             yield Label(header_text, classes="message-header")
+            
+            # Variant navigation (only for AI messages with variants)
+            if self.has_class("-ai") and (self.has_variants or self.total_variants > 1):
+                with Horizontal(classes="variant-navigation"):
+                    yield Button("◀", id="prev-variant", classes="variant-nav-button", 
+                               disabled=(self.variant_number <= 1),
+                               tooltip="Previous variant")
+                    yield Label(f"Response {self.variant_number} of {self.total_variants}", 
+                              classes="variant-indicator")
+                    yield Button("▶", id="next-variant", classes="variant-nav-button",
+                               disabled=(self.variant_number >= self.total_variants),
+                               tooltip="Next variant")
+                    if not self.is_selected_variant:
+                        yield Button("✓ Use This", id="select-variant", classes="variant-select-button",
+                                   tooltip="Use this response to continue the conversation")
             
             # Message content
             yield Markdown(self.message_text, classes="message-text")
@@ -510,6 +559,36 @@ Preview: {preview}...
         except Exception as e:
             logging.error(f"Error extracting files from message: {e}")
             self._extracted_files = []
+    
+    def update_variant_info(self, variant_num: int, total: int, is_selected: bool = False):
+        """Update variant information for this message."""
+        self.variant_number = variant_num
+        self.total_variants = total
+        self.is_selected_variant = is_selected
+        self.has_variants = total > 1
+        
+        # Update the variant navigation UI if it exists
+        try:
+            if self.has_variants:
+                # Update indicator label
+                indicator = self.query_one(".variant-indicator", Label)
+                indicator.update(f"Response {variant_num} of {total}")
+                
+                # Update button states
+                prev_btn = self.query_one("#prev-variant", Button)
+                next_btn = self.query_one("#next-variant", Button)
+                prev_btn.disabled = (variant_num <= 1)
+                next_btn.disabled = (variant_num >= total)
+                
+                # Update select button visibility
+                try:
+                    select_btn = self.query_one("#select-variant", Button)
+                    select_btn.display = not is_selected
+                except QueryError:
+                    pass  # Select button may not exist if already selected
+        except QueryError:
+            # Variant navigation not present yet, will be created on refresh
+            self.refresh(recompose=True)
 
 #
 #

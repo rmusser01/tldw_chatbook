@@ -846,6 +846,27 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     }
     loguru_logger.debug(f"API parameters: {api_params}")
 
+    # Check if multiple responses are requested and warn about costs
+    if llm_n_value and llm_n_value > 1:
+        # Check if streaming is enabled - it doesn't support multiple responses
+        if should_stream:
+            app.notify(
+                f"⚠️ Streaming doesn't support multiple responses (n={llm_n_value}). Switching to non-streaming mode.",
+                severity="warning",
+                timeout=5
+            )
+            should_stream = False
+            loguru_logger.info(f"Disabled streaming because n={llm_n_value} (multiple responses requested)")
+        
+        # Warn about increased costs
+        cost_multiplier = llm_n_value
+        app.notify(
+            f"🔔 Generating {llm_n_value} response variants. Cost will be ~{cost_multiplier}x normal. Use ◀/▶ to navigate between variants.",
+            severity="information",
+            timeout=6
+        )
+        loguru_logger.info(f"User requested {llm_n_value} response variants")
+    
     # Set current_chat_is_streaming before running the worker using thread-safe method
     app.set_current_chat_is_streaming(should_stream)
     loguru_logger.info(f"Set app.current_chat_is_streaming to: {should_stream}")
@@ -1475,9 +1496,15 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
 
                 if db and message_id_to_delete:
                     try:
-                        db.soft_delete_message(message_id_to_delete)  # Assuming soft delete
-                        loguru_logger.info(f"Message ID {message_id_to_delete} soft-deleted from DB.")
-                        app.notify("Message deleted.", severity="information", timeout=2)
+                        # Get the expected version from the widget
+                        expected_version = getattr(action_widget, 'message_version_internal', None)
+                        if expected_version is not None:
+                            db.soft_delete_message(message_id_to_delete, expected_version)
+                            loguru_logger.info(f"Message ID {message_id_to_delete} soft-deleted from DB.")
+                            app.notify("Message deleted.", severity="information", timeout=2)
+                        else:
+                            loguru_logger.error(f"Cannot delete message {message_id_to_delete}: missing version information")
+                            app.notify("Cannot delete message: missing version information", severity="error")
                     except Exception as e_db_delete:
                         loguru_logger.error(f"Failed to delete message {message_id_to_delete} from DB: {e_db_delete}",
                                             exc_info=True)
@@ -1489,7 +1516,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         # Run the deletion handler in a worker
         app.run_worker(_handle_delete_confirmation)
 
-    elif "regenerate-button" in button_classes and message_role == "AI":
+    elif "regenerate-button" in button_classes and action_widget.has_class("-ai"):
         loguru_logger.info(
             f"Action: Regenerate clicked for AI message ID: {getattr(action_widget, 'message_id_internal', 'N/A')}")
         prefix = "chat"  # Assuming regeneration only happens in the main chat tab
@@ -1501,21 +1528,21 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
             return
 
         history_for_regeneration = []
-        widgets_to_remove_after_regen_source = []  # Renamed for clarity
+        widgets_after_target = []  # Messages after the one being regenerated
         found_target_ai_message_for_regen = False
+        original_message_widget = action_widget  # Keep reference to original
 
-        all_message_widgets_in_log = list(chat_container.query(ChatMessage))
+        all_message_widgets_in_log = list(chat_container.query(ChatMessage)) + list(chat_container.query(ChatMessageEnhanced))
 
         for msg_widget_iter in all_message_widgets_in_log:
             if msg_widget_iter is action_widget:  # This is the AI message we're regenerating
                 found_target_ai_message_for_regen = True
-                widgets_to_remove_after_regen_source.append(msg_widget_iter)
                 # Don't add this AI message to history_for_regeneration
                 continue
 
             if found_target_ai_message_for_regen:
-                # All messages *after* the AI message being regenerated should also be removed
-                widgets_to_remove_after_regen_source.append(msg_widget_iter)
+                # All messages *after* the AI message being regenerated should be removed
+                widgets_after_target.append(msg_widget_iter)
             else:
                 # This message is *before* the one we're regenerating
                 if msg_widget_iter.generation_complete:
@@ -1534,12 +1561,27 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         loguru_logger.debug(
             f"Regenerate: History for regeneration ({len(history_for_regeneration)} messages): {history_for_regeneration}")
 
-        for widget_to_remove_iter in widgets_to_remove_after_regen_source:
-            loguru_logger.debug(
-                f"Regenerate: Removing widget {widget_to_remove_iter.id} (Role: {widget_to_remove_iter.role}) from UI.")
-            await widget_to_remove_iter.remove()
-
-        if app.current_ai_message_widget in widgets_to_remove_after_regen_source:
+        # NEW: Remove messages after target (they become invalid after regeneration)
+        if widgets_after_target:
+            loguru_logger.info(f"Regenerate: Removing {len(widgets_after_target)} messages after target")
+            for widget in widgets_after_target:
+                await widget.remove()
+        
+        # NEW: Store original message info for variant creation
+        original_message_id = getattr(original_message_widget, 'message_id_internal', None)
+        original_content = original_message_widget.message_text
+        
+        # NEW: Mark this message as having variants (will be updated after generation)
+        if hasattr(original_message_widget, 'has_variants'):
+            original_message_widget.has_variants = True
+            original_message_widget.variant_count = 1  # Will be incremented
+        
+        # Store reference for use after generation completes
+        app.regenerating_message_widget = original_message_widget
+        app.regenerating_original_id = original_message_id
+        
+        # Clear current AI widget
+        if app.current_ai_message_widget in [original_message_widget] + widgets_after_target:
             app.current_ai_message_widget = None
 
         # Fetch current chat settings (same as send-chat button logic)
@@ -1722,7 +1764,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                        description=f"Regenerating for {selected_provider_regen}")
         app.set_current_chat_worker(worker)
 
-    elif "continue-button" in button_classes and message_role == "AI":
+    elif "continue-button" in button_classes and action_widget.has_class("-ai"):
         loguru_logger.info(
             f"Action: Continue clicked for AI message ID: {getattr(action_widget, 'message_id_internal', 'N/A')}"
         )
@@ -1731,7 +1773,117 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         # Call the continue response handler
         await handle_continue_response_button_pressed(app, button_event, action_widget)
     
-    elif "suggest-response-button" in button_classes and message_role == "AI":
+    elif button.id == "prev-variant" or button.id == "next-variant":
+        # Handle variant navigation
+        loguru_logger.info(f"Action: Variant navigation button {button.id} clicked")
+        
+        if not app.chachanotes_db:
+            app.notify("Database not available for variant navigation", severity="error")
+            return
+            
+        original_id = getattr(action_widget, 'variant_of', None) or getattr(action_widget, 'message_id_internal', None)
+        if not original_id:
+            loguru_logger.warning("No message ID for variant navigation")
+            return
+        
+        # Get all variants from database
+        variants = app.chachanotes_db.get_message_variants(original_id)
+        if not variants or len(variants) <= 1:
+            loguru_logger.info("No variants found or only one variant exists")
+            return
+        
+        # Find current variant index
+        current_variant_id = getattr(action_widget, 'variant_id', None) or getattr(action_widget, 'message_id_internal', None)
+        current_index = next((i for i, v in enumerate(variants) if v['id'] == current_variant_id), 0)
+        
+        # Calculate new index
+        if button.id == "prev-variant":
+            new_index = max(0, current_index - 1)
+        else:  # next-variant
+            new_index = min(len(variants) - 1, current_index + 1)
+        
+        if new_index == current_index:
+            loguru_logger.debug("Already at boundary, no navigation needed")
+            return
+        
+        # Get the new variant's data
+        new_variant = variants[new_index]
+        
+        # Update the message widget with new variant's content
+        action_widget.message_text = new_variant['content']
+        action_widget.variant_id = new_variant['id']
+        action_widget.message_id_internal = new_variant['id']
+        action_widget.message_version_internal = new_variant.get('version', 1)
+        
+        # Update the markdown widget
+        try:
+            markdown_widget = action_widget.query_one(".message-text", Markdown)
+            await markdown_widget.update(new_variant['content'])
+        except QueryError:
+            loguru_logger.error("Could not find markdown widget to update")
+        
+        # Update variant info display
+        if hasattr(action_widget, 'update_variant_info'):
+            action_widget.update_variant_info(new_index + 1, len(variants), False)
+        
+        app.notify(f"Showing variant {new_index + 1} of {len(variants)}", severity="information", timeout=2)
+        loguru_logger.info(f"Navigated to variant {new_index + 1} of {len(variants)}")
+    
+    elif button.id == "select-variant":
+        # Handle variant selection for conversation continuation
+        loguru_logger.info("Action: Select variant button clicked")
+        
+        if not app.chachanotes_db:
+            app.notify("Database not available for variant selection", severity="error")
+            return
+        
+        variant_id = getattr(action_widget, 'variant_id', None) or getattr(action_widget, 'message_id_internal', None)
+        original_id = getattr(action_widget, 'variant_of', None) or variant_id
+        
+        if not variant_id or not original_id:
+            loguru_logger.warning("No variant or original ID for selection")
+            return
+        
+        try:
+            # Update database to mark this variant as selected
+            app.chachanotes_db.select_message_variant(original_id, variant_id)
+            
+            # Update widget to reflect selection
+            action_widget.is_selected_variant = True
+            
+            # Hide the select button
+            try:
+                select_btn = action_widget.query_one("#select-variant", Button)
+                select_btn.display = False
+            except QueryError:
+                pass
+            
+            # Update all other variants in the UI if they exist
+            chat_container = action_widget.parent
+            if chat_container:
+                # Find all message widgets that are variants of the same original
+                for widget in chat_container.query(ChatMessageEnhanced):
+                    widget_variant_of = getattr(widget, 'variant_of', None)
+                    widget_id = getattr(widget, 'message_id_internal', None)
+                    
+                    # Check if this is a sibling variant
+                    if (widget_variant_of == original_id or widget_id == original_id) and widget != action_widget:
+                        widget.is_selected_variant = False
+                        # Show select button on unselected variants
+                        try:
+                            other_select_btn = widget.query_one("#select-variant", Button)
+                            other_select_btn.display = True
+                        except QueryError:
+                            pass
+            
+            app.notify(f"Selected this response to continue the conversation", severity="information")
+            loguru_logger.info(f"Selected variant {variant_id} as the active variant for message {original_id}")
+            
+        except Exception as e:
+            loguru_logger.error(f"Error selecting variant: {e}", exc_info=True)
+            app.notify(f"Failed to select variant: {e}", severity="error")
+    
+    elif "suggest-response-button" in button_classes and action_widget.has_class("-ai"):
         loguru_logger.info(
             f"Action: Suggest Response clicked for AI message ID: {getattr(action_widget, 'message_id_internal', 'N/A')}"
         )
@@ -2713,30 +2865,53 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
         # Check if we should use enhanced widgets
         use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
         
+        # Track messages by their parent_message_id to handle variants
+        message_widgets_by_parent = {}
+        
         for msg_data in db_messages:
+            # Skip messages that are not selected variants (unless they're the only one)
+            if msg_data.get('is_selected_variant') == 0:
+                # Check if this message has variants
+                variant_of = msg_data.get('variant_of')
+                if variant_of:
+                    # This is a non-selected variant, skip it
+                    continue
+            
             content_to_display = ccl.replace_placeholders(
                 msg_data.get('content', ''),
                 character_name_from_conv_load, # Character name for this specific conversation
                 current_user_name
             )
-
+            
+            # Determine the display role (sender) - respect custom names
+            sender_role = msg_data.get('sender', 'Unknown')
+            
             # Use ChatMessageEnhanced if there's image data OR if we're in enhanced mode
             if msg_data.get('image_data') or use_enhanced_chat:
                 chat_msg_widget_for_display = ChatMessageEnhanced(
                     message=content_to_display,
-                    role=msg_data.get('sender', 'Unknown'),
+                    role=sender_role,  # Use the actual sender name
                     generation_complete=True,
                     message_id=msg_data.get('id'),
                     message_version=msg_data.get('version'),
                     timestamp=msg_data.get('timestamp'),
                     image_data=msg_data.get('image_data'),
                     image_mime_type=msg_data.get('image_mime_type'),
-                    feedback=msg_data.get('feedback')
+                    feedback=msg_data.get('feedback'),
+                    sender=msg_data.get('sender')  # Pass sender for proper class assignment
                 )
+                
+                # Check if this message has variants
+                if msg_data.get('total_variants', 1) > 1:
+                    chat_msg_widget_for_display.update_variant_info(
+                        msg_data.get('variant_number', 1),
+                        msg_data.get('total_variants', 1),
+                        msg_data.get('is_selected_variant', True)
+                    )
             else:
                 chat_msg_widget_for_display = ChatMessage(
                     message=content_to_display,
-                    role=msg_data.get('sender', 'Unknown'),
+                    role=sender_role,  # Use the actual sender name
                     generation_complete=True,
                     message_id=msg_data.get('id'),
                     message_version=msg_data.get('version'),
@@ -2748,6 +2923,13 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
             
             # Styling class already handled by ChatMessage constructor based on role "User" or other
             await chat_log_widget_disp.mount(chat_msg_widget_for_display)
+            
+            # Store widget reference for variant handling
+            parent_msg_id = msg_data.get('parent_message_id')
+            if parent_msg_id:
+                if parent_msg_id not in message_widgets_by_parent:
+                    message_widgets_by_parent[parent_msg_id] = []
+                message_widgets_by_parent[parent_msg_id].append(chat_msg_widget_for_display)
 
         if chat_log_widget_disp.is_mounted:
             chat_log_widget_disp.scroll_end(animate=False)
@@ -3550,7 +3732,7 @@ async def handle_chat_sidebar_prompt_search_changed(
     logger.info(f"[Prompts] Search '{search_term}' → {len(prompts)} results.")
 
 
-async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.Pressed, message_widget: ChatMessage) -> None:
+async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.Pressed, message_widget: Union[ChatMessage, ChatMessageEnhanced]) -> None:
     """Handles the 'Continue Response' button press on an AI chat message."""
     loguru_logger.info(f"Continue Response button pressed for message_id: {message_widget.message_id_internal}, current text: '{message_widget.message_text[:50]}...'")
     db = app.chachanotes_db
@@ -3852,10 +4034,17 @@ async def handle_respond_for_me_button_pressed(app: 'TldwCli', event: Button.Pre
     original_button_label: Optional[str] = "💡" # Default/fallback icon
 
     try:
-        respond_button = app.query_one("#respond-for-me-button", Button)
-        original_button_label = respond_button.label
-        respond_button.disabled = True
-        respond_button.label = f"{get_char(EMOJI_THINKING, FALLBACK_THINKING)} Suggesting..."
+        # Try to find the respond button - it may not exist in all chat windows
+        try:
+            respond_button = app.query_one("#respond-for-me-button", Button)
+            original_button_label = respond_button.label
+            respond_button.disabled = True
+            respond_button.label = f"{get_char(EMOJI_THINKING, FALLBACK_THINKING)} Suggesting..."
+        except QueryError:
+            # Button doesn't exist in this window (e.g., ChatWindowEnhanced), that's okay
+            loguru_logger.debug("Respond button not found in UI, continuing without it")
+            respond_button = None
+        
         app.notify("Generating suggestion...", timeout=2)
 
         # --- 1. Retrieve History for API ---
