@@ -1938,7 +1938,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         
         try:
             # Update database to mark this variant as selected
-            app.chachanotes_db.select_message_variant(original_id, variant_id)
+            app.chachanotes_db.select_message_variant(variant_id)
             
             # Update widget to reflect selection
             action_widget.is_selected_variant = True
