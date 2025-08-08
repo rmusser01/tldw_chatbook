@@ -255,11 +255,19 @@ class ChatbookImporter:
             
             if success:
                 if status.successful_items > 0:
-                    message = f"Successfully imported {status.successful_items}/{status.total_items} items"
+                    details = []
                     if status.skipped_items > 0:
-                        message += f" ({status.skipped_items} skipped)"
+                        details.append(f"{status.skipped_items} skipped")
+                    if status.failed_items > 0:
+                        details.append(f"{status.failed_items} failed")
+                    
+                    message = f"Successfully imported {status.successful_items}/{status.total_items} items"
+                    if details:
+                        message += f" ({', '.join(details)})"
                 elif status.skipped_items > 0:
-                    message = f"Skipped all {status.skipped_items} items due to conflicts"
+                    message = f"Skipped {status.skipped_items}/{status.total_items} items due to conflicts"
+                    if status.failed_items > 0:
+                        message += f" ({status.failed_items} failed)"
                 else:
                     message = "No items to import"
                 logger.info(message)
