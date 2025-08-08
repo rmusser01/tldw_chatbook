@@ -353,9 +353,10 @@ class AudioRecordingService:
                 else:
                     # Fallback: manual conversion
                     import struct
+                    samples = struct.unpack(f'{frames * self.channels}f', indata.tobytes())
                     audio_data = b''.join(
                         struct.pack('h', int(min(32767, max(-32768, sample * 32767))))
-                        for sample in indata.flatten()
+                        for sample in samples
                     )
                 self._process_audio_chunk(audio_data)
         
