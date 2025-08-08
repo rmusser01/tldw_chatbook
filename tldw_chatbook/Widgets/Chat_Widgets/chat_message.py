@@ -128,6 +128,7 @@ class ChatMessage(Widget):
                  image_data: Optional[bytes] = None,
                  image_mime_type: Optional[str] = None,
                  feedback: Optional[str] = None,
+                 sender: Optional[str] = None,
                  **kwargs):
         super().__init__(**kwargs)
         self.message_text = message
@@ -144,7 +145,8 @@ class ChatMessage(Widget):
         #self.add_class(f"-{role.lower()}") # Add role-specific class
         # For CSS styling, we use a generic class based on whether it's the user or not.
         # The actual self.role (e.g., "Default Assistant") is used for display in the header.
-        if role.lower() == "user":
+        # User messages have sender="User" even if role is the username
+        if (sender and sender.lower() == "user") or role.lower() == "user":
             self.add_class("-user")
         else: # Any role other than "user" (e.g., "AI", "Default Assistant", "Character Name") gets the -ai style
             self.add_class("-ai")

@@ -39,8 +39,7 @@ from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiPlaintextWindow import Inge
 from tldw_chatbook.Widgets.Media_Ingest.IngestLocalPlaintextWindow import IngestLocalPlaintextWindow
 from tldw_chatbook.Widgets.Media_Ingest.IngestLocalWebArticleWindow import IngestLocalWebArticleWindow
 from tldw_chatbook.Widgets.Media_Ingest.IngestLocalDocumentWindow import IngestLocalDocumentWindow
-from tldw_chatbook.Widgets.Media_Ingest.IngestLocalAudioWindow import IngestLocalAudioWindow
-from tldw_chatbook.Widgets.Media_Ingest.IngestLocalVideoWindow import IngestLocalVideoWindow
+from tldw_chatbook.Widgets.Media_Ingest.IngestUIFactory import create_ingest_ui
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -776,14 +775,16 @@ class IngestWindow(Container):
     
     def compose_local_video_tab(self) -> ComposeResult:
         """Composes the Video tab content for local media ingestion."""
-        window = IngestLocalVideoWindow(self.app_instance)
+        # Use factory to get the appropriate UI based on config
+        window = create_ingest_ui(self.app_instance, media_type="video")
         # Store reference to initialize models later
         self._local_video_window = window
         yield from window.compose()
 
     def compose_local_audio_tab(self) -> ComposeResult:
         """Composes the Audio tab content for local media ingestion."""
-        window = IngestLocalAudioWindow(self.app_instance)
+        # Use factory to get the appropriate UI based on config
+        window = create_ingest_ui(self.app_instance, media_type="audio")
         # Store reference to initialize models later
         self._local_audio_window = window
         yield from window.compose()

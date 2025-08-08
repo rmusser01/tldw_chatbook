@@ -258,30 +258,82 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
 
                     if isinstance(worker_result_content, dict) and 'choices' in worker_result_content:
                         try:
-                            # Extract main content
-                            message_content = worker_result_content['choices'][0]['message']['content']
+                            choices = worker_result_content.get('choices', [])
+                            num_choices = len(choices)
                             
-                            # Check for DeepSeek reasoning_content field
-                            reasoning_content = None
-                            logger.info(f"DeepSeek response structure: {json.dumps(worker_result_content['choices'][0], indent=2)[:500]}...")
-                            if 'reasoning_content' in worker_result_content['choices'][0]['message']:
-                                reasoning_content = worker_result_content['choices'][0]['message']['reasoning_content']
-                                logger.info(f"Found reasoning_content in message: {reasoning_content[:200]}...")
-                            elif 'reasoning_content' in worker_result_content['choices'][0]:
-                                reasoning_content = worker_result_content['choices'][0]['reasoning_content']
-                                logger.info(f"Found reasoning_content in choice: {reasoning_content[:200]}...")
-                            
-                            # Combine content with reasoning if present and strip_thinking_tags is False
-                            if reasoning_content and hasattr(app, 'app_config'):
-                                strip_tags_setting = app.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
-                                if not strip_tags_setting:
-                                    # Include reasoning content wrapped in thinking tags
-                                    original_text_for_storage = f"<thinking>\n{reasoning_content}\n</thinking>\n\n{message_content}"
+                            # Check if we have multiple choices (n > 1 was used)
+                            if num_choices > 1:
+                                logger.info(f"Received {num_choices} response choices from API")
+                                
+                                # Process first choice for immediate display
+                                first_choice = choices[0]
+                                message_content = first_choice['message']['content']
+                                
+                                # Check for DeepSeek reasoning_content field
+                                reasoning_content = None
+                                if 'reasoning_content' in first_choice['message']:
+                                    reasoning_content = first_choice['message']['reasoning_content']
+                                elif 'reasoning_content' in first_choice:
+                                    reasoning_content = first_choice['reasoning_content']
+                                
+                                # Combine content with reasoning if present
+                                if reasoning_content and hasattr(app, 'app_config'):
+                                    strip_tags_setting = app.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+                                    if not strip_tags_setting:
+                                        original_text_for_storage = f"<thinking>\n{reasoning_content}\n</thinking>\n\n{message_content}"
+                                    else:
+                                        original_text_for_storage = message_content
                                 else:
-                                    # Just use the main content
                                     original_text_for_storage = message_content
+                                
+                                # Store all choices for variant creation after saving
+                                app._pending_response_variants = []
+                                for i, choice in enumerate(choices):
+                                    variant_content = choice['message']['content']
+                                    # Handle reasoning content for each variant
+                                    variant_reasoning = None
+                                    if 'reasoning_content' in choice['message']:
+                                        variant_reasoning = choice['message']['reasoning_content']
+                                    elif 'reasoning_content' in choice:
+                                        variant_reasoning = choice['reasoning_content']
+                                    
+                                    if variant_reasoning and not strip_tags_setting:
+                                        variant_full_text = f"<thinking>\n{variant_reasoning}\n</thinking>\n\n{variant_content}"
+                                    else:
+                                        variant_full_text = variant_content
+                                    
+                                    app._pending_response_variants.append({
+                                        'content': variant_full_text,
+                                        'is_first': (i == 0)
+                                    })
+                                
+                                logger.info(f"Stored {len(app._pending_response_variants)} variants for creation")
+                                
                             else:
-                                original_text_for_storage = message_content
+                                # Single choice - original behavior
+                                message_content = choices[0]['message']['content']
+                                
+                                # Check for DeepSeek reasoning_content field
+                                reasoning_content = None
+                                logger.info(f"DeepSeek response structure: {json.dumps(choices[0], indent=2)[:500]}...")
+                                if 'reasoning_content' in choices[0]['message']:
+                                    reasoning_content = choices[0]['message']['reasoning_content']
+                                    logger.info(f"Found reasoning_content in message: {reasoning_content[:200]}...")
+                                elif 'reasoning_content' in choices[0]:
+                                    reasoning_content = choices[0]['reasoning_content']
+                                    logger.info(f"Found reasoning_content in choice: {reasoning_content[:200]}...")
+                                
+                                # Combine content with reasoning if present and strip_thinking_tags is False
+                                if reasoning_content and hasattr(app, 'app_config'):
+                                    strip_tags_setting = app.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+                                    if not strip_tags_setting:
+                                        # Include reasoning content wrapped in thinking tags
+                                        original_text_for_storage = f"<thinking>\n{reasoning_content}\n</thinking>\n\n{message_content}"
+                                    else:
+                                        # Just use the main content
+                                        original_text_for_storage = message_content
+                                else:
+                                    original_text_for_storage = message_content
                                 
                             final_display_text_obj = Text(original_text_for_storage)  # Use Text() for plain text
                         except (KeyError, IndexError, TypeError) as e_parse:
@@ -399,6 +451,163 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                                     logger.debug(
                                         f"Non-streamed AI message saved to DB. ConvID: {app.current_chat_conversation_id}, "
                                         f"MsgID: {saved_ai_msg_details_ns.get('id')}, Version: {saved_ai_msg_details_ns.get('version')}")
+                                    
+                                    # Check if we have pending response variants to create
+                                    if hasattr(app, '_pending_response_variants') and app._pending_response_variants:
+                                        logger.info(f"Creating {len(app._pending_response_variants)} response variants")
+                                        original_message_id = saved_ai_msg_details_ns.get('id')
+                                        
+                                        # Update the first message as variant 1
+                                        ai_message_widget.variant_of = None  # First one is the original
+                                        ai_message_widget.variant_id = original_message_id
+                                        ai_message_widget.variant_number = 1
+                                        ai_message_widget.total_variants = len(app._pending_response_variants)
+                                        ai_message_widget.is_selected_variant = True
+                                        
+                                        # Create additional message widgets for other variants
+                                        chat_container = ai_message_widget.parent
+                                        if chat_container:
+                                            for i, variant_data in enumerate(app._pending_response_variants):
+                                                if i == 0:
+                                                    # Skip first one, it's already displayed
+                                                    continue
+                                                
+                                                # Create variant in database
+                                                variant_id = app.chachanotes_db.create_message_variant(
+                                                    original_message_id=original_message_id,
+                                                    variant_content=variant_data['content'],
+                                                    is_selected=False  # Only first is selected
+                                                )
+                                                
+                                                if variant_id:
+                                                    # Create widget for variant (but hidden)
+                                                    from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+                                                    variant_widget = ChatMessageEnhanced(
+                                                        message=variant_data['content'],
+                                                        role=ai_sender_name_for_db,
+                                                        generation_complete=True,
+                                                        message_id=variant_id
+                                                    )
+                                                    
+                                                    # Set variant properties
+                                                    variant_widget.variant_of = original_message_id
+                                                    variant_widget.variant_id = variant_id
+                                                    variant_widget.variant_number = i + 1
+                                                    variant_widget.total_variants = len(app._pending_response_variants)
+                                                    variant_widget.is_selected_variant = False
+                                                    variant_widget.has_variants = True
+                                                    
+                                                    # Mount but hide the widget
+                                                    await chat_container.mount(variant_widget)
+                                                    variant_widget.display = False
+                                                    
+                                                    logger.info(f"Created variant {i+1} of {len(app._pending_response_variants)} with ID {variant_id}")
+                                            
+                                            # Update the first widget to show variant navigation
+                                            if hasattr(ai_message_widget, 'update_variant_info'):
+                                                ai_message_widget.update_variant_info(1, len(app._pending_response_variants), True)
+                                            
+                                            # Notify user about multiple responses
+                                            app.notify(
+                                                f"Generated {len(app._pending_response_variants)} response variants. Use ◀/▶ to navigate.",
+                                                severity="information",
+                                                timeout=4
+                                            )
+                                        
+                                        # Clear pending variants
+                                        delattr(app, '_pending_response_variants')
+                                    
+                                    # Check if this is a regeneration - create variant relationship
+                                    elif hasattr(app, 'regenerating_message_widget') and app.regenerating_message_widget:
+                                        original_widget = app.regenerating_message_widget
+                                        original_id = getattr(app, 'regenerating_original_id', None)
+                                        
+                                        # For ephemeral chats (no original_id), content was already replaced in the original widget
+                                        if original_id is None:
+                                            # The non-streaming already updated the original widget (ai_message_widget == original_widget)
+                                            logger.info("Regenerate: Content replaced in original widget (ephemeral chat, non-streaming)")
+                                            
+                                            # Clear regeneration tracking
+                                            delattr(app, 'regenerating_message_widget')
+                                            if hasattr(app, 'regenerating_original_id'):
+                                                delattr(app, 'regenerating_original_id')
+                                        elif original_id and ai_msg_db_id_ns_version:
+                                            try:
+                                                # Get all existing variants to determine the variant number
+                                                existing_variants = app.chachanotes_db.get_message_variants(original_id)
+                                                variant_count = len(existing_variants) + 1  # +1 for this new variant
+                                                
+                                                # Update database to mark this as a variant
+                                                # Note: The new message is already saved, we just need to update its variant fields
+                                                app.chachanotes_db.execute_query(
+                                                    """UPDATE messages SET 
+                                                       variant_of = ?, 
+                                                       variant_number = ?, 
+                                                       is_selected_variant = 1,
+                                                       total_variants = ?
+                                                       WHERE id = ?""",
+                                                    (original_id, variant_count, variant_count, ai_msg_db_id_ns_version)
+                                                )
+                                                
+                                                # Update original message to mark it has variants and is not selected
+                                                app.chachanotes_db.execute_query(
+                                                    """UPDATE messages SET 
+                                                       is_selected_variant = 0,
+                                                       total_variants = ?
+                                                       WHERE id = ?""",
+                                                    (variant_count, original_id)
+                                                )
+                                                
+                                                # Update all other variants' total count
+                                                for variant in existing_variants:
+                                                    if variant['id'] != original_id:
+                                                        app.chachanotes_db.execute_query(
+                                                            """UPDATE messages SET 
+                                                               total_variants = ?,
+                                                               is_selected_variant = 0
+                                                               WHERE id = ?""",
+                                                            (variant_count, variant['id'])
+                                                        )
+                                                
+                                                # Update the new message widget with variant info
+                                                ai_message_widget.variant_of = original_id
+                                                ai_message_widget.variant_id = ai_msg_db_id_ns_version
+                                                ai_message_widget.variant_number = variant_count
+                                                ai_message_widget.total_variants = variant_count
+                                                ai_message_widget.is_selected_variant = True
+                                                ai_message_widget.has_variants = True
+                                                
+                                                # Update the new widget to show variant navigation
+                                                if hasattr(ai_message_widget, 'update_variant_info'):
+                                                    ai_message_widget.update_variant_info(variant_count, variant_count, True)
+                                                
+                                                # Update original widget with variant info
+                                                if hasattr(original_widget, 'has_variants'):
+                                                    original_widget.has_variants = True
+                                                    original_widget.variant_id = original_id
+                                                    original_widget.variant_number = 1
+                                                    original_widget.total_variants = variant_count
+                                                    original_widget.is_selected_variant = False
+                                                    original_widget.display = False  # Hide original
+                                                    
+                                                    # Update original widget to show variant navigation
+                                                    if hasattr(original_widget, 'update_variant_info'):
+                                                        original_widget.update_variant_info(1, variant_count, False)
+                                                
+                                                logger.info(f"Created regeneration variant {variant_count} of original message {original_id}")
+                                                app.notify(
+                                                    f"Regenerated response (variant {variant_count} of {variant_count}). Use ◀/▶ to navigate between variants.",
+                                                    severity="information",
+                                                    timeout=4
+                                                )
+                                                
+                                            except Exception as e:
+                                                logger.error(f"Failed to create regeneration variant: {e}", exc_info=True)
+                                        
+                                        # Clear regeneration tracking
+                                        delattr(app, 'regenerating_message_widget')
+                                        if hasattr(app, 'regenerating_original_id'):
+                                            delattr(app, 'regenerating_original_id')
                                 else:
                                     logger.error(
                                         f"Failed to retrieve saved non-streamed AI message details from DB for ID {ai_msg_db_id_ns_version}.")

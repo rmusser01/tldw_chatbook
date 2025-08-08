@@ -128,7 +128,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 11 # Incremented schema version to add study tables (learning paths, flashcards, mindmaps)
+    _CURRENT_SCHEMA_VERSION = 12 # Incremented schema version to add message variant support
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
 
     _FULL_SCHEMA_SQL_V4 = """
@@ -1613,6 +1613,27 @@ UPDATE db_schema_version
    AND version = 10;
 """
 
+    _MIGRATE_V11_TO_V12_SQL = """
+-- Migration from V11 to V12: Add message variant support for multiple responses
+
+-- Add columns to messages table for variant tracking
+ALTER TABLE messages ADD COLUMN variant_of TEXT REFERENCES messages(id) ON DELETE CASCADE;
+ALTER TABLE messages ADD COLUMN variant_number INTEGER DEFAULT 1;
+ALTER TABLE messages ADD COLUMN is_selected_variant BOOLEAN DEFAULT 1;
+ALTER TABLE messages ADD COLUMN total_variants INTEGER DEFAULT 1;
+
+-- Create indexes for efficient variant queries
+CREATE INDEX IF NOT EXISTS idx_messages_variant_of ON messages(variant_of);
+CREATE INDEX IF NOT EXISTS idx_messages_selected_variant ON messages(variant_of, is_selected_variant);
+CREATE INDEX IF NOT EXISTS idx_messages_variants_by_parent ON messages(parent_message_id, variant_number);
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 12
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 11;
+"""
+
     def __init__(self, db_path: Union[str, Path], client_id: str, 
                  check_integrity_on_startup: bool = False):
         """
@@ -2286,6 +2307,41 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V10→V11] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V10 to V11 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v11_to_v12(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 11 to version 12.
+
+        This migration adds message variant support for multiple AI responses
+        and conversation forking.
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 12 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V11 to V12 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V11_TO_V12_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V11→V12] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 12:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V11→V12] Migration version check failed. Expected 12, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V11→V12] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V11→V12] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V11 to V12 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V11→V12] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V11 to V12 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 7 to version 8.
@@ -2380,6 +2436,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 10 and target_version > 10:
                         self._migrate_from_v10_to_v11(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 11 and target_version > 11:
+                        self._migrate_from_v11_to_v12(conn)
                 elif current_db_version == 4 and target_version >= 5:
                     self._migrate_from_v4_to_v5(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2400,6 +2459,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 10 and target_version > 10:
                         self._migrate_from_v10_to_v11(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 11 and target_version > 11:
+                        self._migrate_from_v11_to_v12(conn)
                 elif current_db_version == 5 and target_version >= 6:
                     self._migrate_from_v5_to_v6(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2417,6 +2479,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 10 and target_version > 10:
                         self._migrate_from_v10_to_v11(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 11 and target_version > 11:
+                        self._migrate_from_v11_to_v12(conn)
                 elif current_db_version == 6 and target_version >= 7:
                     self._migrate_from_v6_to_v7(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2431,6 +2496,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 10 and target_version > 10:
                         self._migrate_from_v10_to_v11(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 11 and target_version > 11:
+                        self._migrate_from_v11_to_v12(conn)
                 elif current_db_version == 7 and target_version == 8:
                     self._migrate_from_v7_to_v8(conn)
                 elif current_db_version == 8 and target_version == 9:
@@ -2439,6 +2507,8 @@ UPDATE db_schema_version
                     self._migrate_from_v9_to_v10(conn)
                 elif current_db_version == 10 and target_version == 11:
                     self._migrate_from_v10_to_v11(conn)
+                elif current_db_version == 11 and target_version == 12:
+                    self._migrate_from_v11_to_v12(conn)
                 elif current_initial_version < target_version: # An older schema exists
                     # For versions older than 4, we don't have a migration path
                     raise SchemaError(
@@ -3518,7 +3588,7 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database errors during fetching.
         """
         start_time = time.time()
-        query = "SELECT * FROM conversations WHERE conversation_name = ? AND deleted = 0 ORDER BY created_at DESC"
+        query = "SELECT * FROM conversations WHERE title = ? AND deleted = 0 ORDER BY created_at DESC"
         try:
             cursor = self.execute_query(query, (conversation_name,))
             rows = cursor.fetchall()
@@ -4051,10 +4121,12 @@ UPDATE db_schema_version
             raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
 
         # The new query joins with conversations to check its 'deleted' status.
+        # Now includes variant fields for message variant support
         query = f"""
             SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
-                   m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role 
+                   m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
+                   m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ? 
@@ -4353,6 +4425,191 @@ UPDATE db_schema_version
         # Use the existing update_message method with feedback in update_data
         update_data = {'feedback': feedback}
         return self.update_message(message_id, update_data, expected_version)
+
+    def create_message_variant(self, original_message_id: str, variant_content: str, 
+                              variant_number: int = None, is_selected: bool = False) -> Optional[str]:
+        """
+        Creates a variant of an existing message (for regeneration or multiple responses).
+        
+        Args:
+            original_message_id: The ID of the message to create a variant of.
+            variant_content: The content of the new variant.
+            variant_number: The variant number (auto-assigned if None).
+            is_selected: Whether this variant is the selected one.
+            
+        Returns:
+            The ID of the created variant message.
+            
+        Raises:
+            InputError: If the original message doesn't exist.
+            CharactersRAGDBError: For database errors.
+        """
+        try:
+            with self.transaction() as conn:
+                # Get the original message details
+                cursor = conn.execute("""
+                    SELECT conversation_id, parent_message_id, sender, role,
+                           image_data, image_mime_type
+                    FROM messages 
+                    WHERE id = ? AND deleted = 0
+                """, (original_message_id,))
+                
+                original = cursor.fetchone()
+                if not original:
+                    raise InputError(f"Original message {original_message_id} not found")
+                
+                # If original is already a variant, find the root
+                cursor = conn.execute("""
+                    SELECT variant_of FROM messages WHERE id = ?
+                """, (original_message_id,))
+                variant_info = cursor.fetchone()
+                root_variant_id = variant_info['variant_of'] if variant_info and variant_info['variant_of'] else original_message_id
+                
+                # Count existing variants
+                cursor = conn.execute("""
+                    SELECT COUNT(*) as count, MAX(variant_number) as max_num 
+                    FROM messages 
+                    WHERE (variant_of = ? OR id = ?) AND deleted = 0
+                """, (root_variant_id, root_variant_id))
+                
+                variant_stats = cursor.fetchone()
+                if variant_number is None:
+                    variant_number = (variant_stats['max_num'] or 1) + 1
+                
+                # If selected, unselect others
+                if is_selected:
+                    conn.execute("""
+                        UPDATE messages 
+                        SET is_selected_variant = 0 
+                        WHERE (variant_of = ? OR id = ?) AND deleted = 0
+                    """, (root_variant_id, root_variant_id))
+                
+                # Create the new variant message
+                new_msg_id = str(uuid.uuid4())
+                now = self._get_current_utc_timestamp_iso()
+                
+                conn.execute("""
+                    INSERT INTO messages (
+                        id, conversation_id, parent_message_id, sender, content, 
+                        role, image_data, image_mime_type,
+                        variant_of, variant_number, is_selected_variant, total_variants,
+                        timestamp, last_modified, version, client_id, deleted
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0)
+                """, (
+                    new_msg_id, original['conversation_id'], original['parent_message_id'],
+                    original['sender'], variant_content, original['role'],
+                    original['image_data'], original['image_mime_type'],
+                    root_variant_id, variant_number, int(is_selected), variant_stats['count'] + 1,
+                    now, now, self.client_id
+                ))
+                
+                # Update total_variants count for all variants
+                conn.execute("""
+                    UPDATE messages 
+                    SET total_variants = ? 
+                    WHERE (variant_of = ? OR id = ?) AND deleted = 0
+                """, (variant_stats['count'] + 1, root_variant_id, root_variant_id))
+                
+                logger.info(f"Created variant {new_msg_id} (#{variant_number}) of message {original_message_id}")
+                return new_msg_id
+                
+        except InputError:
+            raise
+        except Exception as e:
+            logger.error(f"Error creating message variant: {e}", exc_info=True)
+            raise CharactersRAGDBError(f"Failed to create message variant: {e}") from e
+    
+    def get_message_variants(self, message_id: str) -> List[Dict[str, Any]]:
+        """
+        Gets all variants of a message (including the original).
+        
+        Args:
+            message_id: The ID of any message in the variant group.
+            
+        Returns:
+            List of message variants ordered by variant_number.
+        """
+        try:
+            with self.transaction() as conn:
+                # Find the root variant ID
+                cursor = conn.execute("""
+                    SELECT variant_of FROM messages WHERE id = ? AND deleted = 0
+                """, (message_id,))
+                result = cursor.fetchone()
+                
+                if result and result['variant_of']:
+                    root_id = result['variant_of']
+                else:
+                    root_id = message_id
+                
+                # Get all variants
+                cursor = conn.execute("""
+                    SELECT id, content, sender, role, variant_number, is_selected_variant,
+                           total_variants, timestamp, last_modified, version, feedback
+                    FROM messages 
+                    WHERE (id = ? OR variant_of = ?) AND deleted = 0
+                    ORDER BY variant_number
+                """, (root_id, root_id))
+                
+                variants = []
+                for row in cursor:
+                    variants.append(dict(row))
+                
+                return variants
+                
+        except Exception as e:
+            logger.error(f"Error getting message variants: {e}", exc_info=True)
+            raise CharactersRAGDBError(f"Failed to get message variants: {e}") from e
+    
+    def select_message_variant(self, variant_id: str) -> bool:
+        """
+        Selects a specific message variant as the active one.
+        
+        Args:
+            variant_id: The ID of the variant to select.
+            
+        Returns:
+            True if successful.
+            
+        Raises:
+            InputError: If the variant doesn't exist.
+            CharactersRAGDBError: For database errors.
+        """
+        try:
+            with self.transaction() as conn:
+                # Get the variant info
+                cursor = conn.execute("""
+                    SELECT variant_of FROM messages WHERE id = ? AND deleted = 0
+                """, (variant_id,))
+                result = cursor.fetchone()
+                
+                if not result:
+                    raise InputError(f"Message variant {variant_id} not found")
+                
+                root_id = result['variant_of'] if result['variant_of'] else variant_id
+                
+                # Unselect all variants
+                conn.execute("""
+                    UPDATE messages 
+                    SET is_selected_variant = 0 
+                    WHERE (id = ? OR variant_of = ?) AND deleted = 0
+                """, (root_id, root_id))
+                
+                # Select the specified variant
+                conn.execute("""
+                    UPDATE messages 
+                    SET is_selected_variant = 1 
+                    WHERE id = ? AND deleted = 0
+                """, (variant_id,))
+                
+                logger.info(f"Selected variant {variant_id}")
+                return True
+                
+        except InputError:
+            raise
+        except Exception as e:
+            logger.error(f"Error selecting message variant: {e}", exc_info=True)
+            raise CharactersRAGDBError(f"Failed to select message variant: {e}") from e
 
     def search_messages_by_content(self, content_query: str, conversation_id: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
         """
