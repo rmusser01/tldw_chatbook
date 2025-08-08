@@ -191,6 +191,7 @@ class ChatMessageEnhanced(Widget):
         image_data: Optional[bytes] = None,
         image_mime_type: Optional[str] = None,
         feedback: Optional[str] = None,
+        sender: Optional[str] = None,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -206,7 +207,8 @@ class ChatMessageEnhanced(Widget):
         self._image_widget = None
         
         # Add role-specific class
-        if role.lower() == "user":
+        # User messages have sender="User" even if role is the username
+        if (sender and sender.lower() == "user") or role.lower() == "user":
             self.add_class("-user")
         else:
             self.add_class("-ai")

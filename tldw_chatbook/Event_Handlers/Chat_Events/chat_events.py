@@ -198,14 +198,16 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                 last_message = all_messages[-1]
                 loguru_logger.debug(f"Found {len(all_messages)} messages. Last message role: {last_message.role}, type: {type(last_message).__name__}")
                 
-                if last_message.role == "User":
+                # Check if the last message is from a user by checking CSS class
+                # User messages have "-user" class, AI messages have "-ai" class
+                if last_message.has_class("-user"):
                     # The last message is from the user, so we should resend the conversation
-                    loguru_logger.info("Last message is from user, resending conversation")
+                    loguru_logger.info(f"Last message is from user (role: {last_message.role}), resending conversation")
                     resend_conversation = True
                     # Set a dummy message to pass validation
                     message_text_from_input = "[Resending conversation]"
                 else:
-                    # Last message is not from user (likely AI or System)
+                    # Last message is not from user (doesn't have -user class)
                     loguru_logger.debug("Last message is not from user (role: %s), not resending", last_message.role)
                     text_area.focus()
                     return
@@ -1451,35 +1453,41 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         logging.info("Action: Delete clicked for %s message: '%s...'", message_role, message_text[:50])
         message_id_to_delete = getattr(action_widget, 'message_id_internal', None)
         
-        # Show confirmation dialog
-        from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
-        dialog = create_delete_confirmation(
-            item_type="Message",
-            item_name=f"{message_role} message",
-            additional_warning="This will remove the message from your conversation history."
-        )
-        
-        confirmed = await app.push_screen_wait(dialog)
-        if not confirmed:
-            loguru_logger.info("Message deletion cancelled by user.")
-            return
-        
-        try:
-            await action_widget.remove()
-            if action_widget is app.current_ai_message_widget:
-                app.current_ai_message_widget = None
+        # Run the delete confirmation in a worker to avoid NoActiveWorker error
+        async def _handle_delete_confirmation():
+            # Show confirmation dialog
+            from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
+            dialog = create_delete_confirmation(
+                item_type="Message",
+                item_name=f"{message_role} message",
+                additional_warning="This will remove the message from your conversation history."
+            )
+            
+            confirmed = await app.push_screen_wait(dialog)
+            if not confirmed:
+                loguru_logger.info("Message deletion cancelled by user.")
+                return
+            
+            try:
+                await action_widget.remove()
+                if action_widget is app.current_ai_message_widget:
+                    app.current_ai_message_widget = None
 
-            if db and message_id_to_delete:
-                try:
-                    db.soft_delete_message(message_id_to_delete)  # Assuming soft delete
-                    loguru_logger.info(f"Message ID {message_id_to_delete} soft-deleted from DB.")
-                    app.notify("Message deleted.", severity="information", timeout=2)
-                except Exception as e_db_delete:
-                    loguru_logger.error(f"Failed to delete message {message_id_to_delete} from DB: {e_db_delete}",
-                                        exc_info=True)
-                    app.notify("Failed to delete message from DB.", severity="error")
-        except Exception as exc:
-            logging.error("Failed to delete message widget: %s", exc, exc_info=True)
+                if db and message_id_to_delete:
+                    try:
+                        db.soft_delete_message(message_id_to_delete)  # Assuming soft delete
+                        loguru_logger.info(f"Message ID {message_id_to_delete} soft-deleted from DB.")
+                        app.notify("Message deleted.", severity="information", timeout=2)
+                    except Exception as e_db_delete:
+                        loguru_logger.error(f"Failed to delete message {message_id_to_delete} from DB: {e_db_delete}",
+                                            exc_info=True)
+                        app.notify("Failed to delete message from DB.", severity="error")
+            except Exception as exc:
+                logging.error("Failed to delete message widget: %s", exc, exc_info=True)
+                app.notify("Failed to delete message.", severity="error")
+        
+        # Run the deletion handler in a worker
+        app.run_worker(_handle_delete_confirmation)
 
     elif "regenerate-button" in button_classes and message_role == "AI":
         loguru_logger.info(

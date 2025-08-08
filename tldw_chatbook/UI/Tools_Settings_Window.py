@@ -604,6 +604,34 @@ class ToolsSettingsWindow(Container):
                         tooltip="How long to show the splash screen"
                     )
             
+            # Add spacing before Media Ingestion section
+            yield Static("", classes="settings-section-spacer")
+            yield Static("", classes="settings-section-spacer")
+            
+            # Media Ingestion Settings Group
+            with Container(classes="settings-group"):
+                yield Static("📥 Media Ingestion", classes="settings-group-title")
+                
+                yield Label("UI Style:", classes="settings-label")
+                ui_style_options = [
+                    ("📋 Simplified (Default)", "simplified"),
+                    ("⚡ Grid Layout", "grid"),
+                    ("🎯 Wizard Flow", "wizard"),
+                    ("📊 Split Pane", "split")
+                ]
+                
+                # Get current UI style from config
+                from tldw_chatbook.config import get_ingest_ui_style
+                current_ui_style = get_ingest_ui_style()
+                
+                yield Select(
+                    options=ui_style_options,
+                    value=current_ui_style,
+                    id="general-ingest-ui-style",
+                    classes="settings-select",
+                    tooltip="Choose the UI layout for media ingestion"
+                )
+            
             # Add spacing before Developer section
             yield Static("", classes="settings-section-spacer")
             yield Static("", classes="settings-section-spacer")
@@ -2976,6 +3004,11 @@ Thank you for using tldw-chatbook! 🎉
                         severity="warning",
                         timeout=8
                     )
+            
+            # Media Ingestion UI Style
+            ingest_ui_style = self.query_one("#general-ingest-ui-style", Select).value
+            if save_setting_to_cli_config("media_ingestion", "ui_style", ingest_ui_style):
+                saved_count += 1
             
             # Log Level
             if save_setting_to_cli_config("general", "log_level", self.query_one("#general-log-level", Select).value):
