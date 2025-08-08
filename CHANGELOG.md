@@ -10,11 +10,14 @@ and this project adheres to Some kind of Versioning
 ### Added
 - Initial features pending documentation
 
+## [0.1.7.0] - 2025-08-7
+### Added 
+- Chat swiping/forking + multiple responses
+
+
 ## [0.1.6.5] - 2025-08-5
 ### Worked on 
 - Evals+Embeddings+Chatbook UIs
-
-
 
 
 ## [0.1.6.4] - 2025-08-5
