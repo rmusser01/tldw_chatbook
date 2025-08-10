@@ -133,7 +133,8 @@ from .UI.Conv_Char_Window import CCPWindow
 from .UI.Notes_Window import NotesWindow
 from .UI.Logs_Window import LogsWindow
 from .UI.Stats_Window import StatsWindow
-from .UI.Ingest_Window import IngestWindow, INGEST_NAV_BUTTON_IDS, INGEST_VIEW_IDS, MEDIA_TYPES
+from .UI.NewIngestWindow import NewIngestWindow
+from .UI.Ingest_Window import INGEST_NAV_BUTTON_IDS, INGEST_VIEW_IDS, MEDIA_TYPES
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
 # Using unified Evals dashboard
@@ -779,7 +780,7 @@ class PlaceholderWindow(Container):
             if self.window_class.__name__ == 'EvalsLab':
                 self._actual_window = self.window_class(id=self.window_id, classes=self.actual_classes)
             else:
-                self._actual_window = self.window_class(self.app_instance, classes=self.actual_classes)
+                self._actual_window = self.window_class(self.app_instance, id=self.window_id, classes=self.actual_classes)
             
             # Clear placeholder styling and mount actual window
             self.remove_class("placeholder-window")
@@ -1572,7 +1573,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("notes", NotesWindow, "notes-window"),
             ("media", MediaWindow, "media-window"),
             ("search", SearchWindow, "search-window"),
-            ("ingest", IngestWindow, "ingest-window"),
+            ("ingest", NewIngestWindow, "ingest-window"),
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
             ("llm_management", LLMManagementWindow, "llm_management-window"),
             ("logs", LogsWindow, "logs-window"),
@@ -3510,20 +3511,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_video_models(self) -> None:
         """Initialize models for the video ingestion window."""
         try:
-            ingest_window = self.query_one("#ingest-window", IngestWindow)
-            if ingest_window._local_video_window:
-                self.log.debug("Initializing video window models")
-                ingest_window._local_video_window._try_initialize_models()
+            ingest_window = self.query_one("#ingest-window", NewIngestWindow)
+            # New ingest window doesn't need model initialization
+            self.log.debug("New ingest window loaded")
         except Exception as e:
             self.log.debug(f"Could not initialize video models: {e}")
 
     def _initialize_audio_models(self) -> None:
         """Initialize models for the audio ingestion window."""
         try:
-            ingest_window = self.query_one("#ingest-window", IngestWindow)
-            if ingest_window._local_audio_window:
-                self.log.debug("Initializing audio window models")
-                ingest_window._local_audio_window._try_initialize_models()
+            ingest_window = self.query_one("#ingest-window", NewIngestWindow)
+            # New ingest window doesn't need model initialization
+            self.log.debug("New ingest window loaded")
         except Exception as e:
             self.log.debug(f"Could not initialize audio models: {e}")
 
