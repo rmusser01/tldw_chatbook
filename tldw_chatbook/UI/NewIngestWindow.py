@@ -1513,33 +1513,37 @@ class NewIngestWindow(Container):
                                id="doc-title", classes="form-textarea-metadata"))
         
         # Analysis options
-        analysis_container = Container(classes="analysis-section")
-        widgets.append(analysis_container)
-        analysis_container.mount(Label("Analysis Options:", classes="form-label"))
-        analysis_container.mount(Checkbox("Enable LLM Analysis", False, id="doc-enable-analysis"))
-        
         providers = list(self.app_instance.app_config.get("api_settings", {}).keys()) if self.app_instance.app_config else []
         provider_options = [(name, name) for name in providers] if providers else [("No providers configured", "none")]
-        
-        analysis_container.mount(Label("Analysis Provider:", classes="form-label"))
         default_provider = provider_options[0][1] if provider_options and provider_options[0][1] != "none" else "none"
-        analysis_container.mount(Select(provider_options, id="doc-analysis-provider", value=default_provider))
         
-        analysis_container.mount(Label("Analysis Model:", classes="form-label"))
-        analysis_container.mount(Select([("Select provider first", "none")], id="doc-analysis-model", value="none"))
+        prompt_row = Horizontal(
+            TextArea("Enter custom analysis prompt...", 
+                    id="doc-prompt", classes="form-textarea"),
+            Button("Load Prompt", id="doc-load-prompt", classes="load-prompt-btn"),
+            classes="prompt-row"
+        )
         
-        analysis_container.mount(Label("Analysis Prompt:", classes="form-label"))
-        prompt_row = Horizontal(classes="prompt-row")
-        analysis_container.mount(prompt_row)
-        prompt_row.mount(TextArea("Enter custom analysis prompt...", 
-                                 id="doc-prompt", classes="form-textarea"))
-        prompt_row.mount(Button("Load Prompt", id="doc-load-prompt", classes="load-prompt-btn"))
+        analysis_container = Container(
+            Label("Analysis Options:", classes="form-label"),
+            Checkbox("Enable LLM Analysis", False, id="doc-enable-analysis"),
+            Label("Analysis Provider:", classes="form-label"),
+            Select(provider_options, id="doc-analysis-provider", value=default_provider),
+            Label("Analysis Model:", classes="form-label"),
+            Select([("Select provider first", "none")], id="doc-analysis-model", value="none"),
+            Label("Analysis Prompt:", classes="form-label"),
+            prompt_row,
+            classes="analysis-section"
+        )
+        widgets.append(analysis_container)
         
         # Queue/Submit buttons
-        queue_buttons = Horizontal(classes="queue-buttons")
+        queue_buttons = Horizontal(
+            Button("Add to Queue", id="doc-add-queue", variant="default"),
+            Button("Process Now", id="submit-doc", variant="primary"),
+            classes="queue-buttons"
+        )
         widgets.append(queue_buttons)
-        queue_buttons.mount(Button("Add to Queue", id="doc-add-queue", variant="default"))
-        queue_buttons.mount(Button("Process Now", id="submit-doc", variant="primary"))
         
         return widgets
     
@@ -1564,33 +1568,37 @@ class NewIngestWindow(Container):
         widgets.append(Checkbox("Save scraped content", False, id="web-save-original"))
         
         # Analysis options
-        analysis_container = Container(classes="analysis-section")
-        widgets.append(analysis_container)
-        analysis_container.mount(Label("Analysis Options:", classes="form-label"))
-        analysis_container.mount(Checkbox("Enable LLM Analysis", False, id="web-enable-analysis"))
-        
         providers = list(self.app_instance.app_config.get("api_settings", {}).keys()) if self.app_instance.app_config else []
         provider_options = [(name, name) for name in providers] if providers else [("No providers configured", "none")]
-        
-        analysis_container.mount(Label("Analysis Provider:", classes="form-label"))
         default_provider = provider_options[0][1] if provider_options and provider_options[0][1] != "none" else "none"
-        analysis_container.mount(Select(provider_options, id="web-analysis-provider", value=default_provider))
         
-        analysis_container.mount(Label("Analysis Model:", classes="form-label"))
-        analysis_container.mount(Select([("Select provider first", "none")], id="web-analysis-model", value="none"))
+        prompt_row = Horizontal(
+            TextArea("Enter custom analysis prompt...", 
+                    id="web-prompt", classes="form-textarea"),
+            Button("Load Prompt", id="web-load-prompt", classes="load-prompt-btn"),
+            classes="prompt-row"
+        )
         
-        analysis_container.mount(Label("Analysis Prompt:", classes="form-label"))
-        prompt_row = Horizontal(classes="prompt-row")
-        analysis_container.mount(prompt_row)
-        prompt_row.mount(TextArea("Enter custom analysis prompt...", 
-                                 id="web-prompt", classes="form-textarea"))
-        prompt_row.mount(Button("Load Prompt", id="web-load-prompt", classes="load-prompt-btn"))
+        analysis_container = Container(
+            Label("Analysis Options:", classes="form-label"),
+            Checkbox("Enable LLM Analysis", False, id="web-enable-analysis"),
+            Label("Analysis Provider:", classes="form-label"),
+            Select(provider_options, id="web-analysis-provider", value=default_provider),
+            Label("Analysis Model:", classes="form-label"),
+            Select([("Select provider first", "none")], id="web-analysis-model", value="none"),
+            Label("Analysis Prompt:", classes="form-label"),
+            prompt_row,
+            classes="analysis-section"
+        )
+        widgets.append(analysis_container)
         
         # Queue/Submit buttons
-        queue_buttons = Horizontal(classes="queue-buttons")
+        queue_buttons = Horizontal(
+            Button("Add to Queue", id="web-add-queue", variant="default"),
+            Button("Process Now", id="submit-web", variant="primary"),
+            classes="queue-buttons"
+        )
         widgets.append(queue_buttons)
-        queue_buttons.mount(Button("Add to Queue", id="web-add-queue", variant="default"))
-        queue_buttons.mount(Button("Process Now", id="submit-web", variant="primary"))
         
         return widgets
     
@@ -1616,33 +1624,37 @@ class NewIngestWindow(Container):
                                id="ebook-author", classes="form-textarea-metadata"))
         
         # Analysis options
-        analysis_container = Container(classes="analysis-section")
-        widgets.append(analysis_container)
-        analysis_container.mount(Label("Analysis Options:", classes="form-label"))
-        analysis_container.mount(Checkbox("Enable LLM Analysis", False, id="ebook-enable-analysis"))
-        
         providers = list(self.app_instance.app_config.get("api_settings", {}).keys()) if self.app_instance.app_config else []
         provider_options = [(name, name) for name in providers] if providers else [("No providers configured", "none")]
-        
-        analysis_container.mount(Label("Analysis Provider:", classes="form-label"))
         default_provider = provider_options[0][1] if provider_options and provider_options[0][1] != "none" else "none"
-        analysis_container.mount(Select(provider_options, id="ebook-analysis-provider", value=default_provider))
         
-        analysis_container.mount(Label("Analysis Model:", classes="form-label"))
-        analysis_container.mount(Select([("Select provider first", "none")], id="ebook-analysis-model", value="none"))
+        prompt_row = Horizontal(
+            TextArea("Enter custom analysis prompt...", 
+                    id="ebook-prompt", classes="form-textarea"),
+            Button("Load Prompt", id="ebook-load-prompt", classes="load-prompt-btn"),
+            classes="prompt-row"
+        )
         
-        analysis_container.mount(Label("Analysis Prompt:", classes="form-label"))
-        prompt_row = Horizontal(classes="prompt-row")
-        analysis_container.mount(prompt_row)
-        prompt_row.mount(TextArea("Enter custom analysis prompt...", 
-                                 id="ebook-prompt", classes="form-textarea"))
-        prompt_row.mount(Button("Load Prompt", id="ebook-load-prompt", classes="load-prompt-btn"))
+        analysis_container = Container(
+            Label("Analysis Options:", classes="form-label"),
+            Checkbox("Enable LLM Analysis", False, id="ebook-enable-analysis"),
+            Label("Analysis Provider:", classes="form-label"),
+            Select(provider_options, id="ebook-analysis-provider", value=default_provider),
+            Label("Analysis Model:", classes="form-label"),
+            Select([("Select provider first", "none")], id="ebook-analysis-model", value="none"),
+            Label("Analysis Prompt:", classes="form-label"),
+            prompt_row,
+            classes="analysis-section"
+        )
+        widgets.append(analysis_container)
         
         # Queue/Submit buttons
-        queue_buttons = Horizontal(classes="queue-buttons")
+        queue_buttons = Horizontal(
+            Button("Add to Queue", id="ebook-add-queue", variant="default"),
+            Button("Process Now", id="submit-ebook", variant="primary"),
+            classes="queue-buttons"
+        )
         widgets.append(queue_buttons)
-        queue_buttons.mount(Button("Add to Queue", id="ebook-add-queue", variant="default"))
-        queue_buttons.mount(Button("Process Now", id="submit-ebook", variant="primary"))
         
         return widgets
     
@@ -1666,10 +1678,12 @@ class NewIngestWindow(Container):
         widgets.append(Checkbox("Import subdirectories recursively", True, id="notes-recursive"))
         
         # Queue/Submit buttons
-        queue_buttons = Horizontal(classes="queue-buttons")
+        queue_buttons = Horizontal(
+            Button("Add to Queue", id="notes-add-queue", variant="default"),
+            Button("Import Now", id="submit-notes", variant="primary"),
+            classes="queue-buttons"
+        )
         widgets.append(queue_buttons)
-        queue_buttons.mount(Button("Add to Queue", id="notes-add-queue", variant="default"))
-        queue_buttons.mount(Button("Import Now", id="submit-notes", variant="primary"))
         
         return widgets
     
