@@ -624,6 +624,10 @@ class ToolsSettingsWindow(Container):
                 from tldw_chatbook.config import get_ingest_ui_style
                 current_ui_style = get_ingest_ui_style()
                 
+                # Map "default" to "simplified" for UI display
+                if current_ui_style == "default":
+                    current_ui_style = "simplified"
+                
                 yield Select(
                     options=ui_style_options,
                     value=current_ui_style,
@@ -3007,8 +3011,20 @@ Thank you for using tldw-chatbook! 🎉
             
             # Media Ingestion UI Style
             ingest_ui_style = self.query_one("#general-ingest-ui-style", Select).value
+            old_ui_style = self.config_data.get("media_ingestion", {}).get("ui_style", "simplified")
             if save_setting_to_cli_config("media_ingestion", "ui_style", ingest_ui_style):
                 saved_count += 1
+                # If the UI style changed, refresh the IngestWindow if it exists
+                if ingest_ui_style != old_ui_style:
+                    try:
+                        from ..UI.Ingest_Window import IngestWindow
+                        ingest_window = self.app_instance.query_one("#ingest-window", IngestWindow)
+                        await ingest_window.refresh_ui_style()
+                        logger.info(f"Refreshed IngestWindow UI style from {old_ui_style} to {ingest_ui_style}")
+                    except QueryError:
+                        # Window doesn't exist yet, will use new style when created
+                        logger.debug("IngestWindow not found, will use new style when created")
+                        pass
             
             # Log Level
             if save_setting_to_cli_config("general", "log_level", self.query_one("#general-log-level", Select).value):

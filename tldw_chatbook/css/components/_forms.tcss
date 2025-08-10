@@ -47,14 +47,11 @@
 
 .form-textarea {
     width: 100%;
+    height: auto;
     min-height: 5;
     margin-bottom: 1;
 }
 
-.form-select {
-    width: 100%;
-    margin-bottom: 1;
-}
 
 .form-checkbox {
     margin: 1 0;
@@ -122,3 +119,162 @@
     padding: 1;
     margin-top: 1;
 }
+
+/* Title/Author input fields fix */
+.title-author-row Input {
+    height: 3;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* New base media ingestion form styling */
+.form-input {
+    height: 3;
+    width: 100%;
+    margin-bottom: 1;
+    border: solid $primary;
+    padding: 0 1;
+}
+
+.form-input:focus {
+    border: solid $accent;
+    background: $accent 10%;
+}
+
+.form-input.error {
+    border: solid $error;
+    background: $error 10%;
+}
+
+.form-select {
+    height: 3;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+.form-checkbox {
+    margin: 1 0;
+}
+
+.form-label-primary {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+    border-bottom: solid $primary;
+    padding-bottom: 1;
+}
+
+/* Responsive metadata columns */
+.metadata-row {
+    layout: horizontal;
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.metadata-col {
+    width: 1fr;
+    height: auto;
+}
+
+/* Mode toggle section - CRITICAL for visibility */
+.mode-toggle-container {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+    padding: 1;
+}
+
+.mode-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.mode-toggle {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+/* Essential container sections - CRITICAL for Input widget visibility */
+.essential-section {
+    width: 100%;
+    height: auto;        /* Allow container to size to content */
+    margin-bottom: 2;
+    padding: 1;
+}
+
+.media-options-section {
+    width: 100%;
+    height: auto;
+    margin-bottom: 2;
+}
+
+.options-section {
+    width: 100%;
+    height: auto;
+    margin-bottom: 2;
+    padding: 1;
+}
+
+.process-button-section {
+    width: 100%;
+    height: auto;
+    margin-top: 2;
+    padding: 1;
+    align: center middle;
+}
+
+/* Time range inputs layout */
+.time-range-row {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.time-col {
+    width: 1fr;
+    height: auto;
+    padding: 0 1;
+}
+
+.time-col:first-child {
+    padding-left: 0;
+}
+
+.time-col:last-child {
+    padding-right: 0;
+}
+
+/* Advanced mode visibility controls */
+.advanced-only {
+    display: block;
+}
+
+.simple-mode .advanced-only {
+    display: none;
+}
+
+.advanced-mode .advanced-only {
+    display: block;
+}
+
+/* Form textarea styling */
+.form-textarea {
+    width: 100%;
+    min-height: 5;
+    max-height: 10;
+    margin-bottom: 1;
+    border: solid $primary;
+    padding: 1;
+}
+
+.form-textarea:focus {
+    border: solid $accent;
+    background: $accent 10%;
+}
+
+/* Note: Textual doesn't support @media queries
+   Responsive behavior must be handled programmatically
+   in the Python code using terminal size detection */

@@ -133,7 +133,7 @@ from .UI.Conv_Char_Window import CCPWindow
 from .UI.Notes_Window import NotesWindow
 from .UI.Logs_Window import LogsWindow
 from .UI.Stats_Window import StatsWindow
-from .UI.Ingest_Window import IngestWindow, INGEST_NAV_BUTTON_IDS, MEDIA_TYPES
+from .UI.Ingest_Window import IngestWindow, INGEST_NAV_BUTTON_IDS, INGEST_VIEW_IDS, MEDIA_TYPES
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
 # Using unified Evals dashboard
@@ -860,11 +860,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         DeveloperProvider
     }
 
-    ALL_INGEST_VIEW_IDS = [
-        "ingest-view-prompts", "ingest-view-characters",
-        "ingest-view-media", "ingest-view-notes",
-        *[f"ingest-view-tldw-api-{mt}" for mt in MEDIA_TYPES]
-    ]
+    ALL_INGEST_VIEW_IDS = INGEST_VIEW_IDS
     ALL_MAIN_WINDOW_IDS = [ # Assuming these are your main content window IDs
         "chat-window", "conversations_characters_prompts-window", "notes-window",
         "ingest-window", "tools_settings-window", "llm_management-window",

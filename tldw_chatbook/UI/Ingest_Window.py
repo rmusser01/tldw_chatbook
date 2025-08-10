@@ -36,9 +36,7 @@ from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiDocumentWindow import Inges
 from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiXmlWindow import IngestTldwApiXmlWindow
 from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiMediaWikiWindow import IngestTldwApiMediaWikiWindow
 from tldw_chatbook.Widgets.Media_Ingest.IngestTldwApiPlaintextWindow import IngestTldwApiPlaintextWindow
-from tldw_chatbook.Widgets.Media_Ingest.IngestLocalPlaintextWindow import IngestLocalPlaintextWindow
 from tldw_chatbook.Widgets.Media_Ingest.IngestLocalWebArticleWindow import IngestLocalWebArticleWindow
-from tldw_chatbook.Widgets.Media_Ingest.IngestLocalDocumentWindow import IngestLocalDocumentWindow
 from tldw_chatbook.Widgets.Media_Ingest.IngestUIFactory import create_ingest_ui
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -145,10 +143,34 @@ class IngestWindow(Container):
                     child.styles.display = "none"
                     logger.debug(f"Initially hiding view: {child.id}")
             
-            # The default view will be set by the reactive watcher
-            logger.debug("All ingest views hidden, waiting for reactive watcher to set default")
+            # Set default view to local video
+            logger.debug("All ingest views hidden, setting default view to local video")
+            self.call_after_refresh(self._set_default_view)
         except QueryError as e:
             logger.error(f"Error during IngestWindow mount: {e}")
+    
+    def _set_default_view(self) -> None:
+        """Set the default view after mount."""
+        try:
+            default_view_id = "ingest-view-local-video"
+            logger.debug(f"Setting default view: {default_view_id}")
+            self.app_instance.show_ingest_view(default_view_id)
+            # Also set the corresponding nav button as active
+            self.call_after_refresh(self._set_default_nav_button)
+        except Exception as e:
+            logger.error(f"Error setting default view: {e}")
+    
+    def _set_default_nav_button(self) -> None:
+        """Set the default navigation button as active."""
+        try:
+            default_nav_button_id = "ingest-nav-local-video"
+            # Use async wrapper since _update_active_nav_button is async
+            async def set_nav_button():
+                await self._update_active_nav_button(default_nav_button_id)
+            
+            self.run_worker(set_nav_button)
+        except Exception as e:
+            logger.error(f"Error setting default nav button: {e}")
     
     async def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Handle TextArea changes."""
@@ -457,18 +479,13 @@ class IngestWindow(Container):
                 yield from self.compose_local_audio_tab()
                 
             with VerticalScroll(id="ingest-view-local-document", classes="ingest-view-area"):
-                window = IngestLocalDocumentWindow(self.app_instance)
-                yield from window.compose()
+                yield create_ingest_ui(self.app_instance, media_type="document")
                 
             with VerticalScroll(id="ingest-view-local-pdf", classes="ingest-view-area"):
-                from tldw_chatbook.Widgets.Media_Ingest.IngestLocalPdfWindow import IngestLocalPdfWindow
-                window = IngestLocalPdfWindow(self.app_instance)
-                yield from window.compose()
+                yield create_ingest_ui(self.app_instance, media_type="pdf")
                 
             with VerticalScroll(id="ingest-view-local-ebook", classes="ingest-view-area"):
-                from tldw_chatbook.Widgets.Media_Ingest.IngestLocalEbookWindow import IngestLocalEbookWindow
-                window = IngestLocalEbookWindow(self.app_instance)
-                yield from window.compose()
+                yield create_ingest_ui(self.app_instance, media_type="ebook")
                 
             with VerticalScroll(id="ingest-view-local-web", classes="ingest-view-area"):
                 window = IngestLocalWebArticleWindow(self.app_instance)
@@ -478,8 +495,7 @@ class IngestWindow(Container):
                 yield from self.compose_local_xml_tab()
                 
             with VerticalScroll(id="ingest-view-local-plaintext", classes="ingest-view-area"):
-                window = IngestLocalPlaintextWindow(self.app_instance)
-                yield from window.compose()
+                yield create_ingest_ui(self.app_instance, media_type="plaintext")
             
             with VerticalScroll(id="ingest-view-subscriptions", classes="ingest-view-area"):
                 yield from self.compose_subscriptions_tab()
@@ -779,7 +795,7 @@ class IngestWindow(Container):
         window = create_ingest_ui(self.app_instance, media_type="video")
         # Store reference to initialize models later
         self._local_video_window = window
-        yield from window.compose()
+        yield window
 
     def compose_local_audio_tab(self) -> ComposeResult:
         """Composes the Audio tab content for local media ingestion."""
@@ -787,7 +803,7 @@ class IngestWindow(Container):
         window = create_ingest_ui(self.app_instance, media_type="audio")
         # Store reference to initialize models later
         self._local_audio_window = window
-        yield from window.compose()
+        yield window
 
     def compose_local_document_tab(self) -> ComposeResult:
         """Composes the Document tab content for local media ingestion."""
@@ -4079,6 +4095,34 @@ class IngestWindow(Container):
         """Handle cancellation of API video processing."""
         # TODO: Implement API cancellation when API processing is async
         self.app_instance.notify("API processing cancellation not yet implemented", severity="information")
+    
+    async def refresh_ui_style(self) -> None:
+        """Refresh the UI to reflect the new UI style setting.
+        
+        This method recreates the video and audio windows with the new UI style
+        from the configuration. Called after UI style settings are changed.
+        """
+        try:
+            from tldw_chatbook.Widgets.Media_Ingest.IngestUIFactory import create_ingest_ui
+            from tldw_chatbook.config import get_ingest_ui_style
+            
+            # Get the new UI style
+            new_style = get_ingest_ui_style()
+            logger.info(f"Refreshing IngestWindow with UI style: {new_style}")
+            
+            # Recreate the video and audio windows with the new style
+            self._local_video_window = create_ingest_ui(self.app_instance, media_type="video")
+            self._local_audio_window = create_ingest_ui(self.app_instance, media_type="audio")
+            
+            # Note: Full visual refresh requires the user to switch tabs to see the new UI
+            logger.info(f"Media ingestion UI windows recreated with {new_style} style")
+            self.app_instance.notify(
+                f"Media ingestion UI style changed to '{new_style}'. Switch tabs to see the new layout.", 
+                severity="information"
+            )
+        except Exception as e:
+            logger.error(f"Failed to refresh ingestion UI style: {e}")
+            self.app_instance.notify(f"Failed to refresh UI style: {str(e)}", severity="error")
 
 #
 # End of Ingest_Window.py
