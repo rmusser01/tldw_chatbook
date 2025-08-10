@@ -7,15 +7,19 @@ Completely new design with no legacy code dependencies.
 from typing import TYPE_CHECKING, List, Dict, Any, Optional
 from pathlib import Path
 import asyncio
+from dataclasses import dataclass
+from datetime import datetime
+import os
 from loguru import logger
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, Grid, VerticalScroll
-from textual.widgets import Static, Button, Label, ProgressBar, Input, TextArea, Checkbox, Select
+from textual.widgets import Static, Button, Label, ProgressBar, Input, TextArea, Checkbox, Select, Switch, Collapsible
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual import on, work
 from textual.message import Message
+from textual.screen import ModalScreen
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -126,6 +130,87 @@ class GlobalDropZone(Widget):
         self.file_count = len(files)
         self.has_files = len(files) > 0
         self.post_message(FileDropped(files))
+
+
+@dataclass
+class QueueItem:
+    """Data class for queue items."""
+    media_type: str
+    sources: List[str]
+    metadata: Dict[str, Any]
+    processing_options: Dict[str, Any]
+    status: str = "queued"
+    id: str = ""
+    
+    def __post_init__(self):
+        if not self.id:
+            self.id = f"{self.media_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+
+class PromptSelectorModal(ModalScreen):
+    """Modal for selecting prompts from database."""
+    
+    DEFAULT_CSS = """
+    PromptSelectorModal {
+        align: center middle;
+    }
+    
+    PromptSelectorModal > Container {
+        width: 80%;
+        height: 80%;
+        background: $panel;
+        border: thick $primary;
+        padding: 2;
+    }
+    
+    .prompt-modal-title {
+        text-style: bold;
+        color: $primary;
+        margin-bottom: 1;
+    }
+    
+    .prompt-search {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    .prompt-list {
+        height: 1fr;
+        border: solid $primary;
+        margin-bottom: 1;
+    }
+    """
+    
+    def __init__(self, callback=None):
+        super().__init__()
+        self.callback = callback
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Static("Select Prompt from Library", classes="prompt-modal-title")
+            yield Input(placeholder="Search prompts...", id="prompt-search", classes="prompt-search")
+            
+            # TODO: Connect to PromptsDatabase and load actual prompts
+            with VerticalScroll(classes="prompt-list"):
+                yield Static("[Placeholder: Prompt library will be loaded here]")
+                yield Static("Example: Summarization Prompt")
+                yield Static("Example: Analysis Prompt")
+                yield Static("Example: Q&A Generation Prompt")
+            
+            with Horizontal():
+                yield Button("Select", id="select-prompt", variant="primary")
+                yield Button("Cancel", id="cancel-prompt")
+    
+    @on(Button.Pressed, "#select-prompt")
+    def select_prompt(self):
+        # TODO: Get selected prompt and pass to callback
+        if self.callback:
+            self.callback("[Selected prompt text will go here]")
+        self.dismiss()
+    
+    @on(Button.Pressed, "#cancel-prompt")
+    def cancel(self):
+        self.dismiss()
 
 
 class ActivityFeed(Widget):
@@ -477,6 +562,69 @@ class NewIngestWindow(Container):
     .hidden {
         display: none;
     }
+    
+    /* New styles for enhanced features */
+    .form-textarea-source {
+        width: 100%;
+        min-height: 6;
+        max-height: 12;
+        margin-bottom: 1;
+    }
+    
+    .form-textarea-metadata {
+        width: 100%;
+        min-height: 4;
+        max-height: 8; 
+        margin-bottom: 1;
+    }
+    
+    .small-label {
+        text-style: italic;
+        color: $text-muted;
+        height: 1;
+        margin-top: -1;
+        margin-bottom: 1;
+    }
+    
+    .time-input-container {
+        height: auto;
+        margin-bottom: 1;
+    }
+    
+    .time-input-container > Vertical {
+        width: 1fr;
+        padding-right: 1;
+    }
+    
+    .processing-mode-container {
+        margin-bottom: 2;
+        padding-bottom: 1;
+        border-bottom: solid $primary;
+    }
+    
+    .queue-buttons {
+        margin-top: 2;
+    }
+    
+    .queue-buttons > Button {
+        margin-right: 1;
+    }
+    
+    .prompt-row {
+        margin-bottom: 1;
+    }
+    
+    .load-prompt-btn {
+        height: 3;
+        width: auto;
+        margin-left: 1;
+    }
+    
+    .analysis-section {
+        margin-top: 2;
+        padding-top: 1;
+        border-top: solid $primary;
+    }
     """
     
     # Reactive state
@@ -484,17 +632,22 @@ class NewIngestWindow(Container):
     current_media_type = reactive("video")  # Default to video
     processing_active = reactive(False)
     selected_card = reactive(None)  # Track which card is selected
+    ingestion_queue = reactive([])  # Queue for batch processing
+    processing_mode = reactive("local")  # local or remote
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        logger.info("NewIngestWindow initialized - fresh modern interface")
+        self.processing_worker = None
+        logger.info("NewIngestWindow initialized - fresh modern interface with batch processing")
     
     def on_mount(self) -> None:
         """Handle mount event."""
         logger.info("NewIngestWindow mounted successfully")
         # Initialize with video form by default
         self.call_after_refresh(self._initialize_default_view)
+        # Start the queue processor
+        self.processing_worker = self.process_ingestion_queue()
     
     def _initialize_default_view(self) -> None:
         """Initialize the default view."""
@@ -598,7 +751,8 @@ class NewIngestWindow(Container):
             
             # Right side - Ingestion settings form
             with Vertical(classes="ingestion-panel"):
-                yield Container(id="ingestion-form-container", classes="form-container")
+                with VerticalScroll(classes="form-scroll-container"):
+                    yield Container(id="ingestion-form-container", classes="form-container")
     
     @on(MediaTypeSelected)
     def handle_media_type_selected(self, event: MediaTypeSelected) -> None:
@@ -673,6 +827,12 @@ class NewIngestWindow(Container):
         # Handle submit buttons
         elif button_id.startswith("submit-"):
             await self._handle_submit_button(button_id)
+        # Handle add to queue buttons
+        elif button_id.endswith("-add-queue"):
+            await self._handle_add_to_queue(button_id)
+        # Handle load prompt buttons
+        elif button_id.endswith("-load-prompt"):
+            await self._handle_load_prompt(button_id)
     
     async def _handle_browse_button(self, button_id: str) -> None:
         """Handle file browse button clicks."""
@@ -685,21 +845,31 @@ class NewIngestWindow(Container):
             
             if result:
                 # Handle single file or list of files
+                files_to_add = []
                 if isinstance(result, Path):
-                    file_path = result
-                elif isinstance(result, list) and result:
-                    file_path = result[0]  # Take first file
+                    files_to_add = [str(result)]
+                elif isinstance(result, list):
+                    files_to_add = [str(f) for f in result if f]
                 else:
-                    file_path = Path(result) if result else None
+                    if result:
+                        files_to_add = [str(result)]
                 
-                if file_path:
-                    # Update the corresponding input field
+                if files_to_add:
+                    # Update the corresponding TextArea by appending
                     media_type = button_id.replace("-browse", "")
                     try:
-                        input_field = self.query_one(f"#{media_type}-source", Input)
-                        input_field.value = str(file_path)
-                    except:
-                        logger.debug(f"Could not find input field for {media_type}")
+                        source_widget = self.query_one(f"#{media_type}-source", TextArea)
+                        current_text = source_widget.text.strip()
+                        
+                        # Append new files to existing content
+                        if current_text:
+                            new_text = current_text + "\n" + "\n".join(files_to_add)
+                        else:
+                            new_text = "\n".join(files_to_add)
+                        
+                        source_widget.text = new_text
+                    except Exception as e:
+                        logger.debug(f"Could not find source TextArea for {media_type}: {e}")
                     
         except ImportError:
             # Fallback to basic file picker if enhanced not available
@@ -707,13 +877,18 @@ class NewIngestWindow(Container):
                 from ..Third_Party.textual_fspicker.file_open import FileOpen
                 result = await self.app.push_screen_wait(FileOpen())
                 if result:
-                    file_path = result if isinstance(result, Path) else Path(result)
+                    file_path = str(result if isinstance(result, Path) else Path(result))
                     media_type = button_id.replace("-browse", "")
                     try:
-                        input_field = self.query_one(f"#{media_type}-source", Input)
-                        input_field.value = str(file_path)
-                    except:
-                        pass
+                        source_widget = self.query_one(f"#{media_type}-source", TextArea)
+                        current_text = source_widget.text.strip()
+                        
+                        if current_text:
+                            source_widget.text = current_text + "\n" + file_path
+                        else:
+                            source_widget.text = file_path
+                    except Exception as e:
+                        logger.debug(f"Error updating source widget: {e}")
             except Exception as e:
                 logger.error(f"Error with file picker: {e}")
                 self.app.notify("File picker unavailable", severity="error")
@@ -722,55 +897,149 @@ class NewIngestWindow(Container):
             self.app.notify(f"Error selecting files: {e}", severity="error")
     
     async def _handle_submit_button(self, button_id: str) -> None:
-        """Handle submit button clicks."""
+        """Handle submit button clicks - process immediately."""
         media_type = button_id.replace("submit-", "")
         logger.info(f"Processing {media_type} ingestion")
         
         # Gather form data based on media type
         form_data = self._gather_form_data(media_type)
         
-        if not form_data.get("source"):
-            self.app.notify(f"Please provide a source file or URL", severity="warning")
+        if not form_data.get("sources"):
+            self.app.notify(f"Please provide at least one source file or URL", severity="warning")
             return
         
-        # Show processing notification
-        self.app.notify(f"Processing {media_type}...", severity="information")
+        # Create queue item and add directly to queue for immediate processing
+        queue_item = QueueItem(
+            media_type=media_type,
+            sources=form_data.get("sources", []),
+            metadata=form_data.get("items", []),
+            processing_options=form_data
+        )
         
-        # TODO: Actually process the media using the appropriate backend
-        # For now, just log the form data
-        logger.info(f"Form data for {media_type}: {form_data}")
+        # Add to front of queue for immediate processing
+        current_queue = [queue_item] + list(self.ingestion_queue)
+        self.ingestion_queue = current_queue
+        
+        # Show processing notification
+        self.app.notify(f"Processing {len(queue_item.sources)} {media_type} file(s)...", severity="information")
+    
+    async def _handle_add_to_queue(self, button_id: str) -> None:
+        """Handle add to queue button clicks."""
+        media_type = button_id.replace("-add-queue", "")
+        logger.info(f"Adding {media_type} to queue")
+        
+        # Gather form data
+        form_data = self._gather_form_data(media_type)
+        
+        if not form_data.get("sources"):
+            self.app.notify(f"Please provide at least one source file or URL", severity="warning")
+            return
+        
+        # Create queue item
+        queue_item = QueueItem(
+            media_type=media_type,
+            sources=form_data.get("sources", []),
+            metadata=form_data.get("items", []),
+            processing_options=form_data
+        )
+        
+        # Add to queue
+        self._add_to_queue(queue_item)
+        
+        # Show notification
+        self.app.notify(f"Added {len(queue_item.sources)} {media_type} file(s) to queue", severity="success")
+    
+    async def _handle_load_prompt(self, button_id: str) -> None:
+        """Handle load prompt button clicks."""
+        media_type = button_id.replace("-load-prompt", "")
+        logger.info(f"Loading prompt for {media_type}")
+        
+        # Create callback to set the prompt text
+        def set_prompt_text(prompt_text: str):
+            try:
+                prompt_widget = self.query_one(f"#{media_type}-prompt", TextArea)
+                prompt_widget.text = prompt_text
+            except Exception as e:
+                logger.error(f"Error setting prompt text: {e}")
+        
+        # Open the prompt selector modal
+        modal = PromptSelectorModal(callback=set_prompt_text)
+        await self.app.push_screen(modal)
         
     def _gather_form_data(self, media_type: str) -> dict:
         """Gather form data from the current form."""
         form_data = {}
         
         try:
+            # Parse multi-line sources
+            source_widget = self.query_one(f"#{media_type}-source", TextArea)
+            sources = self._parse_multiline_input(source_widget.text)
+            form_data["sources"] = sources
+            
+            # Parse titles and authors if available
+            try:
+                title_widget = self.query_one(f"#{media_type}-title", TextArea)
+                titles = self._parse_multiline_input(title_widget.text)
+            except:
+                titles = []
+            
+            try:
+                author_widget = self.query_one(f"#{media_type}-author", TextArea)
+                authors = self._parse_multiline_input(author_widget.text)
+            except:
+                authors = []
+            
+            # Match metadata to sources
+            form_data["items"] = self._match_metadata_to_sources(sources, titles, authors)
+            
+            # Common processing options
+            form_data["processing_mode"] = self.processing_mode
+            
+            # Media-specific options
             if media_type == "video":
-                form_data["source"] = self.query_one("#video-source", Input).value
-                form_data["title"] = self.query_one("#video-title", Input).value
-                form_data["author"] = self.query_one("#video-author", Input).value
                 form_data["transcribe"] = self.query_one("#video-transcribe", Checkbox).value
+                form_data["vad"] = self.query_one("#video-vad", Checkbox).value
                 form_data["timestamps"] = self.query_one("#video-timestamps", Checkbox).value
                 form_data["diarize"] = self.query_one("#video-diarize", Checkbox).value
+                form_data["save_original"] = self.query_one("#video-save-original", Checkbox).value
+                form_data["start_time"] = self.query_one("#video-start-time", Input).value
+                form_data["end_time"] = self.query_one("#video-end-time", Input).value
+                form_data["enable_analysis"] = self.query_one("#video-enable-analysis", Checkbox).value
+                form_data["analysis_provider"] = self.query_one("#video-analysis-provider", Select).value
+                form_data["analysis_model"] = self.query_one("#video-analysis-model", Select).value
                 form_data["prompt"] = self.query_one("#video-prompt", TextArea).text
+                
             elif media_type == "audio":
-                form_data["source"] = self.query_one("#audio-source", Input).value
                 form_data["transcribe"] = self.query_one("#audio-transcribe", Checkbox).value
+                form_data["vad"] = self.query_one("#audio-vad", Checkbox).value
                 form_data["diarize"] = self.query_one("#audio-diarize", Checkbox).value
+                form_data["save_original"] = self.query_one("#audio-save-original", Checkbox).value
+                form_data["start_time"] = self.query_one("#audio-start-time", Input).value
+                form_data["end_time"] = self.query_one("#audio-end-time", Input).value
+                form_data["enable_analysis"] = self.query_one("#audio-enable-analysis", Checkbox).value
+                form_data["analysis_provider"] = self.query_one("#audio-analysis-provider", Select).value
+                form_data["analysis_model"] = self.query_one("#audio-analysis-model", Select).value
+                form_data["prompt"] = self.query_one("#audio-prompt", TextArea).text
+                
             elif media_type == "pdf":
-                form_data["source"] = self.query_one("#pdf-source", Input).value
                 form_data["engine"] = self.query_one("#pdf-engine", Select).value
+                form_data["enable_analysis"] = self.query_one("#pdf-enable-analysis", Checkbox).value
+                form_data["analysis_provider"] = self.query_one("#pdf-analysis-provider", Select).value
+                form_data["analysis_model"] = self.query_one("#pdf-analysis-model", Select).value
+                form_data["prompt"] = self.query_one("#pdf-prompt", TextArea).text
+                
             elif media_type == "web":
-                form_data["source"] = self.query_one("#web-url", Input).value
                 form_data["use_cookies"] = self.query_one("#web-cookies", Checkbox).value
-            # Add other media types as needed
-            else:
-                # Generic source field
-                source_field = self.query_one(f"#{media_type}-source", Input)
-                if source_field:
-                    form_data["source"] = source_field.value
+                form_data["save_original"] = self.query_one("#web-save-original", Checkbox).value
+                form_data["enable_analysis"] = self.query_one("#web-enable-analysis", Checkbox).value
+                form_data["analysis_provider"] = self.query_one("#web-analysis-provider", Select).value
+                form_data["analysis_model"] = self.query_one("#web-analysis-model", Select).value
+                form_data["prompt"] = self.query_one("#web-prompt", TextArea).text
+                
+            # Add gathering for other media types as needed
+                
         except Exception as e:
-            logger.error(f"Error gathering form data: {e}")
+            logger.error(f"Error gathering form data for {media_type}: {e}")
         
         return form_data
     
@@ -797,6 +1066,117 @@ class NewIngestWindow(Container):
         logger.debug("Settings button pressed")
         # TODO: Implement settings dialog
         self.app.notify("Settings coming soon!", severity="information")
+    
+    def _parse_multiline_input(self, text: str) -> List[str]:
+        """Parse TextArea content into list of non-empty lines."""
+        return [line.strip() for line in text.splitlines() if line.strip()]
+    
+    def _match_metadata_to_sources(self, sources: List[str], titles: List[str], authors: List[str] = None) -> List[dict]:
+        """Match titles and authors to sources by line position."""
+        result = []
+        for i, source in enumerate(sources):
+            metadata = {"source": source}
+            if i < len(titles) and titles[i]:
+                metadata["title"] = titles[i]
+            if authors and i < len(authors) and authors[i]:
+                metadata["author"] = authors[i]
+            result.append(metadata)
+        return result
+    
+    def _save_original_file(self, file_path: str, media_type: str, content: bytes = None):
+        """Save original downloaded file to user's Downloads folder."""
+        try:
+            # Create directory structure
+            download_dir = Path.home() / "Downloads" / "tldw_Chatbook_Processed_Files" / media_type
+            download_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Get filename from path
+            filename = Path(file_path).name
+            target_path = download_dir / filename
+            
+            if content:
+                # Save provided content
+                target_path.write_bytes(content)
+            else:
+                # Copy existing file
+                import shutil
+                shutil.copy2(file_path, target_path)
+            
+            logger.info(f"Saved original file to: {target_path}")
+            return target_path
+        except Exception as e:
+            logger.error(f"Error saving original file: {e}")
+            return None
+    
+    def _add_to_queue(self, item: QueueItem):
+        """Add item to processing queue."""
+        current_queue = list(self.ingestion_queue)
+        current_queue.append(item)
+        self.ingestion_queue = current_queue
+        
+        # Update activity feed
+        try:
+            activity_feed = self.query_one(ActivityFeed)
+            activity_feed.add_activity(
+                f"Added {item.media_type} to queue ({len(item.sources)} files)",
+                "queued"
+            )
+        except:
+            pass
+    
+    @work(exclusive=True, group="ingestion_worker")
+    async def process_ingestion_queue(self):
+        """Worker to process files from the ingestion queue one by one."""
+        logger.info("Ingestion queue processor started.")
+        
+        while self.is_mounted:
+            if self.ingestion_queue:
+                item = self.ingestion_queue[0]
+                logger.info(f"Processing queue item: {item.id}")
+                
+                try:
+                    # Update activity feed
+                    activity_feed = self.query_one(ActivityFeed)
+                    activity_feed.add_activity(
+                        f"Processing {item.media_type} ({len(item.sources)} files)",
+                        "processing",
+                        0.0
+                    )
+                    
+                    # TODO: Actual processing logic here
+                    # Simulate processing with progress updates
+                    total_steps = 10
+                    for i in range(total_steps):
+                        activity_feed.add_activity(
+                            f"Processing {item.media_type}",
+                            "processing",
+                            (i + 1) / total_steps * 100
+                        )
+                        await asyncio.sleep(0.5)
+                    
+                    activity_feed.add_activity(
+                        f"Completed {item.media_type}",
+                        "completed"
+                    )
+                    logger.info(f"Queue item completed: {item.id}")
+                    
+                except Exception as e:
+                    logger.error(f"Queue item failed: {item.id}. Error: {e}")
+                    try:
+                        activity_feed = self.query_one(ActivityFeed)
+                        activity_feed.add_activity(
+                            f"Failed {item.media_type}: {str(e)}",
+                            "failed"
+                        )
+                    except:
+                        pass
+                
+                # Remove completed/failed item from queue
+                self.ingestion_queue = self.ingestion_queue[1:]
+            
+            await asyncio.sleep(1)
+        
+        logger.info("Ingestion queue processor stopped.")
     
     def _detect_media_type(self, files: List[Path]) -> Optional[str]:
         """Auto-detect media type from file extensions."""
@@ -840,6 +1220,12 @@ class NewIngestWindow(Container):
         try:
             # Get the form container
             form_container = self.query_one("#ingestion-form-container", Container)
+            
+            # Check if container is mounted
+            if not form_container.is_mounted:
+                logger.warning("Form container not mounted yet, skipping update")
+                return
+            
             form_container.remove_children()
             
             # Create form based on media type
@@ -874,132 +1260,481 @@ class NewIngestWindow(Container):
     
     def _create_video_form(self) -> list:
         """Create form widgets for video ingestion."""
-        from textual.containers import Container
-        from textual.widgets import Input, TextArea, Checkbox, Select, Button
-        
         widgets = []
         
         # Title section
         widgets.append(Static("Video Ingestion Settings", classes="form-title"))
         
-        # File/URL input
-        widgets.append(Label("Video Source:", classes="form-label"))
-        widgets.append(Input(placeholder="Enter YouTube URL or file path", id="video-source", classes="form-input"))
+        # Processing Mode Toggle
+        mode_container = Container(
+            Label("Processing Mode:", classes="form-label"),
+            Switch(value=self.processing_mode == "local", id="video-mode-switch"),
+            Static("⚫ Local  ⚪ Remote", id="video-mode-label"),
+            classes="processing-mode-container"
+        )
+        widgets.append(mode_container)
+        
+        # Multi-line source input
+        widgets.append(Label("Video Sources (one per line):", classes="form-label"))
+        widgets.append(Static("Enter YouTube URLs or file paths, one per line", classes="small-label"))
+        widgets.append(TextArea("", 
+                               id="video-source", classes="form-textarea-source"))
         widgets.append(Button("Browse Files", id="video-browse", variant="default"))
         
-        # Metadata
-        widgets.append(Label("Title (optional):", classes="form-label"))
-        widgets.append(Input(placeholder="Video title", id="video-title", classes="form-input"))
+        # Multi-line metadata
+        widgets.append(Label("Titles (optional, one per source line):", classes="form-label"))
+        widgets.append(Static("Line 1 title corresponds to line 1 source, etc.", classes="small-label"))
+        widgets.append(TextArea("", 
+                               id="video-title", classes="form-textarea-metadata"))
         
-        widgets.append(Label("Author (optional):", classes="form-label"))
-        widgets.append(Input(placeholder="Video author", id="video-author", classes="form-input"))
+        widgets.append(Label("Authors (optional, one per source line):", classes="form-label"))
+        widgets.append(TextArea("", 
+                               id="video-author", classes="form-textarea-metadata"))
+        
+        # Time range options
+        widgets.append(Label("Time Range (optional, applies to all):", classes="form-label"))
+        time_container = Horizontal(
+            Vertical(
+                Label("Start Time:"),
+                Input(placeholder="HH:MM:SS or seconds", id="video-start-time", classes="form-input")
+            ),
+            Vertical(
+                Label("End Time:"),
+                Input(placeholder="HH:MM:SS or seconds", id="video-end-time", classes="form-input")
+            ),
+            classes="time-input-container"
+        )
+        widgets.append(time_container)
         
         # Processing options
         widgets.append(Label("Processing Options:", classes="form-label"))
         widgets.append(Checkbox("Enable transcription", True, id="video-transcribe"))
+        widgets.append(Checkbox("Enable Voice Activity Detection (VAD)", False, id="video-vad"))
         widgets.append(Checkbox("Include timestamps", True, id="video-timestamps"))
         widgets.append(Checkbox("Speaker diarization", False, id="video-diarize"))
+        widgets.append(Checkbox("Save original file (if downloaded)", False, id="video-save-original"))
         
-        # Custom prompt
-        widgets.append(Label("Analysis Prompt (optional):", classes="form-label"))
-        widgets.append(TextArea(id="video-prompt", classes="form-textarea"))
+        # Analysis options
+        # Get available providers from app config
+        providers = list(self.app_instance.app_config.get("api_settings", {}).keys()) if self.app_instance.app_config else []
+        provider_options = [(name, name) for name in providers] if providers else [("No providers configured", "none")]
+        default_provider = provider_options[0][1] if provider_options and provider_options[0][1] != "none" else "none"
         
-        # Submit button
-        widgets.append(Button("Process Video", id="submit-video", variant="primary"))
+        analysis_container = Container(
+            Label("Analysis Options:", classes="form-label"),
+            Checkbox("Enable LLM Analysis", False, id="video-enable-analysis"),
+            Label("Analysis Provider:", classes="form-label"),
+            Select(provider_options, id="video-analysis-provider", value=default_provider),
+            Label("Analysis Model:", classes="form-label"),
+            Select([("Select provider first", "none")], id="video-analysis-model", value="none"),
+            Label("Analysis Prompt:", classes="form-label"),
+            Horizontal(
+                TextArea("", 
+                         id="video-prompt", classes="form-textarea"),
+                Button("Load Prompt", id="video-load-prompt", classes="load-prompt-btn"),
+                classes="prompt-row"
+            ),
+            classes="analysis-section"
+        )
+        widgets.append(analysis_container)
+        
+        # Queue/Submit buttons
+        queue_buttons = Horizontal(
+            Button("Add to Queue", id="video-add-queue", variant="default"),
+            Button("Process Now", id="submit-video", variant="primary"),
+            classes="queue-buttons"
+        )
+        widgets.append(queue_buttons)
         
         return widgets
     
     def _create_audio_form(self) -> list:
         """Create form widgets for audio ingestion."""
         widgets = []
+        
+        # Title section
         widgets.append(Static("Audio Ingestion Settings", classes="form-title"))
-        widgets.append(Label("Audio Source:", classes="form-label"))
-        widgets.append(Input(placeholder="Enter audio file path", id="audio-source", classes="form-input"))
+        
+        # Processing Mode Toggle
+        mode_container = Container(
+            Label("Processing Mode:", classes="form-label"),
+            Switch(value=self.processing_mode == "local", id="audio-mode-switch"),
+            Static("⚫ Local  ⚪ Remote", id="audio-mode-label"),
+            classes="processing-mode-container"
+        )
+        widgets.append(mode_container)
+        
+        # Multi-line source input
+        widgets.append(Label("Audio Sources (one per line):", classes="form-label"))
+        widgets.append(Static("Enter audio file paths or URLs, one per line", classes="small-label"))
+        widgets.append(TextArea("/path/to/audio1.mp3\n/path/to/podcast.wav\n...", 
+                               id="audio-source", classes="form-textarea-source"))
         widgets.append(Button("Browse Files", id="audio-browse", variant="default"))
+        
+        # Multi-line metadata
+        widgets.append(Label("Titles (optional, one per source line):", classes="form-label"))
+        widgets.append(TextArea("Audio Title 1\nAudio Title 2\n...", 
+                               id="audio-title", classes="form-textarea-metadata"))
+        
+        widgets.append(Label("Authors (optional, one per source line):", classes="form-label"))
+        widgets.append(TextArea("Speaker/Author 1\nSpeaker/Author 2\n...", 
+                               id="audio-author", classes="form-textarea-metadata"))
+        
+        # Time range options
+        widgets.append(Label("Time Range (optional, applies to all):", classes="form-label"))
+        time_container = Horizontal(
+            Vertical(
+                Label("Start Time:"),
+                Input(placeholder="HH:MM:SS or seconds", id="audio-start-time", classes="form-input")
+            ),
+            Vertical(
+                Label("End Time:"),
+                Input(placeholder="HH:MM:SS or seconds", id="audio-end-time", classes="form-input")
+            ),
+            classes="time-input-container"
+        )
+        widgets.append(time_container)
+        
+        # Processing options
+        widgets.append(Label("Processing Options:", classes="form-label"))
         widgets.append(Checkbox("Enable transcription", True, id="audio-transcribe"))
+        widgets.append(Checkbox("Enable Voice Activity Detection (VAD)", False, id="audio-vad"))
         widgets.append(Checkbox("Speaker diarization", False, id="audio-diarize"))
-        widgets.append(Button("Process Audio", id="submit-audio", variant="primary"))
+        widgets.append(Checkbox("Save original file (if downloaded)", False, id="audio-save-original"))
+        
+        # Analysis options
+        # Get available providers from app config
+        providers = list(self.app_instance.app_config.get("api_settings", {}).keys()) if self.app_instance.app_config else []
+        provider_options = [(name, name) for name in providers] if providers else [("No providers configured", "none")]
+        default_provider = provider_options[0][1] if provider_options and provider_options[0][1] != "none" else "none"
+        
+        analysis_container = Container(
+            Label("Analysis Options:", classes="form-label"),
+            Checkbox("Enable LLM Analysis", False, id="audio-enable-analysis"),
+            Label("Analysis Provider:", classes="form-label"),
+            Select(provider_options, id="audio-analysis-provider", value=default_provider),
+            Label("Analysis Model:", classes="form-label"),
+            Select([("Select provider first", "none")], id="audio-analysis-model", value="none"),
+            Label("Analysis Prompt:", classes="form-label"),
+            Horizontal(
+                TextArea("Enter custom analysis prompt or load from library...", 
+                         id="audio-prompt", classes="form-textarea"),
+                Button("Load Prompt", id="audio-load-prompt", classes="load-prompt-btn"),
+                classes="prompt-row"
+            ),
+            classes="analysis-section"
+        )
+        widgets.append(analysis_container)
+        
+        # Queue/Submit buttons
+        queue_buttons = Horizontal(
+            Button("Add to Queue", id="audio-add-queue", variant="default"),
+            Button("Process Now", id="submit-audio", variant="primary"),
+            classes="queue-buttons"
+        )
+        widgets.append(queue_buttons)
+        
         return widgets
     
     def _create_pdf_form(self) -> list:
         """Create form widgets for PDF ingestion."""
         widgets = []
+        
         widgets.append(Static("PDF Ingestion Settings", classes="form-title"))
-        widgets.append(Label("PDF File:", classes="form-label"))
-        widgets.append(Input(placeholder="Enter PDF file path", id="pdf-source", classes="form-input"))
+        
+        # Multi-line source input
+        widgets.append(Label("PDF Files (one per line):", classes="form-label"))
+        widgets.append(TextArea("/path/to/document.pdf\n/path/to/paper.pdf\n...", 
+                               id="pdf-source", classes="form-textarea-source"))
         widgets.append(Button("Browse Files", id="pdf-browse", variant="default"))
+        
+        # Multi-line metadata
+        widgets.append(Label("Titles (optional, one per source line):", classes="form-label"))
+        widgets.append(TextArea("Document Title 1\nDocument Title 2\n...", 
+                               id="pdf-title", classes="form-textarea-metadata"))
+        
+        widgets.append(Label("Authors (optional, one per source line):", classes="form-label"))
+        widgets.append(TextArea("Author 1\nAuthor 2\n...", 
+                               id="pdf-author", classes="form-textarea-metadata"))
+        
+        # Processing options
         widgets.append(Label("PDF Engine:", classes="form-label"))
         pdf_engines = [("PyMuPDF4LLM", "pymupdf4llm"), ("PyMuPDF", "pymupdf"), ("Docling", "docling")]
         widgets.append(Select(pdf_engines, id="pdf-engine", value="pymupdf4llm"))
-        widgets.append(Button("Process PDF", id="submit-pdf", variant="primary"))
+        
+        # Analysis options
+        providers = list(self.app_instance.app_config.get("api_settings", {}).keys()) if self.app_instance.app_config else []
+        provider_options = [(name, name) for name in providers] if providers else [("No providers configured", "none")]
+        default_provider = provider_options[0][1] if provider_options and provider_options[0][1] != "none" else "none"
+        
+        analysis_container = Container(
+            Label("Analysis Options:", classes="form-label"),
+            Checkbox("Enable LLM Analysis", False, id="pdf-enable-analysis"),
+            Label("Analysis Provider:", classes="form-label"),
+            Select(provider_options, id="pdf-analysis-provider", value=default_provider),
+            Label("Analysis Model:", classes="form-label"),
+            Select([("Select provider first", "none")], id="pdf-analysis-model", value="none"),
+            Label("Analysis Prompt:", classes="form-label"),
+            Horizontal(
+                TextArea("Enter custom analysis prompt...", 
+                         id="pdf-prompt", classes="form-textarea"),
+                Button("Load Prompt", id="pdf-load-prompt", classes="load-prompt-btn"),
+                classes="prompt-row"
+            ),
+            classes="analysis-section"
+        )
+        widgets.append(analysis_container)
+        
+        # Queue/Submit buttons
+        queue_buttons = Horizontal(
+            Button("Add to Queue", id="pdf-add-queue", variant="default"),
+            Button("Process Now", id="submit-pdf", variant="primary"),
+            classes="queue-buttons"
+        )
+        widgets.append(queue_buttons)
+        
         return widgets
     
     def _create_document_form(self) -> list:
         """Create form widgets for document ingestion."""
         widgets = []
+        
         widgets.append(Static("Document Ingestion Settings", classes="form-title"))
-        widgets.append(Label("Document File:", classes="form-label"))
-        widgets.append(Input(placeholder="Enter document file path", id="doc-source", classes="form-input"))
+        
+        # Multi-line source input
+        widgets.append(Label("Document Files (one per line):", classes="form-label"))
+        widgets.append(TextArea("/path/to/document.txt\n/path/to/article.md\n...", 
+                               id="doc-source", classes="form-textarea-source"))
         widgets.append(Button("Browse Files", id="doc-browse", variant="default"))
-        widgets.append(Button("Process Document", id="submit-doc", variant="primary"))
+        
+        # Multi-line metadata
+        widgets.append(Label("Titles (optional, one per source line):", classes="form-label"))
+        widgets.append(TextArea("Document Title 1\nDocument Title 2\n...", 
+                               id="doc-title", classes="form-textarea-metadata"))
+        
+        # Analysis options
+        analysis_container = Container(classes="analysis-section")
+        widgets.append(analysis_container)
+        analysis_container.mount(Label("Analysis Options:", classes="form-label"))
+        analysis_container.mount(Checkbox("Enable LLM Analysis", False, id="doc-enable-analysis"))
+        
+        providers = list(self.app_instance.app_config.get("api_settings", {}).keys()) if self.app_instance.app_config else []
+        provider_options = [(name, name) for name in providers] if providers else [("No providers configured", "none")]
+        
+        analysis_container.mount(Label("Analysis Provider:", classes="form-label"))
+        default_provider = provider_options[0][1] if provider_options and provider_options[0][1] != "none" else "none"
+        analysis_container.mount(Select(provider_options, id="doc-analysis-provider", value=default_provider))
+        
+        analysis_container.mount(Label("Analysis Model:", classes="form-label"))
+        analysis_container.mount(Select([("Select provider first", "none")], id="doc-analysis-model", value="none"))
+        
+        analysis_container.mount(Label("Analysis Prompt:", classes="form-label"))
+        prompt_row = Horizontal(classes="prompt-row")
+        analysis_container.mount(prompt_row)
+        prompt_row.mount(TextArea("Enter custom analysis prompt...", 
+                                 id="doc-prompt", classes="form-textarea"))
+        prompt_row.mount(Button("Load Prompt", id="doc-load-prompt", classes="load-prompt-btn"))
+        
+        # Queue/Submit buttons
+        queue_buttons = Horizontal(classes="queue-buttons")
+        widgets.append(queue_buttons)
+        queue_buttons.mount(Button("Add to Queue", id="doc-add-queue", variant="default"))
+        queue_buttons.mount(Button("Process Now", id="submit-doc", variant="primary"))
+        
         return widgets
     
     def _create_web_form(self) -> list:
         """Create form widgets for web content ingestion."""
         widgets = []
+        
         widgets.append(Static("Web Content Ingestion", classes="form-title"))
-        widgets.append(Label("Web URL:", classes="form-label"))
-        widgets.append(Input(placeholder="Enter web page URL", id="web-url", classes="form-input"))
+        
+        # Multi-line URL input
+        widgets.append(Label("Web URLs (one per line):", classes="form-label"))
+        widgets.append(TextArea("https://example.com/article1\nhttps://example.com/article2\n...", 
+                               id="web-url", classes="form-textarea-source"))
+        
+        # Multi-line metadata
+        widgets.append(Label("Titles (optional, one per URL):", classes="form-label"))
+        widgets.append(TextArea("Article Title 1\nArticle Title 2\n...", 
+                               id="web-title", classes="form-textarea-metadata"))
+        
+        # Processing options
         widgets.append(Checkbox("Use cookies for scraping", False, id="web-cookies"))
-        widgets.append(Button("Process Web Page", id="submit-web", variant="primary"))
+        widgets.append(Checkbox("Save scraped content", False, id="web-save-original"))
+        
+        # Analysis options
+        analysis_container = Container(classes="analysis-section")
+        widgets.append(analysis_container)
+        analysis_container.mount(Label("Analysis Options:", classes="form-label"))
+        analysis_container.mount(Checkbox("Enable LLM Analysis", False, id="web-enable-analysis"))
+        
+        providers = list(self.app_instance.app_config.get("api_settings", {}).keys()) if self.app_instance.app_config else []
+        provider_options = [(name, name) for name in providers] if providers else [("No providers configured", "none")]
+        
+        analysis_container.mount(Label("Analysis Provider:", classes="form-label"))
+        default_provider = provider_options[0][1] if provider_options and provider_options[0][1] != "none" else "none"
+        analysis_container.mount(Select(provider_options, id="web-analysis-provider", value=default_provider))
+        
+        analysis_container.mount(Label("Analysis Model:", classes="form-label"))
+        analysis_container.mount(Select([("Select provider first", "none")], id="web-analysis-model", value="none"))
+        
+        analysis_container.mount(Label("Analysis Prompt:", classes="form-label"))
+        prompt_row = Horizontal(classes="prompt-row")
+        analysis_container.mount(prompt_row)
+        prompt_row.mount(TextArea("Enter custom analysis prompt...", 
+                                 id="web-prompt", classes="form-textarea"))
+        prompt_row.mount(Button("Load Prompt", id="web-load-prompt", classes="load-prompt-btn"))
+        
+        # Queue/Submit buttons
+        queue_buttons = Horizontal(classes="queue-buttons")
+        widgets.append(queue_buttons)
+        queue_buttons.mount(Button("Add to Queue", id="web-add-queue", variant="default"))
+        queue_buttons.mount(Button("Process Now", id="submit-web", variant="primary"))
+        
         return widgets
     
     def _create_ebook_form(self) -> list:
         """Create form widgets for ebook ingestion."""
         widgets = []
+        
         widgets.append(Static("E-Book Ingestion Settings", classes="form-title"))
-        widgets.append(Label("E-Book File:", classes="form-label"))
-        widgets.append(Input(placeholder="Enter ebook file path", id="ebook-source", classes="form-input"))
+        
+        # Multi-line source input
+        widgets.append(Label("E-Book Files (one per line):", classes="form-label"))
+        widgets.append(TextArea("/path/to/book.epub\n/path/to/novel.mobi\n...", 
+                               id="ebook-source", classes="form-textarea-source"))
         widgets.append(Button("Browse Files", id="ebook-browse", variant="default"))
-        widgets.append(Button("Process E-Book", id="submit-ebook", variant="primary"))
+        
+        # Multi-line metadata
+        widgets.append(Label("Titles (optional, one per source line):", classes="form-label"))
+        widgets.append(TextArea("Book Title 1\nBook Title 2\n...", 
+                               id="ebook-title", classes="form-textarea-metadata"))
+        
+        widgets.append(Label("Authors (optional, one per source line):", classes="form-label"))
+        widgets.append(TextArea("Author 1\nAuthor 2\n...", 
+                               id="ebook-author", classes="form-textarea-metadata"))
+        
+        # Analysis options
+        analysis_container = Container(classes="analysis-section")
+        widgets.append(analysis_container)
+        analysis_container.mount(Label("Analysis Options:", classes="form-label"))
+        analysis_container.mount(Checkbox("Enable LLM Analysis", False, id="ebook-enable-analysis"))
+        
+        providers = list(self.app_instance.app_config.get("api_settings", {}).keys()) if self.app_instance.app_config else []
+        provider_options = [(name, name) for name in providers] if providers else [("No providers configured", "none")]
+        
+        analysis_container.mount(Label("Analysis Provider:", classes="form-label"))
+        default_provider = provider_options[0][1] if provider_options and provider_options[0][1] != "none" else "none"
+        analysis_container.mount(Select(provider_options, id="ebook-analysis-provider", value=default_provider))
+        
+        analysis_container.mount(Label("Analysis Model:", classes="form-label"))
+        analysis_container.mount(Select([("Select provider first", "none")], id="ebook-analysis-model", value="none"))
+        
+        analysis_container.mount(Label("Analysis Prompt:", classes="form-label"))
+        prompt_row = Horizontal(classes="prompt-row")
+        analysis_container.mount(prompt_row)
+        prompt_row.mount(TextArea("Enter custom analysis prompt...", 
+                                 id="ebook-prompt", classes="form-textarea"))
+        prompt_row.mount(Button("Load Prompt", id="ebook-load-prompt", classes="load-prompt-btn"))
+        
+        # Queue/Submit buttons
+        queue_buttons = Horizontal(classes="queue-buttons")
+        widgets.append(queue_buttons)
+        queue_buttons.mount(Button("Add to Queue", id="ebook-add-queue", variant="default"))
+        queue_buttons.mount(Button("Process Now", id="submit-ebook", variant="primary"))
+        
         return widgets
     
     def _create_notes_form(self) -> list:
         """Create form widgets for notes import."""
         widgets = []
+        
         widgets.append(Static("Notes Import Settings", classes="form-title"))
-        widgets.append(Label("Notes File/Directory:", classes="form-label"))
-        widgets.append(Input(placeholder="Enter notes file or directory path", id="notes-source", classes="form-input"))
+        
+        # Multi-line source input
+        widgets.append(Label("Notes Files/Directories (one per line):", classes="form-label"))
+        widgets.append(TextArea("/path/to/notes.md\n/path/to/notes_folder/\n...", 
+                               id="notes-source", classes="form-textarea-source"))
         widgets.append(Button("Browse", id="notes-browse", variant="default"))
+        
+        # Processing options
+        widgets.append(Label("Import Options:", classes="form-label"))
         widgets.append(Checkbox("Import as templates", False, id="notes-templates"))
         widgets.append(Checkbox("Enable sync", True, id="notes-sync"))
-        widgets.append(Button("Import Notes", id="submit-notes", variant="primary"))
+        widgets.append(Checkbox("Process YAML frontmatter", True, id="notes-frontmatter"))
+        widgets.append(Checkbox("Import subdirectories recursively", True, id="notes-recursive"))
+        
+        # Queue/Submit buttons
+        queue_buttons = Horizontal(classes="queue-buttons")
+        widgets.append(queue_buttons)
+        queue_buttons.mount(Button("Add to Queue", id="notes-add-queue", variant="default"))
+        queue_buttons.mount(Button("Import Now", id="submit-notes", variant="primary"))
+        
         return widgets
     
     def _create_character_form(self) -> list:
         """Create form widgets for character card import."""
         widgets = []
+        
         widgets.append(Static("Character Card Import", classes="form-title"))
-        widgets.append(Label("Character Card File:", classes="form-label"))
-        widgets.append(Input(placeholder="Enter character card file path (.json, .png)", id="char-source", classes="form-input"))
+        
+        # Multi-line source input
+        widgets.append(Label("Character Card Files (one per line):", classes="form-label"))
+        widgets.append(Static("Supports .json, .png with embedded data", classes="small-label"))
+        widgets.append(TextArea("/path/to/character1.json\n/path/to/character2.png\n...", 
+                               id="char-source", classes="form-textarea-source"))
         widgets.append(Button("Browse Files", id="char-browse", variant="default"))
+        
+        # Processing options
         widgets.append(Label("Card Format:", classes="form-label"))
-        formats = [("Tavern/SillyTavern", "tavern"), ("CharacterAI", "cai"), ("Auto-detect", "auto")]
+        formats = [("Auto-detect", "auto"), ("Tavern/SillyTavern", "tavern"), ("CharacterAI", "cai")]
         widgets.append(Select(formats, id="char-format", value="auto"))
-        widgets.append(Button("Import Character", id="submit-char", variant="primary"))
+        
+        widgets.append(Label("Import Options:", classes="form-label"))
+        widgets.append(Checkbox("Extract and save character images", True, id="char-extract-image"))
+        widgets.append(Checkbox("Import example messages", True, id="char-import-examples"))
+        
+        # Queue/Submit buttons
+        queue_buttons = Horizontal(
+            Button("Add to Queue", id="char-add-queue", variant="default"),
+            Button("Import Now", id="submit-char", variant="primary"),
+            classes="queue-buttons"
+        )
+        widgets.append(queue_buttons)
+        
         return widgets
     
     def _create_conversation_form(self) -> list:
         """Create form widgets for conversation import."""
         widgets = []
+        
         widgets.append(Static("Conversation Import", classes="form-title"))
-        widgets.append(Label("Conversation File:", classes="form-label"))
-        widgets.append(Input(placeholder="Enter conversation export file", id="conv-source", classes="form-input"))
+        
+        # Multi-line source input
+        widgets.append(Label("Conversation Files (one per line):", classes="form-label"))
+        widgets.append(TextArea("/path/to/conversation1.json\n/path/to/chat_export.json\n...", 
+                               id="conv-source", classes="form-textarea-source"))
         widgets.append(Button("Browse Files", id="conv-browse", variant="default"))
+        
+        # Processing options
         widgets.append(Label("Import Format:", classes="form-label"))
-        formats = [("JSON", "json"), ("ChatGPT Export", "chatgpt"), ("Discord", "discord")]
-        widgets.append(Select(formats, id="conv-format", value="json"))
-        widgets.append(Button("Import Conversation", id="submit-conv", variant="primary"))
+        formats = [("Auto-detect", "auto"), ("JSON", "json"), ("ChatGPT Export", "chatgpt"), ("Discord", "discord")]
+        widgets.append(Select(formats, id="conv-format", value="auto"))
+        
+        widgets.append(Label("Import Options:", classes="form-label"))
+        widgets.append(Checkbox("Parse timestamps", True, id="conv-timestamps"))
+        widgets.append(Checkbox("Import attachments/images", True, id="conv-attachments"))
+        widgets.append(Checkbox("Preserve message IDs", False, id="conv-preserve-ids"))
+        
+        # Queue/Submit buttons
+        queue_buttons = Horizontal(
+            Button("Add to Queue", id="conv-add-queue", variant="default"),
+            Button("Import Now", id="submit-conv", variant="primary"),
+            classes="queue-buttons"
+        )
+        widgets.append(queue_buttons)
+        
         return widgets
     
     def _open_media_processor(self, media_type: str):

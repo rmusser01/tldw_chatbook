@@ -67,12 +67,12 @@ ChatMessage.-tool-result > Vertical {
     color: $text;
 }
 .message-actions Button:focus {
-    outline: solid $accent;
+    background: $surface-darken-1;
+    color: $text;
 }
 .message-actions Button:focus:hover {
     background: $surface;
     color: $text;
-    outline: solid $accent;
 }
 /* Initially hide AI actions until generation is complete */
 ChatMessage.-ai .message-actions.-generating {
