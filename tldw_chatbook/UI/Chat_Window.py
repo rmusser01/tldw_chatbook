@@ -112,8 +112,13 @@ class ChatWindow(Container):
 
     def compose(self) -> ComposeResult:
         logger.debug("Composing ChatWindow UI")
+        compose_start = time.perf_counter()
+        
         # Settings Sidebar (Left)
+        sidebar_start = time.perf_counter()
         yield from create_settings_sidebar(TAB_CHAT, self.app_instance.app_config)
+        left_sidebar_time = time.perf_counter() - sidebar_start
+        logger.info(f"ChatWindow: Left sidebar created in {left_sidebar_time:.3f}s")
 
         # Check if tabs are enabled
         enable_tabs = get_cli_setting("chat_defaults", "enable_tabs", False)
@@ -160,10 +165,16 @@ class ChatWindow(Container):
                     )
 
         # Character Details Sidebar (Right)
+        right_sidebar_start = time.perf_counter()
         yield from create_chat_right_sidebar(
             "chat",
             initial_ephemeral_state=self.app_instance.current_chat_is_ephemeral
         )
+        right_sidebar_time = time.perf_counter() - right_sidebar_start
+        logger.info(f"ChatWindow: Right sidebar created in {right_sidebar_time:.3f}s")
+        
+        total_compose_time = time.perf_counter() - compose_start
+        logger.info(f"ChatWindow: Total compose time: {total_compose_time:.3f}s")
     
     async def handle_notes_expand_button(self, app, event) -> None:
         """Handle the notes expand/collapse button."""

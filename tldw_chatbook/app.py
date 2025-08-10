@@ -1064,8 +1064,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self._startup_start_time = time.perf_counter()
         self._startup_phases = {}
         
-        # Log initial memory usage
-        log_resource_usage()
+        # Tab switching optimization
+        self._tab_switch_timer = None
+        self._pending_tab_switch = None
+        self._initialized_tabs = set()  # Track which tabs have been initialized
+        
+        # Reduce logging in production
+        if not os.environ.get("TLDW_DEBUG"):
+            logging.getLogger().setLevel(logging.INFO)  # Reduce to INFO level in production
+            # Disable debug logging for performance
+            logging.getLogger("tldw_chatbook").setLevel(logging.INFO)
+        
+        # Log initial memory usage only in debug mode
+        if os.environ.get("TLDW_DEBUG"):
+            log_resource_usage()
         log_counter("app_startup_initiated", 1, documentation="Application startup initiated")
         
         super().__init__()
@@ -1524,22 +1536,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _create_main_ui_widgets(self) -> List[Widget]:
         """Create the main UI widgets (called after splash screen or immediately if disabled)."""
         widgets = []
+        compose_phases = {}  # Track timing for each phase
         
-        # Header removed - no title/header bar needed
-        # component_start = time.perf_counter()
-        # widgets.append(Header())
-        # log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-        #              labels={"component": "header"}, 
-        #              documentation="Time to create UI component")
-        
-        # Custom title bar with surface color
+        # Phase: Title Bar
+        phase_start = time.perf_counter()
         component_start = time.perf_counter()
         widgets.append(TitleBar())
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+        titlebar_time = time.perf_counter() - component_start
+        compose_phases["titlebar"] = titlebar_time
+        log_histogram("app_component_creation_duration_seconds", titlebar_time,
                      labels={"component": "titlebar"}, 
                      documentation="Time to create UI component")
+        logger.info(f"TitleBar created in {titlebar_time:.3f}s")
 
-        # Check config for navigation type
+        # Phase: Navigation (TabBar or TabDropdown)
+        phase_start = time.perf_counter()
         use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
         component_start = time.perf_counter()
         
@@ -1551,10 +1562,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Use traditional tab bar
             widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
             logger.info("Using traditional tab bar navigation")
-            
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+        
+        nav_time = time.perf_counter() - component_start
+        compose_phases["navigation"] = nav_time
+        log_histogram("app_component_creation_duration_seconds", nav_time,
                      labels={"component": "navigation"}, 
                      documentation="Time to create UI component")
+        logger.info(f"Navigation created in {nav_time:.3f}s")
 
         # Content area - all windows
         content_area_start = time.perf_counter()
@@ -1591,14 +1605,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Create window widgets and compose them into the container properly
         initial_tab = self._initial_tab_value
+        window_creation_times = {}  # Track individual window creation times
+        
         for window_name, window_class, window_id in windows:
+            window_start = time.perf_counter()
             is_initial_window = window_id == f"{initial_tab}-window"
             
-            # Always load LogsWindow and ChatbooksWindow immediately
-            if is_initial_window or window_id == "logs-window" or window_id == "chatbooks-window":
-                # Create the actual window for the initial tab, logs tab, and chatbooks tab
+            # Always load LogsWindow immediately to capture logs, and the initial window
+            if is_initial_window or window_id == "logs-window":
+                # Create the actual window for the initial tab and logs tab
                 logger.info(f"Creating actual window for {window_name}")
+                creation_start = time.perf_counter()
                 window_widget = window_class(self, id=window_id, classes="window")
+                creation_time = time.perf_counter() - creation_start
+                window_creation_times[window_name] = creation_time
+                logger.info(f"Window {window_name} created in {creation_time:.3f}s")
                 # For non-initial windows, make them invisible initially
                 if not is_initial_window:
                     window_widget.display = False
@@ -1606,9 +1627,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 # Create a placeholder for other tabs
                 logger.debug(f"Creating placeholder for tab: {window_name}")
                 window_widget = PlaceholderWindow(self, window_class, window_id, classes="window")
+                window_widget.display = False  # Hide placeholder initially
+                window_creation_times[window_name] = time.perf_counter() - window_start
             
             # Mount the window widget into the container
+            mount_start = time.perf_counter()
             content_container._add_child(window_widget)
+            mount_time = time.perf_counter() - mount_start
+            if mount_time > 0.01:  # Log if mounting takes more than 10ms
+                logger.warning(f"Mounting {window_name} took {mount_time:.3f}s")
+        
+        # Log window creation summary
+        if window_creation_times:
+            sorted_times = sorted(window_creation_times.items(), key=lambda x: x[1], reverse=True)
+            logger.info("=== WINDOW CREATION TIMES ===")
+            for window_name, creation_time in sorted_times[:5]:  # Top 5 slowest
+                logger.info(f"  {window_name}: {creation_time:.3f}s")
+            logger.info("=============================")
+        
+        # Store for later analysis
+        self._window_creation_times = window_creation_times
         
         widgets.append(content_container)
         
@@ -3082,8 +3120,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             return
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
             return
-        # (Your existing watcher code is likely fine, just ensure the QueryErrors aren't hiding a problem)
-        loguru_logger.debug(f"\n>>> DEBUG: watch_current_tab triggered! Old: '{old_tab}', New: '{new_tab}'")
+        
+        # Cancel any pending tab switch timer
+        if self._tab_switch_timer:
+            self._tab_switch_timer.stop()
+            self._tab_switch_timer = None
+        
+        # Store the pending tab switch
+        self._pending_tab_switch = (old_tab, new_tab)
+        
+        # Debounce rapid tab switches - wait 50ms before actually switching
+        self._tab_switch_timer = self.set_timer(0.05, lambda: self._execute_tab_switch(old_tab, new_tab))
+    
+    def _execute_tab_switch(self, old_tab: Optional[str], new_tab: str) -> None:
+        """Execute the actual tab switch after debouncing."""
+        # Check if this is still the pending switch
+        if self._pending_tab_switch != (old_tab, new_tab):
+            return  # A newer switch is pending
+        
+        self._pending_tab_switch = None
+        loguru_logger.debug(f"\n>>> DEBUG: Executing tab switch! Old: '{old_tab}', New: '{new_tab}'")
         if not isinstance(new_tab, str) or not new_tab:
             print(f">>> DEBUG: watch_current_tab: Invalid new_tab '{new_tab!r}', aborting.")
             logging.error(f"Watcher received invalid new_tab value: {new_tab!r}. Aborting tab switch.")
@@ -3137,10 +3193,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             new_window = self.query_one(f"#{new_tab}-window")
             
-            # Initialize placeholder window if needed
+            # Initialize placeholder window if needed (with caching)
             if isinstance(new_window, PlaceholderWindow) and not new_window.is_initialized:
-                loguru_logger.info(f"Initializing lazy-loaded window for tab: {new_tab}")
-                new_window.initialize()
+                # Check if we've already started initializing this tab
+                if new_tab not in self._initialized_tabs:
+                    loguru_logger.info(f"Initializing lazy-loaded window for tab: {new_tab}")
+                    self._initialized_tabs.add(new_tab)
+                    new_window.initialize()
+                else:
+                    # Tab is already being initialized, skip
+                    loguru_logger.debug(f"Tab {new_tab} already initialized or initializing")
             
             # Always set display to True for the new window
             new_window.display = True

@@ -91,3 +91,33 @@ For production use, the metrics can be:
 - Visualized in Grafana dashboards
 - Used for alerting on slow startups
 - Collected for performance trending over time
+
+## Debug Mode
+
+To enable detailed debug logging and additional performance metrics during development:
+
+### Environment Variable
+Set the `TLDW_DEBUG` environment variable before running the application:
+
+```bash
+export TLDW_DEBUG=1
+python -m tldw_chatbook.app
+```
+
+### What Debug Mode Enables
+When `TLDW_DEBUG` is set:
+- **Detailed logging**: All DEBUG level messages are logged (otherwise INFO level is used)
+- **Resource usage tracking**: Memory and CPU usage is logged at startup checkpoints
+- **Performance metrics**: Additional timing metrics are collected
+- **Verbose startup**: Detailed breakdown of initialization phases
+
+### Performance Impact
+Debug mode has a measurable performance impact:
+- Logging overhead can add 100-200ms to startup time
+- Memory tracking adds ~50MB overhead
+- Should NOT be used in production
+
+### Recommended Usage
+- **Development**: Enable for troubleshooting performance issues
+- **Testing**: Enable when collecting metrics for optimization
+- **Production**: Keep disabled for best performance

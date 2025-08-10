@@ -2621,13 +2621,15 @@ class ToolsSettingsWindow(Container):
 
     def _compose_splash_gallery(self) -> ComposeResult:
         """Compose the Splash Screen Gallery section."""
-        from ..Widgets.splash_screen_viewer import SplashScreenViewer
-        
         yield Static("🎨 Splash Screen Gallery", classes="section-title")
         yield Static("Browse and preview all available splash screen animations", classes="section-description")
         
-        # Include the splash screen viewer directly
-        yield SplashScreenViewer(classes="embedded-splash-viewer")
+        # Create a placeholder container that will be populated when actually viewed
+        yield Container(
+            Static("Loading splash screen gallery...", classes="loading-placeholder"),
+            id="splash-viewer-container",
+            classes="embedded-splash-viewer"
+        )
     
     def _compose_about(self) -> ComposeResult:
         """Compose the About section."""
@@ -4194,8 +4196,38 @@ Thank you for using tldw-chatbook! 🎉
         except Exception as e:
             self.app_instance.notify(f"Error resetting embedding config: {e}", severity="error")
     
+    async def _lazy_load_splash_gallery(self) -> None:
+        """Lazily load the SplashScreenViewer when the gallery tab is first accessed."""
+        try:
+            container = self.query_one("#splash-viewer-container", Container)
+            
+            # Check if already loaded (container will have more than just the loading message)
+            if len(container.children) > 1 or (len(container.children) == 1 and not isinstance(container.children[0], Static)):
+                return  # Already loaded
+            
+            # Clear the loading message
+            container.remove_children()
+            
+            # Now import and create the actual viewer
+            from ..Widgets.splash_screen_viewer import SplashScreenViewer
+            viewer = SplashScreenViewer(classes="embedded-splash-viewer")
+            
+            # Mount the viewer into the container
+            await container.mount(viewer)
+            logger.debug("SplashScreenViewer loaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to load SplashScreenViewer: {e}")
+            # Show error message instead
+            container.remove_children()
+            await container.mount(Static(f"Failed to load splash gallery: {e}", classes="error-message"))
+    
     async def _show_view(self, view_id: str) -> None:
         """Show the specified view and hide all others."""
+        # Lazy load splash gallery when first accessed
+        if view_id == "ts-view-splash-gallery":
+            await self._lazy_load_splash_gallery()
+        
         # Use ContentSwitcher to switch views
         content_switcher = self.query_one("#tools-settings-content-pane", ContentSwitcher)
         content_switcher.current = view_id
