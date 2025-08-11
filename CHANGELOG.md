@@ -10,6 +10,12 @@ and this project adheres to Some kind of Versioning
 ### Added
 - Initial features pending documentation
 
+
+## [0.1.7.3] - 2025-08-7
+### Fixed 
+- Replaced top tab bar with link bar instead
+
+
 ## [0.1.7.2] - 2025-08-7
 ### Fixed 
 - Numpy requirement in base install

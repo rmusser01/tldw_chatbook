@@ -12,11 +12,12 @@
 /* Single-line tab links navigation */
 #tab-links-container {
     dock: top;
-    height: 2;
+    height: 3;
     background: $background;
     padding: 0 1;
     overflow-x: auto;
     overflow-y: hidden;
+    border: solid $accent;
 }
 
 #tab-links-inner {
