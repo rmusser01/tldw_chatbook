@@ -2681,8 +2681,6 @@ Thank you for using tldw-chatbook! 🎉
             yield Button("Configuration File Settings", id="ts-nav-config-file-settings", classes="ts-nav-button")
             yield Button("Database Tools", id="ts-nav-db-tools", classes="ts-nav-button")
             yield Button("Appearance", id="ts-nav-appearance", classes="ts-nav-button")
-            yield Button("Theme Editor", id="ts-nav-theme-editor", classes="ts-nav-button")
-            yield Button("Splash Screen Gallery", id="ts-nav-splash-gallery", classes="ts-nav-button")
             yield Button("Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button")
             yield Button("About", id="ts-nav-about", classes="ts-nav-button")
 
@@ -2708,18 +2706,8 @@ Thank you for using tldw-chatbook! 🎉
                 classes="ts-view-area",
             )
             yield Container(
-                *self._compose_theme_editor(),
-                id="ts-view-theme-editor",
-                classes="ts-view-area",
-            )
-            yield Container(
                 *self._compose_tool_settings(),
                 id="ts-view-tool-settings",
-                classes="ts-view-area",
-            )
-            yield Container(
-                *self._compose_splash_gallery(),
-                id="ts-view-splash-gallery",
                 classes="ts-view-area",
             )
             yield Container(
@@ -2750,10 +2738,6 @@ Thank you for using tldw-chatbook! 🎉
             await self._show_view("ts-view-db-tools")
         elif button_id == "ts-nav-appearance":
             await self._show_view("ts-view-appearance")
-        elif button_id == "ts-nav-theme-editor":
-            await self._show_view("ts-view-theme-editor")
-        elif button_id == "ts-nav-splash-gallery":
-            await self._show_view("ts-view-splash-gallery")
         elif button_id == "ts-nav-tool-settings":
             await self._show_view("ts-view-tool-settings")
         elif button_id == "ts-nav-about":
@@ -4224,10 +4208,6 @@ Thank you for using tldw-chatbook! 🎉
     
     async def _show_view(self, view_id: str) -> None:
         """Show the specified view and hide all others."""
-        # Lazy load splash gallery when first accessed
-        if view_id == "ts-view-splash-gallery":
-            await self._lazy_load_splash_gallery()
-        
         # Use ContentSwitcher to switch views
         content_switcher = self.query_one("#tools-settings-content-pane", ContentSwitcher)
         content_switcher.current = view_id
@@ -4246,9 +4226,7 @@ Thank you for using tldw-chatbook! 🎉
             "ts-view-config-file-settings": "ts-nav-config-file-settings",
             "ts-view-db-tools": "ts-nav-db-tools",
             "ts-view-appearance": "ts-nav-appearance",
-            "ts-view-theme-editor": "ts-nav-theme-editor",
             "ts-view-tool-settings": "ts-nav-tool-settings",
-            "ts-view-splash-gallery": "ts-nav-splash-gallery",
             "ts-view-about": "ts-nav-about"
         }
         

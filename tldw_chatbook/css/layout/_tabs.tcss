@@ -12,18 +12,19 @@
 /* Single-line tab links navigation */
 #tab-links-container {
     dock: top;
-    height: 3;
-    background: $background;
+    height: 4;
+    background: $panel;
     padding: 0 1;
-    overflow-x: auto;
-    overflow-y: hidden;
     border: solid $accent;
 }
 
 #tab-links-inner {
     layout: horizontal;
-    height: 1;
+    height: auto;
     width: auto;
+    background: transparent;
+    margin: 0;
+    padding: 0;
 }
 
 #tab-links-inner > Static {
@@ -37,7 +38,7 @@
     padding: 0 1;
     text-style: none;
     width: auto;
-    height: 1;
+    height: auto;
 }
 
 .tab-link:hover {

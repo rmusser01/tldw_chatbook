@@ -67,7 +67,7 @@ from .config import (
     get_prompts_db_path,
 )
 from .Logging_Config import configure_application_logging
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, \
+from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
@@ -137,6 +137,7 @@ from .UI.NewIngestWindow import NewIngestWindow
 from .UI.Ingest_Window import INGEST_NAV_BUTTON_IDS, INGEST_VIEW_IDS, MEDIA_TYPES
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
+from .UI.Customize_Window import CustomizeWindow
 # Using unified Evals dashboard
 from .UI.Evals_Window_v3_unified import EvalsWindow
 from .UI.Coding_Window import CodingWindow
@@ -299,6 +300,7 @@ class TabNavigationProvider(Provider):
             ("Tab Navigation: Switch to Search", TAB_SEARCH, "Switch to search interface"),
             ("Tab Navigation: Switch to Ingest", TAB_INGEST, "Switch to content ingestion"),
             ("Tab Navigation: Switch to Tools & Settings", TAB_TOOLS_SETTINGS, "Switch to settings and configuration"),
+            ("Tab Navigation: Switch to Customize", TAB_CUSTOMIZE, "Switch to appearance customization"),
             ("Tab Navigation: Switch to LLM Management", TAB_LLM, "Switch to LLM provider management"),
             ("Tab Navigation: Switch to Logs", TAB_LOGS, "Switch to application logs"),
             ("Tab Navigation: Switch to Stats", TAB_STATS, "Switch to statistics view"),
@@ -323,6 +325,7 @@ class TabNavigationProvider(Provider):
             ("Tab Navigation: Switch to Notes", TAB_NOTES, "Switch to notes management"),
             ("Tab Navigation: Switch to Search", TAB_SEARCH, "Switch to search interface"),
             ("Tab Navigation: Switch to Tools & Settings", TAB_TOOLS_SETTINGS, "Switch to settings and configuration"),
+            ("Tab Navigation: Switch to Customize", TAB_CUSTOMIZE, "Switch to appearance customization"),
         ]
         
         for command_text, tab_id, help_text in popular_tabs:
@@ -867,7 +870,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         "chat-window", "conversations_characters_prompts-window", "notes-window",
         "ingest-window", "tools_settings-window", "llm_management-window",
         "media-window", "search-window", "logs-window", "stats-window", "evals-window", 
-        "coding-window", "stts-window", "study-window", "chatbooks-window"
+        "coding-window", "stts-window", "study-window", "chatbooks-window", "customize-window"
     ]
 
     # Define reactive at class level with a placeholder default and type hint
@@ -1451,6 +1454,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             TAB_LLM: llm_handlers_map,
             TAB_LOGS: app_lifecycle.APP_LIFECYCLE_BUTTON_HANDLERS,
             TAB_TOOLS_SETTINGS: tools_settings_handlers,
+            TAB_CUSTOMIZE: {},  # Customize handles its own events
             TAB_SEARCH: search_handlers,
             TAB_EVALS: evals_handlers,
             TAB_CODING: {},  # Empty for now - coding handles its own events
@@ -1596,6 +1600,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("ingest", NewIngestWindow, "ingest-window"),
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
             ("llm_management", LLMManagementWindow, "llm_management-window"),
+            ("customize", CustomizeWindow, "customize-window"),
             ("logs", LogsWindow, "logs-window"),
             ("coding", CodingWindow, "coding-window"),
             ("stats", StatsWindow, "stats-window"),
@@ -4145,6 +4150,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 TAB_INGEST: "ingest-window",
                 TAB_TOOLS_SETTINGS: "tools_settings-window",
                 TAB_LLM: "llm_management-window",
+                TAB_CUSTOMIZE: "customize-window",
                 TAB_LOGS: "logs-window",
                 TAB_STATS: "stats-window",
                 TAB_EVALS: "evals-window",

@@ -13,7 +13,7 @@ from textual.widgets import Static
 if TYPE_CHECKING:
     from ..app import TldwCli
 
-from ..Constants import TAB_CCP, TAB_TOOLS_SETTINGS, TAB_INGEST, TAB_LLM, TAB_EVALS, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_CHATBOOKS
+from ..Constants import TAB_CCP, TAB_TOOLS_SETTINGS, TAB_INGEST, TAB_LLM, TAB_EVALS, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_CHATBOOKS, TAB_CUSTOMIZE
 #
 #######################################################################################################################
 #
@@ -54,6 +54,8 @@ class TabLinks(ScrollableContainer):
                     label_text = "Study"
                 elif tab_id == TAB_CHATBOOKS:
                     label_text = "Chatbooks"
+                elif tab_id == TAB_CUSTOMIZE:
+                    label_text = "Customize"
                 else:
                     # Default: capitalize first letter of each word
                     label_text = tab_id.replace('_', ' ').title()
