@@ -44,9 +44,16 @@ class TestTabLinksNavigation:
                 link = app.query_one(link_id)
                 assert link is not None, f"Tab link for {tab_id} should exist"
                 
+                # Check if link is visible in viewport, if not scroll to it
+                container = app.query_one("#tab-links-container")
+                
+                # Scroll the widget into view if needed
+                container.scroll_to_widget(link, animate=False)
+                await pilot.pause(0.2)  # Let scroll complete
+                
                 # Click the tab link
                 await pilot.click(link_id)
-                await pilot.pause(0.1)  # Let the navigation complete
+                await pilot.pause(1.0)  # Let the navigation complete - some tabs are heavy
                 
                 # Verify navigation happened
                 assert app.current_tab == tab_id, f"Should have navigated to {tab_id}"
