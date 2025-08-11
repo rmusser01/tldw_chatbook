@@ -13,8 +13,17 @@ from textual.widgets import Button, TextArea
 from textual.reactive import reactive
 #
 # Local Imports
-from ..Widgets.settings_sidebar import create_settings_sidebar
-from tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar import create_chat_right_sidebar
+# Check if optimized versions are available, fall back to original if not
+try:
+    from ..Widgets.settings_sidebar_optimized import create_settings_sidebar_optimized
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar_optimized import create_chat_right_sidebar_optimized
+    USE_OPTIMIZED_SIDEBARS = True
+    logger.info("Using optimized sidebars for better performance")
+except ImportError:
+    from ..Widgets.settings_sidebar import create_settings_sidebar
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar import create_chat_right_sidebar
+    USE_OPTIMIZED_SIDEBARS = False
+    logger.info("Using standard sidebars")
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ..Constants import TAB_CHAT
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE, EMOJI_SEND, FALLBACK_SEND, \
@@ -116,9 +125,12 @@ class ChatWindow(Container):
         
         # Settings Sidebar (Left)
         sidebar_start = time.perf_counter()
-        yield from create_settings_sidebar(TAB_CHAT, self.app_instance.app_config)
+        if USE_OPTIMIZED_SIDEBARS:
+            yield from create_settings_sidebar_optimized(TAB_CHAT, self.app_instance.app_config)
+        else:
+            yield from create_settings_sidebar(TAB_CHAT, self.app_instance.app_config)
         left_sidebar_time = time.perf_counter() - sidebar_start
-        logger.info(f"ChatWindow: Left sidebar created in {left_sidebar_time:.3f}s")
+        logger.info(f"ChatWindow: Left sidebar created in {left_sidebar_time:.3f}s (optimized={USE_OPTIMIZED_SIDEBARS})")
 
         # Check if tabs are enabled
         enable_tabs = get_cli_setting("chat_defaults", "enable_tabs", False)
@@ -166,12 +178,18 @@ class ChatWindow(Container):
 
         # Character Details Sidebar (Right)
         right_sidebar_start = time.perf_counter()
-        yield from create_chat_right_sidebar(
-            "chat",
-            initial_ephemeral_state=self.app_instance.current_chat_is_ephemeral
-        )
+        if USE_OPTIMIZED_SIDEBARS:
+            yield from create_chat_right_sidebar_optimized(
+                "chat",
+                initial_ephemeral_state=self.app_instance.current_chat_is_ephemeral
+            )
+        else:
+            yield from create_chat_right_sidebar(
+                "chat",
+                initial_ephemeral_state=self.app_instance.current_chat_is_ephemeral
+            )
         right_sidebar_time = time.perf_counter() - right_sidebar_start
-        logger.info(f"ChatWindow: Right sidebar created in {right_sidebar_time:.3f}s")
+        logger.info(f"ChatWindow: Right sidebar created in {right_sidebar_time:.3f}s (optimized={USE_OPTIMIZED_SIDEBARS})")
         
         total_compose_time = time.perf_counter() - compose_start
         logger.info(f"ChatWindow: Total compose time: {total_compose_time:.3f}s")

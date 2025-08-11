@@ -8,3 +8,56 @@
 #tabs Button { width: 1fr; height: 100%; border: none; background: $panel; color: $text-muted; }
 #tabs Button:hover { background: $panel-lighten-1; color: $text; }
 #tabs Button.-active { background: $accent; color: $text; text-style: bold; border: none; }
+
+/* Single-line tab links navigation */
+#tab-links-container {
+    dock: top;
+    height: 2;
+    background: $background;
+    padding: 0 1;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+#tab-links-inner {
+    layout: horizontal;
+    height: 1;
+    width: auto;
+}
+
+#tab-links-inner > Static {
+    width: auto;
+    height: 1;
+    margin: 0;
+}
+
+.tab-link {
+    color: $text-muted;
+    padding: 0 1;
+    text-style: none;
+    width: auto;
+    height: 1;
+}
+
+.tab-link:hover {
+    color: $text;
+    text-style: underline;
+    background: $panel-lighten-1;
+}
+
+.tab-link.-active {
+    color: $accent;
+    text-style: bold;
+    background: transparent;
+}
+
+.tab-link.-active:hover {
+    text-style: bold underline;
+}
+
+.tab-separator {
+    color: $text-muted;
+    padding: 0;
+    width: auto;
+    height: 1;
+}

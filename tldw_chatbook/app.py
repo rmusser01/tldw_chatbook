@@ -144,6 +144,7 @@ from .UI.STTS_Window import STTSWindow
 from .UI.Study_Window import StudyWindow
 from .UI.Chatbooks_Window import ChatbooksWindow
 from .UI.Tab_Bar import TabBar
+from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
@@ -1549,15 +1550,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                      documentation="Time to create UI component")
         logger.info(f"TitleBar created in {titlebar_time:.3f}s")
 
-        # Phase: Navigation (TabBar or TabDropdown)
+        # Phase: Navigation (TabBar, TabLinks, or TabDropdown)
         phase_start = time.perf_counter()
         use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
+        use_links = get_cli_setting("general", "use_link_navigation", True)  # Default to links
         component_start = time.perf_counter()
         
         if use_dropdown:
             # Use dropdown navigation
             widgets.append(TabDropdown(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
             logger.info("Using dropdown navigation for tabs")
+        elif use_links:
+            # Use single-line link navigation
+            widgets.append(TabLinks(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
+            logger.info("Using single-line link navigation for tabs")
         else:
             # Use traditional tab bar
             widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
@@ -3153,6 +3159,25 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Hide Old Tab ---
         if old_tab and old_tab != new_tab:
+            # Update navigation UI to remove active state from old tab
+            use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
+            use_links = get_cli_setting("general", "use_link_navigation", True)
+            
+            if not use_dropdown:  # Only for non-dropdown navigation
+                if use_links:
+                    # Update TabLinks active state
+                    try:
+                        from .UI.Tab_Links import TabLinks
+                        tab_links = self.query_one(TabLinks)
+                        tab_links.set_active_tab(new_tab)
+                    except QueryError:
+                        pass
+                else:
+                    # Remove active class from old tab button
+                    try:
+                        self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
+                    except QueryError:
+                        pass
             # Handle Notes tab auto-save cleanup when leaving the tab
             if old_tab == TAB_NOTES:
                 # Cancel any pending auto-save timer
@@ -3180,6 +3205,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         try:
             # Update navigation UI based on type
             use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
+            use_links = get_cli_setting("general", "use_link_navigation", True)
+            
             if use_dropdown:
                 # Update dropdown selection if it exists and differs
                 try:
@@ -3187,6 +3214,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     dropdown.update_active_tab(new_tab)
                 except QueryError:
                     pass
+            elif use_links:
+                # Update link navigation
+                # TabLinks active state is now handled by TabLinks.set_active_tab() above
+                pass
             else:
                 # Update traditional tab bar button
                 self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
