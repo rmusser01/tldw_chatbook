@@ -12,8 +12,6 @@ from textual import on
 from loguru import logger
 #
 # Local Imports
-from .Theme_Editor_Window import ThemeEditorView
-from ..Widgets.splash_screen_viewer import SplashScreenViewer
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -25,6 +23,7 @@ if TYPE_CHECKING:
 class CustomizeWindow(Container):
     """
     Container for the Customize Tab's UI - Theme Editor and Splash Screen Gallery.
+    Both views are lazily loaded when first accessed.
     """
     
     DEFAULT_CSS = """
@@ -88,6 +87,11 @@ class CustomizeWindow(Container):
         height: 100%;
     }
     
+    .embedded-theme-editor {
+        width: 100%;
+        height: 100%;
+    }
+    
     .loading-placeholder {
         text-align: center;
         color: $text-muted;
@@ -97,6 +101,7 @@ class CustomizeWindow(Container):
     
     def __init__(self, *args, **kwargs):
         super().__init__(**kwargs)
+        self.theme_editor_loaded = False
         self.splash_viewer_loaded = False
         self.current_view = "customize-view-theme"
         
@@ -110,12 +115,15 @@ class CustomizeWindow(Container):
         
         # Content pane - simple container that we'll manage manually
         with Container(id="customize-content-pane", classes="customize-content-pane"):
-            # Theme Editor view (initially visible)
-            yield Container(
-                ThemeEditorView(),
-                id="customize-view-theme",
-                classes="customize-view-area",
-            )
+            # Theme Editor view (initially visible but not loaded)
+            with Container(id="customize-view-theme", classes="customize-view-area"):
+                yield Static("🎨 Theme Editor", classes="section-title")
+                yield Static("Customize the application's color theme", classes="section-description")
+                yield Container(
+                    Static("Loading theme editor...", classes="loading-placeholder"),
+                    id="theme-editor-container",
+                    classes="embedded-theme-editor"
+                )
             
             # Splash Screen Gallery view (initially hidden)
             with Container(id="customize-view-splash", classes="customize-view-area") as splash_container:
@@ -128,6 +136,11 @@ class CustomizeWindow(Container):
                     classes="embedded-splash-viewer"
                 )
     
+    async def on_mount(self) -> None:
+        """Called when the widget is mounted. Load the default view."""
+        # Load theme editor by default since it's the initial view
+        await self._load_theme_editor()
+    
     @on(Button.Pressed)
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle navigation button presses."""
@@ -135,6 +148,9 @@ class CustomizeWindow(Container):
         
         if button_id == "customize-nav-theme":
             await self._show_view("customize-view-theme")
+            # Load theme editor on first access
+            if not self.theme_editor_loaded:
+                await self._load_theme_editor()
             event.stop()  # Stop event propagation
         elif button_id == "customize-nav-splash":
             await self._show_view("customize-view-splash")
@@ -178,14 +194,45 @@ class CustomizeWindow(Container):
         except Exception as e:
             logger.error(f"Error switching to view {view_id}: {e}")
     
+    async def _load_theme_editor(self) -> None:
+        """Load the theme editor when first accessed."""
+        if self.theme_editor_loaded:
+            return
+            
+        try:
+            container = self.query_one("#theme-editor-container")
+            # Clear the placeholder
+            await container.remove_children()
+            
+            # Import and mount the actual theme editor
+            from .Theme_Editor_Window import ThemeEditorView
+            theme_editor = ThemeEditorView()
+            await container.mount(theme_editor)
+            self.theme_editor_loaded = True
+            
+            logger.info("Theme editor loaded successfully")
+        except Exception as e:
+            logger.error(f"Error loading theme editor: {e}")
+            # Show error message instead of placeholder
+            try:
+                container = self.query_one("#theme-editor-container")
+                await container.remove_children()
+                await container.mount(Static(f"Error loading theme editor: {str(e)}", classes="error-message"))
+            except Exception:
+                pass
+    
     async def _load_splash_viewer(self) -> None:
         """Load the splash screen viewer when first accessed."""
+        if self.splash_viewer_loaded:
+            return
+            
         try:
             container = self.query_one("#splash-viewer-container")
             # Clear the placeholder
             await container.remove_children()
             
-            # Mount the actual splash viewer
+            # Import and mount the actual splash viewer
+            from ..Widgets.splash_screen_viewer import SplashScreenViewer
             splash_viewer = SplashScreenViewer()
             await container.mount(splash_viewer)
             self.splash_viewer_loaded = True
