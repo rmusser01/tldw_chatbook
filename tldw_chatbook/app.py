@@ -138,8 +138,8 @@ from .UI.Ingest_Window import INGEST_NAV_BUTTON_IDS, INGEST_VIEW_IDS, MEDIA_TYPE
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Customize_Window import CustomizeWindow
-# Using unified Evals dashboard
-from .UI.Evals_Window_v3_unified import EvalsWindow
+# Using pragmatic V2 Evals window
+from .UI.evals_window_v2 import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Study_Window import StudyWindow
@@ -148,6 +148,7 @@ from .UI.Tab_Bar import TabBar
 from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
 from .UI.MediaWindow_v2 import MediaWindow
+from .UI.MediaWindowV88 import MediaWindowV88
 from .UI.SearchWindow import SearchWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
@@ -1596,7 +1597,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("chat", chat_window_class, "chat-window"),
             ("ccp", CCPWindow, "conversations_characters_prompts-window"),
             ("notes", NotesWindow, "notes-window"),
-            ("media", MediaWindow, "media-window"),
+            # Force MediaWindowV88
+            ("media", MediaWindowV88, "media-window"),
             ("search", SearchWindow, "search-window"),
             ("ingest", NewIngestWindow, "ingest-window"),
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
@@ -3329,7 +3331,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         elif new_tab == TAB_MEDIA:
             def activate_media_initial_view():
                 try:
-                    media_window = self.query_one(MediaWindow)
+                    media_window = self.query_one(MediaWindowV88)
                     media_window.activate_initial_view()
                 except QueryError:
                     loguru_logger.error("Could not find MediaWindow to activate its initial view.")

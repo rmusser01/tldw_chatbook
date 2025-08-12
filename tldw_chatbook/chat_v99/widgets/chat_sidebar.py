@@ -146,7 +146,23 @@ class ChatSidebar(Container):
                 providers = [
                     ("openai", "OpenAI"),
                     ("anthropic", "Anthropic"),
-                    ("local", "Local Model")
+                    ("google", "Google (Gemini)"),
+                    ("mistral", "Mistral AI"),
+                    ("cohere", "Cohere"),
+                    ("groq", "Groq"),
+                    ("deepseek", "DeepSeek"),
+                    ("openrouter", "OpenRouter"),
+                    ("huggingface", "HuggingFace"),
+                    ("moonshot", "Moonshot (Kimi)"),
+                    ("zai", "01.AI (Yi)"),
+                    ("ollama", "Ollama (Local)"),
+                    ("llama_cpp", "Llama.cpp (Local)"),
+                    ("koboldcpp", "KoboldCPP (Local)"),
+                    ("oobabooga", "Oobabooga (Local)"),
+                    ("tabbyapi", "TabbyAPI (Local)"),
+                    ("vllm", "vLLM (Local)"),
+                    ("local-llm", "Local LLM (Generic)"),
+                    ("custom_openai", "Custom OpenAI API")
                 ]
                 yield Select(
                     options=providers,
@@ -168,6 +184,25 @@ class ChatSidebar(Container):
                     value="0.7",
                     id="temperature",
                     placeholder="0.7",
+                    classes="sidebar-input"
+                )
+                
+                # API Key input (for non-local providers)
+                yield Label("API Key:")
+                yield Input(
+                    value="",
+                    id="api-key",
+                    placeholder="Enter API key or use config",
+                    password=True,
+                    classes="sidebar-input"
+                )
+                
+                # System prompt
+                yield Label("System Prompt:")
+                yield Input(
+                    value="",
+                    id="system-prompt",
+                    placeholder="Optional system prompt",
                     classes="sidebar-input"
                 )
                 
@@ -229,29 +264,111 @@ class ChatSidebar(Container):
         """
         model_select = self.query_one("#model-select", Select)
         
-        # Model options based on provider
-        if provider == "openai":
-            models = [
+        # Comprehensive model options for ALL providers
+        model_map = {
+            "openai": [
+                ("gpt-4-turbo-preview", "GPT-4 Turbo Preview"),
                 ("gpt-4", "GPT-4"),
-                ("gpt-4-turbo", "GPT-4 Turbo"),
-                ("gpt-3.5-turbo", "GPT-3.5 Turbo")
-            ]
-        elif provider == "anthropic":
-            models = [
-                ("claude-3-opus", "Claude 3 Opus"),
-                ("claude-3-sonnet", "Claude 3 Sonnet"),
-                ("claude-3-haiku", "Claude 3 Haiku")
-            ]
-        else:  # local
-            models = [
-                ("llama-2-7b", "Llama 2 7B"),
-                ("mistral-7b", "Mistral 7B"),
+                ("gpt-4-32k", "GPT-4 32K"),
+                ("gpt-3.5-turbo", "GPT-3.5 Turbo"),
+                ("gpt-3.5-turbo-16k", "GPT-3.5 Turbo 16K")
+            ],
+            "anthropic": [
+                ("claude-3-opus-20240229", "Claude 3 Opus"),
+                ("claude-3-sonnet-20240229", "Claude 3 Sonnet"),
+                ("claude-3-haiku-20240307", "Claude 3 Haiku"),
+                ("claude-2.1", "Claude 2.1"),
+                ("claude-2.0", "Claude 2.0")
+            ],
+            "google": [
+                ("gemini-pro", "Gemini Pro"),
+                ("gemini-pro-vision", "Gemini Pro Vision"),
+                ("gemini-ultra", "Gemini Ultra")
+            ],
+            "mistral": [
+                ("mistral-large-latest", "Mistral Large"),
+                ("mistral-medium-latest", "Mistral Medium"),
+                ("mistral-small-latest", "Mistral Small"),
+                ("mixtral-8x7b", "Mixtral 8x7B"),
+                ("mistral-7b", "Mistral 7B")
+            ],
+            "cohere": [
+                ("command", "Command"),
+                ("command-light", "Command Light"),
+                ("command-nightly", "Command Nightly")
+            ],
+            "groq": [
+                ("mixtral-8x7b-32768", "Mixtral 8x7B"),
+                ("llama2-70b-4096", "Llama 2 70B"),
+                ("gemma-7b-it", "Gemma 7B")
+            ],
+            "deepseek": [
+                ("deepseek-chat", "DeepSeek Chat"),
+                ("deepseek-coder", "DeepSeek Coder")
+            ],
+            "openrouter": [
+                ("auto", "Auto (Best Available)"),
+                ("anthropic/claude-3-opus", "Claude 3 Opus"),
+                ("openai/gpt-4-turbo", "GPT-4 Turbo"),
+                ("google/gemini-pro", "Gemini Pro")
+            ],
+            "huggingface": [
+                ("HuggingFaceH4/zephyr-7b-beta", "Zephyr 7B"),
+                ("mistralai/Mistral-7B-Instruct-v0.2", "Mistral 7B Instruct"),
+                ("meta-llama/Llama-2-7b-chat-hf", "Llama 2 7B Chat")
+            ],
+            "moonshot": [
+                ("moonshot-v1-8k", "Moonshot v1 8K"),
+                ("moonshot-v1-32k", "Moonshot v1 32K"),
+                ("moonshot-v1-128k", "Moonshot v1 128K")
+            ],
+            "zai": [
+                ("yi-large", "Yi Large"),
+                ("yi-medium", "Yi Medium"),
+                ("yi-34b", "Yi 34B")
+            ],
+            "ollama": [
+                ("llama2", "Llama 2"),
+                ("mistral", "Mistral"),
+                ("codellama", "Code Llama"),
+                ("phi", "Phi"),
+                ("mixtral", "Mixtral"),
+                ("gemma", "Gemma"),
+                ("custom", "Custom Model")
+            ],
+            "llama_cpp": [
+                ("default", "Default Model"),
+                ("custom", "Custom Path")
+            ],
+            "koboldcpp": [
+                ("default", "Default Model")
+            ],
+            "oobabooga": [
+                ("default", "Default Model")
+            ],
+            "tabbyapi": [
+                ("default", "Default Model")
+            ],
+            "vllm": [
+                ("default", "Default Model"),
+                ("custom", "Custom Model")
+            ],
+            "local-llm": [
+                ("default", "Default Local Model")
+            ],
+            "custom_openai": [
+                ("gpt-3.5-turbo", "GPT-3.5 Compatible"),
+                ("gpt-4", "GPT-4 Compatible"),
                 ("custom", "Custom Model")
             ]
+        }
         
+        # Get models for selected provider
+        models = model_map.get(provider, [("default", "Default Model")])
         model_select.set_options(models)
         
-        # Don't set value here - it will be set after options are loaded
+        # Update app settings
+        self.app.settings.provider = provider
     
     @on(Button.Pressed, "#new-session")
     def handle_new_session(self):
