@@ -1584,7 +1584,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         content_area_start = time.perf_counter()
         
         # Check config for which chat window to use
-        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+        # Default to enhanced window (True) unless explicitly disabled
+        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", True)
         chat_window_class = ChatWindowEnhanced if use_enhanced_chat else ChatWindow
         logger.info(f"Using {'enhanced' if use_enhanced_chat else 'basic'} chat window (use_enhanced_window={use_enhanced_chat})")
         
