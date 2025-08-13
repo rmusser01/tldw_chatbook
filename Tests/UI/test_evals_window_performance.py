@@ -343,8 +343,9 @@ async def test_memory_cleanup_after_evaluation():
             # Run evaluation
             evals_window.selected_task_id = "1"
             evals_window.selected_model_id = "1"
-            await evals_window.run_evaluation()
-            await pilot.pause()
+            # run_evaluation is not async, it runs in a worker
+            evals_window.run_worker(evals_window.run_evaluation, thread=True)
+            await pilot.pause(0.5)  # Give it time to start
             
             during_eval = process.memory_info().rss / 1024 / 1024  # MB
             

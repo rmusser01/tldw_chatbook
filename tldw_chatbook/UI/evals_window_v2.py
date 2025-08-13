@@ -568,8 +568,10 @@ class EvalsWindow(Container):
                 "task_type": "question_answer",
                 "config_format": "custom",
                 "config_data": {
-                    "prompt_template": "Question: {question}\nChoices:\n{choices}\nAnswer:",
-                    "metrics": ["accuracy"]
+                    "dataset_name": "mmlu_test",
+                    "doc_to_text": "Question: {question}\nChoices:\n{choices}\nAnswer:",
+                    "doc_to_target": "{answer}",
+                    "metric": "exact_match"
                 }
             },
             {
@@ -578,8 +580,10 @@ class EvalsWindow(Container):
                 "task_type": "generation",
                 "config_format": "custom",
                 "config_data": {
-                    "prompt_template": "Write a function that {description}",
-                    "metrics": ["pass_rate", "syntax_valid"]
+                    "dataset_name": "code_gen",
+                    "doc_to_text": "Write a function that {description}",
+                    "generation_kwargs": {"max_length": 500},
+                    "metric": "bleu"
                 }
             },
             {
@@ -588,8 +592,10 @@ class EvalsWindow(Container):
                 "task_type": "classification",
                 "config_format": "custom",
                 "config_data": {
-                    "prompt_template": "Classify the following text:\n{text}\nCategory:",
-                    "metrics": ["accuracy", "f1_score"]
+                    "dataset_name": "text_class",
+                    "doc_to_text": "Classify the following text:\n{text}\nCategory:",
+                    "doc_to_target": "{category}",
+                    "metric": "accuracy"
                 }
             }
         ]
@@ -1002,7 +1008,7 @@ class EvalsWindow(Container):
                 if worker.is_cancelled or self.cancel_event.is_set():
                     return False  # Signal to stop
                 
-                progress = (current / total * 100) if total > 0 else 0
+                progress = (int(current) / int(total) * 100) if int(total) > 0 else 0
                 self.evaluation_progress = progress
                 self.progress_message = message or f"Processing sample {current}/{total}"
                 return True  # Continue
@@ -1027,7 +1033,7 @@ class EvalsWindow(Container):
                 )
                 
                 # Get results
-                results = self.orchestrator.db.get_run_details(run_id)
+                results = self.orchestrator.db.get_run(run_id)
                 
                 if results:
                     self.app.call_from_thread(self._handle_evaluation_complete, run_id, results)

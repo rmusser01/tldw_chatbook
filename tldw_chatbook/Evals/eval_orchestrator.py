@@ -299,14 +299,27 @@ class EvaluationOrchestrator:
             if task_data.get('config_data'):
                 task_config_dict.update(task_data['config_data'])
             
+            # Store model-specific overrides separately
+            model_overrides = {}
             if config_overrides:
+                # Separate model params from task params
+                model_params = ['temperature', 'max_tokens', 'top_p', 'top_k']
+                for key in list(config_overrides.keys()):
+                    if key in model_params:
+                        model_overrides[key] = config_overrides.pop(key)
+                # Update task config with remaining overrides
                 task_config_dict.update(config_overrides)
             
             # Validate configurations
             ConfigurationValidator.validate_task_config(task_config_dict)
             ConfigurationValidator.validate_model_config(model_data)
             
-            task_config = TaskConfig(**task_config_dict)
+            # Filter task_config_dict to only include TaskConfig fields
+            from inspect import signature
+            task_config_fields = set(signature(TaskConfig).parameters.keys())
+            filtered_task_config = {k: v for k, v in task_config_dict.items() if k in task_config_fields}
+            
+            task_config = TaskConfig(**filtered_task_config)
             
             # Generate run name if not provided
             if not run_name:
@@ -341,7 +354,8 @@ class EvaluationOrchestrator:
             model_config = {
                 'provider': model_data['provider'],
                 'model_id': model_data['model_id'],
-                **model_data.get('config', {})
+                **model_data.get('config', {}),
+                **model_overrides  # Include the temperature, max_tokens, etc.
             }
             eval_runner = EvalRunner(task_config, model_config)
             
