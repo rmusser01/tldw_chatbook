@@ -46,8 +46,8 @@ class TestMessageActions:
             message_item = message_list.query("MessageItemEnhanced")[0]
             copy_button = message_item.query_one("#copy-btn")
             
-            # Mock pyperclip at the actual import location (imported inside the function)
-            with patch('pyperclip.copy') as mock_copy:
+            # Mock pyperclip where it's used (in the module)
+            with patch('tldw_chatbook.chat_v99.widgets.message_item_enhanced.pyperclip.copy') as mock_copy:
                 # Click copy button
                 await pilot.click(copy_button)
                 await pilot.pause(0.1)

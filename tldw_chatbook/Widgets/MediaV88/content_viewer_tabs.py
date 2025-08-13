@@ -54,35 +54,37 @@ class ContentViewerTabs(Container):
     DEFAULT_CSS = """
     ContentViewerTabs {
         height: 100%;
-        layout: vertical;
     }
     
-    ContentViewerTabs TabbedContent {
+    ContentViewerTabs > TabbedContent {
+        height: 100%;
+    }
+    
+    ContentViewerTabs TabbedContent > ContentSwitcher {
         height: 100%;
     }
     
     ContentViewerTabs TabPane {
         height: 100%;
         padding: 0;
-        layout: vertical;
     }
     
-    #content-tab {
+    #content-tab > Container {
         height: 100%;
         layout: vertical;
     }
     
-    #analysis-tab {
+    #analysis-tab > Container {
         height: 100%;
         layout: vertical;
     }
     
     .content-controls {
+        dock: top;
         height: auto;
         padding: 1;
         background: $boost;
         border-bottom: solid $primary-lighten-3;
-        margin-bottom: 1;
     }
     
     .content-search {
@@ -114,7 +116,7 @@ class ContentViewerTabs(Container):
     }
     
     #content-scroll {
-        height: 1fr;
+        height: 100%;
         width: 100%;
     }
     
@@ -125,8 +127,16 @@ class ContentViewerTabs(Container):
         background: $primary-background;
     }
     
+    .analysis-controls {
+        dock: top;
+        height: auto;
+        padding: 1;
+        background: $boost;
+        border-bottom: solid $primary-lighten-3;
+    }
+    
     #analysis-scroll {
-        height: 1fr;
+        height: 100%;
         width: 100%;
     }
     
@@ -277,85 +287,87 @@ class ContentViewerTabs(Container):
         with TabbedContent(id="media-tabs"):
             # Content Tab
             with TabPane("Content", id="content-tab"):
-                # Search controls
-                with Container(classes="content-controls"):
-                    with Horizontal(classes="content-search"):
-                        yield Input(
-                            placeholder="Search in content...",
-                            id="content-search-input"
-                        )
-                        yield Button("Find", id="find-button", variant="primary")
-                        yield Button("Clear", id="clear-search-button")
+                with Container():
+                    # Search controls
+                    with Container(classes="content-controls"):
+                        with Horizontal(classes="content-search"):
+                            yield Input(
+                                placeholder="Search in content...",
+                                id="content-search-input"
+                            )
+                            yield Button("Find", id="find-button", variant="primary")
+                            yield Button("Clear", id="clear-search-button")
+                        
+                        with Horizontal(classes="search-nav", id="search-nav"):
+                            yield Button("◀ Prev", id="prev-match", disabled=True)
+                            yield Button("Next ▶", id="next-match", disabled=True)
+                            yield Static("No matches", id="search-status", classes="search-status")
                     
-                    with Horizontal(classes="search-nav", id="search-nav"):
-                        yield Button("◀ Prev", id="prev-match", disabled=True)
-                        yield Button("Next ▶", id="next-match", disabled=True)
-                        yield Static("No matches", id="search-status", classes="search-status")
-                
-                # Content display in a scrollable container
-                with VerticalScroll(id="content-scroll"):
-                    yield Markdown(
-                        "# No Content\n\nSelect a media item to view its content.",
-                        id="content-display"
-                    )
+                    # Content display in a scrollable container
+                    with VerticalScroll(id="content-scroll"):
+                        yield Markdown(
+                            "# No Content\n\nSelect a media item to view its content.",
+                            id="content-display"
+                        )
             
             # Analysis Tab
             with TabPane("Analysis", id="analysis-tab"):
-                # Analysis generation controls
-                with Container(classes="analysis-controls"):
-                    # Provider and model selection
-                    with Horizontal(classes="provider-row"):
-                        yield Label("Provider:", classes="provider-label")
-                        yield Select(
-                            options=[(p, p) for p in self.available_providers],
-                            value=self.available_providers[0] if self.available_providers else None,
-                            id="provider-select"
-                        )
-                        yield Select(
-                            options=[],
-                            id="model-select",
-                            prompt="Select model..."
+                with Container():
+                    # Analysis generation controls
+                    with Container(classes="analysis-controls"):
+                        # Provider and model selection
+                        with Horizontal(classes="provider-row"):
+                            yield Label("Provider:", classes="provider-label")
+                            yield Select(
+                                options=[(p, p) for p in self.available_providers],
+                                value=self.available_providers[0] if self.available_providers else None,
+                                id="provider-select"
+                            )
+                            yield Select(
+                                options=[],
+                                id="model-select",
+                                prompt="Select model..."
+                            )
+                        
+                        # System prompt
+                        with Container(classes="prompt-section"):
+                            yield Label("System Prompt:", classes="prompt-label")
+                            yield TextArea(
+                                "You are an expert analyst. Provide a comprehensive analysis of the provided content.",
+                                id="system-prompt-input",
+                                classes="prompt-input"
+                            )
+                        
+                        # User prompt
+                        with Container(classes="prompt-section"):
+                            yield Label("User Prompt:", classes="prompt-label")
+                            yield TextArea(
+                                "Please analyze the following content and provide key insights, summary, and recommendations.",
+                                id="user-prompt-input",
+                                classes="prompt-input"
+                            )
+                        
+                        # Generate button
+                        yield Button(
+                            "Generate Analysis",
+                            id="generate-analysis-button",
+                            classes="generate-button",
+                            variant="success"
                         )
                     
-                    # System prompt
-                    with Container(classes="prompt-section"):
-                        yield Label("System Prompt:", classes="prompt-label")
-                        yield TextArea(
-                            "You are an expert analyst. Provide a comprehensive analysis of the provided content.",
-                            id="system-prompt-input",
-                            classes="prompt-input"
+                    # Analysis display in a scrollable container
+                    with VerticalScroll(id="analysis-scroll"):
+                        yield Markdown(
+                            "# No Analysis\n\nGenerate or select an analysis to view.",
+                            id="analysis-display"
                         )
                     
-                    # User prompt
-                    with Container(classes="prompt-section"):
-                        yield Label("User Prompt:", classes="prompt-label")
-                        yield TextArea(
-                            "Please analyze the following content and provide key insights, summary, and recommendations.",
-                            id="user-prompt-input",
-                            classes="prompt-input"
-                        )
-                    
-                    # Generate button
-                    yield Button(
-                        "Generate Analysis",
-                        id="generate-analysis-button",
-                        classes="generate-button",
-                        variant="success"
-                    )
-                
-                # Analysis display in a scrollable container
-                with VerticalScroll(id="analysis-scroll"):
-                    yield Markdown(
-                        "# No Analysis\n\nGenerate or select an analysis to view.",
-                        id="analysis-display"
-                    )
-                
-                # Version navigation
-                with Horizontal(classes="analysis-nav", id="analysis-nav"):
-                    yield Button("◀ Previous", id="prev-version", disabled=True)
-                    yield Static("No versions", id="version-info", classes="version-info")
-                    yield Button("Next ▶", id="next-version", disabled=True)
-                    yield Button("Save", id="save-analysis", disabled=True)
+                    # Version navigation
+                    with Horizontal(classes="analysis-nav", id="analysis-nav"):
+                        yield Button("◀ Previous", id="prev-version", disabled=True)
+                        yield Static("No versions", id="version-info", classes="version-info")
+                        yield Button("Next ▶", id="next-version", disabled=True)
+                        yield Button("Save", id="save-analysis", disabled=True)
     
     def on_mount(self) -> None:
         """Initialize when mounted."""
@@ -539,16 +551,18 @@ class ContentViewerTabs(Container):
                 if author and author != 'Unknown':
                     markdown_content += f"*By {author}*\n\n---\n\n"
                 
-                # Add the actual content (truncate for testing)
-                markdown_content += str(content)[:5000]  # Limit to first 5000 chars for now
+                # Add the actual content
+                markdown_content += str(content)
                 
                 # Schedule the update to happen properly
                 async def update_markdown():
-                    content_display = self.query_one("#content-display", Markdown)
+                    content_scroll = self.query_one("#content-scroll", VerticalScroll)
+                    content_display = content_scroll.query_one("#content-display", Markdown)
                     await content_display.update(markdown_content)
                     logger.info(f"Content display updated with {len(markdown_content)} chars")
                     # Check visibility and size for debugging
                     logger.info(f"Markdown widget visible: {content_display.visible}, size: {content_display.size}")
+                    logger.info(f"Scroll container size: {content_scroll.size}")
                 
                 # Use call_later to schedule the async update
                 self.call_later(update_markdown)
@@ -556,7 +570,8 @@ class ContentViewerTabs(Container):
                 logger.info(f"Content loaded: {len(markdown_content)} chars")
             else:
                 async def update_no_content():
-                    content_display = self.query_one("#content-display", Markdown)
+                    content_scroll = self.query_one("#content-scroll", VerticalScroll)
+                    content_display = content_scroll.query_one("#content-display", Markdown)
                     no_content_msg = "# No Content Available\n\nThis media item has no content to display."
                     await content_display.update(no_content_msg)
                     logger.info("No content message displayed")
@@ -577,7 +592,8 @@ class ContentViewerTabs(Container):
                 
                 # Schedule the update to happen properly
                 async def update_analysis():
-                    analysis_display = self.query_one("#analysis-display", Markdown)
+                    analysis_scroll = self.query_one("#analysis-scroll", VerticalScroll)
+                    analysis_display = analysis_scroll.query_one("#analysis-display", Markdown)
                     await analysis_display.update(str(analysis))
                     logger.info(f"Analysis display updated with {len(str(analysis))} chars")
                     
@@ -592,7 +608,8 @@ class ContentViewerTabs(Container):
                 logger.info(f"Analysis loaded: {len(str(analysis))} chars")
             else:
                 async def update_no_analysis():
-                    analysis_display = self.query_one("#analysis-display", Markdown)
+                    analysis_scroll = self.query_one("#analysis-scroll", VerticalScroll)
+                    analysis_display = analysis_scroll.query_one("#analysis-display", Markdown)
                     no_analysis_msg = "# No Analysis\n\nNo analysis has been generated for this media item yet."
                     await analysis_display.update(no_analysis_msg)
                     logger.info("No analysis message displayed")
@@ -723,12 +740,22 @@ class ContentViewerTabs(Container):
         
         try:
             # Clear content
-            content_display = self.query_one("#content-display", Markdown)
-            content_display.update("# No Content\n\nSelect a media item to view its content.")
+            content_scroll = self.query_one("#content-scroll", VerticalScroll)
+            content_display = content_scroll.query_one("#content-display", Markdown)
+            
+            async def clear_content():
+                await content_display.update("# No Content\n\nSelect a media item to view its content.")
+            
+            self.call_later(clear_content)
             
             # Clear analysis
-            analysis_display = self.query_one("#analysis-display", Markdown)
-            analysis_display.update("# No Analysis\n\nGenerate or select an analysis to view.")
+            analysis_scroll = self.query_one("#analysis-scroll", VerticalScroll)
+            analysis_display = analysis_scroll.query_one("#analysis-display", Markdown)
+            
+            async def clear_analysis():
+                await analysis_display.update("# No Analysis\n\nGenerate or select an analysis to view.")
+            
+            self.call_later(clear_analysis)
             
             # Reset controls
             self.handle_clear_search(None)

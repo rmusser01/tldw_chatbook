@@ -131,6 +131,22 @@ class ChatV99App(App):
             # Get the database instance
             db = get_chachanotes_db_lazy()
             
+            # Ensure Default Character exists to avoid database errors
+            try:
+                from tldw_chatbook.Chat.Chat_Functions import DEFAULT_CHARACTER_NAME, DEFAULT_CHARACTER_DESCRIPTION
+                default_char = db.get_character_card_by_name(DEFAULT_CHARACTER_NAME)
+                if not default_char:
+                    # Create Default Character if it doesn't exist
+                    db.add_character_card(
+                        name=DEFAULT_CHARACTER_NAME,
+                        description=DEFAULT_CHARACTER_DESCRIPTION,
+                        personality="",
+                        scenario=""
+                    )
+                    logger.info(f"Created '{DEFAULT_CHARACTER_NAME}' in database")
+            except Exception as e:
+                logger.warning(f"Could not ensure Default Character exists: {e}")
+            
             # Use the REAL save function with correct parameters
             conversation_id, status = save_chat_history_to_db_wrapper(
                 db=db,

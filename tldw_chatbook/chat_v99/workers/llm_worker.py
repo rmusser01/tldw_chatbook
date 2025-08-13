@@ -120,16 +120,16 @@ class LLMWorker:
             # Prepare conversation history for the API
             conversation_history = self._prepare_conversation(messages, prompt)
             
-            # Call the REAL API
+            # Call the REAL API with correct parameters
             response = await asyncio.to_thread(
                 handler,
                 conversation_history,
                 api_key=api_key,
                 model=self.settings.model,
                 temp=self.settings.temperature,
-                system_prompt=self.settings.system_prompt or "",
-                streaming=self.settings.streaming,
-                max_tokens=self.settings.max_tokens
+                system_message=self.settings.system_prompt or "",  # Fixed parameter name
+                streaming=self.settings.streaming
+                # Note: max_tokens not supported by all providers
             )
             
             if self.settings.streaming and hasattr(response, '__iter__'):

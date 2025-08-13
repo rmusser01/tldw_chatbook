@@ -17,7 +17,7 @@ from textual.containers import Container, VerticalScroll, Horizontal, Vertical, 
 from textual.widgets import (
     Button, Static, Select, Input, 
     Label, ProgressBar, DataTable, TextArea,
-    Checkbox, LoadingIndicator, Header
+    Checkbox, LoadingIndicator, Header, Collapsible
 )
 from textual.reactive import reactive
 from textual.message import Message
@@ -76,7 +76,7 @@ class EvalsWindow(Container):
     .evals-scroll-container {
         height: 1fr;          /* consume remaining space between header and footer */
         width: 100%;
-        overflow-y: auto;     /* vertical scroll only */
+        overflow-y: scroll;   /* always show vertical scroll */
         overflow-x: hidden;   /* avoid horizontal scrollbars */
     }
     
@@ -89,10 +89,23 @@ class EvalsWindow(Container):
     /* Section containers */
     .config-section {
         width: 100%;
+        min-height: auto;     /* Allow sections to expand as needed */
         margin-bottom: 1;
         border: round $primary;
         padding: 1;
         background: $panel;
+    }
+    
+    /* Collapsible sections styling */
+    Collapsible {
+        width: 100%;
+        margin-bottom: 1;
+        border: round $primary;
+        background: $panel;
+    }
+    
+    Collapsible > Container {
+        padding: 1;
     }
     
     .section-title {
@@ -193,12 +206,13 @@ class EvalsWindow(Container):
     /* Results table */
     .results-section {
         width: 100%;
-        min-height: 25;
+        min-height: 30;
     }
     
     .results-table {
         width: 100%;
-        height: 20;            /* fixed height so it doesn't blow out the scroller */
+        height: 35;            /* Increased height for better visibility */
+        min-height: 25;
         border: solid $primary;
     }
     
@@ -288,10 +302,8 @@ class EvalsWindow(Container):
         
         # Main scrollable content area
         with VerticalScroll(classes="evals-scroll-container"):
-            # Task Configuration Section
-            with Container(classes="config-section"):
-                yield Static("📋 Task Configuration", classes="section-title")
-                
+            # Task Configuration Section - Collapsible
+            with Collapsible(title="📋 Task Configuration", collapsed=False):
                 with Container(classes="form-container"):
                     # Task selection
                     with Container(classes="form-row"):
@@ -303,75 +315,72 @@ class EvalsWindow(Container):
                             classes="form-input",
                             allow_blank=True
                         )
-                        
+                    
                     # Task action buttons
                     with Container(classes="button-row"):
                         yield Button("📁 Load Task File", id="load-task-btn", variant="default")
                         yield Button("➕ Create Task", id="create-task-btn", variant="default")
                         yield Button("🔄 Refresh Tasks", id="refresh-tasks-btn", variant="default")
             
-            # Model Configuration Section
-            with Container(classes="config-section"):
-                    yield Static("🤖 Model Configuration", classes="section-title")
+            # Model Configuration Section - Collapsible
+            with Collapsible(title="🤖 Model Configuration", collapsed=False):
+                with Container(classes="form-container"):
+                    # Model selection
+                    with Container(classes="form-row"):
+                        yield Label("Model:", classes="form-label")
+                        yield Select(
+                            [("Loading...", None)],
+                            prompt="Select a model",
+                            id="model-select",
+                            classes="form-input",
+                            allow_blank=True
+                        )
                     
-                    with Container(classes="form-container"):
-                        # Model selection
-                        with Container(classes="form-row"):
-                            yield Label("Model:", classes="form-label")
-                            yield Select(
-                                [("Loading...", None)],
-                                prompt="Select a model",
-                                id="model-select",
-                                classes="form-input",
-                                allow_blank=True
-                            )
-                        
-                        # Temperature
-                        with Container(classes="form-row"):
-                            yield Label("Temperature:", classes="form-label")
-                            yield Input(
-                                value="0.7",
-                                type="number",
-                                id="temperature-input",
-                                placeholder="0.0 - 2.0",
-                                classes="form-input"
-                            )
-                        
-                        # Max tokens
-                        with Container(classes="form-row"):
-                            yield Label("Max Tokens:", classes="form-label")
-                            yield Input(
-                                value="2048",
-                                type="integer",
-                                id="max-tokens-input",
-                                placeholder="Max tokens to generate",
-                                classes="form-input"
-                            )
-                        
-                        # Max samples
-                        with Container(classes="form-row"):
-                            yield Label("Max Samples:", classes="form-label")
-                            yield Input(
-                                value="100",
-                                type="integer",
-                                id="max-samples-input",
-                                placeholder="Number of samples to evaluate",
-                                classes="form-input"
-                            )
-                        
+                    # Temperature
+                    with Container(classes="form-row"):
+                        yield Label("Temperature:", classes="form-label")
+                        yield Input(
+                            value="0.7",
+                            type="number",
+                            id="temperature-input",
+                            placeholder="0.0 - 2.0",
+                            classes="form-input"
+                        )
+                    
+                    # Max tokens
+                    with Container(classes="form-row"):
+                        yield Label("Max Tokens:", classes="form-label")
+                        yield Input(
+                            value="2048",
+                            type="integer",
+                            id="max-tokens-input",
+                            placeholder="Max tokens to generate",
+                            classes="form-input"
+                        )
+                    
+                    # Max samples
+                    with Container(classes="form-row"):
+                        yield Label("Max Samples:", classes="form-label")
+                        yield Input(
+                            value="100",
+                            type="integer",
+                            id="max-samples-input",
+                            placeholder="Number of samples to evaluate",
+                            classes="form-input"
+                        )
+                    
                     # Model action buttons
                     with Container(classes="button-row"):
                         yield Button("➕ Add Model", id="add-model-btn", variant="default")
                         yield Button("🧪 Test Connection", id="test-model-btn", variant="default")
                         yield Button("🔄 Refresh Models", id="refresh-models-btn", variant="default")
             
-            # Cost Estimation Section
-            with Container(classes="config-section"):
-                yield Static("💰 Cost Estimation", classes="section-title")
+            # Cost Estimation Section - Collapsible (starts collapsed)
+            with Collapsible(title="💰 Cost Estimation", collapsed=True):
                 yield Static("Estimated cost: $0.00", id="cost-estimate", classes="cost-display")
                 yield Static("", id="cost-warning", classes="warning")
             
-            # Run Button
+            # Run Button (always visible)
             yield Button(
                 "▶️ Run Evaluation",
                 id="run-button",
@@ -379,16 +388,15 @@ class EvalsWindow(Container):
                 variant="primary"
             )
             
-            # Progress Section (hidden initially)
-            with Container(classes="progress-container", id="progress-section"):
-                yield Static("Progress:", id="progress-label", classes="progress-label")
-                yield ProgressBar(id="progress-bar", show_eta=True, total=100)
-                yield Static("", id="progress-message")
-                yield Button("⏹️ Cancel", id="cancel-button", variant="error")
+            # Progress Section - Collapsible (starts collapsed)
+            with Collapsible(title="📊 Progress", collapsed=True, id="progress-collapsible"):
+                with Container(classes="progress-container", id="progress-section"):
+                    yield ProgressBar(id="progress-bar", show_eta=True, total=100)
+                    yield Static("", id="progress-message")
+                    yield Button("⏹️ Cancel", id="cancel-button", variant="error")
             
-            # Results Section
-            with Container(classes="config-section results-section"):
-                yield Static("📊 Recent Results", classes="section-title")
+            # Results Section - Collapsible
+            with Collapsible(title="📊 Recent Results", collapsed=False):
                 yield DataTable(id="results-table", classes="results-table", zebra_stripes=True)
         
         # Status Footer  
@@ -405,12 +413,8 @@ class EvalsWindow(Container):
     
     def _initialize(self) -> None:
         """Initialize the evaluation system"""
-        # Hide progress initially
-        try:
-            progress_section = self.query_one("#progress-section")
-            progress_section.display = False
-        except Exception as e:
-            logger.warning(f"Could not hide progress section: {e}")
+        # Progress section is now in a collapsible that starts collapsed
+        # No need to manually hide it
         
         # Initialize orchestrator
         self._initialize_orchestrator()
@@ -818,19 +822,19 @@ class EvalsWindow(Container):
         try:
             # Update UI based on status
             run_button = self.query_one("#run-button", Button)
-            progress_section = self.query_one("#progress-section")
+            progress_collapsible = self.query_one("#progress-collapsible", Collapsible)
             
             if new == "running":
                 run_button.label = "⏸️ Running..."
                 run_button.add_class("--running")
-                progress_section.display = True
+                progress_collapsible.collapsed = False  # Expand to show progress
             else:
                 run_button.label = "▶️ Run Evaluation"
                 run_button.remove_class("--running")
                 if new in ["completed", "error", "cancelled"]:
-                    # Keep progress visible for a moment
+                    # Keep progress visible for a moment to show final status
                     if self.app_instance:
-                        self.app_instance.set_timer(3.0, lambda: setattr(progress_section, 'display', False))
+                        self.app_instance.set_timer(3.0, lambda: setattr(progress_collapsible, 'collapsed', True))
         except Exception as e:
             logger.warning(f"Failed to update UI for status change: {e}")
     

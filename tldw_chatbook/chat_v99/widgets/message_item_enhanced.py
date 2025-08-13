@@ -7,6 +7,14 @@ from textual.message import Message
 from textual import on
 from datetime import datetime
 
+# Import pyperclip at module level for proper mocking
+try:
+    import pyperclip
+    HAS_PYPERCLIP = True
+except ImportError:
+    HAS_PYPERCLIP = False
+    pyperclip = None
+
 try:
     from ..models import ChatMessage
 except ImportError:
@@ -21,10 +29,17 @@ class MessageItemEnhanced(Container):
     
     class MessageAction(Message):
         """Event fired when a message action is triggered."""
+        bubble = True  # Class attribute for proper bubbling
+        
         def __init__(self, action: str, message: ChatMessage):
             super().__init__()
             self.action = action
             self.message = message
+            
+        @property
+        def control(self):
+            """Return the widget that sent this message."""
+            return self._sender if hasattr(self, '_sender') else None
     
     DEFAULT_CSS = """
     MessageItemEnhanced {
@@ -209,35 +224,43 @@ class MessageItemEnhanced(Container):
         self.token_count = len(self.content) // 4
     
     @on(Button.Pressed, "#edit-btn")
-    def handle_edit(self):
+    def handle_edit(self, event: Button.Pressed = None):
         """Handle edit button press."""
         self.post_message(self.MessageAction("edit", self.message))
     
     @on(Button.Pressed, "#copy-btn")
-    def handle_copy(self):
+    def handle_copy(self, event: Button.Pressed = None):
         """Handle copy button press."""
-        import pyperclip
-        try:
-            pyperclip.copy(self.content)
-            self.app.notify("Copied to clipboard", severity="information")
-        except:
-            # Fallback if pyperclip not available
+        # Debug logging
+        from loguru import logger
+        logger.debug(f"handle_copy called! Content: {self.content[:20]}...")
+        
+        if HAS_PYPERCLIP and pyperclip:
+            try:
+                pyperclip.copy(self.content)
+                self.app.notify("Copied to clipboard", severity="information")
+            except Exception as e:
+                logger.debug(f"Pyperclip copy failed: {e}")
+                # Fallback if copy fails
+                self.post_message(self.MessageAction("copy", self.message))
+        else:
+            # Pyperclip not available, let parent handle it
             self.post_message(self.MessageAction("copy", self.message))
     
     @on(Button.Pressed, "#regenerate-btn")
-    def handle_regenerate(self):
+    def handle_regenerate(self, event: Button.Pressed = None):
         """Handle regenerate button press."""
         if self.message.role == "assistant":
             self.post_message(self.MessageAction("regenerate", self.message))
     
     @on(Button.Pressed, "#continue-btn")
-    def handle_continue(self):
+    def handle_continue(self, event: Button.Pressed = None):
         """Handle continue button press."""
         if self.message.role == "assistant":
             self.post_message(self.MessageAction("continue", self.message))
     
     @on(Button.Pressed, "#pin-btn")
-    def handle_pin(self):
+    def handle_pin(self, event: Button.Pressed = None):
         """Handle pin button press."""
         self.post_message(self.MessageAction("pin", self.message))
         # Visual feedback following Textual pattern
@@ -247,7 +270,7 @@ class MessageItemEnhanced(Container):
         pin_btn.label = "📍" if current_label == "📌" else "📌"
     
     @on(Button.Pressed, "#delete-btn")
-    def handle_delete(self):
+    def handle_delete(self, event: Button.Pressed = None):
         """Handle delete button press."""
         self.post_message(self.MessageAction("delete", self.message))
     

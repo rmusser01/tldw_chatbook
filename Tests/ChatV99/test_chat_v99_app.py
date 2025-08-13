@@ -229,18 +229,21 @@ class TestChatSidebar:
             sidebar = pilot.app.screen.query_one("#sidebar", ChatSidebar)
             temp_input = sidebar.query_one("#temperature", Input)
             
-            # Valid temperature
+            # Valid temperature - trigger Changed event properly
             temp_input.value = "0.7"
+            temp_input.post_message(Input.Changed(temp_input, "0.7"))
             await pilot.pause(0.1)
             assert pilot.app.settings.temperature == 0.7
             
-            # Invalid temperature (>1)
+            # Invalid temperature (>1) - trigger Changed event
             temp_input.value = "1.5"
+            temp_input.post_message(Input.Changed(temp_input, "1.5"))
             await pilot.pause(0.1)
             assert pilot.app.settings.temperature == 0.7  # Should not change
             
-            # Invalid temperature (non-numeric)
+            # Invalid temperature (non-numeric) - trigger Changed event
             temp_input.value = "abc"
+            temp_input.post_message(Input.Changed(temp_input, "abc"))
             await pilot.pause(0.1)
             assert pilot.app.settings.temperature == 0.7  # Should not change
     
