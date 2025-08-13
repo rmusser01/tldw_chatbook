@@ -250,10 +250,17 @@ class EvalsWindow(Container):
         margin: 1 0;
     }
     
-    /* Fix dropdown visibility */
+    /* Fix dropdown visibility in Collapsibles */
     Select > SelectOverlay {
         width: 100%;
-        max-height: 10;
+        max-height: 15;
+        background: $panel;
+        border: solid $primary;
+    }
+    
+    /* Ensure Collapsibles don't clip dropdowns */
+    Collapsible {
+        overflow: visible;
     }
 
     """
@@ -461,6 +468,16 @@ class EvalsWindow(Container):
     def _load_tasks(self) -> None:
         """Load tasks from database and populate selector"""
         try:
+            # Ensure orchestrator is available
+            if not self.orchestrator:
+                logger.warning("No orchestrator available for loading tasks")
+                return
+                
+            # Ensure database is available
+            if not hasattr(self.orchestrator, 'db') or not self.orchestrator.db:
+                logger.warning("No database available for loading tasks")
+                return
+                
             tasks = self.orchestrator.db.list_tasks()
             task_select = self.query_one("#task-select", Select)
             
@@ -495,6 +512,16 @@ class EvalsWindow(Container):
     def _load_models(self) -> None:
         """Load models from database and populate selector"""
         try:
+            # Ensure orchestrator is available
+            if not self.orchestrator:
+                logger.warning("No orchestrator available for loading models")
+                return
+                
+            # Ensure database is available
+            if not hasattr(self.orchestrator, 'db') or not self.orchestrator.db:
+                logger.warning("No database available for loading models")
+                return
+                
             models = self.orchestrator.db.list_models()
             model_select = self.query_one("#model-select", Select)
             
@@ -636,22 +663,56 @@ class EvalsWindow(Container):
     @on(Select.Changed, "#task-select")
     def handle_task_change(self, event: Select.Changed) -> None:
         """Handle task selection"""
-        if event.value and event.value != Select.BLANK:
-            self.selected_task_id = event.value
-            task_info = self.available_tasks.get(event.value, {})
+        try:
+            # Check if orchestrator is initialized
+            if not self.orchestrator:
+                logger.warning("Orchestrator not initialized, skipping task change")
+                return
+            
+            # Check for valid selection
+            if not event.value or event.value == Select.BLANK:
+                self.selected_task_id = None
+                return
+                
+            # Update task selection
+            self.selected_task_id = str(event.value)
+            task_info = self.available_tasks.get(str(event.value), {})
             self._update_status(f"Task selected: {task_info.get('name', 'Unknown')}")
             logger.info(f"Task selected: {event.value}")
             self._update_cost_estimate()
+            
+        except Exception as e:
+            logger.error(f"Error handling task change: {e}", exc_info=True)
+            self._update_status(f"Error selecting task: {e}", error=True)
+            if self.app_instance:
+                self.app_instance.notify(f"Error selecting task: {e}", severity="error")
     
     @on(Select.Changed, "#model-select")
     def handle_model_change(self, event: Select.Changed) -> None:
         """Handle model selection"""
-        if event.value and event.value != Select.BLANK:
-            self.selected_model_id = event.value
-            model_info = self.available_models.get(event.value, {})
+        try:
+            # Check if orchestrator is initialized
+            if not self.orchestrator:
+                logger.warning("Orchestrator not initialized, skipping model change")
+                return
+            
+            # Check for valid selection
+            if not event.value or event.value == Select.BLANK:
+                self.selected_model_id = None
+                return
+                
+            # Update model selection
+            self.selected_model_id = str(event.value)
+            model_info = self.available_models.get(str(event.value), {})
             self._update_status(f"Model selected: {model_info.get('name', 'Unknown')}")
             logger.info(f"Model selected: {event.value}")
             self._update_cost_estimate()
+            
+        except Exception as e:
+            logger.error(f"Error handling model change: {e}", exc_info=True)
+            self._update_status(f"Error selecting model: {e}", error=True)
+            if self.app_instance:
+                self.app_instance.notify(f"Error selecting model: {e}", severity="error")
     
     @on(Input.Changed, "#temperature-input")
     def handle_temperature_change(self, event: Input.Changed) -> None:

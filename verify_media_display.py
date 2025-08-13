@@ -11,8 +11,8 @@ async def test_media_display():
     async with app.run_test() as pilot:
         print("Testing MediaWindowV88 in main app...")
         
-        # Wait for app to load
-        await pilot.pause(1.0)
+        # Wait for splash screen to finish
+        await pilot.pause(5.0)
         
         # Navigate to media tab
         try:
@@ -22,7 +22,13 @@ async def test_media_display():
             print("✓ Navigated to media tab")
         except Exception as e:
             print(f"✗ Failed to navigate to media tab: {e}")
-            return False
+            # Try pressing the key shortcut instead
+            try:
+                await pilot.press("m")
+                await pilot.pause(1.0)
+                print("✓ Navigated to media tab via shortcut")
+            except:
+                return False
         
         # Check if MediaWindowV88 exists
         from tldw_chatbook.UI.MediaWindowV88 import MediaWindowV88

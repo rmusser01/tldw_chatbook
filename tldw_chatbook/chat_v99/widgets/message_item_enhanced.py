@@ -223,13 +223,28 @@ class MessageItemEnhanced(Container):
         # Simple approximation: ~4 chars per token
         self.token_count = len(self.content) // 4
     
-    @on(Button.Pressed, "#edit-btn")
-    def handle_edit(self, event: Button.Pressed = None):
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle all button presses using a single handler."""
+        button_id = event.button.id
+        
+        if button_id == "edit-btn":
+            self.handle_edit()
+        elif button_id == "copy-btn":
+            self.handle_copy()
+        elif button_id == "regenerate-btn":
+            self.handle_regenerate()
+        elif button_id == "continue-btn":
+            self.handle_continue()
+        elif button_id == "pin-btn":
+            self.handle_pin()
+        elif button_id == "delete-btn":
+            self.handle_delete()
+    
+    def handle_edit(self):
         """Handle edit button press."""
         self.post_message(self.MessageAction("edit", self.message))
     
-    @on(Button.Pressed, "#copy-btn")
-    def handle_copy(self, event: Button.Pressed = None):
+    def handle_copy(self):
         """Handle copy button press."""
         # Debug logging
         from loguru import logger
@@ -247,20 +262,17 @@ class MessageItemEnhanced(Container):
             # Pyperclip not available, let parent handle it
             self.post_message(self.MessageAction("copy", self.message))
     
-    @on(Button.Pressed, "#regenerate-btn")
-    def handle_regenerate(self, event: Button.Pressed = None):
+    def handle_regenerate(self):
         """Handle regenerate button press."""
         if self.message.role == "assistant":
             self.post_message(self.MessageAction("regenerate", self.message))
     
-    @on(Button.Pressed, "#continue-btn")
-    def handle_continue(self, event: Button.Pressed = None):
+    def handle_continue(self):
         """Handle continue button press."""
         if self.message.role == "assistant":
             self.post_message(self.MessageAction("continue", self.message))
     
-    @on(Button.Pressed, "#pin-btn")
-    def handle_pin(self, event: Button.Pressed = None):
+    def handle_pin(self):
         """Handle pin button press."""
         self.post_message(self.MessageAction("pin", self.message))
         # Visual feedback following Textual pattern
@@ -269,8 +281,7 @@ class MessageItemEnhanced(Container):
         current_label = str(pin_btn.label)
         pin_btn.label = "📍" if current_label == "📌" else "📌"
     
-    @on(Button.Pressed, "#delete-btn")
-    def handle_delete(self, event: Button.Pressed = None):
+    def handle_delete(self):
         """Handle delete button press."""
         self.post_message(self.MessageAction("delete", self.message))
     
