@@ -906,7 +906,15 @@ class EvalsWindow(Container):
                 if new in ["completed", "error", "cancelled"]:
                     # Keep progress visible for a moment to show final status
                     if self.app_instance:
-                        self.app_instance.set_timer(3.0, lambda: setattr(progress_collapsible, 'collapsed', True))
+                        try:
+                            # Only set timer if we have an active event loop
+                            import asyncio
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                self.app_instance.set_timer(3.0, lambda: setattr(progress_collapsible, 'collapsed', True))
+                        except RuntimeError:
+                            # No event loop running (e.g., in tests)
+                            pass
         except Exception as e:
             logger.warning(f"Failed to update UI for status change: {e}")
     
@@ -1008,7 +1016,20 @@ class EvalsWindow(Container):
                 if worker.is_cancelled or self.cancel_event.is_set():
                     return False  # Signal to stop
                 
-                progress = (int(current) / int(total) * 100) if int(total) > 0 else 0
+                # Handle None values gracefully
+                try:
+                    current = int(current) if current is not None else 0
+                    total = int(total) if total is not None else 0
+                except (TypeError, ValueError):
+                    current = 0
+                    total = 0
+                
+                # Ensure we don't divide by zero or compare with None
+                if total and total > 0:
+                    progress = (current / total * 100)
+                else:
+                    progress = 0
+                    
                 self.evaluation_progress = progress
                 self.progress_message = message or f"Processing sample {current}/{total}"
                 return True  # Continue
@@ -1052,7 +1073,7 @@ class EvalsWindow(Container):
         finally:
             self.current_worker = None
     
-    def _handle_evaluation_complete(self, run_id: str, results: tuple) -> None:
+    def _handle_evaluation_complete(self, run_id: str, results: Dict[str, Any]) -> None:
         """Handle evaluation completion"""
         logger.info(f"Evaluation completed: {run_id}")
         
@@ -1061,13 +1082,22 @@ class EvalsWindow(Container):
         self.evaluation_progress = 100.0
         self.progress_message = "Evaluation complete!"
         
-        # Parse results
-        (run_id, task_id, model_id, run_name, status, 
-         start_time, end_time, total_samples, completed_samples,
-         metrics_json, errors_json, *_) = results
+        # Parse results from dictionary
+        task_id = results.get('task_id')
+        model_id = results.get('model_id')
+        run_name = results.get('name', 'Unknown')
+        status = results.get('status', 'unknown')
+        start_time = results.get('created_at')
+        end_time = results.get('completed_at')
+        total_samples = results.get('total_samples') or 0
+        completed_samples = results.get('completed_samples') or 0
+        metrics_json = results.get('metrics', '{}')
+        errors_json = results.get('errors', '[]')
         
-        # Calculate metrics
-        success_rate = (completed_samples / total_samples * 100) if total_samples > 0 else 0
+        # Calculate metrics - ensure values are not None
+        total_samples = int(total_samples) if total_samples is not None else 0
+        completed_samples = int(completed_samples) if completed_samples is not None else 0
+        success_rate = (completed_samples / total_samples * 100) if total_samples and total_samples > 0 else 0
         duration = "N/A"
         if start_time and end_time:
             try:

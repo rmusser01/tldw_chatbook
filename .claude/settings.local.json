@@ -1,4 +1,44 @@
 {
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/appledev/Working/tldw_chatbook/Helper_Scripts/Agent-Tools/Audit-Agent/audit_agent.sh '{{tool}}' '{{file_path}}'",
+            "description": "Run audit agent after file modifications",
+            "timeout": 5000,
+            "continueOnError": true
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ '{{file_path}}' =~ \\.py$ ]]; then cd /Users/appledev/Working/tldw_chatbook && python -m ruff check '{{file_path}}' 2>&1 | head -5 >> .claude/audit.log; fi",
+            "description": "Run ruff linting on Python files",
+            "continueOnError": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p .claude/audit_logs && echo '[$(date)] File modification starting: {{file_path}} via {{tool}}' >> .claude/audit_logs/activity.log",
+            "description": "Log file modification start",
+            "continueOnError": true
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(grep:*)",

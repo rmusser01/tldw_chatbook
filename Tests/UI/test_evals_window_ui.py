@@ -248,7 +248,7 @@ async def test_vertical_scroll_functionality(mock_orchestrator):
         
         # Test scrolling down
         if hasattr(scroll_container, 'scroll_down'):
-            await scroll_container.scroll_down()
+            scroll_container.scroll_down()  # Not async
             await pilot.pause()
             
             # Scroll position should have changed
