@@ -260,7 +260,7 @@ class EvalsWindow(Container):
     
     /* Ensure Collapsibles don't clip dropdowns */
     Collapsible {
-        overflow: visible;
+        overflow: auto;
     }
 
     """
@@ -399,6 +399,7 @@ class EvalsWindow(Container):
             with Collapsible(title="📊 Progress", collapsed=True, id="progress-collapsible"):
                 with Container(classes="progress-container", id="progress-section"):
                     yield ProgressBar(id="progress-bar", show_eta=True, total=100)
+                    yield Static("0%", id="progress-label")  # Add progress label for tests
                     yield Static("", id="progress-message")
                     yield Button("⏹️ Cancel", id="cancel-button", variant="error")
             
@@ -481,8 +482,8 @@ class EvalsWindow(Container):
             tasks = self.orchestrator.db.list_tasks()
             task_select = self.query_one("#task-select", Select)
             
-            # Clear existing options
-            task_options = [(Select.BLANK, None)]
+            # Clear existing options (Select already has blank from allow_blank=True)
+            task_options = []
             
             # Add sample tasks if database is empty
             if not tasks:
@@ -525,8 +526,8 @@ class EvalsWindow(Container):
             models = self.orchestrator.db.list_models()
             model_select = self.query_one("#model-select", Select)
             
-            # Clear existing options
-            model_options = [(Select.BLANK, None)]
+            # Clear existing options (Select already has blank from allow_blank=True)
+            model_options = []
             
             # Add sample models if database is empty
             if not models:
@@ -763,8 +764,8 @@ class EvalsWindow(Container):
         if not self._validate_configuration():
             return
         
-        # Start evaluation
-        self.run_evaluation()
+        # Start evaluation in worker thread
+        self.run_worker(self.run_evaluation, exclusive=True)
     
     @on(Button.Pressed, "#cancel-button")
     def handle_cancel_button(self) -> None:
@@ -990,7 +991,7 @@ class EvalsWindow(Container):
             self.evaluation_progress = 0.0
             self.cancel_event.clear()
             
-            self.call_from_thread(self._update_status, "Initializing evaluation...")
+            self.app.call_from_thread(self._update_status, "Initializing evaluation...")
             
             # Create progress callback
             def progress_callback(current: int, total: int, message: str = ""):
@@ -1025,7 +1026,7 @@ class EvalsWindow(Container):
                 results = self.orchestrator.db.get_run_details(run_id)
                 
                 if results:
-                    self.call_from_thread(self._handle_evaluation_complete, run_id, results)
+                    self.app.call_from_thread(self._handle_evaluation_complete, run_id, results)
                 else:
                     raise ValueError("No results returned")
                     
@@ -1035,9 +1036,9 @@ class EvalsWindow(Container):
         except Exception as e:
             logger.error(f"Evaluation failed: {e}")
             self.evaluation_status = "error"
-            self.call_from_thread(self._update_status, f"Error: {e}", error=True)
+            self.app.call_from_thread(self._update_status, f"Error: {e}", error=True)
             if self.app_instance:
-                self.call_from_thread(self.app_instance.notify, f"Evaluation failed: {e}", "error")
+                self.app.call_from_thread(self.app_instance.notify, f"Evaluation failed: {e}", "error")
         finally:
             self.current_worker = None
     

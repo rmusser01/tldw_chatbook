@@ -1,7 +1,7 @@
 """
-Navigation Column for Media UI V88.
+Navigation Column for Media UI V88 - Fixed version with working dropdowns.
 
-Provides media type selection via dropdown and a paginated list of media items.
+Provides media type selection via buttons and a paginated list of media items.
 """
 
 from typing import TYPE_CHECKING, List, Dict, Any, Optional, Tuple
@@ -9,7 +9,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.reactive import reactive
-from textual.widgets import Select, ListView, ListItem, Button, Label, Static
+from textual.widgets import ListView, ListItem, Button, Label, Static
 from textual.message import Message
 from loguru import logger
 
@@ -24,7 +24,7 @@ class NavigationColumn(Container):
     Left navigation column containing media type selector and item list.
     
     Features:
-    - Dropdown for media type selection
+    - Button-based media type selection (replacing broken dropdowns)
     - Scrollable list of media items
     - Pagination controls
     - Loading states
@@ -42,7 +42,6 @@ class NavigationColumn(Container):
         padding: 1;
         background: $boost;
         border-bottom: solid $primary-lighten-1;
-        layout: vertical;
     }
     
     .nav-header Label {
@@ -50,22 +49,34 @@ class NavigationColumn(Container):
         margin-bottom: 1;
     }
     
-    .nav-header Select {
-        width: 100%;
-        margin: 1 0;
-        height: 3;
-        color: $text;
+    .type-selector-container {
+        layout: vertical;
+        padding: 1;
         background: $panel;
-        border: solid $primary;
+        border-bottom: solid $primary-lighten-2;
     }
     
-    .nav-header Select:focus {
-        border: solid $accent;
+    .type-selector-label {
+        text-style: bold;
+        margin-bottom: 1;
     }
     
-    .nav-header Select > .select--current {
-        color: $text;
+    .type-buttons {
+        layout: vertical;
+        height: auto;
+    }
+    
+    .type-button {
+        width: 100%;
+        height: 3;
+        margin-bottom: 1;
+        text-align: left;
         padding: 0 1;
+    }
+    
+    .type-button.active {
+        background: $accent;
+        text-style: bold;
     }
     
     .media-list-container {
@@ -110,11 +121,6 @@ class NavigationColumn(Container):
     .item-meta {
         color: $text-muted;
         text-style: italic;
-    }
-    
-    .item-type {
-        color: $primary;
-        text-style: none;
     }
     
     .pagination-controls {
@@ -188,35 +194,23 @@ class NavigationColumn(Container):
     
     def compose(self) -> ComposeResult:
         """Compose the navigation column UI."""
-        # Header with view and type selectors
+        # Header
         with Container(classes="nav-header"):
             yield Label("Media Library")
-            
-            # Add view selector dropdown with explicit display text
-            view_options = [
-                ("Detailed Media View", "detailed"),
-                ("Analysis Review", "analysis"),
-                ("Multi-Item Review", "multi"),
-                ("Collections View", "collections")
-            ]
-            view_select = Select(
-                options=view_options,
-                value="detailed",
-                id="media-view-select",
-                prompt="Detailed Media View",  # Use actual value as prompt
-                allow_blank=False
-            )
-            yield view_select
-            
-            # Media type selector with explicit display text
-            type_select = Select(
-                options=[(name, value) for name, value in self._type_options],
-                value="all-media" if "all-media" in [v for _, v in self._type_options] else None,
-                id="media-type-select",
-                prompt="All Media",  # Use actual value as prompt
-                allow_blank=False
-            )
-            yield type_select
+        
+        # Media type selector using buttons
+        with Container(classes="type-selector-container"):
+            yield Label("Media Type:", classes="type-selector-label")
+            with Container(classes="type-buttons"):
+                for name, value in self._type_options:
+                    btn = Button(
+                        name,
+                        id=f"type-btn-{value}",
+                        classes="type-button"
+                    )
+                    if value == "all-media":
+                        btn.add_class("active")
+                    yield btn
         
         # Media items list
         with Container(classes="media-list-container"):
@@ -230,53 +224,45 @@ class NavigationColumn(Container):
     
     def on_mount(self) -> None:
         """Initialize when mounted."""
-        logger.info("NavigationColumn mounted")
-        
-        # Force update the display text on mount
-        try:
-            view_select = self.query_one("#media-view-select", Select)
-            type_select = self.query_one("#media-type-select", Select)
-            
-            # Ensure the dropdowns display their current values
-            if view_select.value:
-                # Find the display name for the current value
-                for label, value in view_select._options:
-                    if value == view_select.value:
-                        view_select.prompt = label
-                        break
-            
-            if type_select.value:
-                # Find the display name for the current value
-                for label, value in type_select._options:
-                    if value == type_select.value:
-                        type_select.prompt = label
-                        break
-            
-            logger.info(f"View dropdown - Value: {view_select.value}, Prompt: {view_select.prompt}")
-            logger.info(f"Type dropdown - Value: {type_select.value}, Prompt: {type_select.prompt}")
-            
-            # Force a refresh
-            view_select.refresh()
-            type_select.refresh()
-            
-        except Exception as e:
-            logger.error(f"Error updating dropdowns: {e}")
+        logger.info("NavigationColumn (fixed) mounted")
     
-    @on(Select.Changed)
-    def handle_type_selection(self, event: Select.Changed) -> None:
-        """Handle media type selection from dropdown."""
-        if event.control.id == "media-type-select" and event.value:
+    @on(Button.Pressed)
+    def handle_button_press(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        button_id = event.button.id
+        
+        # Handle type selection buttons
+        if button_id and button_id.startswith("type-btn-"):
+            type_value = button_id.replace("type-btn-", "")
+            
             # Find display name for the selected value
             display_name = next(
-                (name for name, value in self._type_options if value == event.value),
-                event.value
+                (name for name, value in self._type_options if value == type_value),
+                type_value
             )
             
-            logger.info(f"Media type selected: {event.value} ({display_name})")
-            self.selected_type = event.value
+            logger.info(f"Media type selected: {type_value} ({display_name})")
+            
+            # Update active button styling
+            for name, value in self._type_options:
+                btn = self.query_one(f"#type-btn-{value}", Button)
+                if value == type_value:
+                    btn.add_class("active")
+                else:
+                    btn.remove_class("active")
+            
+            self.selected_type = type_value
             
             # Emit event for parent to handle
-            self.post_message(MediaTypeSelectedEventV88(event.value, display_name))
+            self.post_message(MediaTypeSelectedEventV88(type_value, display_name))
+        
+        # Handle pagination buttons
+        elif button_id == "prev-page" and self.current_page > 1:
+            self.current_page -= 1
+            self.request_page_change(self.current_page)
+        elif button_id == "next-page" and self.current_page < self.total_pages:
+            self.current_page += 1
+            self.request_page_change(self.current_page)
     
     @on(ListView.Selected)
     def handle_item_selection(self, event: ListView.Selected) -> None:
@@ -305,27 +291,20 @@ class NavigationColumn(Container):
                 except ValueError:
                     logger.error(f"Invalid media item ID: {item_id}")
     
-    @on(Button.Pressed)
-    def handle_pagination(self, event: Button.Pressed) -> None:
-        """Handle pagination button presses."""
-        if event.button.id == "prev-page" and self.current_page > 1:
-            self.current_page -= 1
-            self.request_page_change(self.current_page)
-        elif event.button.id == "next-page" and self.current_page < self.total_pages:
-            self.current_page += 1
-            self.request_page_change(self.current_page)
-    
     def set_media_type(self, type_slug: str, display_name: str) -> None:
         """Set the active media type."""
         self.selected_type = type_slug
         
-        # Update dropdown selection
-        try:
-            type_select = self.query_one("#media-type-select", Select)
-            if type_slug in [v for _, v in self._type_options]:
-                type_select.value = type_slug
-        except Exception as e:
-            logger.debug(f"Could not update type selector: {e}")
+        # Update button styling
+        for name, value in self._type_options:
+            try:
+                btn = self.query_one(f"#type-btn-{value}", Button)
+                if value == type_slug:
+                    btn.add_class("active")
+                else:
+                    btn.remove_class("active")
+            except Exception as e:
+                logger.debug(f"Could not update type button: {e}")
     
     def load_items(
         self,
@@ -370,8 +349,8 @@ class NavigationColumn(Container):
         media_type = media_data.get('type', 'Unknown')
         author = media_data.get('author', '')
         
-        # Truncate title more aggressively for narrow column
-        max_title_len = 25  # Reduced from 40
+        # Truncate title for narrow column
+        max_title_len = 25
         if len(title) > max_title_len:
             title = title[:max_title_len-3] + "..."
         
@@ -440,7 +419,6 @@ class NavigationColumn(Container):
                         id="loading-item"
                     )
                 )
-        # If not loading, the list will be updated by load_items
     
     def request_page_change(self, page: int) -> None:
         """Request a page change from the parent."""

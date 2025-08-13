@@ -10,7 +10,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Grid
 from textual.reactive import reactive
-from textual.widgets import Button, Input, Label, TextArea, Static
+from textual.widgets import Button, Input, Label, TextArea, Static, Checkbox
 from textual.message import Message
 from loguru import logger
 
@@ -36,6 +36,14 @@ class MediaDeleteRequestEvent(Message):
         self.media_title = media_title
 
 
+class FormatForReadingChangeEvent(Message):
+    """Event fired when format for reading checkbox is toggled."""
+    
+    def __init__(self, enabled: bool) -> None:
+        super().__init__()
+        self.enabled = enabled
+
+
 class MetadataPanel(Container):
     """
     Metadata display panel with 4-row layout.
@@ -59,10 +67,29 @@ class MetadataPanel(Container):
         margin-bottom: 1;
     }
     
+    MetadataPanel.collapsed #metadata-content {
+        display: none;
+    }
+    
+    .metadata-header {
+        layout: horizontal;
+        height: auto;
+        margin-bottom: 1;
+    }
+    
     .metadata-title {
         text-style: bold;
-        margin-bottom: 1;
         color: $primary;
+        width: 1fr;
+    }
+    
+    #collapse-button {
+        width: auto;
+        min-width: 3;
+        height: 1;
+        background: transparent;
+        border: none;
+        padding: 0 1;
     }
     
     .metadata-grid {
@@ -99,6 +126,20 @@ class MetadataPanel(Container):
     .keywords-container {
         column-span: 3;
         layout: vertical;
+    }
+    
+    .keywords-header {
+        layout: horizontal;
+        height: auto;
+        margin-bottom: 0;
+    }
+    
+    .keywords-label {
+        width: auto;
+    }
+    
+    #format-checkbox {
+        margin-left: 2;
     }
     
     .keywords-list {
@@ -186,6 +227,8 @@ class MetadataPanel(Container):
     edit_mode: reactive[bool] = reactive(False)
     current_media: reactive[Optional[Dict[str, Any]]] = reactive(None)
     has_unsaved_changes: reactive[bool] = reactive(False)
+    panel_collapsed: reactive[bool] = reactive(False)
+    format_for_reading: reactive[bool] = reactive(False)
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the metadata panel."""
@@ -195,55 +238,62 @@ class MetadataPanel(Container):
     
     def compose(self) -> ComposeResult:
         """Compose the metadata panel UI."""
-        yield Label("Media Metadata", classes="metadata-title")
+        # Header with title and collapse button
+        with Horizontal(classes="metadata-header"):
+            yield Label("Media Metadata", classes="metadata-title")
+            yield Button("▼", id="collapse-button", variant="default")
         
-        # Main metadata grid
-        with Grid(classes="metadata-grid", id="metadata-grid"):
-            # Row 1
-            with Container(classes="metadata-field"):
-                yield Label("Title", classes="field-label")
-                yield Static("", id="title-value", classes="field-value")
+        # Content container that can be collapsed
+        with Container(id="metadata-content"):
+            # Main metadata grid
+            with Grid(classes="metadata-grid", id="metadata-grid"):
+                # Row 1
+                with Container(classes="metadata-field"):
+                    yield Label("Title", classes="field-label")
+                    yield Static("", id="title-value", classes="field-value")
+                
+                with Container(classes="metadata-field"):
+                    yield Label("Type", classes="field-label")
+                    yield Static("", id="type-value", classes="field-value")
+                
+                with Container(classes="metadata-field"):
+                    yield Label("Created", classes="field-label")
+                    yield Static("", id="created-value", classes="field-value")
+                
+                # Row 2
+                with Container(classes="metadata-field"):
+                    yield Label("Author", classes="field-label")
+                    yield Static("", id="author-value", classes="field-value")
+                
+                with Container(classes="metadata-field"):
+                    yield Label("URL/Source", classes="field-label")
+                    yield Static("", id="url-value", classes="field-value")
+                
+                with Container(classes="metadata-field"):
+                    yield Label("Modified", classes="field-label")
+                    yield Static("", id="modified-value", classes="field-value")
+                
+                # Row 3 - Keywords (spans all columns)
+                with Container(classes="keywords-container"):
+                    with Horizontal(classes="keywords-header"):
+                        yield Label("Keywords/Tags", classes="field-label keywords-label")
+                        yield Checkbox("Format for Reading", id="format-checkbox", value=False)
+                    yield Horizontal(id="keywords-list", classes="keywords-list")
+                
+                # Row 4 - Description (spans all columns)
+                with Container(classes="description-container"):
+                    yield Label("Description/Summary", classes="field-label")
+                    yield Static("", id="description-value", classes="description-value")
             
-            with Container(classes="metadata-field"):
-                yield Label("Type", classes="field-label")
-                yield Static("", id="type-value", classes="field-value")
+            # Action buttons
+            with Horizontal(classes="action-buttons", id="action-buttons"):
+                yield Button("Edit", id="edit-button", variant="primary")
+                yield Button("Delete", id="delete-button", variant="error")
             
-            with Container(classes="metadata-field"):
-                yield Label("Created", classes="field-label")
-                yield Static("", id="created-value", classes="field-value")
-            
-            # Row 2
-            with Container(classes="metadata-field"):
-                yield Label("Author", classes="field-label")
-                yield Static("", id="author-value", classes="field-value")
-            
-            with Container(classes="metadata-field"):
-                yield Label("URL/Source", classes="field-label")
-                yield Static("", id="url-value", classes="field-value")
-            
-            with Container(classes="metadata-field"):
-                yield Label("Modified", classes="field-label")
-                yield Static("", id="modified-value", classes="field-value")
-            
-            # Row 3 - Keywords (spans all columns)
-            with Container(classes="keywords-container"):
-                yield Label("Keywords/Tags", classes="field-label")
-                yield Horizontal(id="keywords-list", classes="keywords-list")
-            
-            # Row 4 - Description (spans all columns)
-            with Container(classes="description-container"):
-                yield Label("Description/Summary", classes="field-label")
-                yield Static("", id="description-value", classes="description-value")
-        
-        # Action buttons
-        with Horizontal(classes="action-buttons", id="action-buttons"):
-            yield Button("Edit", id="edit-button", variant="primary")
-            yield Button("Delete", id="delete-button", variant="error")
-        
-        # Edit mode buttons (initially hidden)
-        with Horizontal(classes="action-buttons", id="edit-buttons"):
-            yield Button("Save", id="save-button", variant="success")
-            yield Button("Cancel", id="cancel-button", variant="warning")
+            # Edit mode buttons (initially hidden)
+            with Horizontal(classes="action-buttons", id="edit-buttons"):
+                yield Button("Save", id="save-button", variant="success")
+                yield Button("Cancel", id="cancel-button", variant="warning")
     
     def on_mount(self) -> None:
         """Initialize when mounted."""
@@ -293,6 +343,28 @@ class MetadataPanel(Container):
             if media_id:
                 # Post delete request event
                 self.post_message(MediaDeleteRequestEvent(media_id, media_title))
+    
+    @on(Button.Pressed, "#collapse-button")
+    def handle_collapse_toggle(self, event: Button.Pressed) -> None:
+        """Toggle the panel collapse state."""
+        self.panel_collapsed = not self.panel_collapsed
+        
+        # Update button text
+        button = self.query_one("#collapse-button", Button)
+        button.label = "▶" if self.panel_collapsed else "▼"
+        
+        # Toggle the collapsed class
+        if self.panel_collapsed:
+            self.add_class("collapsed")
+        else:
+            self.remove_class("collapsed")
+    
+    @on(Checkbox.Changed, "#format-checkbox")
+    def handle_format_checkbox(self, event: Checkbox.Changed) -> None:
+        """Handle format for reading checkbox change."""
+        self.format_for_reading = event.value
+        # Post event to notify content viewer
+        self.post_message(FormatForReadingChangeEvent(event.value))
     
     def load_media(self, media_data: Dict[str, Any]) -> None:
         """Load media data into the panel."""

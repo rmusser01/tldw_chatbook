@@ -1,7 +1,7 @@
 """
-Navigation Column for Media UI V88.
+Navigation Column for Media UI V88 - Using OptionList instead of Select.
 
-Provides media type selection via dropdown and a paginated list of media items.
+Provides media type selection via OptionList and a paginated list of media items.
 """
 
 from typing import TYPE_CHECKING, List, Dict, Any, Optional, Tuple
@@ -9,7 +9,8 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.reactive import reactive
-from textual.widgets import Select, ListView, ListItem, Button, Label, Static
+from textual.widgets import ListView, ListItem, Button, Label, Static, OptionList
+from textual.widgets.option_list import Option
 from textual.message import Message
 from loguru import logger
 
@@ -24,7 +25,7 @@ class NavigationColumn(Container):
     Left navigation column containing media type selector and item list.
     
     Features:
-    - Dropdown for media type selection
+    - OptionList for media type selection (more reliable rendering)
     - Scrollable list of media items
     - Pagination controls
     - Loading states
@@ -42,7 +43,6 @@ class NavigationColumn(Container):
         padding: 1;
         background: $boost;
         border-bottom: solid $primary-lighten-1;
-        layout: vertical;
     }
     
     .nav-header Label {
@@ -50,22 +50,41 @@ class NavigationColumn(Container):
         margin-bottom: 1;
     }
     
-    .nav-header Select {
-        width: 100%;
-        margin: 1 0;
-        height: 3;
-        color: $text;
+    .view-selector-container {
+        height: auto;
+        padding: 1;
         background: $panel;
+        border-bottom: solid $primary-lighten-2;
+    }
+    
+    .view-selector-label {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    
+    #view-options-list {
+        height: 5;
+        background: $surface;
         border: solid $primary;
+        margin-bottom: 1;
     }
     
-    .nav-header Select:focus {
-        border: solid $accent;
+    .type-selector-container {
+        height: auto;
+        padding: 1;
+        background: $panel;
+        border-bottom: solid $primary-lighten-2;
     }
     
-    .nav-header Select > .select--current {
-        color: $text;
-        padding: 0 1;
+    .type-selector-label {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    
+    #type-options-list {
+        height: 8;
+        background: $surface;
+        border: solid $primary;
     }
     
     .media-list-container {
@@ -112,11 +131,6 @@ class NavigationColumn(Container):
         text-style: italic;
     }
     
-    .item-type {
-        color: $primary;
-        text-style: none;
-    }
-    
     .pagination-controls {
         height: auto;
         padding: 1;
@@ -154,6 +168,7 @@ class NavigationColumn(Container):
     
     # Reactive properties
     selected_type: reactive[Optional[str]] = reactive("all-media")
+    selected_view: reactive[Optional[str]] = reactive("detailed")
     selected_item_id: reactive[Optional[int]] = reactive(None)
     loading: reactive[bool] = reactive(False)
     current_page: reactive[int] = reactive(1)
@@ -171,6 +186,12 @@ class NavigationColumn(Container):
         self.media_types = media_types
         self.media_items: List[Dict[str, Any]] = []
         self._type_options = self._build_type_options()
+        self._view_options = [
+            ("Detailed Media View", "detailed"),
+            ("Analysis Review", "analysis"),
+            ("Multi-Item Review", "multi"),
+            ("Collections View", "collections")
+        ]
     
     def _build_type_options(self) -> List[Tuple[str, str]]:
         """Build options for the media type selector."""
@@ -188,35 +209,32 @@ class NavigationColumn(Container):
     
     def compose(self) -> ComposeResult:
         """Compose the navigation column UI."""
-        # Header with view and type selectors
+        # Header
         with Container(classes="nav-header"):
             yield Label("Media Library")
-            
-            # Add view selector dropdown with explicit display text
-            view_options = [
-                ("Detailed Media View", "detailed"),
-                ("Analysis Review", "analysis"),
-                ("Multi-Item Review", "multi"),
-                ("Collections View", "collections")
-            ]
-            view_select = Select(
-                options=view_options,
-                value="detailed",
-                id="media-view-select",
-                prompt="Detailed Media View",  # Use actual value as prompt
-                allow_blank=False
-            )
-            yield view_select
-            
-            # Media type selector with explicit display text
-            type_select = Select(
-                options=[(name, value) for name, value in self._type_options],
-                value="all-media" if "all-media" in [v for _, v in self._type_options] else None,
-                id="media-type-select",
-                prompt="All Media",  # Use actual value as prompt
-                allow_blank=False
-            )
-            yield type_select
+        
+        # View selector using OptionList
+        with Container(classes="view-selector-container"):
+            yield Label("View Mode:", classes="view-selector-label")
+            view_list = OptionList(id="view-options-list")
+            for name, value in self._view_options:
+                view_list.add_option(Option(name, id=f"view-{value}"))
+            # Set initial selection
+            view_list.highlighted = 0
+            yield view_list
+        
+        # Media type selector using OptionList
+        with Container(classes="type-selector-container"):
+            yield Label("Media Type:", classes="type-selector-label")
+            type_list = OptionList(id="type-options-list")
+            for name, value in self._type_options:
+                type_list.add_option(Option(name, id=f"type-{value}"))
+            # Set initial selection to "all-media" if available
+            for i, (_, value) in enumerate(self._type_options):
+                if value == "all-media":
+                    type_list.highlighted = i
+                    break
+            yield type_list
         
         # Media items list
         with Container(classes="media-list-container"):
@@ -230,53 +248,37 @@ class NavigationColumn(Container):
     
     def on_mount(self) -> None:
         """Initialize when mounted."""
-        logger.info("NavigationColumn mounted")
-        
-        # Force update the display text on mount
-        try:
-            view_select = self.query_one("#media-view-select", Select)
-            type_select = self.query_one("#media-type-select", Select)
-            
-            # Ensure the dropdowns display their current values
-            if view_select.value:
-                # Find the display name for the current value
-                for label, value in view_select._options:
-                    if value == view_select.value:
-                        view_select.prompt = label
-                        break
-            
-            if type_select.value:
-                # Find the display name for the current value
-                for label, value in type_select._options:
-                    if value == type_select.value:
-                        type_select.prompt = label
-                        break
-            
-            logger.info(f"View dropdown - Value: {view_select.value}, Prompt: {view_select.prompt}")
-            logger.info(f"Type dropdown - Value: {type_select.value}, Prompt: {type_select.prompt}")
-            
-            # Force a refresh
-            view_select.refresh()
-            type_select.refresh()
-            
-        except Exception as e:
-            logger.error(f"Error updating dropdowns: {e}")
+        logger.info("NavigationColumn (OptionList version) mounted")
     
-    @on(Select.Changed)
-    def handle_type_selection(self, event: Select.Changed) -> None:
-        """Handle media type selection from dropdown."""
-        if event.control.id == "media-type-select" and event.value:
-            # Find display name for the selected value
-            display_name = next(
-                (name for name, value in self._type_options if value == event.value),
-                event.value
-            )
-            
-            logger.info(f"Media type selected: {event.value} ({display_name})")
-            self.selected_type = event.value
-            
-            # Emit event for parent to handle
-            self.post_message(MediaTypeSelectedEventV88(event.value, display_name))
+    @on(OptionList.OptionSelected)
+    def handle_option_selection(self, event: OptionList.OptionSelected) -> None:
+        """Handle option selection from OptionList widgets."""
+        if event.option_list.id == "view-options-list":
+            # Handle view selection
+            option_id = event.option.id
+            if option_id and option_id.startswith("view-"):
+                view_value = option_id.replace("view-", "")
+                display_name = event.option.prompt
+                
+                logger.info(f"View mode selected: {view_value} ({display_name})")
+                self.selected_view = view_value
+                
+                # Emit event for parent to handle
+                # You might want to create a separate event for view changes
+                # For now, we'll just log it
+        
+        elif event.option_list.id == "type-options-list":
+            # Handle type selection
+            option_id = event.option.id
+            if option_id and option_id.startswith("type-"):
+                type_value = option_id.replace("type-", "")
+                display_name = event.option.prompt
+                
+                logger.info(f"Media type selected: {type_value} ({display_name})")
+                self.selected_type = type_value
+                
+                # Emit event for parent to handle
+                self.post_message(MediaTypeSelectedEventV88(type_value, display_name))
     
     @on(ListView.Selected)
     def handle_item_selection(self, event: ListView.Selected) -> None:
@@ -319,11 +321,13 @@ class NavigationColumn(Container):
         """Set the active media type."""
         self.selected_type = type_slug
         
-        # Update dropdown selection
+        # Update OptionList selection
         try:
-            type_select = self.query_one("#media-type-select", Select)
-            if type_slug in [v for _, v in self._type_options]:
-                type_select.value = type_slug
+            type_list = self.query_one("#type-options-list", OptionList)
+            for i, (_, value) in enumerate(self._type_options):
+                if value == type_slug:
+                    type_list.highlighted = i
+                    break
         except Exception as e:
             logger.debug(f"Could not update type selector: {e}")
     
@@ -370,8 +374,8 @@ class NavigationColumn(Container):
         media_type = media_data.get('type', 'Unknown')
         author = media_data.get('author', '')
         
-        # Truncate title more aggressively for narrow column
-        max_title_len = 25  # Reduced from 40
+        # Truncate title for narrow column
+        max_title_len = 25
         if len(title) > max_title_len:
             title = title[:max_title_len-3] + "..."
         
@@ -440,7 +444,6 @@ class NavigationColumn(Container):
                         id="loading-item"
                     )
                 )
-        # If not loading, the list will be updated by load_items
     
     def request_page_change(self, page: int) -> None:
         """Request a page change from the parent."""

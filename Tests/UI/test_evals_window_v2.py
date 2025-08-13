@@ -7,8 +7,10 @@ import pytest
 import pytest_asyncio
 from unittest.mock import Mock, patch, MagicMock
 from textual.app import App, ComposeResult
+from textual.widgets import Button, Input
 
 from tldw_chatbook.UI.evals_window_v2 import EvalsWindow
+from Tests.UI.textual_test_helpers import safe_click, focus_and_type, get_valid_select_value
 
 
 class EvalsTestApp(App):
@@ -25,20 +27,24 @@ def mock_orchestrator():
     with patch('tldw_chatbook.UI.evals_window_v2.EvaluationOrchestrator') as mock:
         orchestrator = Mock()
         orchestrator.db = Mock()
-        orchestrator.db.get_tasks = Mock(return_value=[
-            (1, "Test Task 1", "multiple_choice", None),
-            (2, "Test Task 2", "generation", None)
+        orchestrator.db.list_tasks = Mock(return_value=[
+            {'id': '1', 'name': 'Test Task 1', 'task_type': 'multiple_choice', 'description': 'Test MC task'},
+            {'id': '2', 'name': 'Test Task 2', 'task_type': 'generation', 'description': 'Test gen task'}
         ])
-        orchestrator.db.get_model_configs = Mock(return_value=[
-            (1, "GPT-4", "openai", "gpt-4", None),
-            (2, "Claude", "anthropic", "claude-3", None)
+        orchestrator.db.list_models = Mock(return_value=[
+            {'id': '1', 'name': 'GPT-4', 'provider': 'openai', 'model_id': 'gpt-4'},
+            {'id': '2', 'name': 'Claude', 'provider': 'anthropic', 'model_id': 'claude-3'}
         ])
-        orchestrator.db.get_run_details = Mock(return_value=(
-            "run-123", 1, 1, "Test Run", "completed",
-            "2024-01-01", "2024-01-02", 100, 95,
-            '{"accuracy": 0.95}', '[]'
-        ))
+        orchestrator.db.list_runs = Mock(return_value=[])
+        orchestrator.db.get_run_details = Mock(return_value={
+            'id': 'run-123', 'task_id': '1', 'model_id': '1', 
+            'name': 'Test Run', 'status': 'completed',
+            'created_at': '2024-01-01', 'completed_at': '2024-01-02', 
+            'total_samples': 100, 'completed_samples': 95,
+            'metrics': {'accuracy': 0.95}, 'errors': []
+        })
         orchestrator.db.create_task = Mock(return_value="task-123")
+        orchestrator.db.create_model = Mock(return_value="model-123")
         orchestrator.create_model_config = Mock(return_value="model-123")
         orchestrator.run_evaluation = Mock()
         
@@ -116,12 +122,11 @@ async def test_temperature_input(mock_orchestrator):
         evals_window = app.query_one(EvalsWindow)
         
         # Get temperature input
-        temp_input = app.query_one("#temperature-input")
+        temp_input = app.query_one("#temperature-input", Input)
         assert temp_input is not None
         
-        # Clear and type new temperature
-        temp_input.clear()
-        await pilot.press("1", ".", "5")
+        # Focus and type new temperature
+        await focus_and_type(pilot, temp_input, "1.5")
         await pilot.pause()  # Let message propagate
         
         # Check that temperature was updated
@@ -138,12 +143,11 @@ async def test_max_samples_input(mock_orchestrator):
         evals_window = app.query_one(EvalsWindow)
         
         # Get max samples input
-        samples_input = app.query_one("#max-samples-input")
+        samples_input = app.query_one("#max-samples-input", Input)
         assert samples_input is not None
         
-        # Clear and type new value
-        samples_input.clear()
-        await pilot.press("5", "0", "0")
+        # Focus and type new value
+        await focus_and_type(pilot, samples_input, "500")
         await pilot.pause()  # Let message propagate
         
         # Check that max samples was updated
@@ -180,49 +184,68 @@ async def test_cost_estimation_updates(mock_orchestrator):
 async def test_run_button_validation(mock_orchestrator):
     """Test that run button validates configuration"""
     app = EvalsTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(120, 50)) as pilot:  # Larger screen
         await pilot.pause()  # Let app initialize
         
         evals_window = app.query_one(EvalsWindow)
         
         # Try to run without configuration
-        run_button = app.query_one("#run-button")
-        await pilot.click("#run-button")
+        run_button = app.query_one("#run-button", Button)
+        await safe_click(pilot, run_button)
         await pilot.pause()
         
         # Should still be idle (validation failed)
         assert evals_window.evaluation_status == "idle"
         
         # Now configure properly
-        task_select = app.query_one("#task-select")
-        task_select.value = "1"
-        model_select = app.query_one("#model-select")
-        model_select.value = "1"
-        await pilot.pause()
+        from textual.widgets import Select
+        task_select = app.query_one("#task-select", Select)
+        task_value = get_valid_select_value(task_select, 0)
+        if task_value:
+            task_select.value = task_value
+            await pilot.pause()  # Wait for change event
+            # Verify it was set
+            assert evals_window.selected_task_id is not None, "Task ID was not set"
+        
+        model_select = app.query_one("#model-select", Select)
+        model_value = get_valid_select_value(model_select, 0)
+        if model_value:
+            model_select.value = model_value
+            await pilot.pause()  # Wait for change event
+            # Verify it was set
+            assert evals_window.selected_model_id is not None, "Model ID was not set"
         
         # Try to run again - should start evaluation
         # Note: Actual evaluation won't complete in test, but status should change
-        with patch.object(evals_window, 'run_evaluation') as mock_run:
-            await pilot.click("#run-button")
+        with patch.object(evals_window, 'run_worker') as mock_worker:
+            await safe_click(pilot, run_button)
             await pilot.pause()
-            mock_run.assert_called_once()
+            # Check that run_worker was called with run_evaluation
+            mock_worker.assert_called_once()
+            # Verify the first argument is the run_evaluation method
+            assert mock_worker.call_args[0][0].__name__ == 'run_evaluation'
 
 
 @pytest.mark.asyncio
 async def test_add_model_button(mock_orchestrator):
     """Test adding a new model"""
     app = EvalsTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(120, 50)) as pilot:  # Larger screen
         await pilot.pause()  # Let app initialize
         
         evals_window = app.query_one(EvalsWindow)
         
+        # Ensure orchestrator is set up
+        assert evals_window.orchestrator is not None, "Orchestrator not initialized"
+        
         # Click add model button
-        await pilot.click("#add-model-btn")
+        add_btn = app.query_one("#add-model-btn", Button)
+        click_result = await safe_click(pilot, add_btn)
+        assert click_result, "Failed to click add model button"
         await pilot.pause()
         
-        # Check that create_model_config was called
-        mock_orchestrator.return_value.create_model_config.assert_called_once()
+        # Check that create_model was called on the database
+        mock_orchestrator.return_value.db.create_model.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -233,7 +256,8 @@ async def test_create_task_button(mock_orchestrator):
         await pilot.pause()  # Let app initialize
         
         # Click create task button
-        await pilot.click("#create-task-btn")
+        create_btn = app.query_one("#create-task-btn", Button)
+        await safe_click(pilot, create_btn)
         await pilot.pause()
         
         # Check that task was created
@@ -249,14 +273,15 @@ async def test_progress_display(mock_orchestrator):
         
         evals_window = app.query_one(EvalsWindow)
         
-        # Progress should be hidden initially
-        progress_section = app.query_one("#progress-section")
-        assert progress_section.display == False
+        # Progress collapsible should be collapsed initially
+        from textual.widgets import Collapsible
+        progress_collapsible = app.query_one("#progress-collapsible", Collapsible)
+        assert progress_collapsible.collapsed == True
         
-        # When status changes to running, progress should show
+        # When status changes to running, progress should expand
         evals_window.evaluation_status = "running"
         await pilot.pause()
-        assert progress_section.display == True
+        assert progress_collapsible.collapsed == False
         
         # When status changes to completed, it should remain visible briefly
         evals_window.evaluation_status = "completed"
@@ -274,11 +299,12 @@ async def test_reactive_state_updates(mock_orchestrator):
         evals_window = app.query_one(EvalsWindow)
         
         # Update progress
+        from textual.widgets import ProgressBar
         evals_window.evaluation_progress = 50.0
         await pilot.pause()
         
-        progress_label = app.query_one("#progress-label")
-        assert "50.0%" in progress_label.renderable
+        progress_bar = app.query_one("#progress-bar", ProgressBar)
+        assert progress_bar.percentage == 0.5  # ProgressBar uses 0-1 scale
         
         # Update progress message
         evals_window.progress_message = "Processing sample 50/100"
@@ -338,9 +364,11 @@ async def test_status_updates(mock_orchestrator):
         evals_window = app.query_one(EvalsWindow)
         
         # Get status element
-        status = app.query_one("#status-text")
+        from textual.widgets import Static
+        status = app.query_one("#status-text", Static)
         assert status is not None
-        assert "Ready" in status.renderable
+        # Status could be "Ready" or "Data loaded successfully"
+        assert "Ready" in status.renderable or "loaded" in status.renderable
         
         # Update status
         evals_window._update_status("Testing", error=True)

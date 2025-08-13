@@ -88,7 +88,9 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:modelcontextprotocol.io)"
+      "WebFetch(domain:modelcontextprotocol.io)",
+      "Bash(python:*)",
+      "Bash(python -m pytest Tests/UI/test_evals_window_v2.py::test_run_button_validation -xvs --tb=line)"
     ],
     "deny": []
   }

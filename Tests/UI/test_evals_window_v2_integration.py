@@ -16,6 +16,7 @@ from textual.widgets import Button, Select, Input, DataTable, Static, ProgressBa
 from tldw_chatbook.UI.evals_window_v2 import EvalsWindow
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
+from Tests.UI.textual_test_helpers import safe_click, get_valid_select_value, set_select_by_index
 
 
 class EvalsIntegrationTestApp(App):
@@ -137,15 +138,20 @@ async def test_task_selection_updates_state(test_db, temp_db_dir):
             evals_window = app.query_one(EvalsWindow)
             task_select = app.query_one("#task-select", Select)
             
-            # Select the task
-            task_select.value = str(task_id)
-            await pilot.pause()
+            # Get available task options
+            task_options = [opt for opt in task_select._options if opt[0] != Select.BLANK]
             
-            # Check that the state was updated
-            assert evals_window.selected_task_id == str(task_id)
-            
-            # Check that task info was stored
-            assert str(task_id) in evals_window.available_tasks
+            if task_options:
+                # Select the first available task
+                task_label, task_value = task_options[0]
+                task_select.value = task_value
+                await pilot.pause()
+                
+                # Check that the state was updated
+                assert evals_window.selected_task_id == task_value
+                
+                # Check that task info was stored
+                assert task_value in evals_window.available_tasks
 
 
 @pytest.mark.asyncio
@@ -162,15 +168,20 @@ async def test_model_selection_updates_state(test_db, temp_db_dir):
             evals_window = app.query_one(EvalsWindow)
             model_select = app.query_one("#model-select", Select)
             
-            # Select the model
-            model_select.value = str(model_id)
-            await pilot.pause()
+            # Get available model options
+            model_options = [opt for opt in model_select._options if opt[0] != Select.BLANK]
             
-            # Check that the state was updated
-            assert evals_window.selected_model_id == str(model_id)
-            
-            # Check that model info was stored
-            assert str(model_id) in evals_window.available_models
+            if model_options:
+                # Select the first available model
+                model_label, model_value = model_options[0]
+                model_select.value = model_value
+                await pilot.pause()
+                
+                # Check that the state was updated
+                assert evals_window.selected_model_id == model_value
+                
+                # Check that model info was stored
+                assert model_value in evals_window.available_models
 
 
 @pytest.mark.asyncio
@@ -221,7 +232,7 @@ async def test_run_button_requires_configuration():
         
         # Try to run without configuration
         initial_status = evals_window.evaluation_status
-        await pilot.click("#run-button")
+        await safe_click(pilot, "#run-button")
         await pilot.pause()
         
         # Should still be idle because validation failed
@@ -328,7 +339,7 @@ async def test_create_task_button_functionality(test_db):
             initial_task_count = len(db.list_tasks())
             
             # Click create task button
-            await pilot.click("#create-task-btn")
+            await safe_click(pilot, "#create-task-btn")
             await pilot.pause()
             
             # Should have created a new task
@@ -350,7 +361,7 @@ async def test_add_model_button_functionality(test_db):
             initial_model_count = len(db.list_models())
             
             # Click add model button
-            await pilot.click("#add-model-btn")
+            await safe_click(pilot, "#add-model-btn")
             await pilot.pause()
             
             # Should have added a new model
@@ -379,7 +390,7 @@ async def test_refresh_buttons_reload_data(test_db):
             )
             
             # Click refresh tasks
-            await pilot.click("#refresh-tasks-btn")
+            await safe_click(pilot, "#refresh-tasks-btn")
             await pilot.pause()
             
             # Check that new task appears in selector

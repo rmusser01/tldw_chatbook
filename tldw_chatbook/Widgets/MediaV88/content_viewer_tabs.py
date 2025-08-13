@@ -247,6 +247,7 @@ class ContentViewerTabs(Container):
     current_analysis: reactive[Optional[str]] = reactive(None)
     analysis_versions: reactive[List[Dict[str, Any]]] = reactive([])
     current_version_index: reactive[int] = reactive(0)
+    format_for_reading: reactive[bool] = reactive(False)
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the content viewer tabs."""
@@ -551,6 +552,10 @@ class ContentViewerTabs(Container):
                 if author and author != 'Unknown':
                     markdown_content += f"*By {author}*\n\n---\n\n"
                 
+                # Apply format for reading if enabled
+                if self.format_for_reading:
+                    content = self._apply_reading_format(str(content))
+                
                 # Add the actual content
                 markdown_content += str(content)
                 
@@ -730,6 +735,36 @@ class ContentViewerTabs(Container):
         """Clear search highlights from content."""
         # This would clear highlighting in the markdown display
         pass
+    
+    def _apply_reading_format(self, text: str) -> str:
+        """Apply reading format by adding breaks after sentences."""
+        import re
+        
+        # Preserve existing double line breaks (paragraphs)
+        paragraphs = text.split('\n\n')
+        formatted_paragraphs = []
+        
+        for paragraph in paragraphs:
+            # Skip empty paragraphs
+            if not paragraph.strip():
+                formatted_paragraphs.append(paragraph)
+                continue
+            
+            # Add double newline after sentence endings
+            # Match . ! ? followed by a space and capital letter or end of string
+            formatted = re.sub(r'([.!?])\s+(?=[A-Z]|$)', r'\1\n\n', paragraph)
+            formatted_paragraphs.append(formatted)
+        
+        # Join paragraphs back with double newlines
+        return '\n\n'.join(formatted_paragraphs)
+    
+    def set_format_for_reading(self, enabled: bool) -> None:
+        """Set the format for reading mode and reload content."""
+        if self.format_for_reading != enabled:
+            self.format_for_reading = enabled
+            # Reload content if we have media loaded
+            if self.current_media:
+                self._load_content(self.current_media)
     
     def clear_display(self) -> None:
         """Clear all displays."""
