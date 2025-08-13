@@ -257,6 +257,10 @@ class MetadataPanel(Container):
     
     def watch_edit_mode(self, edit_mode: bool) -> None:
         """React to edit mode changes."""
+        # Don't try to manipulate UI during mount
+        if not self.is_mounted:
+            return
+            
         if edit_mode:
             self._enter_edit_mode()
         else:
@@ -410,99 +414,170 @@ class MetadataPanel(Container):
             'keywords': self.current_media.get('keywords', ''),
         }
         
-        # Replace static fields with inputs
+        # Replace static fields with inputs following Textual best practices
         try:
-            # Title
-            title_container = self.query_one("#title-value").parent
-            title_static = self.query_one("#title-value")
-            title_static.remove()
-            title_input = Input(
-                value=self.original_values['title'],
-                id="title-input",
-                classes="edit-input"
-            )
-            title_container.mount(title_input)
+            # We'll hide statics and show inputs that are pre-mounted but hidden
+            # First, ensure edit inputs exist (mount them if needed)
+            grid = self.query_one("#metadata-grid", Grid)
             
-            # Author
-            author_container = self.query_one("#author-value").parent
-            author_static = self.query_one("#author-value")
-            author_static.remove()
-            author_input = Input(
-                value=self.original_values['author'],
-                id="author-input",
-                classes="edit-input"
-            )
-            author_container.mount(author_input)
+            # Title field
+            self._replace_with_input("#title-value", "title-input", self.original_values['title'])
             
-            # URL
-            url_container = self.query_one("#url-value").parent
-            url_static = self.query_one("#url-value")
-            url_static.remove()
-            url_input = Input(
-                value=self.original_values['url'],
-                id="url-input",
-                classes="edit-input"
-            )
-            url_container.mount(url_input)
+            # Author field  
+            self._replace_with_input("#author-value", "author-input", self.original_values['author'])
             
-            # Description
-            desc_container = self.query_one("#description-value").parent
-            desc_static = self.query_one("#description-value")
-            desc_static.remove()
-            desc_textarea = TextArea(
-                self.original_values['description'],
-                id="description-input",
-                classes="edit-textarea"
-            )
-            desc_container.mount(desc_textarea)
+            # URL field
+            self._replace_with_input("#url-value", "url-input", self.original_values['url'])
             
-            # Keywords
-            keywords_container = self.query_one("#keywords-list").parent
-            keywords_list = self.query_one("#keywords-list")
-            keywords_list.remove()
+            # Description field - use TextArea
+            self._replace_with_textarea("#description-value", "description-input", self.original_values['description'])
             
-            # Convert keywords list to comma-separated string
+            # Keywords field
             keywords_str = self.original_values['keywords']
             if isinstance(keywords_str, list):
                 keywords_str = ', '.join(keywords_str)
+            self._replace_keywords_with_input(keywords_str)
             
+        except Exception as e:
+            logger.error(f"Error entering edit mode: {e}", exc_info=True)
+            self.app_instance.notify("Failed to enter edit mode", severity="error")
+            return
+        
+        # Toggle buttons
+        self._toggle_edit_buttons(True)
+    
+    def _replace_with_input(self, static_id: str, input_id: str, value: str) -> None:
+        """Replace a static widget with an input widget."""
+        try:
+            static_widget = self.query_one(static_id, Static)
+            parent = static_widget.parent
+            
+            # Remove the static widget
+            static_widget.remove()
+            
+            # Create and mount the input
+            input_widget = Input(value=value, id=input_id, classes="edit-input")
+            parent.mount(input_widget)
+        except Exception as e:
+            logger.error(f"Error replacing {static_id}: {e}")
+    
+    def _replace_with_textarea(self, static_id: str, textarea_id: str, value: str) -> None:
+        """Replace a static widget with a textarea widget."""
+        try:
+            static_widget = self.query_one(static_id, Static)
+            parent = static_widget.parent
+            
+            # Remove the static widget
+            static_widget.remove()
+            
+            # Create and mount the textarea
+            textarea_widget = TextArea(value, id=textarea_id, classes="edit-textarea")
+            parent.mount(textarea_widget)
+        except Exception as e:
+            logger.error(f"Error replacing {static_id}: {e}")
+    
+    def _replace_keywords_with_input(self, keywords_str: str) -> None:
+        """Replace keywords list with input field."""
+        try:
+            keywords_list = self.query_one("#keywords-list", Horizontal)
+            parent = keywords_list.parent
+            
+            # Remove the keywords list
+            keywords_list.remove()
+            
+            # Create and mount the input
             keywords_input = Input(
                 value=keywords_str,
                 placeholder="Enter keywords separated by commas",
                 id="keywords-input",
                 classes="edit-input"
             )
-            keywords_container.mount(keywords_input)
-            
+            parent.mount(keywords_input)
         except Exception as e:
-            logger.error(f"Error entering edit mode: {e}", exc_info=True)
-        
-        # Toggle buttons
-        self._toggle_edit_buttons(True)
+            logger.error(f"Error replacing keywords: {e}")
     
     def _exit_edit_mode(self) -> None:
         """Exit edit mode and restore display."""
         logger.info("Exiting edit mode")
         
-        # Rebuild the display
         try:
-            # We need to restore the original structure
-            # For simplicity, we'll remount the entire grid
-            grid = self.query_one("#metadata-grid")
-            grid.remove_children()
-            
-            # Recreate the original structure
-            self._recreate_metadata_grid(grid)
-            
-            # Update with current data
-            self._update_display()
+            # Replace inputs back with static widgets
+            self._restore_static("#title-input", "title-value", self.current_media.get('title', ''))
+            self._restore_static("#author-input", "author-value", self.current_media.get('author', ''))
+            self._restore_static("#url-input", "url-value", self.current_media.get('url', ''))
+            self._restore_static_textarea("#description-input", "description-value", 
+                                        self.current_media.get('description', self.current_media.get('summary', '')))
+            self._restore_keywords()
             
         except Exception as e:
             logger.error(f"Error exiting edit mode: {e}", exc_info=True)
+            # If there's an error, try to reload the whole panel
+            if self.current_media:
+                self.load_media(self.current_media)
         
         # Toggle buttons
         self._toggle_edit_buttons(False)
         self.has_unsaved_changes = False
+    
+    def _restore_static(self, input_id: str, static_id: str, value: str) -> None:
+        """Restore a static widget from an input widget."""
+        try:
+            input_widget = self.query_one(input_id, Input)
+            parent = input_widget.parent
+            
+            # Remove the input widget
+            input_widget.remove()
+            
+            # Create and mount the static
+            static_widget = Static(value or "N/A", id=static_id, classes="field-value")
+            parent.mount(static_widget)
+        except Exception as e:
+            logger.error(f"Error restoring {static_id}: {e}")
+    
+    def _restore_static_textarea(self, textarea_id: str, static_id: str, value: str) -> None:
+        """Restore a static widget from a textarea widget."""
+        try:
+            textarea_widget = self.query_one(textarea_id, TextArea)
+            parent = textarea_widget.parent
+            
+            # Remove the textarea widget
+            textarea_widget.remove()
+            
+            # Create and mount the static
+            static_widget = Static(value or "No description available", id=static_id, classes="description-value")
+            parent.mount(static_widget)
+        except Exception as e:
+            logger.error(f"Error restoring {static_id}: {e}")
+    
+    def _restore_keywords(self) -> None:
+        """Restore keywords list from input field."""
+        try:
+            keywords_input = self.query_one("#keywords-input", Input)
+            parent = keywords_input.parent
+            
+            # Remove the input
+            keywords_input.remove()
+            
+            # Create and mount the keywords list
+            keywords_list = Horizontal(id="keywords-list", classes="keywords-list")
+            parent.mount(keywords_list)
+            
+            # Populate with keywords
+            keywords = self.current_media.get('keywords', [])
+            if isinstance(keywords, str):
+                keywords = [k.strip() for k in keywords.split(',') if k.strip()]
+            
+            if keywords:
+                for keyword in keywords:
+                    tag = Static(keyword, classes="keyword-tag")
+                    keywords_list.mount(tag)
+            else:
+                placeholder = Static("No keywords", classes="keyword-tag")
+                placeholder.styles.opacity = "0.5"
+                keywords_list.mount(placeholder)
+                
+        except Exception as e:
+            logger.error(f"Error restoring keywords: {e}")
     
     def _recreate_metadata_grid(self, grid: Grid) -> None:
         """Recreate the metadata grid structure."""
@@ -559,12 +634,36 @@ class MetadataPanel(Container):
             # Collect changed values
             changes = {}
             
-            # Get input values
-            title = self.query_one("#title-input", Input).value
-            author = self.query_one("#author-input", Input).value
-            url = self.query_one("#url-input", Input).value
-            description = self.query_one("#description-input", TextArea).text
-            keywords = self.query_one("#keywords-input", Input).value
+            # Get input values safely
+            try:
+                title = self.query_one("#title-input", Input).value
+            except:
+                logger.error("Could not find title input")
+                return
+                
+            try:
+                author = self.query_one("#author-input", Input).value
+            except:
+                logger.error("Could not find author input")
+                return
+                
+            try:
+                url = self.query_one("#url-input", Input).value
+            except:
+                logger.error("Could not find url input")
+                return
+                
+            try:
+                description = self.query_one("#description-input", TextArea).text
+            except:
+                logger.error("Could not find description textarea")
+                return
+                
+            try:
+                keywords = self.query_one("#keywords-input", Input).value
+            except:
+                logger.error("Could not find keywords input")
+                return
             
             # Check for changes
             if title != self.original_values['title']:
@@ -620,15 +719,36 @@ class MetadataPanel(Container):
         self.current_media = None
         self.has_unsaved_changes = False
         
-        if self.edit_mode:
+        # Don't trigger edit mode change during mount
+        if self.edit_mode and self.is_mounted:
             self.edit_mode = False
         
-        # Show empty state
+        # Show empty state - but keep grid visible with empty values
         try:
-            grid = self.query_one("#metadata-grid", Grid)
-            grid.styles.display = "none"
+            # Update fields to show "N/A" or empty state
+            fields = {
+                'title-value': 'Select a media item',
+                'type-value': 'N/A',
+                'author-value': 'N/A',
+                'url-value': 'N/A',
+                'created-value': 'N/A',
+                'modified-value': 'N/A',
+                'description-value': 'No media selected',
+            }
             
-            # Could add an empty state message here
+            for field_id, value in fields.items():
+                try:
+                    field = self.query_one(f"#{field_id}", Static)
+                    field.update(value)
+                except Exception:
+                    pass
+            
+            # Clear keywords
+            try:
+                keywords_list = self.query_one("#keywords-list", Horizontal)
+                keywords_list.remove_children()
+            except Exception:
+                pass
             
         except Exception as e:
             logger.debug(f"Could not clear display: {e}")

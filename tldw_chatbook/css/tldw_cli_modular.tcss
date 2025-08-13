@@ -5725,6 +5725,11 @@ EvalsWindow {
     height: 100%;
 }
 
+/* Override horizontal layout from .window class for evals window */
+#evals-window.window {
+    layout: vertical !important;
+}
+
 /* --- Collapsible Sections --- */
 Collapsible {
     margin-bottom: 1;

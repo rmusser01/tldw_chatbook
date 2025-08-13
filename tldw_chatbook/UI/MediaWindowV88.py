@@ -223,22 +223,11 @@ class MediaWindowV88(Container):
     @on(MediaItemSelectedEventV88)
     def handle_media_item_selected(self, event: MediaItemSelectedEventV88) -> None:
         """Handle media item selection from list."""
+        logger.info(f"Media item selected: {event.media_id}")
         self.selected_media_id = event.media_id
-        self.current_media_data = event.media_data
         
-        # Update metadata panel if it exists
-        if hasattr(self, 'metadata_panel'):
-            try:
-                self.metadata_panel.load_media(event.media_data)
-            except AttributeError:
-                pass  # Component not fully implemented yet
-        
-        # Update content viewer if it exists
-        if hasattr(self, 'content_viewer'):
-            try:
-                self.content_viewer.load_media(event.media_data)
-            except AttributeError:
-                pass  # Component not fully implemented yet
+        # Load full media details from database (this will update metadata and content panels)
+        self.load_media_details(event.media_id)
     
     @on(MediaSearchEventV88)
     def handle_media_search(self, event: MediaSearchEventV88) -> None:
@@ -406,22 +395,18 @@ class MediaWindowV88(Container):
             if full_data:
                 self.current_media_data = full_data
                 
-                # Update panels
-                if hasattr(self, 'metadata_panel'):
-                    try:
-                        self.metadata_panel.load_media(full_data)
-                    except AttributeError:
-                        pass
+                # Must update UI from main thread when in a worker
+                def update_ui():
+                    self.metadata_panel.load_media(full_data)
+                    self.content_viewer.load_media(full_data)
                 
-                if hasattr(self, 'content_viewer'):
-                    try:
-                        self.content_viewer.load_media(full_data)
-                    except AttributeError:
-                        pass
+                # Schedule the UI update in the main thread
+                self.app.call_after_refresh(update_ui)
                 
                 logger.info(f"Loaded media details: {full_data.get('title', 'Unknown')}")
             else:
                 logger.warning(f"No data found for media ID: {media_id}")
+                self.app_instance.notify("Media item not found", severity="warning")
                 
         except Exception as e:
             logger.error(f"Failed to load media details: {e}", exc_info=True)

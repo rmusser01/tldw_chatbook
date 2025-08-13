@@ -49,6 +49,12 @@ class NavigationColumn(Container):
         margin-bottom: 1;
     }
     
+    #media-view-select {
+        width: 100%;
+        height: 3;
+        margin-bottom: 1;
+    }
+    
     #media-type-select {
         width: 100%;
         height: 3;
@@ -70,10 +76,12 @@ class NavigationColumn(Container):
     }
     
     .media-list-item {
-        padding: 0 1;
+        padding: 1;
         height: auto;
-        min-height: 4;
+        min-height: 3;
+        max-height: 5;
         border-bottom: solid $primary-lighten-3;
+        width: 100%;
     }
     
     .media-list-item:hover {
@@ -172,9 +180,25 @@ class NavigationColumn(Container):
     
     def compose(self) -> ComposeResult:
         """Compose the navigation column UI."""
-        # Header with type selector
+        # Header with view and type selectors
         with Container(classes="nav-header"):
             yield Label("Media Library")
+            
+            # Add view selector dropdown
+            view_options = [
+                ("Detailed Media View", "detailed"),
+                ("Analysis Review", "analysis"),
+                ("Multi-Item Review", "multi"),
+                ("Collections View", "collections")
+            ]
+            yield Select(
+                options=view_options,
+                value="detailed",
+                id="media-view-select",
+                prompt="Select view..."
+            )
+            
+            # Media type selector
             yield Select(
                 options=[(name, value) for name, value in self._type_options],
                 value="all-media" if "all-media" in [v for _, v in self._type_options] else None,
@@ -279,6 +303,8 @@ class NavigationColumn(Container):
         
         # Update list view
         list_view = self.query_one("#media-items-list", ListView)
+        
+        # Clear the list completely including any loading indicators
         list_view.clear()
         
         if not items:
@@ -305,20 +331,20 @@ class NavigationColumn(Container):
         media_type = media_data.get('type', 'Unknown')
         author = media_data.get('author', '')
         
-        # Truncate title if too long
-        if len(title) > 40:
-            title = title[:37] + "..."
+        # Truncate title more aggressively for narrow column
+        max_title_len = 25  # Reduced from 40
+        if len(title) > max_title_len:
+            title = title[:max_title_len-3] + "..."
         
-        # Build metadata string
-        meta_parts = []
+        # Build compact metadata
+        if author and len(author) > 15:
+            author = author[:12] + "..."
+        
+        meta_text = f"{media_type}"
         if author:
-            meta_parts.append(f"by {author}")
-        if media_type:
-            meta_parts.append(media_type)
+            meta_text = f"{author} • {media_type}"
         
-        meta_text = " • ".join(meta_parts) if meta_parts else ""
-        
-        # Create content container
+        # Create compact content container
         content = Vertical(
             Static(title, classes="item-title"),
             Static(meta_text, classes="item-meta") if meta_text else Static(""),

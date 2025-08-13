@@ -6,11 +6,10 @@ from textual import on
 from typing import List, Optional
 
 try:
-    from .message_item import MessageItem
+    from .message_item_enhanced import MessageItemEnhanced as MessageItem
     from ..models import ChatSession, ChatMessage
     from ..messages import MessageReceived, StreamingChunk
 except ImportError:
-    from message_item import MessageItem
     import sys
     from pathlib import Path
     sys.path.append(str(Path(__file__).parent.parent))
@@ -68,8 +67,9 @@ class MessageList(VerticalScroll):
     def compose(self):
         """Compose message items.
         Called automatically when messages change due to recompose=True."""
+        # Use MessageItemEnhanced (aliased as MessageItem) for all messages
         for message in self.messages:
-            yield MessageItem(message)
+            yield MessageItem(message, is_streaming=False)
         
         # Add streaming message if active (reactive pattern)
         if self.is_streaming and self.streaming_content:

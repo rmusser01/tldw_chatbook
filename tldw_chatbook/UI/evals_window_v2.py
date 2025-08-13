@@ -45,10 +45,10 @@ class EvalsWindow(Container):
     # CSS for proper layout
     DEFAULT_CSS = """
     EvalsWindow {
-        layout: vertical;
-        height: 100%;
-        width: 100%;
-        overflow: hidden;
+    layout: vertical;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;  /* was auto auto; let only the inner scroller scroll */
     }
     
     /* Header section */
@@ -74,14 +74,16 @@ class EvalsWindow(Container):
     
     /* Main scrollable content */
     .evals-scroll-container {
-        height: 1fr;
+        height: 1fr;          /* consume remaining space between header and footer */
         width: 100%;
-        overflow: auto auto;
+        overflow-y: auto;     /* vertical scroll only */
+        overflow-x: hidden;   /* avoid horizontal scrollbars */
     }
     
     .evals-content {
         width: 100%;
         padding: 0 1;
+        layout: vertical;     /* ensure children stack vertically */
     }
     
     /* Section containers */
@@ -114,24 +116,29 @@ class EvalsWindow(Container):
     }
     
     .form-label {
-        width: 20%;
-        min-width: 15;
-        padding: 1 1 0 0;
+        width: 30%;
+        min-width: 10;
+        max-width: 20;
+        padding: 0 1;
+        height: 3;
     }
     
     .form-input {
-        width: 80%;
+        width: 70%;
+        height: 3;
     }
     
     /* Specific input sizing */
     Select {
         width: 100%;
         height: 3;
+        min-height: 3;
     }
     
     Input {
         width: 100%;
         height: 3;
+        min-height: 3;
     }
     
     TextArea {
@@ -143,7 +150,7 @@ class EvalsWindow(Container):
     .button-row {
         width: 100%;
         layout: horizontal;
-        height: 3;
+        height: 4;
         margin: 1 0;
     }
     
@@ -191,7 +198,7 @@ class EvalsWindow(Container):
     
     .results-table {
         width: 100%;
-        height: 20;
+        height: 20;            /* fixed height so it doesn't blow out the scroller */
         border: solid $primary;
     }
     
@@ -200,13 +207,14 @@ class EvalsWindow(Container):
         height: 100%;
     }
     
-    /* Status footer */
+    /* Status footer (no docking) */
     .status-footer {
         width: 100%;
         height: 3;
         background: $surface;
         border: solid $primary;
         padding: 1;
+        /* dock: bottom;  <-- remove this */
     }
     
     /* State styling */
@@ -233,8 +241,9 @@ class EvalsWindow(Container):
         width: 100%;
         max-height: 10;
     }
+
     """
-    
+
     # Reactive state
     selected_task_id: reactive[Optional[str]] = reactive(None)
     selected_model_id: reactive[Optional[str]] = reactive(None)
@@ -264,41 +273,45 @@ class EvalsWindow(Container):
         self.cancel_event = threading.Event()
         self._initialized = False
         
+        # Ensure container is visible and uses vertical layout
+        self.styles.height = "100%"
+        self.styles.width = "100%"
+        self.styles.layout = "vertical"  # Force vertical layout to override .window class
+        
     def compose(self) -> ComposeResult:
         """Build the UI with proper composition and sizing"""
         
-        # Header section
+        # Header section  
         with Container(classes="evals-header"):
             yield Static("🧪 Evaluation Lab V2", classes="header-title")
             yield Static("Complete evaluation system with full functionality", classes="header-subtitle")
         
         # Main scrollable content area
         with VerticalScroll(classes="evals-scroll-container"):
-            with Container(classes="evals-content"):
+            # Task Configuration Section
+            with Container(classes="config-section"):
+                yield Static("📋 Task Configuration", classes="section-title")
                 
-                # Task Configuration Section
-                with Container(classes="config-section"):
-                    yield Static("📋 Task Configuration", classes="section-title")
-                    
-                    with Container(classes="form-container"):
-                        # Task selection
-                        with Container(classes="form-row"):
-                            yield Label("Task:", classes="form-label")
-                            yield Select(
-                                [(Select.BLANK, None)],
-                                prompt="Select a task",
-                                id="task-select",
-                                classes="form-input"
-                            )
+                with Container(classes="form-container"):
+                    # Task selection
+                    with Container(classes="form-row"):
+                        yield Label("Task:", classes="form-label")
+                        yield Select(
+                            [("Loading...", None)],
+                            prompt="Select a task",
+                            id="task-select",
+                            classes="form-input",
+                            allow_blank=True
+                        )
                         
-                        # Task action buttons
-                        with Container(classes="button-row"):
-                            yield Button("📁 Load Task File", id="load-task-btn", variant="default")
-                            yield Button("➕ Create Task", id="create-task-btn", variant="default")
-                            yield Button("🔄 Refresh Tasks", id="refresh-tasks-btn", variant="default")
-                
-                # Model Configuration Section
-                with Container(classes="config-section"):
+                    # Task action buttons
+                    with Container(classes="button-row"):
+                        yield Button("📁 Load Task File", id="load-task-btn", variant="default")
+                        yield Button("➕ Create Task", id="create-task-btn", variant="default")
+                        yield Button("🔄 Refresh Tasks", id="refresh-tasks-btn", variant="default")
+            
+            # Model Configuration Section
+            with Container(classes="config-section"):
                     yield Static("🤖 Model Configuration", classes="section-title")
                     
                     with Container(classes="form-container"):
@@ -306,10 +319,11 @@ class EvalsWindow(Container):
                         with Container(classes="form-row"):
                             yield Label("Model:", classes="form-label")
                             yield Select(
-                                [(Select.BLANK, None)],
+                                [("Loading...", None)],
                                 prompt="Select a model",
                                 id="model-select",
-                                classes="form-input"
+                                classes="form-input",
+                                allow_blank=True
                             )
                         
                         # Temperature
@@ -345,39 +359,39 @@ class EvalsWindow(Container):
                                 classes="form-input"
                             )
                         
-                        # Model action buttons
-                        with Container(classes="button-row"):
-                            yield Button("➕ Add Model", id="add-model-btn", variant="default")
-                            yield Button("🧪 Test Connection", id="test-model-btn", variant="default")
-                            yield Button("🔄 Refresh Models", id="refresh-models-btn", variant="default")
-                
-                # Cost Estimation Section
-                with Container(classes="config-section"):
-                    yield Static("💰 Cost Estimation", classes="section-title")
-                    yield Static("Estimated cost: $0.00", id="cost-estimate", classes="cost-display")
-                    yield Static("", id="cost-warning", classes="warning")
-                
-                # Run Button
-                yield Button(
-                    "▶️ Run Evaluation",
-                    id="run-button",
-                    classes="run-button",
-                    variant="primary"
-                )
-                
-                # Progress Section (hidden initially)
-                with Container(classes="progress-container", id="progress-section"):
-                    yield Static("Progress:", id="progress-label", classes="progress-label")
-                    yield ProgressBar(id="progress-bar", show_eta=True, total=100)
-                    yield Static("", id="progress-message")
-                    yield Button("⏹️ Cancel", id="cancel-button", variant="error")
-                
-                # Results Section
-                with Container(classes="config-section results-section"):
-                    yield Static("📊 Recent Results", classes="section-title")
-                    yield DataTable(id="results-table", classes="results-table", zebra_stripes=True)
+                    # Model action buttons
+                    with Container(classes="button-row"):
+                        yield Button("➕ Add Model", id="add-model-btn", variant="default")
+                        yield Button("🧪 Test Connection", id="test-model-btn", variant="default")
+                        yield Button("🔄 Refresh Models", id="refresh-models-btn", variant="default")
+            
+            # Cost Estimation Section
+            with Container(classes="config-section"):
+                yield Static("💰 Cost Estimation", classes="section-title")
+                yield Static("Estimated cost: $0.00", id="cost-estimate", classes="cost-display")
+                yield Static("", id="cost-warning", classes="warning")
+            
+            # Run Button
+            yield Button(
+                "▶️ Run Evaluation",
+                id="run-button",
+                classes="run-button",
+                variant="primary"
+            )
+            
+            # Progress Section (hidden initially)
+            with Container(classes="progress-container", id="progress-section"):
+                yield Static("Progress:", id="progress-label", classes="progress-label")
+                yield ProgressBar(id="progress-bar", show_eta=True, total=100)
+                yield Static("", id="progress-message")
+                yield Button("⏹️ Cancel", id="cancel-button", variant="error")
+            
+            # Results Section
+            with Container(classes="config-section results-section"):
+                yield Static("📊 Recent Results", classes="section-title")
+                yield DataTable(id="results-table", classes="results-table", zebra_stripes=True)
         
-        # Status Footer
+        # Status Footer  
         with Container(classes="status-footer"):
             yield Static("Ready", id="status-text")
     
@@ -457,7 +471,7 @@ class EvalsWindow(Container):
             
             # Populate task options
             for task in tasks:
-                task_id = task.get('task_id')
+                task_id = task.get('id')  # Changed from 'task_id' to 'id'
                 task_name = task.get('name', 'Unknown')
                 task_type = task.get('task_type', 'unknown')
                 display_name = f"{task_name} ({task_type})"
@@ -491,7 +505,7 @@ class EvalsWindow(Container):
             
             # Populate model options
             for model in models:
-                model_id = model.get('model_id')
+                model_id = model.get('id')  # Changed from 'model_id' to 'id'
                 model_name = model.get('name', 'Unknown')
                 provider = model.get('provider', 'unknown')
                 display_name = f"{model_name} ({provider})"
@@ -499,7 +513,7 @@ class EvalsWindow(Container):
                 self.available_models[str(model_id)] = {
                     "name": model_name,
                     "provider": provider,
-                    "model_id": model.get('model_id', '')
+                    "model_id": model.get('model_id', '')  # This is the actual model identifier
                 }
             
             model_select.set_options(model_options)
@@ -722,30 +736,28 @@ class EvalsWindow(Container):
             return
             
         try:
-            # Create a new task
-            from ..Evals.task_loader import TaskConfig
+            # Create a new task directly with database
+            task_name = f"Custom Task {datetime.now().strftime('%H%M%S')}"
             
-            task_config = TaskConfig(
-                name=f"Custom Task {datetime.now().strftime('%H%M%S')}",
-                description="A custom evaluation task",
-                task_type="question_answer",
-                prompt_template="Question: {question}\nAnswer:",
-                answer_format="letter",
-                metrics=["accuracy"],
-                metadata={"created_by": "evals_window_v2"}
-            )
+            # Create the task config for database
+            config_data = {
+                "prompt_template": "Question: {question}\nAnswer:",
+                "answer_format": "letter",
+                "metrics": ["accuracy"],
+                "metadata": {"created_by": "evals_window_v2"}
+            }
             
             # Store in database
             task_id = self.orchestrator.db.create_task(
-                name=task_config.name,
-                description=task_config.description,
-                task_type=task_config.task_type,
+                name=task_name,
+                description="A custom evaluation task",
+                task_type="question_answer",
                 config_format="custom",
-                config_data=task_config.__dict__,
+                config_data=config_data,
                 dataset_id=None
             )
             
-            self._update_status(f"Task created: {task_config.name}", success=True)
+            self._update_status(f"Task created: {task_name}", success=True)
             if self.app_instance:
                 self.app_instance.notify(f"Task created with ID: {task_id}")
             

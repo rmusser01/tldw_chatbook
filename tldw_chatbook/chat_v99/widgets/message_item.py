@@ -54,7 +54,7 @@ class MessageItem(Container):
     
     MessageItem.streaming {
         border: dashed $accent;
-        animation: pulse 1s ease-in-out infinite;
+        opacity: 0.8;
     }
     
     MessageItem:hover {
@@ -84,11 +84,6 @@ class MessageItem(Container):
         padding: 1;
         background: $surface;
         border: round #888888;
-    }
-    
-    @keyframes pulse {
-        0%, 100% { opacity: 1.0; }
-        50% { opacity: 0.7; }
     }
     """
     
@@ -146,8 +141,13 @@ class MessageItem(Container):
     def watch_content(self, old_content: str, new_content: str):
         """React to content changes for streaming updates.
         This follows the reactive pattern instead of direct manipulation."""
-        content_widget = self.query_one("#content", Static)
-        content_widget.update(new_content)
+        # Only query widgets if we're mounted (compose has been called)
+        if self.is_mounted:
+            try:
+                content_widget = self.query_one("#content", Static)
+                content_widget.update(new_content)
+            except:
+                pass  # Widget not ready yet
     
     def update_streaming_content(self, content: str):
         """Update content for streaming messages using reactive pattern.

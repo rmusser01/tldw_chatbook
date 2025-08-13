@@ -42,8 +42,8 @@ class SearchBar(Container):
     }
     
     SearchBar.collapsed {
-        height: 3;
-        padding: 0;
+        height: auto;
+        min-height: 3;
     }
     
     SearchBar.collapsed .search-content {
@@ -58,10 +58,15 @@ class SearchBar(Container):
     
     #search-toggle {
         width: auto;
-        min-width: 5;
+        min-width: 8;
         height: 3;
         margin-right: 1;
-        background: $primary;
+        background: $panel;
+        border: solid $primary;
+    }
+    
+    #search-toggle:hover {
+        background: $primary 20%;
     }
     
     .search-title {
@@ -273,15 +278,18 @@ class SearchBar(Container):
     def handle_toggle(self, event: Button.Pressed) -> None:
         """Toggle the search bar collapse state."""
         self.collapsed = not self.collapsed
+        event.stop()  # Stop event propagation
     
     @on(Button.Pressed, "#search-button")
     def handle_search(self, event: Button.Pressed) -> None:
         """Execute search with current parameters."""
         self._execute_search()
+        event.stop()
     
     @on(Button.Pressed, "#clear-button")
     def handle_clear(self, event: Button.Pressed) -> None:
         """Clear all search parameters."""
+        event.stop()
         # Clear inputs
         try:
             search_input = self.query_one("#search-input", Input)
@@ -310,6 +318,7 @@ class SearchBar(Container):
     @on(Button.Pressed, "#advanced-toggle")
     def handle_advanced_toggle(self, event: Button.Pressed) -> None:
         """Toggle advanced filters visibility."""
+        event.stop()
         try:
             collapsible = self.query_one("#advanced-filters-collapsible", Collapsible)
             collapsible.collapsed = not collapsible.collapsed

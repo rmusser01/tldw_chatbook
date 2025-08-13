@@ -111,6 +111,12 @@ class ChatSidebar(Container):
                     classes="sidebar-input"
                 )
                 
+                yield Input(
+                    placeholder="Search conversations...",
+                    id="search-conversations",
+                    classes="sidebar-input"
+                )
+                
                 yield Button(
                     "✨ New Session",
                     id="new-session",
@@ -433,6 +439,22 @@ class ChatSidebar(Container):
         except ValueError:
             event.input.value = ""
     
+    @on(Input.Changed, "#api-key")
+    def handle_api_key_change(self, event: Input.Changed):
+        """Update API key in settings."""
+        self.app.settings.api_key = event.value.strip() if event.value else None
+        
+        # Update LLM worker with new settings
+        if hasattr(self.app, 'screen') and self.app.screen:
+            screen = self.app.screen
+            if hasattr(screen, 'llm_worker'):
+                screen.llm_worker = screen.llm_worker.__class__(self.app.settings)
+    
+    @on(Input.Changed, "#system-prompt")
+    def handle_system_prompt_change(self, event: Input.Changed):
+        """Update system prompt in settings."""
+        self.app.settings.system_prompt = event.value.strip() if event.value else None
+    
     def load_session_history(self, sessions: List[Tuple[str, str]]):
         """Load session history into the history tab.
         
@@ -446,8 +468,50 @@ class ChatSidebar(Container):
         history_list.remove_children()
         
         for session_id, title in sessions:
-            history_list.mount(Button(
+            button = Button(
                 title,
                 classes="session-item",
                 id=f"history-{session_id}"
-            ))
+            )
+            # Store session_id as data attribute
+            button.data = session_id
+            history_list.mount(button)
+    
+    @on(Button.Pressed)
+    def handle_history_item_click(self, event: Button.Pressed):
+        """Handle clicks on history items."""
+        if event.button.id and event.button.id.startswith("history-"):
+            # Get session ID from button data
+            session_id = getattr(event.button, 'data', None)
+            if session_id and hasattr(self.app, 'load_session_by_id'):
+                # Load the session
+                self.app.run_worker(lambda: self.app.load_session_by_id(session_id))
+    
+    @on(Input.Changed, "#search-conversations")
+    def handle_search_change(self, event: Input.Changed):
+        """Search conversations as user types."""
+        search_query = event.value.strip()
+        if search_query and len(search_query) >= 2:
+            # Search conversations
+            self.app.run_worker(lambda: self._search_conversations(search_query))
+        elif not search_query:
+            # Clear search, reload all
+            self.app.action_open_session()
+    
+    async def _search_conversations(self, query: str):
+        """Search conversations in database."""
+        from tldw_chatbook.config import get_chachanotes_db_lazy
+        
+        try:
+            db = get_chachanotes_db_lazy()
+            # Use the database's search functionality
+            results = db.search_conversations(query, limit=20)
+            
+            if results:
+                session_list = [(conv[0], conv[1]) for conv in results]  # (id, title)
+                self.load_session_history(session_list)
+                self.app.notify(f"Found {len(results)} matches")
+            else:
+                self.app.notify("No matches found", severity="warning")
+        except Exception as e:
+            self.app.notify(f"Search error: {str(e)}", severity="error")

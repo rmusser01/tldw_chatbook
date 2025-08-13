@@ -9,13 +9,21 @@ from datetime import datetime
 # Handle both relative and absolute imports
 try:
     from .screens.chat_screen import ChatScreen
-    from .models import ChatSession, Settings
+    from .models import ChatSession, Settings, ChatMessage
     from .messages import SessionChanged, SidebarToggled
 except ImportError:
     # Fallback for direct execution
     from screens.chat_screen import ChatScreen
-    from models import ChatSession, Settings
+    from models import ChatSession, Settings, ChatMessage
     from messages import SessionChanged, SidebarToggled
+
+# Use the REAL, EXISTING database and chat functions!
+from tldw_chatbook.Chat.Chat_Functions import (
+    save_chat_history_to_db_wrapper,
+    save_chat_history
+)
+from tldw_chatbook.config import get_chachanotes_db_lazy
+from loguru import logger
 
 
 class ChatV99App(App):
@@ -50,7 +58,7 @@ class ChatV99App(App):
         Binding("ctrl+o", "open_session", "Open", priority=True), 
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+\\", "toggle_sidebar", "Toggle Sidebar"),
-        Binding("ctrl+k", "clear_messages", "Clear Chat"),
+        Binding("ctrl+k", "clear_messages", "Clear Chat", priority=True),
     ]
     
     # Reactive state with proper typing
@@ -99,25 +107,103 @@ class ChatV99App(App):
         Create new session object to trigger reactive update."""
         if self.current_session:
             # Create new session to trigger reactive update (not mutation)
-            self.current_session = ChatSession(
+            new_session = ChatSession(
                 id=self.current_session.id,
                 title=self.current_session.title,
-                messages=[],
+                messages=[],  # Clear messages
                 created_at=self.current_session.created_at,
                 updated_at=datetime.now(),
                 metadata=self.current_session.metadata
             )
+            self.current_session = new_session
     
     def action_save_session(self):
-        """Save current session."""
+        """Save current session using REAL Chat_Functions."""
         if self.current_session:
-            # This would integrate with the database
-            self.notify(f"Session '{self.current_session.title}' saved")
+            # Convert ChatSession messages to OpenAI format expected by save function
+            chatbot_history = []
+            for msg in self.current_session.messages:
+                chatbot_history.append({
+                    "role": msg.role,
+                    "content": msg.content
+                })
+            
+            # Get the database instance
+            db = get_chachanotes_db_lazy()
+            
+            # Use the REAL save function with correct parameters
+            conversation_id, status = save_chat_history_to_db_wrapper(
+                db=db,
+                chatbot_history=chatbot_history,
+                conversation_id=self.current_session.id,
+                media_content_for_char_assoc=None,
+                media_name_for_char_assoc=None,
+                character_name_for_chat=None
+            )
+            
+            if conversation_id:
+                self.current_session.id = conversation_id
+                self.notify(f"✅ Saved: {self.current_session.title}")
+            else:
+                self.notify(f"Failed to save: {status}", severity="error")
     
     def action_open_session(self):
-        """Open a saved session."""
-        # This would show a file picker or session list
-        self.notify("Open session dialog would appear here")
+        """Load sessions using REAL database."""
+        self.run_worker(self._load_sessions)
+    
+    async def _load_sessions(self):
+        """Load sessions from REAL database."""
+        try:
+            db = get_chachanotes_db_lazy()
+            conversations = db.get_all_conversations(limit=20)
+            
+            if conversations:
+                # Update sidebar with real conversations
+                if self.screen:
+                    sidebar = self.screen.query_one("#sidebar")
+                    if sidebar:
+                        session_list = [(conv['conversation_id'], conv['title']) 
+                                      for conv in conversations]
+                        sidebar.load_session_history(session_list)
+                        self.notify(f"Found {len(conversations)} conversations")
+            else:
+                self.notify("No conversations found", severity="warning")
+        except Exception as e:
+            logger.error(f"Error loading conversations: {e}")
+            self.notify(f"Error: {str(e)}", severity="error")
+    
+    async def load_session_by_id(self, conversation_id: str):
+        """Load a specific conversation from REAL database."""
+        try:
+            # Use REAL database to load messages
+            db = get_chachanotes_db_lazy()
+            messages = db.get_messages_for_conversation(conversation_id)
+            
+            if messages:
+                # Convert to ChatSession format
+                chat_messages = []
+                for msg in messages:
+                    if isinstance(msg, dict):
+                        role = msg.get('role', 'user')
+                        content = msg.get('message', '')
+                        if content:
+                            chat_messages.append(ChatMessage(role=role, content=content))
+                
+                # Get conversation details
+                db = get_chachanotes_db_lazy()
+                details = db.get_conversation_details(conversation_id)
+                
+                self.current_session = ChatSession(
+                    id=conversation_id,
+                    title=details.get('title', 'Untitled') if details else 'Untitled',
+                    messages=chat_messages
+                )
+                self.notify(f"Loaded: {self.current_session.title}")
+            else:
+                self.notify("Conversation not found", severity="error")
+        except Exception as e:
+            logger.error(f"Error loading conversation: {e}")
+            self.notify(f"Error: {str(e)}", severity="error")
 
 
 if __name__ == "__main__":

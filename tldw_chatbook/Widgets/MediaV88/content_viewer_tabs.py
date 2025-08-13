@@ -53,20 +53,28 @@ class ContentViewerTabs(Container):
     
     DEFAULT_CSS = """
     ContentViewerTabs {
-        height: 1fr;
-        min-height: 0;
+        height: 100%;
         layout: vertical;
     }
     
     ContentViewerTabs TabbedContent {
         height: 100%;
-        min-height: 0;
     }
     
     ContentViewerTabs TabPane {
         height: 100%;
-        padding: 1;
-        overflow-y: auto;
+        padding: 0;
+        layout: vertical;
+    }
+    
+    #content-tab {
+        height: 100%;
+        layout: vertical;
+    }
+    
+    #analysis-tab {
+        height: 100%;
+        layout: vertical;
     }
     
     .content-controls {
@@ -105,13 +113,28 @@ class ContentViewerTabs(Container):
         color: $text-muted;
     }
     
-    #content-display {
+    #content-scroll {
         height: 1fr;
-        min-height: 0;
+        width: 100%;
+    }
+    
+    #content-display {
+        height: auto;
+        width: 100%;
         padding: 1;
         background: $primary-background;
-        border: solid $primary-lighten-3;
-        overflow-y: auto;
+    }
+    
+    #analysis-scroll {
+        height: 1fr;
+        width: 100%;
+    }
+    
+    #analysis-display {
+        height: auto;
+        width: 100%;
+        padding: 1;
+        background: $primary-background;
     }
     
     .analysis-controls {
@@ -269,11 +292,12 @@ class ContentViewerTabs(Container):
                         yield Button("Next ▶", id="next-match", disabled=True)
                         yield Static("No matches", id="search-status", classes="search-status")
                 
-                # Content display
-                yield Markdown(
-                    "# No Content\n\nSelect a media item to view its content.",
-                    id="content-display"
-                )
+                # Content display in a scrollable container
+                with VerticalScroll(id="content-scroll"):
+                    yield Markdown(
+                        "# No Content\n\nSelect a media item to view its content.",
+                        id="content-display"
+                    )
             
             # Analysis Tab
             with TabPane("Analysis", id="analysis-tab"):
@@ -319,11 +343,12 @@ class ContentViewerTabs(Container):
                         variant="success"
                     )
                 
-                # Analysis display
-                yield Markdown(
-                    "# No Analysis\n\nGenerate or select an analysis to view.",
-                    id="analysis-display"
-                )
+                # Analysis display in a scrollable container
+                with VerticalScroll(id="analysis-scroll"):
+                    yield Markdown(
+                        "# No Analysis\n\nGenerate or select an analysis to view.",
+                        id="analysis-display"
+                    )
                 
                 # Version navigation
                 with Horizontal(classes="analysis-nav", id="analysis-nav"):
@@ -496,9 +521,15 @@ class ContentViewerTabs(Container):
     def _load_content(self, media_data: Dict[str, Any]) -> None:
         """Load content into the content tab."""
         try:
-            content_display = self.query_one("#content-display", Markdown)
-            
+            # Check various possible content fields
             content = media_data.get('content', '')
+            if not content:
+                content = media_data.get('transcription', '')
+            if not content:
+                content = media_data.get('summary', '')
+            if not content:
+                content = media_data.get('text', '')
+            
             if content:
                 # Format content as markdown
                 title = media_data.get('title', 'Untitled')
@@ -508,36 +539,67 @@ class ContentViewerTabs(Container):
                 if author and author != 'Unknown':
                     markdown_content += f"*By {author}*\n\n---\n\n"
                 
-                # Add the actual content
-                markdown_content += content
+                # Add the actual content (truncate for testing)
+                markdown_content += str(content)[:5000]  # Limit to first 5000 chars for now
                 
-                content_display.update(markdown_content)
+                # Schedule the update to happen properly
+                async def update_markdown():
+                    content_display = self.query_one("#content-display", Markdown)
+                    await content_display.update(markdown_content)
+                    logger.info(f"Content display updated with {len(markdown_content)} chars")
+                    # Check visibility and size for debugging
+                    logger.info(f"Markdown widget visible: {content_display.visible}, size: {content_display.size}")
+                
+                # Use call_later to schedule the async update
+                self.call_later(update_markdown)
+                
+                logger.info(f"Content loaded: {len(markdown_content)} chars")
             else:
-                content_display.update("# No Content Available\n\nThis media item has no content to display.")
+                async def update_no_content():
+                    content_display = self.query_one("#content-display", Markdown)
+                    no_content_msg = "# No Content Available\n\nThis media item has no content to display."
+                    await content_display.update(no_content_msg)
+                    logger.info("No content message displayed")
+                
+                self.call_later(update_no_content)
+                logger.info("No content found in media data")
                 
         except Exception as e:
-            logger.error(f"Error loading content: {e}")
+            logger.error(f"Error loading content: {e}", exc_info=True)
     
     def _load_analysis(self, media_data: Dict[str, Any]) -> None:
         """Load analysis into the analysis tab."""
         try:
-            analysis_display = self.query_one("#analysis-display", Markdown)
-            
             # Check for existing analysis
             analysis = media_data.get('analysis')
             if analysis:
                 self.current_analysis = analysis
-                analysis_display.update(analysis)
                 
-                # Enable save button
-                try:
-                    save_btn = self.query_one("#save-analysis", Button)
-                    save_btn.disabled = False
-                except Exception:
-                    pass
+                # Schedule the update to happen properly
+                async def update_analysis():
+                    analysis_display = self.query_one("#analysis-display", Markdown)
+                    await analysis_display.update(str(analysis))
+                    logger.info(f"Analysis display updated with {len(str(analysis))} chars")
+                    
+                    # Enable save button
+                    try:
+                        save_btn = self.query_one("#save-analysis", Button)
+                        save_btn.disabled = False
+                    except Exception:
+                        pass
+                
+                self.call_later(update_analysis)
+                logger.info(f"Analysis loaded: {len(str(analysis))} chars")
             else:
-                analysis_display.update("# No Analysis\n\nNo analysis has been generated for this media item yet.")
+                async def update_no_analysis():
+                    analysis_display = self.query_one("#analysis-display", Markdown)
+                    no_analysis_msg = "# No Analysis\n\nNo analysis has been generated for this media item yet."
+                    await analysis_display.update(no_analysis_msg)
+                    logger.info("No analysis message displayed")
+                
+                self.call_later(update_no_analysis)
                 self.current_analysis = None
+                logger.info("No analysis found in media data")
             
             # Load version history if available
             self._load_analysis_versions(media_data)

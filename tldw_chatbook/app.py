@@ -781,9 +781,9 @@ class PlaceholderWindow(Container):
                 child.remove()
             
             # Create the actual window
-            # EvalsLab is a Container that doesn't take app instance as first argument
-            if self.window_class.__name__ == 'EvalsLab':
-                self._actual_window = self.window_class(id=self.window_id, classes=self.actual_classes)
+            # EvalsLab and EvalsWindow are Containers that take app_instance as keyword argument
+            if self.window_class.__name__ in ['EvalsLab', 'EvalsWindow']:
+                self._actual_window = self.window_class(app_instance=self.app_instance, id=self.window_id, classes=self.actual_classes)
             else:
                 self._actual_window = self.window_class(self.app_instance, id=self.window_id, classes=self.actual_classes)
             
@@ -798,6 +798,7 @@ class PlaceholderWindow(Container):
             # Make sure the actual window fills the container
             self._actual_window.styles.height = "100%"
             self._actual_window.styles.width = "100%"
+            self._actual_window.styles.display = "block"  # Ensure the actual window is visible
             
             self.mount(self._actual_window)
             self._initialized = True
