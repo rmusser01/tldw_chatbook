@@ -69,6 +69,10 @@ def mock_orchestrator():
         # Mock orchestrator methods
         orchestrator.create_model_config = Mock(return_value='model-123')
         orchestrator.run_evaluation = AsyncMock(return_value='run-123')
+        orchestrator.db.get_run_details = Mock(return_value={
+            'id': 'run-123', 'task_id': '1', 'model_id': '1',
+            'status': 'completed', 'metrics': {'accuracy': 0.95}
+        })
         orchestrator.cancel_evaluation = Mock(return_value=True)
         
         mock.return_value = orchestrator

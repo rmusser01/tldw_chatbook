@@ -508,7 +508,9 @@ class EvalsWindow(Container):
             
         except Exception as e:
             logger.error(f"Failed to load tasks: {e}")
-            raise
+            self._update_status(f"Failed to load tasks: {e}", error=True)
+            if self.app_instance:
+                self.app_instance.notify(f"Failed to load tasks: {e}", severity="error")
     
     def _load_models(self) -> None:
         """Load models from database and populate selector"""
@@ -553,7 +555,9 @@ class EvalsWindow(Container):
             
         except Exception as e:
             logger.error(f"Failed to load models: {e}")
-            raise
+            self._update_status(f"Failed to load models: {e}", error=True)
+            if self.app_instance:
+                self.app_instance.notify(f"Failed to load models: {e}", severity="error")
     
     def _create_sample_tasks(self) -> None:
         """Create sample tasks in the database"""
@@ -764,8 +768,8 @@ class EvalsWindow(Container):
         if not self._validate_configuration():
             return
         
-        # Start evaluation in worker thread
-        self.run_worker(self.run_evaluation, exclusive=True)
+        # Start evaluation in worker thread (use thread=True since run_evaluation is not async)
+        self.run_worker(self.run_evaluation, exclusive=True, thread=True)
     
     @on(Button.Pressed, "#cancel-button")
     def handle_cancel_button(self) -> None:

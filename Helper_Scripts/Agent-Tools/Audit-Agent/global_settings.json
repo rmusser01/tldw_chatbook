@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "opus",
+  "feedbackSurveyState": {
+    "lastShownTime": 1754550440423
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/audit_agent.sh",
+            "description": "Run audit agent after file modifications",
+            "timeout": 5000,
+            "continueOnError": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[Audit] File modification starting: {{file_path}}' >> $HOME/.claude/audit_logs/activity.log",
+            "description": "Log file modification start",
+            "continueOnError": true
+          }
+        ]
+      }
+    ]
+  },
+  "audit": {
+    "enabled": true,
+    "logLevel": "info",
+    "logDirectory": "$HOME/.claude/audit_logs",
+    "retentionDays": 30,
+    "notifications": {
+      "onSensitiveData": true,
+      "onQualityIssues": false,
+      "onLintErrors": true
+    }
+  },
+  "tools": {
+    "Write": {
+      "audit": true
+    },
+    "Edit": {
+      "audit": true
+    },
+    "MultiEdit": {
+      "audit": true
+    },
+    "NotebookEdit": {
+      "audit": true
+    }
+  }
+}
