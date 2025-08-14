@@ -22,7 +22,7 @@ class LogsScreen(BaseAppScreen):
     
     def compose_content(self) -> ComposeResult:
         """Compose the logs window content."""
-        self.logs_window = LogsWindow(self.app_instance)
+        self.logs_window = LogsWindow(self.app_instance, classes="window")
         yield self.logs_window
     
     def save_state(self):

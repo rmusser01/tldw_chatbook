@@ -22,7 +22,7 @@ class LLMScreen(BaseAppScreen):
     
     def compose_content(self) -> ComposeResult:
         """Compose the LLM management window content."""
-        self.llm_window = LLMManagementWindow(self.app_instance)
+        self.llm_window = LLMManagementWindow(self.app_instance, classes="window")
         # Yield the window widget directly
         yield self.llm_window
     

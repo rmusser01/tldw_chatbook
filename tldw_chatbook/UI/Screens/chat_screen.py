@@ -27,7 +27,7 @@ class ChatScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
         # Create and yield the chat window container
-        self.chat_window = ChatWindowEnhanced(self.app_instance, id="chat-window")
+        self.chat_window = ChatWindowEnhanced(self.app_instance, id="chat-window", classes="window")
         yield self.chat_window
     
     def save_state(self):

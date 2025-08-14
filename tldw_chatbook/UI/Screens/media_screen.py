@@ -22,7 +22,7 @@ class MediaScreen(BaseAppScreen):
     
     def compose_content(self) -> ComposeResult:
         """Compose the media window content."""
-        self.media_window = MediaWindow(self.app_instance)
+        self.media_window = MediaWindow(self.app_instance, classes="window")
         # Yield the window widget directly
         yield self.media_window
     

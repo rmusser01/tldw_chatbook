@@ -22,7 +22,7 @@ class EvalsScreen(BaseAppScreen):
     
     def compose_content(self) -> ComposeResult:
         """Compose the evals window content."""
-        self.evals_window = EvalsWindow(self.app_instance)
+        self.evals_window = EvalsWindow(self.app_instance, classes="window")
         # Yield the window widget directly
         yield self.evals_window
     

@@ -22,7 +22,7 @@ class CodingScreen(BaseAppScreen):
     
     def compose_content(self) -> ComposeResult:
         """Compose the coding window content."""
-        self.coding_window = CodingWindow(self.app_instance)
+        self.coding_window = CodingWindow(self.app_instance, classes="window")
         # Yield the window widget directly
         yield self.coding_window
     

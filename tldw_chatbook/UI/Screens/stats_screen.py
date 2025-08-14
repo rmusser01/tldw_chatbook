@@ -22,7 +22,7 @@ class StatsScreen(BaseAppScreen):
     
     def compose_content(self) -> ComposeResult:
         """Compose the stats window content."""
-        self.stats_window = StatsWindow(self.app_instance)
+        self.stats_window = StatsWindow(self.app_instance, classes="window")
         # Yield the window widget directly
         yield self.stats_window
     

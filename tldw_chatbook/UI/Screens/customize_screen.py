@@ -22,7 +22,7 @@ class CustomizeScreen(BaseAppScreen):
     
     def compose_content(self) -> ComposeResult:
         """Compose the customize window content."""
-        self.customize_window = CustomizeWindow(self.app_instance)
+        self.customize_window = CustomizeWindow(self.app_instance, classes="window")
         # Yield the window widget directly
         yield self.customize_window
     

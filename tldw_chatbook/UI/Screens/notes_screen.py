@@ -22,9 +22,9 @@ class NotesScreen(BaseAppScreen):
     
     def compose_content(self) -> ComposeResult:
         """Compose the notes window content."""
-        self.notes_window = NotesWindow(self.app_instance)
-        # Yield from the window's compose method instead of the container itself
-        yield from self.notes_window.compose()
+        self.notes_window = NotesWindow(self.app_instance, classes="window")
+        # Yield the window widget directly
+        yield self.notes_window
     
     def save_state(self):
         """Save notes window state."""

@@ -22,7 +22,7 @@ class ConversationScreen(BaseAppScreen):
     
     def compose_content(self) -> ComposeResult:
         """Compose the conversation/character window content."""
-        self.conv_char_window = CCPWindow(self.app_instance)
+        self.conv_char_window = CCPWindow(self.app_instance, classes="window")
         # Yield the window widget directly
         yield self.conv_char_window
     

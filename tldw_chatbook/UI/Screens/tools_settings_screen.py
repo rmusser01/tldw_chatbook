@@ -22,7 +22,7 @@ class ToolsSettingsScreen(BaseAppScreen):
     
     def compose_content(self) -> ComposeResult:
         """Compose the tools settings window content."""
-        self.tools_window = ToolsSettingsWindow(self.app_instance)
+        self.tools_window = ToolsSettingsWindow(self.app_instance, classes="window")
         # Yield the window widget directly
         yield self.tools_window
     
