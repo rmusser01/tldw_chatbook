@@ -1487,6 +1487,67 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             },
         }
 
+    def _setup_buffered_logging(self):
+        """Set up a persistent buffered logging handler for screen navigation mode."""
+        from collections import deque
+        import logging
+        
+        # Create a buffer to store ALL log messages (no max length)
+        if not hasattr(self, '_log_buffer'):
+            self._log_buffer = deque()  # No maxlen - keep all logs
+        
+        # Create a custom handler that stores logs in the buffer
+        class PersistentLogHandler(logging.Handler):
+            def __init__(self, buffer, app):
+                super().__init__()
+                self.buffer = buffer
+                self.app = app
+                
+            def emit(self, record):
+                try:
+                    msg = self.format(record)
+                    self.buffer.append(msg)
+                    
+                    # If we have a RichLog widget active, also write to it directly
+                    if hasattr(self.app, '_current_log_widget') and self.app._current_log_widget:
+                        try:
+                            self.app._current_log_widget.write(msg)
+                        except:
+                            pass  # Widget might not be mounted
+                except Exception:
+                    self.handleError(record)
+        
+        # Add the persistent handler to the root logger
+        if not hasattr(self, '_persistent_log_handler'):
+            self._persistent_log_handler = PersistentLogHandler(self._log_buffer, self)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            self._persistent_log_handler.setFormatter(formatter)
+            logging.getLogger().addHandler(self._persistent_log_handler)
+            logger.info("Persistent logging handler set up for screen navigation")
+            
+        # Initialize current log widget reference
+        self._current_log_widget = None
+    
+    def _display_buffered_logs(self, log_widget):
+        """Display all buffered logs in the RichLog widget."""
+        if not hasattr(self, '_log_buffer'):
+            return
+            
+        # Store reference to current log widget
+        self._current_log_widget = log_widget
+        
+        # Clear the widget first to avoid duplicates
+        log_widget.clear()
+        
+        # Write all buffered messages to the widget
+        for msg in self._log_buffer:
+            log_widget.write(msg)
+        
+        # Scroll to the latest entry
+        log_widget.scroll_end()
+        
+        logger.debug(f"Displayed {len(self._log_buffer)} buffered log entries")
+    
     def _setup_logging(self):
         """Set up logging for the application.
 
@@ -2555,6 +2616,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Push the initial screen (Chat)
             self.push_screen(ChatScreen(self))
             logger.info("Screen-based navigation: Pushed initial ChatScreen")
+            
+            # For screen navigation, set up a buffered logging handler
+            # that will store logs until the LogsWindow is ready
+            self._setup_buffered_logging()
             return
         
         # Update splash screen progress only if splash screen is active
@@ -4610,6 +4675,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self._use_screen_navigation = True
             await self.push_screen(ChatScreen(self))
             logger.info("Screen navigation: Pushed initial ChatScreen after splash")
+            
+            # For screen navigation, set up a buffered logging handler
+            # that will store logs until the LogsWindow is ready
+            self._setup_buffered_logging()
             return
         
         # Check if main UI widgets already exist (avoid duplicate IDs)
