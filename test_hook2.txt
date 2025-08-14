@@ -1,0 +1,2 @@
+Another test to check hook variable substitution
+Testing if variables are passed correctly

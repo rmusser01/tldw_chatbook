@@ -181,8 +181,15 @@ class BaseIngestTab(Container):
                 yield from self.create_media_options()
             
             # Advanced options (collapsible)
-            with Collapsible("Advanced Options", collapsed=True, id="advanced-options"):
-                yield from self.create_advanced_options()
+            # Collect the advanced options widgets
+            advanced_widgets = list(self.create_advanced_options())
+            # Create the collapsible with the widgets as children
+            yield Collapsible(
+                "Advanced Options",
+                *advanced_widgets,
+                collapsed=True,
+                id="advanced-options"
+            )
             
             # Submit button
             yield Button("Process Files", id="submit", classes="submit-button", disabled=True)
