@@ -137,6 +137,20 @@ from .UI.Notes_Window import NotesWindow
 from .UI.Logs_Window import LogsWindow
 from .UI.Stats_Window import StatsWindow
 from .UI.MediaIngestWindow import MediaIngestWindow
+from .UI.Navigation.main_navigation import NavigateToScreen
+from .UI.Screens.chat_screen import ChatScreen
+from .UI.Screens.media_ingest_screen import MediaIngestScreen
+from .UI.Screens.coding_screen import CodingScreen
+from .UI.Screens.conversation_screen import ConversationScreen
+from .UI.Screens.media_screen import MediaScreen
+from .UI.Screens.notes_screen import NotesScreen
+from .UI.Screens.search_screen import SearchScreen
+from .UI.Screens.evals_screen import EvalsScreen
+from .UI.Screens.tools_settings_screen import ToolsSettingsScreen
+from .UI.Screens.llm_screen import LLMScreen
+from .UI.Screens.customize_screen import CustomizeScreen
+from .UI.Screens.logs_screen import LogsScreen
+from .UI.Screens.stats_screen import StatsScreen
 from .UI.Ingest_Window import INGEST_NAV_BUTTON_IDS, INGEST_VIEW_IDS, MEDIA_TYPES
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
@@ -1547,6 +1561,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         widgets = []
         compose_phases = {}  # Track timing for each phase
         
+        # Check if screen-based navigation is enabled
+        use_screen_navigation = get_cli_setting("navigation", "use_screen_navigation", False)
+        
+        if use_screen_navigation:
+            # Screen-based navigation mode - return empty list
+            # The initial screen will be pushed in on_mount
+            logger.info("Using screen-based navigation - skipping widget creation")
+            self._use_screen_navigation = True
+            return []
+        
+        # Traditional tab-based navigation continues below
+        self._use_screen_navigation = False
+        
         # Phase: Title Bar
         phase_start = time.perf_counter()
         component_start = time.perf_counter()
@@ -1688,6 +1715,38 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         return widgets
     
 
+    @on(NavigateToScreen)
+    async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
+        """Handle navigation to a different screen."""
+        screen_name = message.screen_name
+        logger.info(f"Navigating to screen: {screen_name}")
+        
+        # Map screen names to screen classes
+        screen_map = {
+            'chat': ChatScreen,
+            'ingest': MediaIngestScreen,
+            'coding': CodingScreen,
+            'conversation': ConversationScreen,
+            'ccp': ConversationScreen,  # Alias for Conv/Char
+            'media': MediaScreen,
+            'notes': NotesScreen,
+            'search': SearchScreen,
+            'evals': EvalsScreen,
+            'tools_settings': ToolsSettingsScreen,
+            'llm': LLMScreen,
+            'customize': CustomizeScreen,
+            'logs': LogsScreen,
+            'stats': StatsScreen,
+        }
+        
+        screen_class = screen_map.get(screen_name)
+        if screen_class:
+            # Create and push the new screen
+            new_screen = screen_class(self)
+            await self.push_screen(new_screen)
+        else:
+            logger.warning(f"Screen not yet implemented: {screen_name}")
+    
     @on(ChatMessage.Action)
     async def handle_chat_message_action(self, event: ChatMessage.Action) -> None:
         """Handles actions (edit, copy, etc.) from within a ChatMessage widget."""
@@ -2490,6 +2549,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         mount_start = time.perf_counter()
+        
+        # Check if screen-based navigation is enabled
+        if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
+            # Push the initial screen (Chat)
+            self.push_screen(ChatScreen(self))
+            logger.info("Screen-based navigation: Pushed initial ChatScreen")
+            return
         
         # Update splash screen progress only if splash screen is active
         if self.splash_screen_active and self._splash_screen_widget:
@@ -4536,6 +4602,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if self._splash_screen_widget:
             await self._splash_screen_widget.remove()
             self._splash_screen_widget = None
+        
+        # Check if screen-based navigation is enabled
+        use_screen_navigation = get_cli_setting("navigation", "use_screen_navigation", False)
+        if use_screen_navigation:
+            # Push the initial screen
+            self._use_screen_navigation = True
+            await self.push_screen(ChatScreen(self))
+            logger.info("Screen navigation: Pushed initial ChatScreen after splash")
+            return
         
         # Check if main UI widgets already exist (avoid duplicate IDs)
         existing_ids = {widget.id for widget in self.screen._nodes if widget.id}

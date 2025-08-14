@@ -1,4 +1,0 @@
-Test file created to verify the working audit hook
-This should trigger the audit logging
-Modified at: 2025-08-13 19:04
-Testing audit hook functionality

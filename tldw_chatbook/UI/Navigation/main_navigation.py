@@ -34,19 +34,21 @@ class MainNavigationBar(Container):
         dock: top;
         background: $panel;
         border-bottom: solid $primary;
+        overflow-x: auto;
     }
     
     .main-nav {
         height: 100%;
-        width: 100%;
+        width: auto;
         layout: horizontal;
         align: center middle;
-        padding: 0 2;
+        padding: 0 1;
     }
     
     .nav-button {
-        margin: 0 1;
-        min-width: 10;
+        margin: 0;
+        padding: 0 1;
+        min-width: 6;
         background: transparent;
         border: none;
         height: 3;
@@ -65,6 +67,7 @@ class MainNavigationBar(Container):
     
     .nav-separator {
         margin: 0;
+        padding: 0 0;
         color: $text-muted;
         width: 1;
     }

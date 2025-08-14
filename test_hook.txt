@@ -1,2 +1,0 @@
-This is a test file to verify the audit hook is working.
-It should trigger the audit_agent.sh script.
