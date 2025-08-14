@@ -273,7 +273,8 @@ async def test_progress_reactive_updates(mock_orchestrator):
         
         # Check progress bar updated
         progress_bar = app.query_one("#progress-bar", ProgressBar)
-        assert progress_bar.percentage == 0.755  # ProgressBar uses 0-1 scale
+        # Progress bar should be 75.5% converted to 0-1 scale
+        assert abs(progress_bar.percentage - 0.755) < 0.001  # Allow small floating point difference
         
         # Update progress message
         evals_window.progress_message = "Processing sample 75/100"

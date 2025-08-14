@@ -780,12 +780,18 @@ class EvalsWindow(Container):
     @on(Button.Pressed, "#cancel-button")
     def handle_cancel_button(self) -> None:
         """Handle cancel button press"""
+        logger.info("Cancel button pressed")
         if self.current_worker:
+            logger.info(f"Cancelling worker: {self.current_worker}")
             self.cancel_event.set()
             self.current_worker.cancel()
-            self._update_status("Cancelling evaluation...")
+            self.evaluation_status = "idle"  # Reset status immediately
+            logger.info(f"Status set to idle, current status: {self.evaluation_status}")
+            self._update_status("Evaluation cancelled")
             if self.app_instance:
                 self.app_instance.notify("Evaluation cancelled")
+        else:
+            logger.warning("No current worker to cancel")
     
     @on(Button.Pressed, "#refresh-tasks-btn")
     def handle_refresh_tasks(self) -> None:
@@ -922,6 +928,7 @@ class EvalsWindow(Container):
         """React to progress changes"""
         try:
             progress_bar = self.query_one("#progress-bar", ProgressBar)
+            # ProgressBar.update() expects 0-100 range for progress parameter
             progress_bar.update(progress=new)
             
             progress_label = self.query_one("#progress-label", Static)
@@ -1039,6 +1046,12 @@ class EvalsWindow(Container):
             asyncio.set_event_loop(loop)
             
             try:
+                # Check for cancellation before starting
+                if worker.is_cancelled or self.cancel_event.is_set():
+                    logger.info("Evaluation cancelled before starting")
+                    self.evaluation_status = "idle"
+                    return
+                    
                 run_id = loop.run_until_complete(
                     self.orchestrator.run_evaluation(
                         task_id=self.selected_task_id,
@@ -1053,6 +1066,12 @@ class EvalsWindow(Container):
                     )
                 )
                 
+                # Check for cancellation after evaluation
+                if worker.is_cancelled or self.cancel_event.is_set():
+                    logger.info("Evaluation cancelled after completion")
+                    self.evaluation_status = "idle"
+                    return
+                    
                 # Get results
                 results = self.orchestrator.db.get_run(run_id)
                 
@@ -1065,11 +1084,17 @@ class EvalsWindow(Container):
                 loop.close()
             
         except Exception as e:
-            logger.error(f"Evaluation failed: {e}")
-            self.evaluation_status = "error"
-            self.app.call_from_thread(self._update_status, f"Error: {e}", error=True)
-            if self.app_instance:
-                self.app.call_from_thread(self.app_instance.notify, f"Evaluation failed: {e}", "error")
+            # Check if this was a cancellation
+            if worker.is_cancelled or self.cancel_event.is_set():
+                logger.info("Evaluation was cancelled")
+                self.evaluation_status = "idle"
+                self.app.call_from_thread(self._update_status, "Evaluation cancelled")
+            else:
+                logger.error(f"Evaluation failed: {e}")
+                self.evaluation_status = "error"
+                self.app.call_from_thread(self._update_status, f"Error: {e}", error=True)
+                if self.app_instance:
+                    self.app.call_from_thread(self.app_instance.notify, f"Evaluation failed: {e}", "error")
         finally:
             self.current_worker = None
     

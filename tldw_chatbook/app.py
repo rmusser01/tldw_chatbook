@@ -3,6 +3,9 @@
 #
 # Disable progress bars early to prevent interference with TUI
 import os
+
+from tldw_chatbook.UI import MediaWindow_v2
+
 os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
 os.environ['TQDM_DISABLE'] = '1'
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -133,7 +136,7 @@ from .UI.Conv_Char_Window import CCPWindow
 from .UI.Notes_Window import NotesWindow
 from .UI.Logs_Window import LogsWindow
 from .UI.Stats_Window import StatsWindow
-from .UI.NewIngestWindow import NewIngestWindow
+from .UI.MediaIngestWindow import MediaIngestWindow
 from .UI.Ingest_Window import INGEST_NAV_BUTTON_IDS, INGEST_VIEW_IDS, MEDIA_TYPES
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
@@ -147,8 +150,7 @@ from .UI.Chatbooks_Window import ChatbooksWindow
 from .UI.Tab_Bar import TabBar
 from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
-from .UI.MediaWindow_v2 import MediaWindow
-from .UI.MediaWindowV88 import MediaWindowV88
+from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
 from .UI.SearchWindow import SearchWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
@@ -1598,10 +1600,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("chat", chat_window_class, "chat-window"),
             ("ccp", CCPWindow, "conversations_characters_prompts-window"),
             ("notes", NotesWindow, "notes-window"),
-            # Force MediaWindowV88
-            ("media", MediaWindowV88, "media-window"),
+            ("media", MediaWindow_v2, "media-window"),
             ("search", SearchWindow, "search-window"),
-            ("ingest", NewIngestWindow, "ingest-window"),
+            ("ingest", MediaIngestWindow, "ingest-window"),
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
             ("llm_management", LLMManagementWindow, "llm_management-window"),
             ("customize", CustomizeWindow, "customize-window"),
@@ -3332,7 +3333,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         elif new_tab == TAB_MEDIA:
             def activate_media_initial_view():
                 try:
-                    media_window = self.query_one(MediaWindowV88)
+                    media_window = self.query_one(MediaWindow_v2)
                     media_window.activate_initial_view()
                 except QueryError:
                     loguru_logger.error("Could not find MediaWindow to activate its initial view.")
@@ -3613,7 +3614,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_video_models(self) -> None:
         """Initialize models for the video ingestion window."""
         try:
-            ingest_window = self.query_one("#ingest-window", NewIngestWindow)
+            ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
             # New ingest window doesn't need model initialization
             self.log.debug("New ingest window loaded")
         except Exception as e:
@@ -3622,7 +3623,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_audio_models(self) -> None:
         """Initialize models for the audio ingestion window."""
         try:
-            ingest_window = self.query_one("#ingest-window", NewIngestWindow)
+            ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
             # New ingest window doesn't need model initialization
             self.log.debug("New ingest window loaded")
         except Exception as e:
