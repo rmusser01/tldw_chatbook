@@ -22,7 +22,9 @@ class SearchScreen(BaseAppScreen):
     
     def compose_content(self) -> ComposeResult:
         """Compose the search window content."""
-        self.search_window = SearchRAGWindow(self.app_instance, classes="window")
+        self.search_window = SearchRAGWindow(self.app_instance)
+        # Add the window class after creation
+        self.search_window.add_class("window")
         # Yield the window widget directly
         yield self.search_window
     

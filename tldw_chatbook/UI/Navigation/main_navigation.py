@@ -85,7 +85,7 @@ class MainNavigationBar(Container):
             ("media", "Media"),
             ("search", "Search"),
             ("ingest", "Ingest"),
-            ("tools_settings", "Tools"),
+            ("tools_settings", "Settings"),
             ("llm", "LLM"),
             ("customize", "Customize"),
             ("logs", "Logs"),

@@ -2428,10 +2428,6 @@ class ToolsSettingsWindow(Container):
                 id="appearance-smooth-scrolling"
             )
             
-            # Splash Screen Gallery
-            yield Static("Splash Screen Customization", classes="form-section-title")
-            yield Static("View and customize splash screen animations in the Splash Screen Gallery section", classes="section-description")
-            
             # Color Customization
             yield Static("Color Customization", classes="form-section-title")
             
