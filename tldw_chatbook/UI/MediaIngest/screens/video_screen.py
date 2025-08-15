@@ -203,6 +203,10 @@ class VideoIngestScreen(BaseMediaIngestScreen):
     async def process_media_impl(self, form_data: Dict[str, Any]) -> AsyncIterator[ProcessingStatus]:
         """Process video files with transcription and analysis."""
         try:
+            # Import the actual video processor
+            from ....Local_Ingestion.video_processing import LocalVideoProcessor
+            from ....DB.Client_Media_DB_v2 import MediaDatabase
+            
             # Validate with Pydantic model
             validated = VideoFormData(**form_data)
             
@@ -218,6 +222,10 @@ class VideoIngestScreen(BaseMediaIngestScreen):
                 )
                 return
             
+            # Initialize the video processor
+            media_db = MediaDatabase()
+            processor = LocalVideoProcessor(media_db)
+            
             # Process each input
             for idx, input_item in enumerate(all_inputs):
                 file_name = Path(input_item).name if isinstance(input_item, Path) else input_item
@@ -227,26 +235,60 @@ class VideoIngestScreen(BaseMediaIngestScreen):
                     state="processing",
                     progress=(idx / total),
                     current_file=str(input_item),
-                    current_operation="Analyzing video",
+                    current_operation="Processing video",
                     files_processed=idx,
                     total_files=total,
                     message=f"Processing: {file_name}"
                 )
                 
-                # Simulate video analysis
-                await asyncio.sleep(0.5)
-                
-                if validated.transcription_enabled:
+                try:
+                    # Actually process the video using the real backend
+                    if isinstance(input_item, Path):
+                        # Local file processing
+                        result = await asyncio.to_thread(
+                            processor.process_local_video,
+                            str(input_item),
+                            transcribe=validated.transcription_enabled,
+                            whisper_model=validated.transcription_model if hasattr(validated, 'transcription_model') else 'base',
+                            language=validated.transcription_language if hasattr(validated, 'transcription_language') else 'auto',
+                            diarize=validated.diarization if hasattr(validated, 'diarization') else False,
+                            summarize=validated.generate_summary if hasattr(validated, 'generate_summary') else True,
+                            custom_prompt=validated.analysis_prompt if hasattr(validated, 'analysis_prompt') else ""
+                        )
+                    else:
+                        # URL processing
+                        result = await asyncio.to_thread(
+                            processor.process_video_url,
+                            input_item,
+                            transcribe=validated.transcription_enabled,
+                            whisper_model=validated.transcription_model if hasattr(validated, 'transcription_model') else 'base',
+                            language=validated.transcription_language if hasattr(validated, 'transcription_language') else 'auto',
+                            diarize=validated.diarization if hasattr(validated, 'diarization') else False,
+                            summarize=validated.generate_summary if hasattr(validated, 'generate_summary') else True
+                        )
+                    
+                    # Update with success
                     yield ProcessingStatus(
                         state="processing",
-                        progress=(idx + 0.3) / total,
+                        progress=((idx + 1) / total),
                         current_file=str(input_item),
-                        current_operation="Transcribing audio",
-                        files_processed=idx,
+                        current_operation="Completed",
+                        files_processed=idx + 1,
                         total_files=total,
-                        message=f"Transcribing: {file_name}"
+                        message=f"Completed: {file_name}"
                     )
-                    await asyncio.sleep(1)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {file_name}: {e}")
+                    yield ProcessingStatus(
+                        state="processing",
+                        progress=((idx + 1) / total),
+                        current_file=str(input_item),
+                        current_operation="Failed",
+                        files_processed=idx + 1,
+                        total_files=total,
+                        message=f"Failed: {file_name} - {str(e)}"
+                    )
                 
                 if validated.extract_keyframes:
                     yield ProcessingStatus(

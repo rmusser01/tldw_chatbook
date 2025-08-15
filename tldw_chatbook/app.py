@@ -136,7 +136,7 @@ from .UI.Conv_Char_Window import CCPWindow
 from .UI.Notes_Window import NotesWindow
 from .UI.Logs_Window import LogsWindow
 from .UI.Stats_Window import StatsWindow
-from .UI.MediaIngestWindow import MediaIngestWindow
+from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
 from .UI.Navigation.main_navigation import NavigateToScreen
 from .UI.Screens.chat_screen import ChatScreen
 from .UI.Screens.media_ingest_screen import MediaIngestScreen

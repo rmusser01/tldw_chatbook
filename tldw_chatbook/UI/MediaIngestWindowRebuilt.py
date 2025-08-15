@@ -10,9 +10,10 @@ Features:
 - Following Textual's documentation best practices
 """
 
-from typing import TYPE_CHECKING, Optional, Dict, Any, List, AsyncIterator
+from typing import TYPE_CHECKING, Optional, Dict, Any, List, AsyncIterator, Union
 from pathlib import Path
 import asyncio
+import json
 from datetime import datetime
 from loguru import logger
 
@@ -29,15 +30,25 @@ from textual.message import Message
 from textual.binding import Binding
 from textual.css.query import QueryError
 
-# Import enhanced file picker
-from ..Widgets.enhanced_file_picker import EnhancedFilePicker, RecentLocations, BookmarksManager
+# Import enhanced file picker - fallback to basic if enhanced not available
+try:
+    from ..Widgets.enhanced_file_picker import EnhancedFilePicker, RecentLocations, BookmarksManager
+    ENHANCED_PICKER_AVAILABLE = True
+except ImportError:
+    from ..Third_Party.textual_fspicker import FileOpen as EnhancedFilePicker
+    ENHANCED_PICKER_AVAILABLE = False
+    # Create simple fallback classes
+    class RecentLocations:
+        def __init__(self, context="default"):
+            self._recent = []
+        def add(self, path, file_type): pass
+        def get_recent(self): return []
+    
+    class BookmarksManager:
+        def __init__(self, context="default"):
+            self._bookmarks = []
 
-# Import ingestion backends
-from ..Local_Ingestion.video_processing import process_video_file
-from ..Local_Ingestion.audio_processing import process_audio_file
-from ..Local_Ingestion.PDF_Processing_Lib import process_pdf
-from ..Local_Ingestion.Document_Processing_Lib import process_document
-from ..Local_Ingestion.Book_Ingestion_Lib import process_ebook
+# Import ingestion backends - imported dynamically when needed to avoid import errors
 from ..config import get_cli_setting
 
 if TYPE_CHECKING:
@@ -885,23 +896,45 @@ class MediaIngestWindowRebuilt(Container):
             self.show_remote_config()
     
     def open_file_picker(self, media_type: str) -> None:
-        """Open the enhanced file picker for media type."""
+        """Open the file picker for media type."""
+        from ..Third_Party.textual_fspicker import FileOpen, Filters
+        
         # Define file filters based on media type
-        filters = {
-            "video": ["*.mp4", "*.avi", "*.mkv", "*.mov", "*.webm", "*.flv"],
-            "audio": ["*.mp3", "*.wav", "*.flac", "*.m4a", "*.ogg", "*.wma"],
-            "pdf": ["*.pdf"],
-            "doc": ["*.docx", "*.doc", "*.odt", "*.rtf", "*.txt", "*.md"],
-            "ebook": ["*.epub", "*.mobi", "*.azw3", "*.fb2", "*.cbz", "*.cbr"]
+        filter_map = {
+            "video": Filters(
+                ("Video Files", ["*.mp4", "*.avi", "*.mkv", "*.mov", "*.webm", "*.flv"]),
+                ("All Files", ["*"])
+            ),
+            "audio": Filters(
+                ("Audio Files", ["*.mp3", "*.wav", "*.flac", "*.m4a", "*.ogg", "*.wma"]),
+                ("All Files", ["*"])
+            ),
+            "pdf": Filters(
+                ("PDF Files", ["*.pdf"]),
+                ("All Files", ["*"])
+            ),
+            "doc": Filters(
+                ("Documents", ["*.docx", "*.doc", "*.odt", "*.rtf", "*.txt", "*.md"]),
+                ("All Files", ["*"])
+            ),
+            "ebook": Filters(
+                ("Ebooks", ["*.epub", "*.mobi", "*.azw3", "*.fb2", "*.cbz", "*.cbr"]),
+                ("All Files", ["*"])
+            )
         }
         
+        def handle_file_selection(selected_path: Optional[Path]) -> None:
+            """Handle file selection from picker."""
+            if selected_path:
+                self.add_files(media_type, [selected_path])
+        
         # Create and show file picker
-        picker = EnhancedFilePicker(
-            title=f"Select {media_type.title()} Files",
-            filters=filters.get(media_type, ["*"]),
-            multiple=True,
+        picker = FileOpen(
+            title=f"Select {media_type.title()} File",
+            filters=filter_map.get(media_type, Filters(("All Files", ["*"]))),
             show_hidden=False,
-            on_file_selected=lambda files: self.add_files(media_type, files)
+            must_exist=True,
+            select=handle_file_selection
         )
         
         self.app.push_screen(picker)
@@ -1082,10 +1115,78 @@ class MediaIngestWindowRebuilt(Container):
     
     async def process_files_remote(self, media_type: str, files: List[str], options: Dict[str, Any]) -> None:
         """Process files using the remote TLDW API."""
-        # TODO: Implement remote API processing
+        import httpx
+        
         log_widget = self.query_one(f"#{media_type}-log", RichLog)
-        log_widget.write("[yellow]Remote processing not yet implemented[/yellow]")
-        self.show_status("Remote processing coming soon!", "info")
+        progress_bar = self.query_one("#progress-bar", ProgressBar)
+        progress_bar.remove_class("hidden")
+        
+        # Check if we have API configuration
+        if not self.tldw_api_config.get("base_url"):
+            log_widget.write("[red]Remote API not configured[/red]")
+            self.show_status("Please configure TLDW API settings", "error")
+            return
+        
+        api_url = f"{self.tldw_api_config['base_url']}/api/v1/ingest/{media_type}"
+        headers = {}
+        if self.tldw_api_config.get("auth_token"):
+            headers["Authorization"] = f"Bearer {self.tldw_api_config['auth_token']}"
+        
+        total_files = len(files)
+        
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            for i, file_name in enumerate(files):
+                try:
+                    # Update status
+                    self.show_status(f"Uploading {file_name} ({i+1}/{total_files})")
+                    progress_bar.update(progress=(i / total_files) * 100)
+                    log_widget.write(f"[cyan]Uploading:[/cyan] {file_name}")
+                    
+                    # Prepare file for upload
+                    file_path = Path(file_name)
+                    if file_path.exists():
+                        with open(file_path, 'rb') as f:
+                            files_data = {'file': (file_path.name, f, 'application/octet-stream')}
+                            data = {'options': json.dumps(options)}
+                            
+                            # Send to API
+                            response = await client.post(
+                                api_url,
+                                files=files_data,
+                                data=data,
+                                headers=headers
+                            )
+                            
+                            if response.status_code == 200:
+                                result = response.json()
+                                log_widget.write(f"[green]✓ Processed:[/green] {file_name}")
+                            else:
+                                log_widget.write(f"[red]✗ Failed:[/red] {file_name} - Status {response.status_code}")
+                    else:
+                        # Handle URL
+                        data = {
+                            'url': file_name,
+                            'options': options
+                        }
+                        response = await client.post(
+                            api_url,
+                            json=data,
+                            headers=headers
+                        )
+                        
+                        if response.status_code == 200:
+                            log_widget.write(f"[green]✓ Processed:[/green] {file_name}")
+                        else:
+                            log_widget.write(f"[red]✗ Failed:[/red] {file_name} - Status {response.status_code}")
+                            
+                except Exception as e:
+                    log_widget.write(f"[red]✗ Error:[/red] {file_name} - {str(e)}")
+                    logger.error(f"Remote processing error for {file_name}: {e}")
+        
+        progress_bar.update(progress=100)
+        progress_bar.add_class("hidden")
+        self.show_status(f"Completed remote processing of {total_files} files", "success")
+        log_widget.write(f"[bold green]Remote processing complete![/bold green]")
     
     async def process_video_local(self, file_path: Path, options: Dict[str, Any]) -> Dict[str, Any]:
         """Process a video file locally."""
@@ -1205,6 +1306,29 @@ class MediaIngestWindowRebuilt(Container):
             
         except Exception as e:
             logger.error(f"Error processing ebook: {e}")
+            return {"status": "error", "message": str(e)}
+    
+    async def process_web_local(self, url: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        """Process a web URL locally."""
+        try:
+            from ..Web_Scraping.Article_Extractor_Lib import scrape_and_process_article
+            
+            # Process the web URL
+            result = await asyncio.to_thread(
+                scrape_and_process_article,
+                url,
+                extract_article=options.get("extract_article", True),
+                download_media=options.get("download_media", False),
+                to_markdown=options.get("to_markdown", True),
+                extract_metadata=options.get("metadata", True),
+                screenshot=options.get("screenshot", False),
+                summarize=options.get("summarize", True)
+            )
+            
+            return {"status": "success", "message": "Web content processed", "result": result}
+            
+        except Exception as e:
+            logger.error(f"Error processing web URL: {e}")
             return {"status": "error", "message": str(e)}
     
     def cancel_processing(self, media_type: str) -> None:
