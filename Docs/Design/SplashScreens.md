@@ -284,4 +284,4 @@ height = 24
 3. Add the card name to `active_cards` in your config
 4. Set `card_selection = "my_custom_card"` to use it
 
-For more details on creating custom splash screens, see the [Splash Screen Guide](../Development/SPLASH_SCREEN_GUIDE.md).
+For more details on creating custom splash screens, see the [Splash Screen Guide](../Development/SplashScreen%20s/SPLASH_SCREEN_GUIDE.md).

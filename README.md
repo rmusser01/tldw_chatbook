@@ -178,7 +178,7 @@ python scripts/verify_higgs_installation.py
 - For CUDA support, install PyTorch with CUDA before step 1
 - On macOS, you may need to install additional audio libraries: `brew install libsndfile`
 
-- For detailed Higgs configuration and usage, see [Docs/Higgs-Audio-TTS-Guide.md](Docs/Development/Higgs-Audio-TTS-Guide.md).
+- For detailed Higgs configuration and usage, see [Docs/Higgs-Audio-TTS-Guide.md](Docs/Development/TTS/Higgs-Audio-TTS-Guide.md).
 
 ## Core Features (Always Available)
 
@@ -496,7 +496,7 @@ Customizable splash screens with 50+ animation effects:
 - **Configuration**: Via `[splash_screen]` section in config.toml
 - **Performance**: Async rendering with configurable duration
 
-For detailed customization, see the [Splash Screen Guide](Docs/Development/SPLASH_SCREEN_GUIDE.md).
+For detailed customization, see the [Splash Screen Guide](Docs/Development/SplashScreen s/SPLASH_SCREEN_GUIDE.md).
 
 ### Coding Assistant
 - **AI-powered code assistance**: In dedicated coding tab

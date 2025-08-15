@@ -1,17 +1,19 @@
 # tldw_chatbook/Widgets/Media_Ingest/IngestUIFactory.py
 # Factory pattern for selecting the appropriate ingestion UI based on configuration
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 from loguru import logger
 from textual.containers import Container
 
-from tldw_chatbook.config import get_ingest_ui_style
-
-# Import all UI variants
-from .IngestLocalVideoWindowSimplified import IngestLocalVideoWindowSimplified
-from .IngestGridWindow import IngestGridWindow
+# Import standard UI windows - one per media type
+from .Ingest_Local_Video_Window import VideoIngestWindowRedesigned
+from .Ingest_Local_Audio_Window import AudioIngestWindowRedesigned
+from .IngestLocalVideoWindow import IngestLocalVideoWindow
+from .IngestLocalDocumentWindow import IngestLocalDocumentWindow
+from .IngestLocalPdfWindow import IngestLocalPdfWindow
+from .IngestLocalEbookWindow import IngestLocalEbookWindow
+from .IngestLocalPlaintextWindow import IngestLocalPlaintextWindow
 from .IngestWizardWindow import IngestWizardWindow
-from .IngestSplitPaneWindow import IngestSplitPaneWindow
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -25,64 +27,44 @@ class IngestUIFactory:
     @staticmethod
     def create_ui(app_instance: 'TldwCli', media_type: str = "video") -> Container:
         """
-        Create and return the appropriate ingestion UI based on configuration.
+        Create and return the standard ingestion UI for the specified media type.
         
         Args:
             app_instance: The main application instance
             media_type: Type of media to ingest (video, audio, pdf, etc.)
             
         Returns:
-            Container widget for the selected UI style
+            Container widget for the media type
         """
-        # Get configured UI style
-        ui_style = get_ingest_ui_style()
+        logger.info(f"Creating ingestion UI for media type: {media_type}")
         
-        logger.info(f"Creating ingestion UI with style: {ui_style} for media type: {media_type}")
-        
-        # Create and return the appropriate UI
-        if ui_style == "grid":
-            return IngestGridWindow(app_instance, media_type)
-        elif ui_style == "wizard":
-            return IngestWizardWindow(app_instance, media_type)
-        elif ui_style == "split":
-            return IngestSplitPaneWindow(app_instance, media_type)
+        # Create the standard UI for each media type
+        if media_type == "video":
+            return VideoIngestWindowRedesigned(app_instance)
+        elif media_type == "audio":
+            return AudioIngestWindowRedesigned(app_instance)
+        elif media_type == "document":
+            return IngestLocalDocumentWindow(app_instance)
+        elif media_type == "pdf":
+            return IngestLocalPdfWindow(app_instance)
+        elif media_type == "ebook":
+            return IngestLocalEbookWindow(app_instance)
+        elif media_type == "plaintext":
+            return IngestLocalPlaintextWindow(app_instance)
         else:
-            # Default to simplified UI
-            if media_type == "video":
-                return IngestLocalVideoWindowSimplified(app_instance)
-            else:
-                # For other media types, fall back to grid as it's more generic
-                logger.warning(f"Simplified UI not available for {media_type}, using grid layout")
-                return IngestGridWindow(app_instance, media_type)
+            # For unknown media types, use video as fallback
+            logger.warning(f"Unknown media type {media_type}, using video ingestion window")
+            return VideoIngestWindowRedesigned(app_instance)
     
     @staticmethod
-    def get_available_styles() -> list[str]:
+    def get_available_media_types() -> list[str]:
         """
-        Get list of available UI styles.
+        Get list of supported media types.
         
         Returns:
-            List of UI style names
+            List of media type names
         """
-        return ["simplified", "grid", "wizard", "split"]
-    
-    @staticmethod
-    def get_style_description(style: str) -> str:
-        """
-        Get a description of a UI style.
-        
-        Args:
-            style: UI style name
-            
-        Returns:
-            Human-readable description of the style
-        """
-        descriptions = {
-            "simplified": "Simple, vertical layout with progressive disclosure",
-            "grid": "Compact 3-column grid layout for efficient space usage",
-            "wizard": "Step-by-step wizard interface for guided ingestion",
-            "split": "Split-pane interface with live preview on the right"
-        }
-        return descriptions.get(style, "Unknown UI style")
+        return ["video", "audio", "document", "pdf", "ebook", "plaintext"]
 
 
 # Convenience function for direct import

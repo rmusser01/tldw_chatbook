@@ -65,19 +65,17 @@ class IngestWizardContainer(WizardContainer):
         # Process the media based on collected data
         self.process_media(data)
         
-        # Dismiss the wizard
-        parent_screen = self.ancestors_with_self[1] if len(self.ancestors_with_self) > 1 else None
-        if parent_screen and isinstance(parent_screen, ModalScreen):
-            parent_screen.dismiss(data)
+        # Notify user of completion
+        if hasattr(self.app_instance, 'notify'):
+            self.app_instance.notify("Media processing started", severity="information")
     
     def handle_cancellation(self) -> None:
         """Handle wizard cancellation."""
         logger.info("Wizard cancelled")
         
-        # Dismiss the wizard
-        parent_screen = self.ancestors_with_self[1] if len(self.ancestors_with_self) > 1 else None
-        if parent_screen and isinstance(parent_screen, ModalScreen):
-            parent_screen.dismiss(None)
+        # Notify user of cancellation
+        if hasattr(self.app_instance, 'notify'):
+            self.app_instance.notify("Media ingestion cancelled", severity="warning")
     
     def process_media(self, data: Dict[str, Any]) -> None:
         """Process media based on wizard data."""
@@ -96,7 +94,7 @@ class IngestWizardContainer(WizardContainer):
 
 
 class IngestWizardWindow(Container):
-    """Container widget that launches the wizard as a modal."""
+    """Simplified wizard container for media ingestion."""
     
     def __init__(self, app_instance: 'TldwCli', media_type: str = "video", **kwargs):
         super().__init__(**kwargs)
@@ -105,31 +103,9 @@ class IngestWizardWindow(Container):
         logger.debug(f"[Wizard] IngestWizardWindow initialized for {media_type}")
     
     def compose(self) -> ComposeResult:
-        """Compose a simple launcher UI."""
-        with Container(classes="wizard-launcher"):
-            yield Container(
-                Container(
-                    classes="wizard-launch-message"
-                ),
-                classes="wizard-launch-container"
-            )
-    
-    def on_mount(self) -> None:
-        """Launch wizard immediately on mount."""
-        # Launch the wizard screen
-        self.app.push_screen(
-            IngestWizardScreen(self.app_instance, media_type=self.media_type),
-            callback=self.wizard_complete
-        )
-    
-    def wizard_complete(self, result: Any) -> None:
-        """Handle wizard completion."""
-        if result:
-            logger.info(f"Wizard completed with result: {result}")
-            self.app_instance.notify("Media ingestion started", severity="information")
-        else:
-            logger.info("Wizard was cancelled")
-            self.app_instance.notify("Media ingestion cancelled", severity="warning")
+        """Compose the wizard content directly."""
+        # Create the wizard container directly instead of launching a modal
+        yield IngestWizardContainer(self.app_instance, self.media_type)
 
 
 # Standalone test function

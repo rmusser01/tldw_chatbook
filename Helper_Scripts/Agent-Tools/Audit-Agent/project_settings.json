@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "project": "tldw_server",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ '{{file_path}}' =~ \\.py$ ]]; then cd /Users/appledev/Working/tldw_server && python -m ruff check '{{file_path}}' 2>&1 | head -5; fi",
+            "description": "Run ruff linting on Python files",
+            "continueOnError": true
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ '{{file_path}}' =~ tldw_Server_API/tests/.+\\.py$ ]]; then echo '✅ Test file modified: {{file_path}}' >> ~/.claude/audit_logs/test_changes.log; fi",
+            "description": "Track test file modifications",
+            "continueOnError": true
+          }
+        ]
+      }
+    ],
+    "PreCommit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/appledev/Working/tldw_server && python -m pytest tldw_Server_API/tests/ -x --tb=short -q",
+            "description": "Run tests before commit",
+            "continueOnError": false
+          }
+        ]
+      }
+    ]
+  },
+  "projectAudit": {
+    "enabled": true,
+    "pythonLinting": {
+      "tool": "ruff",
+      "autoFix": false,
+      "ignorePatterns": ["**/migrations/**", "**/node_modules/**"]
+    },
+    "sensitivePatterns": [
+      "OPENAI_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "sk-",
+      "ghp_",
+      "password",
+      "secret"
+    ],
+    "requireTests": true,
+    "testPatterns": ["**/tests/**/*.py", "**/test_*.py"],
+    "codeQualityChecks": {
+      "maxFileSize": 1048576,
+      "maxLineLength": 120,
+      "forbiddenPatterns": [
+        "eval(",
+        "exec(",
+        "__import__"
+      ]
+    }
+  },
+  "notifications": {
+    "onSensitiveData": {
+      "enabled": true,
+      "command": "osascript -e 'display notification \"Sensitive data detected in {{file_path}}\" with title \"Claude Code Audit Alert\"'"
+    },
+    "onTestFailure": {
+      "enabled": true,
+      "command": "echo '⚠️  Test failure detected' >&2"
+    }
+  }
+}

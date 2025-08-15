@@ -1,0 +1,1077 @@
+/* ========================================
+ * FEATURES: New Modern Ingest Interface
+ * ======================================== 
+ * Modern, card-based ingest UI with professional styling
+ * ======================================== */
+
+/* ================================================
+ * NEW INGEST WINDOW - Main Hub
+ * ================================================ */
+
+/* Main title and header */
+.main-title {
+    dock: top;
+    height: 4;
+    text-align: center;
+    text-style: bold;
+    color: $primary;
+    background: linear-gradient(90deg, $surface, $surface-lighten-1, $surface);
+    border-bottom: thick $primary;
+    padding: 1 2;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.main-subtitle {
+    dock: top;  
+    height: 3;
+    text-align: center;
+    color: $text-muted;
+    background: $surface-lighten-1;
+    padding: 1 2;
+    margin-bottom: 1;
+    border-bottom: solid $surface-lighten-3;
+}
+
+/* Main content layout */
+.main-content {
+    height: 1fr;
+    width: 100%;
+}
+
+/* ================================================
+ * MEDIA TYPE SELECTION PANEL
+ * ================================================ */
+
+.media-selection-panel {
+    width: 65%;
+    height: 100%;
+    padding: 2;
+    background: $surface;
+    border-right: thick $primary;
+}
+
+.panel-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 2;
+    border-bottom: thick $primary;
+    padding-bottom: 1;
+    background: linear-gradient(90deg, transparent, $primary 5%, transparent 95%, transparent);
+    background-size: 100% 2px;
+    background-position: bottom;
+    background-repeat: no-repeat;
+}
+
+/* Media cards grid layout */
+.media-cards-grid {
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: auto auto auto;
+    grid-gutter: 2;
+    height: auto;
+}
+
+/* ================================================
+ * MEDIA TYPE CARDS
+ * ================================================ */
+
+.media-card {
+    height: 10;
+    background: linear-gradient(135deg, $surface, $surface-lighten-1);
+    border: round $primary;
+    padding: 2;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    position: relative;
+}
+
+.media-card:hover {
+    background: linear-gradient(135deg, $primary 10%, $accent 10%);
+    border: round $accent;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+}
+
+.media-card:focus {
+    border: round $accent;
+    box-shadow: 0 0 0 2px $accent;
+}
+
+/* Card header with icon and title */
+.card-header {
+    height: 4;
+    align: left middle;
+    margin-bottom: 1;
+}
+
+.card-icon {
+    width: 5;
+    text-align: center;
+    text-style: bold;
+    color: $primary;
+    background: $surface-lighten-2;
+    border: round $surface-lighten-3;
+    padding: 1;
+    margin-right: 1;
+}
+
+.media-card:hover .card-icon {
+    color: $accent;
+    background: $surface;
+    border: round $accent;
+}
+
+.card-title {
+    width: 1fr;
+    text-style: bold;
+    color: $text;
+    font-size: 14px;
+}
+
+/* Card description */
+.card-description {
+    color: $text-muted;
+    height: 3;
+    margin-bottom: 2;
+    line-height: 1.2;
+}
+
+/* Card action button */
+.card-button {
+    height: 3;
+    width: 100%;
+    background: $primary;
+    color: $text;
+    border: none;
+    text-style: bold;
+    transition: all 0.2s ease;
+}
+
+.card-button:hover {
+    background: $accent;
+    color: $surface;
+    transform: translateY(-1px);
+}
+
+/* ================================================
+ * ACTIVITY PANEL
+ * ================================================ */
+
+.activity-panel {
+    width: 35%;
+    height: 100%;
+    padding: 2;
+    background: $surface-lighten-1;
+}
+
+/* ================================================
+ * GLOBAL DROP ZONE
+ * ================================================ */
+
+.drop-zone {
+    height: 14;
+    background: linear-gradient(135deg, $surface, $surface-lighten-2);
+    border: thick dashed $primary;
+    text-align: center;
+    padding: 3;
+    margin-bottom: 2;
+    border-radius: 12px;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.drop-zone::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s ease;
+}
+
+.drop-zone:hover::before {
+    left: 100%;
+}
+
+.drop-zone.active {
+    background: linear-gradient(135deg, $accent 20%, $primary 20%);
+    border: thick solid $accent;
+    border-color: $accent;
+    transform: scale(1.02);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.drop-icon {
+    color: $primary;
+    text-style: bold;
+    margin-bottom: 1;
+    font-size: 24px;
+}
+
+.drop-zone.active .drop-icon {
+    color: $accent;
+    animation: pulse 1s infinite;
+}
+
+.drop-message {
+    color: $text;
+    text-style: bold;
+    margin-bottom: 1;
+    font-size: 16px;
+}
+
+.file-count {
+    color: $accent;
+    text-style: bold;
+    background: $surface;
+    border: round $accent;
+    padding: 0 1;
+    display: inline-block;
+}
+
+/* ================================================
+ * ACTIVITY FEED
+ * ================================================ */
+
+.activity-feed {
+    height: 1fr;
+    background: linear-gradient(180deg, $surface, $surface-lighten-1);
+    border: round $primary;
+    padding: 2;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.feed-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 2;
+    border-bottom: thick $primary;
+    padding-bottom: 1;
+    background: linear-gradient(90deg, transparent, $primary 10%, transparent 90%, transparent);
+    background-size: 100% 1px;
+    background-position: bottom;
+    background-repeat: no-repeat;
+}
+
+.activity-list {
+    height: 1fr;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: $primary $surface;
+}
+
+.activity-item {
+    height: 5;
+    margin-bottom: 2;
+    background: linear-gradient(90deg, $surface-lighten-1, $surface);
+    border: round $surface-lighten-2;
+    padding: 1;
+    transition: all 0.2s ease;
+    border-left: thick $primary;
+}
+
+.activity-item:hover {
+    background: linear-gradient(90deg, $surface-lighten-2, $surface-lighten-1);
+    border: round $primary;
+    transform: translateX(4px);
+}
+
+.activity-icon {
+    width: 4;
+    text-align: center;
+    color: $primary;
+    text-style: bold;
+}
+
+.activity-details {
+    width: 1fr;
+    padding-left: 1;
+}
+
+.activity-title {
+    text-style: bold;
+    color: $text;
+    margin-bottom: 1;
+}
+
+.activity-time {
+    color: $text-muted;
+}
+
+.activity-progress {
+    width: 24;
+    height: 2;
+    margin-left: 1;
+}
+
+.empty-message {
+    text-align: center;
+    color: $text-muted;
+    padding: 4;
+    font-style: italic;
+    background: $surface-darken-1;
+    border: round $surface-darken-2;
+    margin: 2;
+}
+
+/* ================================================
+ * QUICK ACTIONS BAR
+ * ================================================ */
+
+.quick-actions {
+    dock: bottom;
+    height: 6;
+    background: linear-gradient(180deg, $surface-lighten-1, $surface);
+    border-top: thick $primary;
+    padding: 2;
+    align: center middle;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.quick-actions Button {
+    margin-right: 3;
+    height: 4;
+    padding: 0 2;
+    background: $primary;
+    color: $text;
+    border: round $primary;
+    text-style: bold;
+    transition: all 0.2s ease;
+}
+
+.quick-actions Button:hover {
+    background: $accent;
+    color: $surface;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.quick-actions Button:focus {
+    box-shadow: 0 0 0 2px $accent;
+}
+
+/* ================================================
+ * SMART FILE DROP ZONE
+ * ================================================ */
+
+.smart-drop-zone {
+    height: 100%;
+    max-height: 15;
+    width: 100%;
+    layout: vertical;
+    padding: 1;
+}
+
+/* Enhanced drop area */
+.drop-area {
+    height: 8;
+    background: linear-gradient(135deg, $surface, $surface-lighten-2);
+    border: thick dashed $primary;
+    text-align: center;
+    padding: 1;
+    margin-bottom: 1;
+    border-radius: 8px;
+    position: relative;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.drop-area:hover {
+    background: linear-gradient(135deg, $primary 10%, $surface-lighten-2);
+    border-color: $accent;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+}
+
+.drop-area.dragging {
+    background: linear-gradient(135deg, $accent 25%, $primary 25%);
+    border: thick solid $accent;
+    transform: scale(1.05);
+    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.2);
+    animation: pulse 0.6s ease-in-out;
+}
+
+/* File list container */
+.file-list-container {
+    height: 1fr;
+    background: linear-gradient(180deg, $surface, $surface-lighten-1);
+    border: round $primary;
+    padding: 2;
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.05);
+}
+
+.list-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 2;
+    border-bottom: thick $primary;
+    padding-bottom: 1;
+}
+
+.file-list {
+    height: 1fr;
+    overflow-y: auto;
+    margin-bottom: 2;
+}
+
+/* ================================================
+ * FILE PREVIEW ITEMS
+ * ================================================ */
+
+.file-preview-item {
+    background: linear-gradient(90deg, $surface-lighten-1, $surface);
+    border: round $surface-lighten-2;
+    padding: 2;
+    margin-bottom: 2;
+    height: auto;
+    transition: all 0.2s ease;
+    border-left: thick $accent;
+}
+
+.file-preview-item:hover {
+    background: linear-gradient(90deg, $surface-lighten-2, $surface-lighten-1);
+    border: round $accent;
+    transform: translateX(4px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.file-info-row {
+    height: auto;
+    align: left middle;
+}
+
+.file-icon {
+    width: 5;
+    text-align: center;
+    text-style: bold;
+    background: $primary;
+    color: $surface;
+    border: round $primary;
+    padding: 1;
+    margin-right: 1;
+}
+
+.file-details {
+    width: 1fr;
+    height: auto;
+    padding-left: 1;
+}
+
+.file-name {
+    text-style: bold;
+    color: $text;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    margin-bottom: 1;
+}
+
+.file-metadata {
+    color: $text-muted;
+    font-size: 12px;
+}
+
+.remove-button {
+    width: 4;
+    height: 4;
+    min-width: 4;
+    text-align: center;
+    padding: 0;
+    background: $error;
+    color: $surface;
+    border: round $error;
+    text-style: bold;
+    transition: all 0.2s ease;
+}
+
+.remove-button:hover {
+    background: $error-darken-1;
+    transform: scale(1.1);
+}
+
+/* ================================================
+ * UNIFIED PROCESSOR
+ * ================================================ */
+
+.processor-container {
+    height: 100%;
+    width: 100%;
+    max-height: 35;
+    overflow: hidden;
+}
+
+.inline-title {
+    height: 2;
+    text-align: center;
+    text-style: bold;
+    color: $primary;
+    background: $surface-lighten-1;
+    margin-bottom: 1;
+    border-bottom: thick $primary;
+}
+
+.processor-content {
+    height: 1fr;
+    width: 100%;
+    max-height: 32;
+}
+
+/* File panel styling */
+.file-panel {
+    width: 55%;
+    height: 100%;
+    max-height: 30;
+    padding: 1;
+    border-right: thick $primary;
+    background: $surface;
+    overflow-y: auto;
+}
+
+.metadata-section {
+    margin-top: 1;
+    padding: 1;
+    background: $surface-lighten-1;
+    border: round $primary;
+}
+
+.metadata-grid {
+    grid-size: 2;
+    grid-columns: auto 1fr;
+    grid-rows: auto;
+    grid-gutter: 1;
+    margin-top: 1;
+}
+
+.metadata-grid Input {
+    height: 2;
+    width: 100%;
+    background: $surface;
+    border: solid $primary;
+    padding: 0 1;
+}
+
+.metadata-grid Input:focus {
+    border: solid $accent;
+    background: $accent 10%;
+}
+
+/* Options panel styling */
+.options-panel {
+    width: 45%;
+    height: 100%;
+    max-height: 30;
+    padding: 1;
+    background: $surface-lighten-1;
+}
+
+/* Compact styles */
+.compact-mode-toggle {
+    height: 4;
+    background: $surface;
+    border: round $primary;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+.compact-label {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.compact-mode-selector {
+    layout: horizontal;
+    height: 2;
+}
+
+.compact-mode-selector RadioButton {
+    margin-right: 2;
+    height: 2;
+}
+
+.compact-options {
+    height: 1fr;
+    max-height: 15;
+    background: $surface;
+    border: round $primary;
+    padding: 1;
+    margin-bottom: 1;
+    overflow-y: auto;
+}
+
+.compact-process-button {
+    width: 100%;
+    height: 3;
+    text-style: bold;
+    background: linear-gradient(135deg, $primary, $accent);
+    color: $surface;
+    margin-bottom: 1;
+}
+
+.compact-process-button:hover {
+    background: linear-gradient(135deg, $accent, $primary);
+}
+
+.compact-process-button:disabled {
+    background: $surface-lighten-2;
+    color: $text-muted;
+}
+
+.compact-status {
+    height: 2;
+    min-height: 2;
+}
+
+/* ================================================
+ * MODE TOGGLE
+ * ================================================ */
+
+.mode-toggle {
+    background: linear-gradient(135deg, $surface, $surface-lighten-1);
+    border: round $primary;
+    padding: 2;
+    margin-bottom: 2;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.mode-label {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 2;
+    text-align: center;
+}
+
+.mode-selector {
+    layout: horizontal;
+    height: auto;
+    margin-bottom: 2;
+    align: center middle;
+}
+
+.mode-selector RadioButton {
+    margin-right: 3;
+    background: $surface;
+    border: solid $primary;
+    border-radius: 20px;
+    padding: 1 2;
+    transition: all 0.2s ease;
+}
+
+.mode-selector RadioButton:hover {
+    background: $primary 20%;
+    border: solid $accent;
+}
+
+.mode-selector RadioButton.-active {
+    background: $primary;
+    color: $surface;
+    border: solid $primary;
+}
+
+.mode-description {
+    color: $text-muted;
+    font-style: italic;
+    text-align: center;
+    background: $surface-darken-1;
+    border: round $surface-darken-2;
+    padding: 1;
+}
+
+/* ================================================
+ * MEDIA OPTIONS
+ * ================================================ */
+
+.media-options {
+    background: linear-gradient(180deg, $surface, $surface-lighten-1);
+    border: round $primary;
+    padding: 2;
+    margin-bottom: 2;
+    height: 1fr;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.options-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 2;
+    border-bottom: thick $primary;
+    padding-bottom: 1;
+    text-align: center;
+}
+
+.options-content {
+    height: 1fr;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: $primary $surface;
+}
+
+/* Process button section */
+.process-section {
+    background: linear-gradient(135deg, $surface, $surface-lighten-2);
+    border: round $primary;
+    padding: 2;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.process-button {
+    width: 100%;
+    height: 5;
+    text-style: bold;
+    margin-bottom: 2;
+    background: linear-gradient(135deg, $primary, $accent);
+    color: $surface;
+    border: none;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    font-size: 16px;
+}
+
+.process-button:hover {
+    background: linear-gradient(135deg, $accent, $primary);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+}
+
+.process-button:disabled {
+    background: $surface-lighten-2;
+    color: $text-muted;
+    transform: none;
+    box-shadow: none;
+}
+
+/* ================================================
+ * PROCESSING DASHBOARD
+ * ================================================ */
+
+.dashboard-header {
+    dock: top;
+    height: 6;
+    background: linear-gradient(135deg, $surface, $surface-lighten-2);
+    border: round $primary;
+    padding: 2;
+    margin-bottom: 2;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.dashboard-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 2;
+    text-align: center;
+    font-size: 18px;
+}
+
+.overall-status {
+    height: 3;
+    align: left middle;
+}
+
+.overall-message {
+    width: 1fr;
+    color: $text;
+    text-style: bold;
+}
+
+.overall-progress {
+    width: 25;
+    height: 2;
+    margin: 0 2;
+    background: $surface-lighten-3;
+    border: round $primary;
+}
+
+.jobs-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 2;
+    border-bottom: thick $primary;
+    padding-bottom: 1;
+    background: linear-gradient(90deg, transparent, $primary 10%, transparent 90%, transparent);
+    background-size: 100% 2px;
+    background-position: bottom;
+    background-repeat: no-repeat;
+}
+
+.jobs-container {
+    height: 1fr;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+/* ================================================
+ * JOB STATUS WIDGETS
+ * ================================================ */
+
+.job-status-widget {
+    background: linear-gradient(135deg, $surface, $surface-lighten-1);
+    border: round $primary;
+    padding: 2;
+    margin-bottom: 2;
+    transition: all 0.2s ease;
+    border-left: thick $accent;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.job-status-widget:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
+    border: round $accent;
+}
+
+.job-header {
+    height: 4;
+    align: left middle;
+    margin-bottom: 2;
+}
+
+.job-title {
+    width: 1fr;
+    text-style: bold;
+    color: $text;
+    font-size: 16px;
+}
+
+.job-status {
+    width: auto;
+    margin-right: 2;
+    color: $accent;
+    text-style: bold;
+    background: $accent 20%;
+    border: round $accent;
+    padding: 0 1;
+}
+
+.job-controls {
+    width: auto;
+    layout: horizontal;
+}
+
+.control-button {
+    width: 4;
+    height: 4;
+    margin-left: 1;
+    padding: 0;
+    text-align: center;
+    border: round;
+    text-style: bold;
+    transition: all 0.2s ease;
+}
+
+.pause-button {
+    background: $warning;
+    color: $surface;
+}
+
+.resume-button {
+    background: $success;
+    color: $surface;
+}
+
+.cancel-button {
+    background: $error;
+    color: $surface;
+}
+
+.control-button:hover {
+    transform: scale(1.1);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.job-progress {
+    margin-bottom: 2;
+}
+
+.job-progress-bar {
+    height: 3;
+    margin-bottom: 1;
+    background: $surface-lighten-3;
+    border: round $primary;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.progress-details {
+    height: 3;
+    align: left middle;
+}
+
+.progress-message {
+    width: 1fr;
+    color: $text;
+}
+
+.progress-time {
+    width: auto;
+    color: $text-muted;
+    font-style: italic;
+}
+
+/* ================================================
+ * ANIMATIONS AND EFFECTS
+ * ================================================ */
+
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+/* Apply animations to dynamic content */
+.media-card,
+.activity-item,
+.file-preview-item,
+.job-status-widget {
+    animation: fadeIn 0.3s ease;
+}
+
+.activity-item {
+    animation: slideInLeft 0.4s ease;
+}
+
+/* ================================================
+ * RESPONSIVE ADJUSTMENTS
+ * ================================================ */
+
+/* Narrow terminal adjustments */
+@media (max-width: 100) {
+    .media-cards-grid {
+        grid-size: 1;
+        grid-columns: 1fr;
+    }
+    
+    .main-content {
+        layout: vertical;
+    }
+    
+    .media-selection-panel {
+        width: 100%;
+        border-right: none;
+        border-bottom: thick $primary;
+    }
+    
+    .activity-panel {
+        width: 100%;
+    }
+    
+    .processor-content {
+        layout: vertical;
+    }
+    
+    .file-panel {
+        width: 100%;
+        border-right: none;
+        border-bottom: thick $primary;
+    }
+    
+    .options-panel {
+        width: 100%;
+    }
+}
+
+/* ================================================
+ * ACCESSIBILITY ENHANCEMENTS
+ * ================================================ */
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .media-card,
+    .drop-zone,
+    .file-preview-item,
+    .job-status-widget {
+        border-width: 2px;
+        border-style: solid;
+    }
+    
+    .card-button,
+    .process-button,
+    .control-button {
+        border: 2px solid;
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    .media-card,
+    .drop-zone,
+    .file-preview-item,
+    .job-status-widget,
+    .control-button,
+    .process-button {
+        transition: none;
+        animation: none;
+        transform: none;
+    }
+}
+
+/* ================================================
+ * UTILITY CLASSES
+ * ================================================ */
+
+.hidden {
+    display: none;
+}
+
+.success {
+    color: $success;
+    background: $success 20%;
+    border: round $success;
+    padding: 0 1;
+}
+
+.error {
+    color: $error;
+    background: $error 20%;
+    border: round $error;
+    padding: 0 1;
+}
+
+.warning {
+    color: $warning;
+    background: $warning 20%;
+    border: round $warning;
+    padding: 0 1;
+}
+
+.processing {
+    opacity: 0.8;
+    animation: pulse 2s infinite;
+}
+
+/* Focus indicators for accessibility */
+Button:focus,
+Input:focus,
+RadioButton:focus {
+    box-shadow: 0 0 0 2px $accent;
+    outline: 2px solid transparent;
+}
+
+/* Scrollbar styling for webkit browsers */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: $surface-lighten-2;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: $primary;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: $accent;
+}
