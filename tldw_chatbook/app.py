@@ -1785,7 +1785,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # Map screen names to screen classes
         screen_map = {
             'chat': ChatScreen,
-            'ingest': MediaIngestScreen,
+            'ingest': MediaIngestScreen,  # Using the rebuilt window through the screen wrapper
             'coding': CodingScreen,
             'conversation': ConversationScreen,
             'ccp': ConversationScreen,  # Alias for Conv/Char

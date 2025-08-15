@@ -112,7 +112,7 @@ class MediaIngestWindowRebuilt(Container):
         width: auto;
         layout: horizontal;
         align: center middle;
-        margin-left: auto;
+        margin: 0 0 0 1;
     }
     
     .mode-label {
@@ -354,9 +354,9 @@ class MediaIngestWindowRebuilt(Container):
     
     def compose_video_tab(self) -> ComposeResult:
         """Compose the video ingestion tab."""
-        with VerticalScroll():
+        with VerticalScroll() as scroll:
             # File selection
-            with Container(classes="form-section"):
+            with Container(classes="form-section") as section:
                 yield Label("Input Files", classes="section-title")
                 
                 with Container(classes="file-list-container"):
@@ -427,21 +427,19 @@ class MediaIngestWindowRebuilt(Container):
                     with Container(classes="form-group"):
                         yield Label("Transcription Model:", classes="form-label")
                         yield Select(
-                            [("base", "Base"), ("small", "Small"), 
-                             ("medium", "Medium"), ("large", "Large")],
+                            [("Base", "base"), ("Small", "small"), 
+                             ("Medium", "medium"), ("Large", "large")],
                             id="video-model",
-                            value="base",
                             classes="form-select"
                         )
                     
                     with Container(classes="form-group"):
                         yield Label("Language:", classes="form-label")
                         yield Select(
-                            [("auto", "Auto-detect"), ("en", "English"),
-                             ("es", "Spanish"), ("fr", "French"),
-                             ("de", "German"), ("zh", "Chinese")],
+                            [("Auto-detect", "auto"), ("English", "en"),
+                             ("Spanish", "es"), ("French", "fr"),
+                             ("German", "de"), ("Chinese", "zh")],
                             id="video-language",
-                            value="auto",
                             classes="form-select"
                         )
                 
@@ -766,9 +764,11 @@ class MediaIngestWindowRebuilt(Container):
             # URL input
             with Container(classes="form-section"):
                 yield Label("Web URLs", classes="section-title")
+                yield Static("Enter URLs, one per line (e.g., https://example.com/article):", 
+                           classes="form-label")
                 
                 yield TextArea(
-                    placeholder="Enter URLs, one per line:\nhttps://example.com/article\nhttps://youtube.com/watch?v=...",
+                    "",  # Initial empty text
                     id="web-urls",
                     classes="form-textarea"
                 )
@@ -1053,11 +1053,48 @@ class MediaIngestWindowRebuilt(Container):
             options["subtitles"] = self.query_one("#video-subtitles", Checkbox).value
             options["keyframes"] = self.query_one("#video-keyframes", Checkbox).value
             options["thumbnails"] = self.query_one("#video-thumbnails", Checkbox).value
-            options["model"] = self.query_one("#video-model", Select).value
-            options["language"] = self.query_one("#video-language", Select).value
+            # Select widget returns the value (second item in tuple)
+            video_model_select = self.query_one("#video-model", Select)
+            options["model"] = video_model_select.value if video_model_select.value != Select.BLANK else "base"
+            video_lang_select = self.query_one("#video-language", Select)
+            options["language"] = video_lang_select.value if video_lang_select.value != Select.BLANK else "auto"
             options["prompt"] = self.query_one("#video-prompt", TextArea).text
         
-        # Add more media-specific options as needed
+        # Get web-specific options
+        if media_type == "web":
+            options["extract_article"] = self.query_one("#web-extract-article", Checkbox).value
+            options["download_media"] = self.query_one("#web-download-media", Checkbox).value
+            options["to_markdown"] = self.query_one("#web-to-markdown", Checkbox).value
+            options["metadata"] = self.query_one("#web-metadata", Checkbox).value
+            options["screenshot"] = self.query_one("#web-screenshot", Checkbox).value
+            options["summarize"] = self.query_one("#web-summarize", Checkbox).value
+        
+        # Get PDF-specific options
+        if media_type == "pdf":
+            options["extract_text"] = self.query_one("#pdf-extract-text", Checkbox).value
+            options["ocr"] = self.query_one("#pdf-ocr", Checkbox).value
+            options["extract_images"] = self.query_one("#pdf-extract-images", Checkbox).value
+            options["extract_tables"] = self.query_one("#pdf-extract-tables", Checkbox).value
+            options["outline"] = self.query_one("#pdf-outline", Checkbox).value
+            options["summarize"] = self.query_one("#pdf-summarize", Checkbox).value
+        
+        # Get document-specific options
+        if media_type == "doc":
+            options["extract_text"] = self.query_one("#doc-extract-text", Checkbox).value
+            options["preserve_format"] = self.query_one("#doc-preserve-format", Checkbox).value
+            options["extract_images"] = self.query_one("#doc-extract-images", Checkbox).value
+            options["extract_tables"] = self.query_one("#doc-extract-tables", Checkbox).value
+            options["to_markdown"] = self.query_one("#doc-to-markdown", Checkbox).value
+            options["summarize"] = self.query_one("#doc-summarize", Checkbox).value
+        
+        # Get ebook-specific options
+        if media_type == "ebook":
+            options["extract_text"] = self.query_one("#ebook-extract-text", Checkbox).value
+            options["metadata"] = self.query_one("#ebook-metadata", Checkbox).value
+            options["extract_cover"] = self.query_one("#ebook-extract-cover", Checkbox).value
+            options["toc"] = self.query_one("#ebook-toc", Checkbox).value
+            options["split_chapters"] = self.query_one("#ebook-split-chapters", Checkbox).value
+            options["summarize"] = self.query_one("#ebook-summarize", Checkbox).value
         
         return options
     
@@ -1091,6 +1128,12 @@ class MediaIngestWindowRebuilt(Container):
                     result = await self.process_document_local(file_path, options)
                 elif media_type == "ebook":
                     result = await self.process_ebook_local(file_path, options)
+                elif media_type == "web":
+                    # For web, we process URLs from the text area
+                    urls = self.query_one("#web-urls", TextArea).text.strip().split('\n')
+                    for url in urls:
+                        if url.strip():
+                            result = await self.process_web_local(url.strip(), options)
                 else:
                     result = {"status": "error", "message": f"Unsupported media type: {media_type}"}
                 
