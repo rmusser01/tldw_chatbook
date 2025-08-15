@@ -156,7 +156,7 @@ from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Customize_Window import CustomizeWindow
 # Using pragmatic V2 Evals window
-from .UI.evals_window_v2 import EvalsWindow
+from .UI.Evals.evals_window_v3 import EvalsWindowV3 as EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Study_Window import StudyWindow
@@ -797,8 +797,8 @@ class PlaceholderWindow(Container):
                 child.remove()
             
             # Create the actual window
-            # EvalsLab and EvalsWindow are Containers that take app_instance as keyword argument
-            if self.window_class.__name__ in ['EvalsLab', 'EvalsWindow']:
+            # EvalsLab, EvalsWindow and EvalsWindowV3 are Containers that take app_instance as keyword argument
+            if self.window_class.__name__ in ['EvalsLab', 'EvalsWindow', 'EvalsWindowV3']:
                 self._actual_window = self.window_class(app_instance=self.app_instance, id=self.window_id, classes=self.actual_classes)
             else:
                 self._actual_window = self.window_class(self.app_instance, id=self.window_id, classes=self.actual_classes)

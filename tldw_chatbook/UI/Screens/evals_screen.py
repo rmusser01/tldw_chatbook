@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from textual.app import ComposeResult
 
 from ..Navigation.base_app_screen import BaseAppScreen
-from ..evals_window_v2 import EvalsWindow
+from ..Evals.evals_window_v3 import EvalsWindowV3 as EvalsWindow
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli

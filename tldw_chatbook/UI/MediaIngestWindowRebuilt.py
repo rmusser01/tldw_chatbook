@@ -311,7 +311,7 @@ class MediaIngestWindowRebuilt(Container):
                 with Container(classes="mode-toggle-container"):
                     yield Static("Mode:", classes="mode-label")
                     yield Switch(id="mode-switch", value=False)
-                    yield Static("Local", id="mode-indicator", classes="mode-label")
+                    yield Static("Local 💻", id="mode-indicator", classes="mode-label")
                     yield Button("⚙️ Configure", 
                                id="configure-remote",
                                classes="remote-config hidden")
@@ -354,483 +354,477 @@ class MediaIngestWindowRebuilt(Container):
     
     def compose_video_tab(self) -> ComposeResult:
         """Compose the video ingestion tab."""
-        with VerticalScroll() as scroll:
-            # File selection
-            with Container(classes="form-section") as section:
-                yield Label("Input Files", classes="section-title")
-                
-                with Container(classes="file-list-container"):
-                    yield DataTable(id="video-file-list", zebra_stripes=True)
-                
-                with Horizontal():
-                    yield Button("Browse Files...", 
-                               id="video-browse-files",
-                               variant="primary")
-                    yield Button("Add URL", 
-                               id="video-add-url",
-                               variant="default")
-                    yield Button("Clear", 
-                               id="video-clear-files",
-                               variant="warning")
+        # File selection section
+        with Container(classes="form-section"):
+            yield Label("Input Files", classes="section-title")
             
-            # Processing options
-            with Container(classes="form-section"):
-                yield Label("Processing Options", classes="section-title")
-                
-                with Grid(classes="options-grid"):
-                    # Transcription options
-                    yield Checkbox("Enable Transcription", 
-                                 id="video-transcribe",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Diarization", 
-                                 id="video-diarization",
-                                 value=False,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Generate Subtitles", 
-                                 id="video-subtitles",
-                                 value=False,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Extract Keyframes", 
-                                 id="video-keyframes",
-                                 value=False,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Generate Thumbnails", 
-                                 id="video-thumbnails",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Compress Video", 
-                                 id="video-compress",
-                                 value=False,
-                                 classes="option-item")
-                    
-                    yield Checkbox("AI Summarization", 
-                                 id="video-summarize",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Chapter Detection", 
-                                 id="video-chapters",
-                                 value=False,
-                                 classes="option-item")
+            with Container(classes="file-list-container"):
+                yield DataTable(id="video-file-list", zebra_stripes=True)
             
-            # Advanced settings
-            with Container(classes="form-section"):
-                yield Label("Advanced Settings", classes="section-title")
+            with Horizontal():
+                yield Button("Browse Files...", 
+                           id="video-browse-files",
+                           variant="primary")
+                yield Button("Add URL", 
+                           id="video-add-url",
+                           variant="default")
+                yield Button("Clear", 
+                           id="video-clear-files",
+                           variant="warning")
+        
+        # Processing options
+        with Container(classes="form-section"):
+            yield Label("Processing Options", classes="section-title")
+            
+            with Grid(classes="options-grid"):
+                # Transcription options
+                yield Checkbox("Enable Transcription", 
+                             id="video-transcribe",
+                             value=True,
+                             classes="option-item")
                 
-                with Horizontal():
-                    with Container(classes="form-group"):
-                        yield Label("Transcription Model:", classes="form-label")
-                        yield Select(
-                            [("Base", "base"), ("Small", "small"), 
-                             ("Medium", "medium"), ("Large", "large")],
-                            id="video-model",
-                            classes="form-select"
-                        )
-                    
-                    with Container(classes="form-group"):
-                        yield Label("Language:", classes="form-label")
-                        yield Select(
-                            [("Auto-detect", "auto"), ("English", "en"),
-                             ("Spanish", "es"), ("French", "fr"),
-                             ("German", "de"), ("Chinese", "zh")],
-                            id="video-language",
-                            classes="form-select"
-                        )
+                yield Checkbox("Diarization", 
+                             id="video-diarization",
+                             value=False,
+                             classes="option-item")
+                
+                yield Checkbox("Generate Subtitles", 
+                             id="video-subtitles",
+                             value=False,
+                             classes="option-item")
+                
+                yield Checkbox("Extract Keyframes", 
+                             id="video-keyframes",
+                             value=False,
+                             classes="option-item")
+                
+                yield Checkbox("Generate Thumbnails", 
+                             id="video-thumbnails",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("Compress Video", 
+                             id="video-compress",
+                             value=False,
+                             classes="option-item")
+                
+                yield Checkbox("AI Summarization", 
+                             id="video-summarize",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("Chapter Detection", 
+                             id="video-chapters",
+                             value=False,
+                             classes="option-item")
+        
+        # Advanced settings
+        with Container(classes="form-section"):
+            yield Label("Advanced Settings", classes="section-title")
+            
+            with Horizontal():
+                with Container(classes="form-group"):
+                    yield Label("Transcription Model:", classes="form-label")
+                    yield Select(
+                        [("Base", "base"), ("Small", "small"), 
+                         ("Medium", "medium"), ("Large", "large")],
+                        id="video-model",
+                        classes="form-select"
+                    )
                 
                 with Container(classes="form-group"):
-                    yield Label("Custom Prompt (for AI analysis):", classes="form-label")
-                    yield TextArea(
-                        "Summarize the key points and main topics discussed in this video.",
-                        id="video-prompt",
-                        classes="form-textarea"
+                    yield Label("Language:", classes="form-label")
+                    yield Select(
+                        [("Auto-detect", "auto"), ("English", "en"),
+                         ("Spanish", "es"), ("French", "fr"),
+                         ("German", "de"), ("Chinese", "zh")],
+                        id="video-language",
+                        classes="form-select"
                     )
             
-            # Action buttons
-            with Horizontal(classes="action-buttons"):
-                yield Button("🚀 Process Videos", 
-                           id="video-process",
-                           classes="action-button process-button")
-                yield Button("⏹️ Cancel", 
-                           id="video-cancel",
-                           classes="action-button cancel-button hidden")
-            
-            # Processing log
-            yield Label("Processing Log", classes="section-title")
-            yield RichLog(id="video-log", 
-                        classes="processing-log",
-                        highlight=True,
-                        markup=True)
+            with Container(classes="form-group"):
+                yield Label("Custom Prompt (for AI analysis):", classes="form-label")
+                yield TextArea(
+                    "Summarize the key points and main topics discussed in this video.",
+                    id="video-prompt",
+                    classes="form-textarea"
+                )
+        
+        # Action buttons
+        with Horizontal(classes="action-buttons"):
+            yield Button("🚀 Process Videos", 
+                       id="video-process",
+                       classes="action-button process-button")
+            yield Button("⏹️ Cancel", 
+                       id="video-cancel",
+                       classes="action-button cancel-button hidden")
+        
+        # Processing log
+        yield Label("Processing Log", classes="section-title")
+        yield RichLog(id="video-log", 
+                    classes="processing-log",
+                    highlight=True,
+                    markup=True)
     
     def compose_audio_tab(self) -> ComposeResult:
         """Compose the audio ingestion tab."""
-        with VerticalScroll():
-            # File selection
-            with Container(classes="form-section"):
-                yield Label("Input Files", classes="section-title")
-                
-                with Container(classes="file-list-container"):
-                    yield DataTable(id="audio-file-list", zebra_stripes=True)
-                
-                with Horizontal():
-                    yield Button("Browse Files...", 
-                               id="audio-browse-files",
-                               variant="primary")
-                    yield Button("Add URL", 
-                               id="audio-add-url",
-                               variant="default")
-                    yield Button("Clear", 
-                               id="audio-clear-files",
-                               variant="warning")
+        # File selection section
+        with Container(classes="form-section"):
+            yield Label("Input Files", classes="section-title")
             
-            # Processing options
-            with Container(classes="form-section"):
-                yield Label("Processing Options", classes="section-title")
+            with Container(classes="file-list-container"):
+                yield DataTable(id="audio-file-list", zebra_stripes=True)
+            
+            with Horizontal():
+                yield Button("Browse Files...", 
+                           id="audio-browse-files",
+                           variant="primary")
+                yield Button("Add URL", 
+                           id="audio-add-url",
+                           variant="default")
+                yield Button("Clear", 
+                           id="audio-clear-files",
+                           variant="warning")
+        
+        # Processing options
+        with Container(classes="form-section"):
+            yield Label("Processing Options", classes="section-title")
+            
+            with Grid(classes="options-grid"):
+                yield Checkbox("Enable Transcription", 
+                             id="audio-transcribe",
+                             value=True,
+                             classes="option-item")
                 
-                with Grid(classes="options-grid"):
-                    yield Checkbox("Enable Transcription", 
-                                 id="audio-transcribe",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Diarization", 
-                                 id="audio-diarization",
-                                 value=False,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Noise Reduction", 
-                                 id="audio-denoise",
-                                 value=False,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Generate Waveform", 
-                                 id="audio-waveform",
-                                 value=False,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Extract Metadata", 
-                                 id="audio-metadata",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("AI Summarization", 
-                                 id="audio-summarize",
-                                 value=True,
-                                 classes="option-item")
-            
-            # Action buttons
-            with Horizontal(classes="action-buttons"):
-                yield Button("🚀 Process Audio", 
-                           id="audio-process",
-                           classes="action-button process-button")
-                yield Button("⏹️ Cancel", 
-                           id="audio-cancel",
-                           classes="action-button cancel-button hidden")
-            
-            # Processing log
-            yield Label("Processing Log", classes="section-title")
-            yield RichLog(id="audio-log", 
-                        classes="processing-log",
-                        highlight=True,
-                        markup=True)
+                yield Checkbox("Diarization", 
+                             id="audio-diarization",
+                             value=False,
+                             classes="option-item")
+                
+                yield Checkbox("Noise Reduction", 
+                             id="audio-denoise",
+                             value=False,
+                             classes="option-item")
+                
+                yield Checkbox("Generate Waveform", 
+                             id="audio-waveform",
+                             value=False,
+                             classes="option-item")
+                
+                yield Checkbox("Extract Metadata", 
+                             id="audio-metadata",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("AI Summarization", 
+                             id="audio-summarize",
+                             value=True,
+                             classes="option-item")
+        
+        # Action buttons
+        with Horizontal(classes="action-buttons"):
+            yield Button("🚀 Process Audio", 
+                       id="audio-process",
+                       classes="action-button process-button")
+            yield Button("⏹️ Cancel", 
+                       id="audio-cancel",
+                       classes="action-button cancel-button hidden")
+        
+        # Processing log
+        yield Label("Processing Log", classes="section-title")
+        yield RichLog(id="audio-log", 
+                    classes="processing-log",
+                    highlight=True,
+                    markup=True)
     
     def compose_pdf_tab(self) -> ComposeResult:
         """Compose the PDF ingestion tab."""
-        with VerticalScroll():
-            # File selection
-            with Container(classes="form-section"):
-                yield Label("Input Files", classes="section-title")
-                
-                with Container(classes="file-list-container"):
-                    yield DataTable(id="pdf-file-list", zebra_stripes=True)
-                
-                with Horizontal():
-                    yield Button("Browse Files...", 
-                               id="pdf-browse-files",
-                               variant="primary")
-                    yield Button("Clear", 
-                               id="pdf-clear-files",
-                               variant="warning")
+        # File selection section
+        with Container(classes="form-section"):
+            yield Label("Input Files", classes="section-title")
             
-            # Processing options
-            with Container(classes="form-section"):
-                yield Label("Processing Options", classes="section-title")
+            with Container(classes="file-list-container"):
+                yield DataTable(id="pdf-file-list", zebra_stripes=True)
+            
+            with Horizontal():
+                yield Button("Browse Files...", 
+                           id="pdf-browse-files",
+                           variant="primary")
+                yield Button("Clear", 
+                           id="pdf-clear-files",
+                           variant="warning")
+        
+        # Processing options
+        with Container(classes="form-section"):
+            yield Label("Processing Options", classes="section-title")
+            
+            with Grid(classes="options-grid"):
+                yield Checkbox("Extract Text", 
+                             id="pdf-extract-text",
+                             value=True,
+                             classes="option-item")
                 
-                with Grid(classes="options-grid"):
-                    yield Checkbox("Extract Text", 
-                                 id="pdf-extract-text",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("OCR for Images", 
-                                 id="pdf-ocr",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Extract Images", 
-                                 id="pdf-extract-images",
-                                 value=False,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Extract Tables", 
-                                 id="pdf-extract-tables",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Generate Outline", 
-                                 id="pdf-outline",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("AI Summarization", 
-                                 id="pdf-summarize",
-                                 value=True,
-                                 classes="option-item")
-            
-            # Action buttons
-            with Horizontal(classes="action-buttons"):
-                yield Button("🚀 Process PDFs", 
-                           id="pdf-process",
-                           classes="action-button process-button")
-                yield Button("⏹️ Cancel", 
-                           id="pdf-cancel",
-                           classes="action-button cancel-button hidden")
-            
-            # Processing log
-            yield Label("Processing Log", classes="section-title")
-            yield RichLog(id="pdf-log", 
-                        classes="processing-log",
-                        highlight=True,
-                        markup=True)
+                yield Checkbox("OCR for Images", 
+                             id="pdf-ocr",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("Extract Images", 
+                             id="pdf-extract-images",
+                             value=False,
+                             classes="option-item")
+                
+                yield Checkbox("Extract Tables", 
+                             id="pdf-extract-tables",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("Generate Outline", 
+                             id="pdf-outline",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("AI Summarization", 
+                             id="pdf-summarize",
+                             value=True,
+                             classes="option-item")
+        
+        # Action buttons
+        with Horizontal(classes="action-buttons"):
+            yield Button("🚀 Process PDFs", 
+                       id="pdf-process",
+                       classes="action-button process-button")
+            yield Button("⏹️ Cancel", 
+                       id="pdf-cancel",
+                       classes="action-button cancel-button hidden")
+        
+        # Processing log
+        yield Label("Processing Log", classes="section-title")
+        yield RichLog(id="pdf-log", 
+                    classes="processing-log",
+                    highlight=True,
+                    markup=True)
     
     def compose_documents_tab(self) -> ComposeResult:
         """Compose the documents ingestion tab."""
-        with VerticalScroll():
-            # File selection
-            with Container(classes="form-section"):
-                yield Label("Input Files", classes="section-title")
+        # File selection section
+        with Container(classes="form-section"):
+            yield Label("Input Files", classes="section-title")
+            
+            with Container(classes="file-list-container"):
+                yield DataTable(id="doc-file-list", zebra_stripes=True)
+            
+            with Horizontal():
+                yield Button("Browse Files...", 
+                           id="doc-browse-files",
+                           variant="primary")
+                yield Button("Clear", 
+                           id="doc-clear-files",
+                           variant="warning")
+        
+        # Supported formats info
+        yield Static(
+            "📝 Supported: DOCX, DOC, ODT, RTF, TXT, MD, CSV, XML",
+            classes="form-label"
+        )
+        
+        # Processing options
+        with Container(classes="form-section"):
+            yield Label("Processing Options", classes="section-title")
+            
+            with Grid(classes="options-grid"):
+                yield Checkbox("Extract Text", 
+                             id="doc-extract-text",
+                             value=True,
+                             classes="option-item")
                 
-                with Container(classes="file-list-container"):
-                    yield DataTable(id="doc-file-list", zebra_stripes=True)
+                yield Checkbox("Preserve Formatting", 
+                             id="doc-preserve-format",
+                             value=True,
+                             classes="option-item")
                 
-                with Horizontal():
-                    yield Button("Browse Files...", 
-                               id="doc-browse-files",
-                               variant="primary")
-                    yield Button("Clear", 
-                               id="doc-clear-files",
-                               variant="warning")
-            
-            # Supported formats info
-            yield Static(
-                "📝 Supported: DOCX, DOC, ODT, RTF, TXT, MD, CSV, XML",
-                classes="form-label"
-            )
-            
-            # Processing options
-            with Container(classes="form-section"):
-                yield Label("Processing Options", classes="section-title")
+                yield Checkbox("Extract Images", 
+                             id="doc-extract-images",
+                             value=False,
+                             classes="option-item")
                 
-                with Grid(classes="options-grid"):
-                    yield Checkbox("Extract Text", 
-                                 id="doc-extract-text",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Preserve Formatting", 
-                                 id="doc-preserve-format",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Extract Images", 
-                                 id="doc-extract-images",
-                                 value=False,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Extract Tables", 
-                                 id="doc-extract-tables",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Convert to Markdown", 
-                                 id="doc-to-markdown",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("AI Summarization", 
-                                 id="doc-summarize",
-                                 value=True,
-                                 classes="option-item")
-            
-            # Action buttons
-            with Horizontal(classes="action-buttons"):
-                yield Button("🚀 Process Documents", 
-                           id="doc-process",
-                           classes="action-button process-button")
-                yield Button("⏹️ Cancel", 
-                           id="doc-cancel",
-                           classes="action-button cancel-button hidden")
-            
-            # Processing log
-            yield Label("Processing Log", classes="section-title")
-            yield RichLog(id="doc-log", 
-                        classes="processing-log",
-                        highlight=True,
-                        markup=True)
+                yield Checkbox("Extract Tables", 
+                             id="doc-extract-tables",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("Convert to Markdown", 
+                             id="doc-to-markdown",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("AI Summarization", 
+                             id="doc-summarize",
+                             value=True,
+                             classes="option-item")
+        
+        # Action buttons
+        with Horizontal(classes="action-buttons"):
+            yield Button("🚀 Process Documents", 
+                       id="doc-process",
+                       classes="action-button process-button")
+            yield Button("⏹️ Cancel", 
+                       id="doc-cancel",
+                       classes="action-button cancel-button hidden")
+        
+        # Processing log
+        yield Label("Processing Log", classes="section-title")
+        yield RichLog(id="doc-log", 
+                    classes="processing-log",
+                    highlight=True,
+                    markup=True)
     
     def compose_ebooks_tab(self) -> ComposeResult:
         """Compose the ebooks ingestion tab."""
-        with VerticalScroll():
-            # File selection
-            with Container(classes="form-section"):
-                yield Label("Input Files", classes="section-title")
+        # File selection section
+        with Container(classes="form-section"):
+            yield Label("Input Files", classes="section-title")
+            
+            with Container(classes="file-list-container"):
+                yield DataTable(id="ebook-file-list", zebra_stripes=True)
+            
+            with Horizontal():
+                yield Button("Browse Files...", 
+                           id="ebook-browse-files",
+                           variant="primary")
+                yield Button("Clear", 
+                           id="ebook-clear-files",
+                           variant="warning")
+        
+        # Supported formats info
+        yield Static(
+            "📚 Supported: EPUB, MOBI, AZW3, FB2, CBZ, CBR",
+            classes="form-label"
+        )
+        
+        # Processing options
+        with Container(classes="form-section"):
+            yield Label("Processing Options", classes="section-title")
+            
+            with Grid(classes="options-grid"):
+                yield Checkbox("Extract Text", 
+                             id="ebook-extract-text",
+                             value=True,
+                             classes="option-item")
                 
-                with Container(classes="file-list-container"):
-                    yield DataTable(id="ebook-file-list", zebra_stripes=True)
+                yield Checkbox("Extract Metadata", 
+                             id="ebook-metadata",
+                             value=True,
+                             classes="option-item")
                 
-                with Horizontal():
-                    yield Button("Browse Files...", 
-                               id="ebook-browse-files",
-                               variant="primary")
-                    yield Button("Clear", 
-                               id="ebook-clear-files",
-                               variant="warning")
-            
-            # Supported formats info
-            yield Static(
-                "📚 Supported: EPUB, MOBI, AZW3, FB2, CBZ, CBR",
-                classes="form-label"
-            )
-            
-            # Processing options
-            with Container(classes="form-section"):
-                yield Label("Processing Options", classes="section-title")
+                yield Checkbox("Extract Cover", 
+                             id="ebook-extract-cover",
+                             value=True,
+                             classes="option-item")
                 
-                with Grid(classes="options-grid"):
-                    yield Checkbox("Extract Text", 
-                                 id="ebook-extract-text",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Extract Metadata", 
-                                 id="ebook-metadata",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Extract Cover", 
-                                 id="ebook-extract-cover",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Generate TOC", 
-                                 id="ebook-toc",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Chapter Splitting", 
-                                 id="ebook-split-chapters",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("AI Summarization", 
-                                 id="ebook-summarize",
-                                 value=True,
-                                 classes="option-item")
-            
-            # Action buttons
-            with Horizontal(classes="action-buttons"):
-                yield Button("🚀 Process Ebooks", 
-                           id="ebook-process",
-                           classes="action-button process-button")
-                yield Button("⏹️ Cancel", 
-                           id="ebook-cancel",
-                           classes="action-button cancel-button hidden")
-            
-            # Processing log
-            yield Label("Processing Log", classes="section-title")
-            yield RichLog(id="ebook-log", 
-                        classes="processing-log",
-                        highlight=True,
-                        markup=True)
+                yield Checkbox("Generate TOC", 
+                             id="ebook-toc",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("Chapter Splitting", 
+                             id="ebook-split-chapters",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("AI Summarization", 
+                             id="ebook-summarize",
+                             value=True,
+                             classes="option-item")
+        
+        # Action buttons
+        with Horizontal(classes="action-buttons"):
+            yield Button("🚀 Process Ebooks", 
+                       id="ebook-process",
+                       classes="action-button process-button")
+            yield Button("⏹️ Cancel", 
+                       id="ebook-cancel",
+                       classes="action-button cancel-button hidden")
+        
+        # Processing log
+        yield Label("Processing Log", classes="section-title")
+        yield RichLog(id="ebook-log", 
+                    classes="processing-log",
+                    highlight=True,
+                    markup=True)
     
     def compose_web_tab(self) -> ComposeResult:
         """Compose the web ingestion tab."""
-        with VerticalScroll():
-            # URL input
-            with Container(classes="form-section"):
-                yield Label("Web URLs", classes="section-title")
-                yield Static("Enter URLs, one per line (e.g., https://example.com/article):", 
-                           classes="form-label")
-                
-                yield TextArea(
-                    "",  # Initial empty text
-                    id="web-urls",
-                    classes="form-textarea"
-                )
-                
-                with Horizontal():
-                    yield Button("Add URL", 
-                               id="web-add-url",
-                               variant="primary")
-                    yield Button("Clear", 
-                               id="web-clear-urls",
-                               variant="warning")
+        # URL input section
+        with Container(classes="form-section"):
+            yield Label("Web URLs", classes="section-title")
+            yield Static("Enter URLs, one per line (e.g., https://example.com/article):", 
+                       classes="form-label")
             
-            # Processing options
-            with Container(classes="form-section"):
-                yield Label("Processing Options", classes="section-title")
+            yield TextArea(
+                "",  # Initial empty text
+                id="web-urls",
+                classes="form-textarea"
+            )
+            
+            with Horizontal():
+                yield Button("Add URL", 
+                           id="web-add-url",
+                           variant="primary")
+                yield Button("Clear", 
+                           id="web-clear-urls",
+                           variant="warning")
+        
+        # Processing options
+        with Container(classes="form-section"):
+            yield Label("Processing Options", classes="section-title")
+            
+            with Grid(classes="options-grid"):
+                yield Checkbox("Extract Article Text", 
+                             id="web-extract-article",
+                             value=True,
+                             classes="option-item")
                 
-                with Grid(classes="options-grid"):
-                    yield Checkbox("Extract Article Text", 
-                                 id="web-extract-article",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Download Media", 
-                                 id="web-download-media",
-                                 value=False,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Convert to Markdown", 
-                                 id="web-to-markdown",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Extract Metadata", 
-                                 id="web-metadata",
-                                 value=True,
-                                 classes="option-item")
-                    
-                    yield Checkbox("Screenshot Page", 
-                                 id="web-screenshot",
-                                 value=False,
-                                 classes="option-item")
-                    
-                    yield Checkbox("AI Summarization", 
-                                 id="web-summarize",
-                                 value=True,
-                                 classes="option-item")
-            
-            # Action buttons
-            with Horizontal(classes="action-buttons"):
-                yield Button("🚀 Process URLs", 
-                           id="web-process",
-                           classes="action-button process-button")
-                yield Button("⏹️ Cancel", 
-                           id="web-cancel",
-                           classes="action-button cancel-button hidden")
-            
-            # Processing log
-            yield Label("Processing Log", classes="section-title")
-            yield RichLog(id="web-log", 
-                        classes="processing-log",
-                        highlight=True,
-                        markup=True)
+                yield Checkbox("Download Media", 
+                             id="web-download-media",
+                             value=False,
+                             classes="option-item")
+                
+                yield Checkbox("Convert to Markdown", 
+                             id="web-to-markdown",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("Extract Metadata", 
+                             id="web-metadata",
+                             value=True,
+                             classes="option-item")
+                
+                yield Checkbox("Screenshot Page", 
+                             id="web-screenshot",
+                             value=False,
+                             classes="option-item")
+                
+                yield Checkbox("AI Summarization", 
+                             id="web-summarize",
+                             value=True,
+                             classes="option-item")
+        
+        # Action buttons
+        with Horizontal(classes="action-buttons"):
+            yield Button("🚀 Process URLs", 
+                       id="web-process",
+                       classes="action-button process-button")
+            yield Button("⏹️ Cancel", 
+                       id="web-cancel",
+                       classes="action-button cancel-button hidden")
+        
+        # Processing log
+        yield Label("Processing Log", classes="section-title")
+        yield RichLog(id="web-log", 
+                    classes="processing-log",
+                    highlight=True,
+                    markup=True)
     
     def on_mount(self) -> None:
         """Initialize when mounted."""
