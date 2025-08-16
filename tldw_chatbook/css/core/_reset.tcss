@@ -9,10 +9,11 @@
     outline: none;
 }
 
-/* Remove hover borders */
-*:hover {
+/* REMOVED: This was causing widgets to "pop" on hover
+   by removing their borders and causing layout shifts */
+/* *:hover {
     border: none;
-}
+} */
 
 /* No borders on focus-within */
 *:focus-within {
