@@ -151,7 +151,11 @@ from .UI.Screens.llm_screen import LLMScreen
 from .UI.Screens.customize_screen import CustomizeScreen
 from .UI.Screens.logs_screen import LogsScreen
 from .UI.Screens.stats_screen import StatsScreen
-from .UI.Ingest_Window import INGEST_NAV_BUTTON_IDS, INGEST_VIEW_IDS, MEDIA_TYPES
+# Note: INGEST_NAV_BUTTON_IDS, INGEST_VIEW_IDS, MEDIA_TYPES need to be defined or imported differently
+# from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt
+INGEST_NAV_BUTTON_IDS = []  # Temporary placeholder
+INGEST_VIEW_IDS = []  # Temporary placeholder
+MEDIA_TYPES = []  # Temporary placeholder
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Customize_Window import CustomizeWindow
@@ -1782,7 +1786,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         screen_name = message.screen_name
         logger.info(f"Navigating to screen: {screen_name}")
         
-        # Map screen names to screen classes
+        # Import the new screens
+        from .UI.Screens.stts_screen import STTSScreen
+        from .UI.Screens.study_screen import StudyScreen
+        from .UI.Screens.chatbooks_screen import ChatbooksScreen
+        from .UI.Screens.subscription_screen import SubscriptionScreen
+        
+        # Complete map of all screen names to screen classes
         screen_map = {
             'chat': ChatScreen,
             'ingest': MediaIngestScreen,  # Using the rebuilt window through the screen wrapper
@@ -1798,6 +1808,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             'customize': CustomizeScreen,
             'logs': LogsScreen,
             'stats': StatsScreen,
+            'stts': STTSScreen,  # Speech-to-Text/Text-to-Speech
+            'study': StudyScreen,  # Study features
+            'chatbooks': ChatbooksScreen,  # Chatbooks management
+            'subscription': SubscriptionScreen,  # Subscription management
+            'subscriptions': SubscriptionScreen,  # Alias for consistency
         }
         
         screen_class = screen_map.get(screen_name)
@@ -1805,8 +1820,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Create and push the new screen
             new_screen = screen_class(self)
             await self.push_screen(new_screen)
+            logger.info(f"Successfully navigated to {screen_name} screen")
         else:
-            logger.warning(f"Screen not yet implemented: {screen_name}")
+            logger.error(f"Unknown screen requested: {screen_name}")
     
     @on(ChatMessage.Action)
     async def handle_chat_message_action(self, event: ChatMessage.Action) -> None:

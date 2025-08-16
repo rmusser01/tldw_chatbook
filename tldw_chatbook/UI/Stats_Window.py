@@ -9,10 +9,10 @@ from textual.app import ComposeResult
 from textual.containers import Container # Use Container as the base for the window
 #
 # Local Imports
-from ..Screens.Stats_screen import StatsScreen # Import the actual screen content
+from tldw_chatbook.UI.Screens.stats_screen import StatsScreen # Import the actual screen content
 # from ..Constants import TAB_STATS # Not strictly needed
 if TYPE_CHECKING:
-    from ..app import TldwCli
+    pass
 #
 #######################################################################################################################
 #

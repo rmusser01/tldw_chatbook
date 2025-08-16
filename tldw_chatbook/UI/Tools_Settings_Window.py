@@ -2999,7 +2999,7 @@ Thank you for using tldw-chatbook! 🎉
                 # If the UI style changed, refresh the IngestWindow if it exists
                 if ingest_ui_style != old_ui_style:
                     try:
-                        from ..UI.Ingest_Window import IngestWindow
+                        from ..UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as IngestWindow
                         ingest_window = self.app_instance.query_one("#ingest-window", IngestWindow)
                         await ingest_window.refresh_ui_style()
                         logger.info(f"Refreshed IngestWindow UI style from {old_ui_style} to {ingest_ui_style}")

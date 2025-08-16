@@ -4,23 +4,20 @@
  * Base resets and default styles
  * ======================================== */
 
-/* Remove all focus outlines to prevent UI shifts */
+/* Remove all default focus outlines and borders */
 *:focus {
-    outline: none !important;
+    outline: none;
 }
 
-/* Remove focus outlines from common widgets */
-Button:focus,
-Input:focus, 
-TextArea:focus,
-Select:focus,
-RadioButton:focus,
-Checkbox:focus,
-Widget:focus {
-    outline: none !important;
+/* Remove hover borders */
+*:hover {
+    border: none;
 }
 
-/* Also handle focus-within states */
+/* No borders on focus-within */
 *:focus-within {
-    outline: none !important;
+    border: none;
 }
+
+/* Widgets can explicitly add focus/hover styles if needed */
+/* Example: .custom-widget:focus { outline: 2px solid $accent; } */

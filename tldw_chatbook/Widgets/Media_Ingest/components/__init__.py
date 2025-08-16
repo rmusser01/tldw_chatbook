@@ -1,1 +1,0 @@
-# Media ingestion components package

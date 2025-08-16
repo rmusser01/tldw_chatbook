@@ -1,0 +1,281 @@
+/* 
+ * Media Ingestion Window Styles
+ * Following Textual CSS best practices
+ */
+
+/* Main Window Container */
+MediaIngestWindowRebuilt {
+    layout: vertical;
+    height: 100%;
+    background: $surface;
+}
+
+/* Tabbed Content Container */
+MediaIngestWindowRebuilt TabbedContent {
+    height: 70%;
+    margin: 0 0 1 0;
+    background: $panel;
+}
+
+MediaIngestWindowRebuilt TabbedContent ContentSwitcher {
+    height: 100%;
+    padding: 1;
+}
+
+/* Tab Pane Styling */
+MediaIngestWindowRebuilt TabPane {
+    padding: 0;
+}
+
+/* Local Ingestion Panel */
+LocalIngestionPanel {
+    layout: vertical;
+    padding: 1 2;
+    height: 100%;
+}
+
+LocalIngestionPanel .file-selection-container {
+    height: 40%;
+    border: solid $primary;
+    border-title-align: left;
+    margin: 0 0 1 0;
+    padding: 1;
+}
+
+LocalIngestionPanel DirectoryTree {
+    height: 100%;
+    background: $boost;
+    scrollbar-size: 1 1;
+}
+
+LocalIngestionPanel .options-container {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+LocalIngestionPanel .options-container Label {
+    margin: 0 0 1 0;
+    text-style: bold;
+}
+
+LocalIngestionPanel .options-container Horizontal {
+    height: 3;
+    margin: 0 0 1 0;
+}
+
+LocalIngestionPanel .options-container Input {
+    width: 1fr;
+    margin: 0 1 0 0;
+}
+
+LocalIngestionPanel .options-container Input:last-child {
+    margin: 0;
+}
+
+LocalIngestionPanel Collapsible {
+    margin: 1 0;
+    border: solid $secondary;
+    padding: 1;
+}
+
+LocalIngestionPanel Collapsible > Contents {
+    padding: 1 0 0 1;
+}
+
+LocalIngestionPanel .process-button-container {
+    height: 5;
+    align: center middle;
+    margin: 1 0 0 0;
+}
+
+LocalIngestionPanel Button#local-process-btn {
+    width: auto;
+    min-width: 25;
+}
+
+LocalIngestionPanel Button#local-process-btn:disabled {
+    opacity: 0.6;
+}
+
+/* Remote Ingestion Panel */
+RemoteIngestionPanel {
+    layout: vertical;
+    padding: 1 2;
+    height: 100%;
+}
+
+RemoteIngestionPanel .media-type-container {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+RemoteIngestionPanel .media-type-container Label {
+    margin: 0 0 1 0;
+    text-style: bold;
+}
+
+RemoteIngestionPanel Select#media-type-select {
+    width: 100%;
+    margin: 0 0 1 0;
+}
+
+RemoteIngestionPanel .url-input-container {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+RemoteIngestionPanel .url-input-container Label {
+    margin: 0 0 1 0;
+    text-style: bold;
+}
+
+RemoteIngestionPanel .url-input-container Label.dim {
+    opacity: 0.7;
+    text-style: italic;
+    margin: 1 0 0 0;
+}
+
+RemoteIngestionPanel TextArea#url-input {
+    height: 8;
+    width: 100%;
+    background: $boost;
+}
+
+RemoteIngestionPanel .dynamic-options {
+    max-height: 40%;
+    min-height: 15;
+    border: solid $secondary;
+    padding: 1;
+    margin: 0 0 1 0;
+    background: $panel;
+    overflow-y: auto;
+}
+
+RemoteIngestionPanel #dynamic-options {
+    layout: vertical;
+    height: auto;
+}
+
+RemoteIngestionPanel #dynamic-options Label {
+    margin: 0 0 1 0;
+    text-style: bold;
+}
+
+RemoteIngestionPanel #dynamic-options Input,
+RemoteIngestionPanel #dynamic-options Select {
+    margin: 0 0 1 0;
+    width: 100%;
+}
+
+RemoteIngestionPanel #dynamic-options Checkbox {
+    margin: 0 0 1 0;
+}
+
+RemoteIngestionPanel #dynamic-options Collapsible {
+    margin: 1 0;
+    border: tall $secondary;
+}
+
+RemoteIngestionPanel .api-button-container {
+    height: 5;
+    align: center middle;
+    margin: 1 0 0 0;
+}
+
+RemoteIngestionPanel Button#api-process-btn {
+    width: auto;
+    min-width: 25;
+}
+
+/* Results Panel */
+IngestionResultsPanel {
+    layout: vertical;
+    height: 30%;
+    border: solid $primary;
+    padding: 1;
+    background: $panel;
+}
+
+IngestionResultsPanel .results-header {
+    height: 3;
+    margin: 0 0 1 0;
+}
+
+IngestionResultsPanel .results-header Label {
+    text-style: bold;
+    color: $text;
+}
+
+IngestionResultsPanel RichLog#results-log {
+    height: 1fr;
+    border: solid $secondary;
+    background: $boost;
+    padding: 1;
+    scrollbar-size: 1 1;
+}
+
+/* Loading States */
+.loading-container {
+    align: center middle;
+    height: 100%;
+    background: $surface;
+}
+
+.loading-container LoadingIndicator {
+    color: $primary;
+}
+
+/* Responsive adjustments for different terminal sizes */
+@media (max-width: 80) {
+    LocalIngestionPanel .options-container Horizontal {
+        layout: vertical;
+        height: auto;
+    }
+    
+    LocalIngestionPanel .options-container Input {
+        width: 100%;
+        margin: 0 0 1 0;
+    }
+}
+
+/* Dark theme overrides */
+.dark MediaIngestWindowRebuilt {
+    background: $background;
+}
+
+.dark LocalIngestionPanel DirectoryTree,
+.dark RemoteIngestionPanel TextArea#url-input,
+.dark IngestionResultsPanel RichLog#results-log {
+    background: $surface-lighten-1;
+}
+
+/* Focus states */
+Input:focus,
+TextArea:focus,
+Select:focus {
+    border: double $accent;
+}
+
+Button:hover {
+    background: $primary-lighten-1;
+}
+
+Button:focus {
+    border: double $accent;
+}
+
+/* Success/Error states */
+.success {
+    color: $success;
+    text-style: bold;
+}
+
+.error {
+    color: $error;
+    text-style: bold;
+}
+
+.warning {
+    color: $warning;
+    text-style: bold;
+}

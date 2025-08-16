@@ -15,7 +15,7 @@ from textual.containers import Container
 
 # Local Imports
 from ..Constants import ALL_TLDW_API_OPTION_CONTAINERS
-from ..UI.Ingest_Window import IngestWindow
+from ..UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as IngestWindow
 from ..config import get_cli_setting
 from ..tldw_api import (
     TLDWAPIClient, ProcessVideoRequest, ProcessAudioRequest,
