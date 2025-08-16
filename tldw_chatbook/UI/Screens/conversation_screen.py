@@ -1,8 +1,10 @@
 """Conversation/Character screen implementation."""
 
 from typing import TYPE_CHECKING
+from loguru import logger
 
 from textual.app import ComposeResult
+from textual.widgets import Button, Input, Select, TextArea
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Conv_Char_Window import CCPWindow
@@ -36,3 +38,7 @@ class ConversationScreen(BaseAppScreen):
         """Restore conversation window state."""
         super().restore_state(state)
         # Restore any conversation-specific state here
+    
+    # Note: We don't override event handlers here because CCPWindow doesn't have its own handlers.
+    # Events will naturally bubble up to the App where they are handled by the button_handler_map
+    # and other event handlers. This follows Textual's event bubbling model.

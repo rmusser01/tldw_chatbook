@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..app import TldwCli
 
 from ..Constants import TAB_CCP, TAB_TOOLS_SETTINGS, TAB_INGEST, TAB_LLM, TAB_EVALS, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_CHATBOOKS, TAB_CUSTOMIZE
+from ..UI.Navigation.main_navigation import NavigateToScreen
 #
 #######################################################################################################################
 #
@@ -86,41 +87,24 @@ class TabLinks(ScrollableContainer):
             if widget_id.startswith("tab-link-"):
                 new_tab_id = widget_id.replace("tab-link-", "")
                 
-                # Check if the app is ready for tab switching
-                from ..app import TldwCli
-                app = self.app
-                if isinstance(app, TldwCli):
-                    # Only proceed if UI is ready
-                    if not getattr(app, '_ui_ready', False):
-                        # UI not ready yet, ignore click
-                        return
-                    
-                    # Don't switch if already on this tab
-                    if new_tab_id == app.current_tab:
-                        return
+                # Update visual state
+                self._update_active_link(new_tab_id)
                 
-                # Update active state visually
-                for link in self.query(".tab-link"):
-                    link.remove_class("-active")
-                clicked_widget.add_class("-active")
+                # Map special tab IDs to screen names
+                screen_name = 'ccp' if new_tab_id == TAB_CCP else new_tab_id
                 
-                # Create a fake button with the appropriate ID to trigger the app's button handler
-                from textual.widgets import Button
-                fake_button = Button("", id=f"tab-{new_tab_id}")
-                
-                # Post a Button.Pressed event to trigger the app's tab switching logic
-                button_pressed_event = Button.Pressed(fake_button)
-                self.app.post_message(button_pressed_event)
+                # Post navigation message to app for screen-based navigation
+                self.post_message(NavigateToScreen(screen_name=screen_name))
     
-    def set_active_tab(self, tab_id: str) -> None:
-        """Update the visual active state of tabs. Called by app when tab changes."""
-        # Update active state visually
+    def _update_active_link(self, new_tab_id: str) -> None:
+        """Update the visual state of tab links."""
+        # Remove active class from all links
         for link in self.query(".tab-link"):
             link.remove_class("-active")
         
-        # Add active class to the new tab
+        # Add active class to the new link
         try:
-            active_link = self.query_one(f"#tab-link-{tab_id}")
+            active_link = self.query_one(f"#tab-link-{new_tab_id}")
             active_link.add_class("-active")
         except:
             pass  # Tab might not exist

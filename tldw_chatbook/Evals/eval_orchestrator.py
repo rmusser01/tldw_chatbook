@@ -63,6 +63,9 @@ class EvaluationOrchestrator:
         self.error_handler = get_error_handler()
         self._client_id = client_id
         
+        # Initialize active tasks tracking for cancellation
+        self._active_tasks = {}
+        
         # Initialize database connection
         self.db = self._initialize_database(db_path, client_id)
         

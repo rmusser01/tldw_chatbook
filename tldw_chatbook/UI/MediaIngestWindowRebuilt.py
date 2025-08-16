@@ -296,30 +296,44 @@ class RemoteIngestionPanel(ScrollableContainer):
         layout: vertical;
         padding: 1;
         height: 100%;
+        background: $panel;
     }
     
-    .media-type-container {
+    RemoteIngestionPanel .media-type-container {
         height: auto;
         margin-bottom: 1;
+        padding: 1;
     }
     
-    .url-input-container {
+    RemoteIngestionPanel .url-input-container {
         height: auto;
         margin-bottom: 1;
+        padding: 1;
     }
     
-    .dynamic-options {
-        height: auto;
-        max-height: 50%;
+    RemoteIngestionPanel .dynamic-options {
+        height: 20;
+        max-height: 20;
         overflow-y: auto;
         border: solid $secondary;
         padding: 1;
         margin-bottom: 1;
+        background: $boost;
     }
     
-    .api-button-container {
-        height: auto;
+    RemoteIngestionPanel .api-button-container {
+        height: 3;
         align: center middle;
+    }
+    
+    RemoteIngestionPanel Label {
+        height: auto;
+        margin-bottom: 1;
+    }
+    
+    RemoteIngestionPanel TextArea {
+        height: 10;
+        background: $boost;
     }
     """
     
@@ -556,16 +570,23 @@ class IngestionResultsPanel(Container):
         height: 100%;
         border: solid $primary;
         padding: 1;
+        background: $panel;
     }
     
-    .results-header {
-        height: auto;
+    IngestionResultsPanel .results-header {
+        height: 3;
         margin-bottom: 1;
     }
     
-    RichLog {
+    IngestionResultsPanel RichLog {
         height: 1fr;
         border: solid $secondary;
+        background: $boost;
+        padding: 1;
+    }
+    
+    IngestionResultsPanel Label {
+        height: auto;
     }
     """
     
@@ -621,20 +642,27 @@ class MediaIngestWindowRebuilt(Widget):
     MediaIngestWindowRebuilt {
         layout: vertical;
         height: 100%;
+        width: 100%;
     }
     
-    TabbedContent {
-        height: 70%;
+    MediaIngestWindowRebuilt TabbedContent {
+        height: 2fr;
         margin-bottom: 1;
+        background: $surface;
     }
     
-    IngestionResultsPanel {
-        height: 30%;
+    MediaIngestWindowRebuilt IngestionResultsPanel {
+        height: 1fr;
+        min-height: 10;
     }
     
-    .loading-container {
+    MediaIngestWindowRebuilt .loading-container {
         align: center middle;
         height: 100%;
+    }
+    
+    MediaIngestWindowRebuilt TabPane {
+        padding: 0;
     }
     """
     

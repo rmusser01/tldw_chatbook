@@ -1,8 +1,10 @@
 """Customize screen implementation."""
 
 from typing import TYPE_CHECKING
+from loguru import logger
 
 from textual.app import ComposeResult
+from textual.widgets import Button
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Customize_Window import CustomizeWindow
@@ -36,3 +38,14 @@ class CustomizeScreen(BaseAppScreen):
         """Restore customize window state."""
         super().restore_state(state)
         # Restore any customize-specific state here
+    
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Forward button events to the CustomizeWindow handler."""
+        if self.customize_window:
+            await self.customize_window.on_button_pressed(event)
+    
+    async def on_mount(self) -> None:
+        """Called when the screen is mounted."""
+        super().on_mount()  # Don't await - parent's on_mount is not async
+        # The customize window will be mounted automatically by Textual
+        # No need to manually call on_mount

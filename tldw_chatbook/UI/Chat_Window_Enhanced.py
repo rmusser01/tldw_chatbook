@@ -88,8 +88,8 @@ class ChatWindowEnhanced(Container):
         # Token counter will be initialized when tab is switched to chat
         # Watch for streaming state changes
         self._update_button_state()
-        # Set up periodic state checking (every 500ms)
-        self.set_interval(0.5, self._check_streaming_state)
+        # REMOVED: Periodic polling was causing performance issues
+        # Button state will be updated on-demand when streaming state actually changes
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """

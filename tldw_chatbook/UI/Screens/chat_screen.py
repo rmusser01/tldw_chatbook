@@ -5,11 +5,14 @@ from loguru import logger
 
 from textual.app import ComposeResult
 from textual.containers import Container
+from textual.widgets import Button
+from textual.events import Key
 
 from ..Navigation.base_app_screen import BaseAppScreen
 
 # Import the existing chat window to reuse its functionality
 from ..Chat_Window_Enhanced import ChatWindowEnhanced
+from ...Widgets.voice_input_widget import VoiceInputMessage
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -46,3 +49,20 @@ class ChatScreen(BaseAppScreen):
             # Restore conversation
             # self.chat_window.load_conversation(state['conversation_id'])
             pass
+    
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """
+        Handle button events - forward to ChatWindowEnhanced if it needs them,
+        otherwise let them bubble to the App.
+        """
+        # ChatWindowEnhanced handles its own buttons
+        if self.chat_window and hasattr(self.chat_window, 'on_button_pressed'):
+            # Check if this button belongs to the chat window
+            button = event.button
+            if button in self.chat_window.walk_children(Button):
+                # This button is a child of chat_window, let it handle it
+                await self.chat_window.on_button_pressed(event)
+                event.stop()  # Stop bubbling since we handled it
+                return
+        # For all other buttons, let the event bubble up to the App
+        # Do NOT stop the event - let it bubble naturally
