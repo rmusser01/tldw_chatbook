@@ -37,7 +37,7 @@ async def test_basic_evaluation_flow():
             name="Test Task",
             description="A test evaluation task",
             task_type="question_answer",
-            config_format="json",
+            config_format="custom",
             config_data={"metric": "exact_match"}
         )
         print(f"   ✓ Created task: {task_id}")
@@ -53,6 +53,7 @@ async def test_basic_evaluation_flow():
         
         # Create a test run
         run_id = db.create_run(
+            name="Test Run",
             task_id=task_id,
             model_id=model_id,
             config_overrides={}

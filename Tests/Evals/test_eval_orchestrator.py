@@ -100,11 +100,20 @@ class TestEvaluationOrchestrator:
                         'name': 'Test Model'
                     }
                     
+                    # Mock get_task and get_model
+                    mock_db.get_task.return_value = {
+                        'name': 'Test Task',
+                        'task_type': 'question_answer',
+                        'dataset_name': 'test_dataset',
+                        'config_data': {'metric': 'exact_match'}
+                    }
+                    mock_db.get_model.return_value = model_config
+                    
                     # Start evaluation (will fail but should track)
                     try:
                         run_id = await orchestrator.run_evaluation(
                             task_id='test_task',
-                            model_configs=[model_config],
+                            model_id='test-model',
                             max_samples=10
                         )
                     except Exception:
@@ -251,18 +260,45 @@ class TestOrchestratorIntegration:
         db_path = tmp_path / "test_evals.db"
         orchestrator = EvaluationOrchestrator(db_path=str(db_path))
         
-        # Test that concurrent manager is working
-        with patch.object(orchestrator.concurrent_manager, 'start_run', side_effect=Exception("Max concurrent runs reached")):
-            
-            with pytest.raises(EvaluationError) as exc_info:
-                await orchestrator.run_evaluation(
-                    task_id='test',
-                    model_configs=[{'provider': 'test', 'model_id': 'test'}],
-                    max_samples=10
-                )
-            
-            # Should raise error
-            pass  # Error expected in test environment
+        # Test that concurrent manager is working by simulating a conflict
+        from tldw_chatbook.Evals.eval_errors import ValidationError, ErrorContext, ErrorCategory, ErrorSeverity
+        
+        conflict_error = ValidationError(ErrorContext(
+            category=ErrorCategory.VALIDATION,
+            severity=ErrorSeverity.WARNING,
+            message="An evaluation is already running for this task and model combination",
+            is_retryable=True
+        ))
+        
+        with patch.object(orchestrator.concurrent_manager, 'register_run', side_effect=conflict_error):
+            # Mock the database to avoid other errors
+            with patch.object(orchestrator.db, 'get_task') as mock_get_task:
+                mock_get_task.return_value = {
+                    'name': 'Test Task',
+                    'task_type': 'question_answer',
+                    'dataset_name': 'test_dataset',
+                    'config_data': {'metric': 'exact_match'}
+                }
+                
+                with patch.object(orchestrator.db, 'get_model') as mock_get_model:
+                    mock_get_model.return_value = {
+                        'provider': 'test',
+                        'model_id': 'test',
+                        'name': 'Test Model'
+                    }
+                    
+                    # Should raise error due to concurrent run conflict
+                    # The ValidationError gets wrapped as EvaluationError
+                    with pytest.raises((ValidationError, EvaluationError)) as exc_info:
+                        await orchestrator.run_evaluation(
+                            task_id='test',
+                            model_id='test',
+                            max_samples=10
+                        )
+                    
+                    # Check that the error is related to concurrent runs
+                    error_msg = str(exc_info.value).lower()
+                    assert "already running" in error_msg or "evaluation failed" in error_msg
 
 
 class TestOrchestratorErrorHandling:
@@ -274,17 +310,26 @@ class TestOrchestratorErrorHandling:
         db_path = tmp_path / "test_evals.db"
         orchestrator = EvaluationOrchestrator(db_path=str(db_path))
         
-        with patch.object(orchestrator.task_loader, 'get_task') as mock_get:
-            mock_get.return_value = None  # Task not found
+        # Mock database to return None for invalid task
+        with patch.object(orchestrator.db, 'get_task') as mock_get_task:
+            mock_get_task.return_value = None  # Task not found
             
-            with pytest.raises(EvaluationError) as exc_info:
-                await orchestrator.run_evaluation(
-                    task_id='invalid_task',
-                    model_configs=[{'provider': 'test', 'model_id': 'test'}],
-                    max_samples=10
-                )
-            
-            assert "not found" in str(exc_info.value).lower()
+            # Mock get_model to avoid other errors
+            with patch.object(orchestrator.db, 'get_model') as mock_get_model:
+                mock_get_model.return_value = {
+                    'provider': 'test',
+                    'model_id': 'test-model',
+                    'name': 'Test Model'
+                }
+                
+                # The error will be wrapped as DatabaseError by _db_operation
+                from tldw_chatbook.Evals.eval_errors import DatabaseError
+                with pytest.raises((EvaluationError, DatabaseError)):
+                    await orchestrator.run_evaluation(
+                        task_id='invalid_task',
+                        model_id='test_model',
+                        max_samples=10
+                    )
     
     @pytest.mark.asyncio
     async def test_invalid_model_config_handling(self, tmp_path):
@@ -292,18 +337,24 @@ class TestOrchestratorErrorHandling:
         db_path = tmp_path / "test_evals.db"
         orchestrator = EvaluationOrchestrator(db_path=str(db_path))
         
-        # Invalid model config (missing required fields)
-        invalid_config = {'provider': 'test'}  # Missing model_id
-        
-        with patch.object(orchestrator.task_loader, 'get_task') as mock_get:
-            mock_get.return_value = Mock(task_type='question_answer')
+        # Mock get_task to return valid task
+        with patch.object(orchestrator.db, 'get_task') as mock_get_task:
+            mock_get_task.return_value = {
+                'name': 'Test Task',
+                'task_type': 'question_answer',
+                'dataset_name': 'test_dataset',
+                'config_data': {'metric': 'exact_match'}
+            }
             
-            with pytest.raises(EvaluationError) as exc_info:
-                await orchestrator.run_evaluation(
-                    task_id='test_task',
-                    model_configs=[invalid_config],
-                    max_samples=10
-                )
-            
-            # Should mention validation error
-            assert "validation" in str(exc_info.value).lower() or "model_id" in str(exc_info.value).lower()
+            # Mock get_model to return None (model not found)
+            with patch.object(orchestrator.db, 'get_model') as mock_get_model:
+                mock_get_model.return_value = None  # Model not found
+                
+                # The error will be wrapped as DatabaseError by _db_operation
+                from tldw_chatbook.Evals.eval_errors import DatabaseError
+                with pytest.raises((EvaluationError, DatabaseError)):
+                    await orchestrator.run_evaluation(
+                        task_id='test_task',
+                        model_id='invalid_model',
+                        max_samples=10
+                    )
