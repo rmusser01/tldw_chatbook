@@ -15,9 +15,9 @@ from unittest.mock import Mock, patch, AsyncMock
 from pathlib import Path
 
 from tldw_chatbook.Evals.specialized_runners import (
-    MultilingualRunner as MultilingualEvaluationRunner,
+    MultilingualEvaluationRunner,
     CodeExecutionRunner as CodeEvaluationRunner,
-    SafetyBiasRunner as SafetyEvaluationRunner
+    SafetyEvaluationRunner
 )
 from tldw_chatbook.Evals.eval_runner import EvalSampleResult as EvalResult
 

@@ -26,9 +26,9 @@ from tldw_chatbook.Evals.concurrency_manager import ConcurrentRunManager
 from tldw_chatbook.Evals.configuration_validator import ConfigurationValidator
 from tldw_chatbook.Evals.eval_errors import get_error_handler, EvaluationError
 from tldw_chatbook.Evals.specialized_runners import (
-    MultilingualRunner,
+    MultilingualEvaluationRunner,
     CodeExecutionRunner,
-    SafetyBiasRunner
+    SafetyEvaluationRunner
 )
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 

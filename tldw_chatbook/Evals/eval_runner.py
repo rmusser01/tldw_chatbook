@@ -877,18 +877,42 @@ class BaseEvalRunner(ABC):
     
     async def _call_llm(self, prompt: str, system_prompt: Optional[str] = None, **kwargs) -> str:
         """Call LLM using existing chat infrastructure."""
+        # Extract known parameters to avoid duplicates
+        temperature = kwargs.pop('temperature', kwargs.pop('temp', 0.7))
+        max_tokens = kwargs.pop('max_tokens', None)
+        top_p = kwargs.pop('top_p', kwargs.pop('maxp', None))
+        
+        # Remove any other parameter variations that might conflict
+        kwargs.pop('max_token', None)  # Sometimes misspelled
+        kwargs.pop('maxTokens', None)  # camelCase variant
+        
+        # Build the messages payload for chat_api_call
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        # Build the call parameters
+        call_params = {
+            'api_endpoint': self.provider_name,
+            'messages_payload': messages,
+            'api_key': self.api_key,
+            'model': self.model_id,
+            'temp': temperature,
+            'streaming': False,  # Eval doesn't need streaming
+        }
+        
+        # Only add optional params if they have values
+        if max_tokens is not None:
+            call_params['max_tokens'] = max_tokens
+        if top_p is not None:
+            call_params['top_p'] = top_p
+            
+        # Add any remaining kwargs that won't conflict
+        call_params.update(kwargs)
+        
         # Use the existing chat_api_call function which already handles all providers
-        response = await chat_api_call(
-            api_endpoint=self.provider_name,
-            api_key=self.api_key,
-            model=self.model_id,
-            input_data=prompt,
-            system_message=system_prompt,
-            temp=kwargs.get('temperature', 0.7),
-            max_tokens=kwargs.get('max_tokens'),
-            streaming=False,  # Eval doesn't need streaming
-            **kwargs
-        )
+        response = await chat_api_call(**call_params)
         
         # Handle response format based on provider
         if isinstance(response, tuple):
