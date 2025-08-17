@@ -14,12 +14,12 @@ import asyncio
 from unittest.mock import Mock, patch, AsyncMock
 from pathlib import Path
 
-from tldw_chatbook.Evals.simplified_runners import (
-    MultilingualEvaluationRunner,
-    CodeEvaluationRunner,
-    SafetyEvaluationRunner,
-    EvalResult
+from tldw_chatbook.Evals.specialized_runners import (
+    MultilingualRunner as MultilingualEvaluationRunner,
+    CodeExecutionRunner as CodeEvaluationRunner,
+    SafetyBiasRunner as SafetyEvaluationRunner
 )
+from tldw_chatbook.Evals.eval_runner import EvalSampleResult as EvalResult
 
 
 class TestMultilingualEvaluationRunner:

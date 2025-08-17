@@ -744,6 +744,78 @@ class EvaluationOrchestrator:
             logger.error(f"Error cancelling evaluation {run_id}: {e}")
             return False
     
+    def get_run_status(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the status and details of an evaluation run.
+        
+        Args:
+            run_id: ID of the evaluation run
+            
+        Returns:
+            Dictionary with run details or None if not found
+        """
+        try:
+            run_data = self.db.get_run(run_id)
+            if run_data:
+                # Add additional status information
+                run_data['is_active'] = run_id in self._active_tasks
+                
+                # Get results if available
+                results = self.db.get_run_results(run_id)
+                if results:
+                    run_data['results'] = results
+                    run_data['samples_evaluated'] = len(results)
+                else:
+                    run_data['results'] = []
+                    run_data['samples_evaluated'] = 0
+                
+                return run_data
+            return None
+        except Exception as e:
+            logger.error(f"Error getting run status for {run_id}: {e}")
+            return None
+    
+    def list_available_tasks(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        List all available evaluation tasks.
+        
+        Args:
+            limit: Maximum number of tasks to return
+            offset: Number of tasks to skip
+            
+        Returns:
+            List of task dictionaries
+        """
+        try:
+            tasks = self.db.list_tasks(limit=limit, offset=offset)
+            
+            # Add source information to database tasks
+            all_tasks = []
+            for task in tasks:
+                task['source'] = 'database'
+                all_tasks.append(task)
+            
+            # Try to add template information if available
+            try:
+                if hasattr(self.task_loader, 'list_available_templates'):
+                    template_tasks = self.task_loader.list_available_templates()
+                    
+                    # Add template tasks (if not already in database)
+                    task_names = {t.get('name') for t in tasks if 'name' in t}
+                    for template in template_tasks:
+                        if template.get('name') and template['name'] not in task_names:
+                            template['source'] = 'template'
+                            all_tasks.append(template)
+            except Exception as template_error:
+                # Log but don't fail if templates aren't available
+                logger.debug(f"Could not load template tasks: {template_error}")
+            
+            return all_tasks
+        except Exception as e:
+            logger.error(f"Error listing available tasks: {e}")
+            # Return empty list but don't crash
+            return []
+    
     def close(self):
         """Close database connections and cancel active runs."""
         # Cancel all active runs

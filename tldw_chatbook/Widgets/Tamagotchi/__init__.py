@@ -17,6 +17,12 @@ from .tamagotchi_messages import (
     TamagotchiAchievement,
     TamagotchiDeath
 )
+from .validators import (
+    TamagotchiValidator,
+    StateValidator,
+    RateLimiter,
+    ValidationError
+)
 
 __all__ = [
     # Core widget classes
@@ -46,6 +52,12 @@ __all__ = [
     'TamagotchiEvolution',
     'TamagotchiAchievement',
     'TamagotchiDeath',
+    
+    # Validators
+    'TamagotchiValidator',
+    'StateValidator',
+    'RateLimiter',
+    'ValidationError',
 ]
 
 __version__ = '1.0.0'

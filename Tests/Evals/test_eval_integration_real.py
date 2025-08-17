@@ -24,11 +24,11 @@ from unittest.mock import patch, AsyncMock
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 from tldw_chatbook.Evals.concurrency_manager import ConcurrentRunManager
 from tldw_chatbook.Evals.configuration_validator import ConfigurationValidator
-from tldw_chatbook.Evals.unified_error_handler import UnifiedErrorHandler, EvaluationError
-from tldw_chatbook.Evals.simplified_runners import (
-    MultilingualEvaluationRunner,
-    CodeEvaluationRunner,
-    SafetyEvaluationRunner
+from tldw_chatbook.Evals.eval_errors import get_error_handler, EvaluationError
+from tldw_chatbook.Evals.specialized_runners import (
+    MultilingualRunner,
+    CodeExecutionRunner,
+    SafetyBiasRunner
 )
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 

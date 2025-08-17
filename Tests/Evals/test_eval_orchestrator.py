@@ -82,14 +82,16 @@ class TestEvaluationOrchestrator:
         """Test that run_evaluation properly tracks active tasks."""
         with patch.object(orchestrator, 'db') as mock_db:
             with patch.object(orchestrator, 'task_loader') as mock_loader:
-                with patch.object(orchestrator.concurrent_manager, 'start_run', return_value=True):
-                    # Note: method name might be different in actual implementation
-                    
+                with patch.object(orchestrator.concurrent_manager, 'register_run', return_value=True) as mock_register:
                     # Mock task config
                     mock_task = Mock()
                     mock_task.task_type = 'question_answer'
                     mock_task.dataset_name = 'test_dataset'
                     mock_loader.get_task.return_value = mock_task
+                    
+                    # Mock database methods
+                    mock_db.create_run.return_value = 'test_run_id'
+                    mock_db.update_run_status.return_value = None
                     
                     # Mock model config
                     model_config = {
@@ -144,6 +146,7 @@ class TestEvaluationOrchestrator:
         from tldw_chatbook.Evals.task_loader import TaskConfig
         mock_task = TaskConfig(
             name="Test Task",
+            description="Test task for unit testing",
             task_type="question_answer",
             dataset_name=str(task_file),
             metric="exact_match"

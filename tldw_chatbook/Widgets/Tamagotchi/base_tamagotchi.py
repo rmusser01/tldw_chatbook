@@ -142,17 +142,21 @@ class BaseTamagotchi(Static):
                 personality, PERSONALITIES
             )
             self._update_interval = TamagotchiValidator.validate_update_interval(update_interval)
-            self.size = TamagotchiValidator.validate_size(size)
+            validated_size = TamagotchiValidator.validate_size(size)
             sprite_theme = TamagotchiValidator.validate_sprite_theme(sprite_theme)
         except ValidationError as e:
-            # Log error and use defaults
-            self.log.error(f"Validation error: {e}")
+            # Log error if logger available
+            try:
+                self.log.error(f"Validation error: {e}")
+            except:
+                pass  # No app context, skip logging
             raise
         
         # Initialize components
         self.storage = storage or MemoryStorage()
         self.sprite_manager = SpriteManager(theme=sprite_theme)
         self.behavior_engine = BehaviorEngine(self.personality_type)
+        self.display_size = validated_size
         
         # Rate limiting
         self.enable_rate_limiting = enable_rate_limiting
@@ -180,8 +184,8 @@ class BaseTamagotchi(Static):
         self._total_interactions = 0
         
         # Apply size class
-        if size in ["compact", "minimal"]:
-            self.add_class(size)
+        if validated_size in ["compact", "minimal"]:
+            self.add_class(validated_size)
     
     def on_mount(self) -> None:
         """
@@ -463,10 +467,10 @@ class BaseTamagotchi(Static):
         
         Returns formatted string based on size setting.
         """
-        if self.size == "minimal":
+        if self.display_size == "minimal":
             # Minimal: Just the sprite
             return f"[{self.sprite}]"
-        elif self.size == "compact":
+        elif self.display_size == "compact":
             # Compact: Sprite and name
             return f"{self.sprite} {self.pet_name}"
         else:
@@ -475,19 +479,41 @@ class BaseTamagotchi(Static):
             return f"{self.sprite} {self.pet_name}\n{stats}\n{self.mood}"
     
     def _load_state(self) -> None:
-        """Load saved state from storage."""
+        """Load saved state from storage with recovery support."""
         try:
-            state = self.storage.load(self.id or self.pet_name)
+            # Use load_with_recovery if available
+            if hasattr(self.storage, 'load_with_recovery'):
+                state = self.storage.load_with_recovery(
+                    self.id or self.pet_name,
+                    self.pet_name
+                )
+            else:
+                state = self.storage.load(self.id or self.pet_name)
+            
             if state:
-                self.happiness = state.get('happiness', 50)
-                self.hunger = state.get('hunger', 50)
-                self.energy = state.get('energy', 50)
-                self.health = state.get('health', 100)
-                self.age = state.get('age', 0)
+                # Validate and apply loaded values
+                self.happiness = TamagotchiValidator.validate_stat(
+                    state.get('happiness', 50), 'happiness'
+                )
+                self.hunger = TamagotchiValidator.validate_stat(
+                    state.get('hunger', 50), 'hunger'
+                )
+                self.energy = TamagotchiValidator.validate_stat(
+                    state.get('energy', 50), 'energy'
+                )
+                self.health = TamagotchiValidator.validate_stat(
+                    state.get('health', 100), 'health'
+                )
+                self.age = TamagotchiValidator.validate_age(
+                    state.get('age', 0)
+                )
                 self._is_alive = state.get('is_alive', True)
-                self._total_interactions = state.get('total_interactions', 0)
+                self._total_interactions = max(0, state.get('total_interactions', 0))
+                
+                self.log.info(f"Loaded state for {self.pet_name}")
         except Exception as e:
             self.log.error(f"Failed to load tamagotchi state: {e}")
+            # Continue with default values
     
     def _save_state(self) -> None:
         """Save current state to storage."""
