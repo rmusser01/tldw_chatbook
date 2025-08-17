@@ -52,17 +52,31 @@ class ChatScreen(BaseAppScreen):
     
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """
-        Handle button events - forward to ChatWindowEnhanced if it needs them,
-        otherwise let them bubble to the App.
+        Handle button events at the screen level.
+        This ensures buttons work properly with screen-based navigation.
         """
-        # ChatWindowEnhanced handles its own buttons
-        if self.chat_window and hasattr(self.chat_window, 'on_button_pressed'):
-            # Check if this button belongs to the chat window
-            button = event.button
-            if button in self.chat_window.walk_children(Button):
-                # This button is a child of chat_window, let it handle it
-                await self.chat_window.on_button_pressed(event)
-                event.stop()  # Stop bubbling since we handled it
-                return
-        # For all other buttons, let the event bubble up to the App
-        # Do NOT stop the event - let it bubble naturally
+        button_id = event.button.id
+        
+        # Log for debugging
+        logger.debug(f"ChatScreen handling button: {button_id}")
+        
+        # Handle sidebar toggle buttons directly at screen level
+        if button_id in ["toggle-chat-left-sidebar", "toggle-chat-right-sidebar"]:
+            # These buttons affect app-level state, so we need to handle them specially
+            await self._handle_sidebar_toggle(button_id)
+            event.stop()
+            return
+            
+        # For all other buttons in the chat window, delegate to ChatWindowEnhanced
+        if self.chat_window:
+            # The chat window knows how to handle its own buttons
+            await self.chat_window.on_button_pressed(event)
+            event.stop()  # Prevent bubbling to app level
+    
+    async def _handle_sidebar_toggle(self, button_id: str) -> None:
+        """Handle sidebar toggle buttons."""
+        # Access the app instance to toggle the sidebars
+        if button_id == "toggle-chat-left-sidebar":
+            self.app_instance.chat_sidebar_collapsed = not self.app_instance.chat_sidebar_collapsed
+        elif button_id == "toggle-chat-right-sidebar":
+            self.app_instance.chat_right_sidebar_collapsed = not self.app_instance.chat_right_sidebar_collapsed

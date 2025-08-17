@@ -90,13 +90,21 @@ async def update_chat_token_counter(app: 'TldwCli') -> None:
         
         # Update the display in footer
         try:
-            footer = app.query_one("AppFooterStatus")
-            from ...Utils.token_counter import format_token_display
-            display_text = format_token_display(used_tokens, display_limit)
-            footer.update_token_count(display_text)
-            logger.debug(f"Token count updated: {used_tokens}/{display_limit} (model limit: {total_limit})")
+            # Check if in screen navigation mode
+            if hasattr(app, '_use_screen_navigation') and app._use_screen_navigation:
+                # In screen mode, footer might not exist or be in a different place
+                logger.debug(f"Token count in screen mode: {used_tokens}/{display_limit}")
+                # Store for potential screen usage
+                app.current_token_count = (used_tokens, display_limit)
+            else:
+                # Legacy tab mode - update footer directly
+                footer = app.query_one("AppFooterStatus")
+                from ...Utils.token_counter import format_token_display
+                display_text = format_token_display(used_tokens, display_limit)
+                footer.update_token_count(display_text)
+                logger.debug(f"Token count updated: {used_tokens}/{display_limit} (model limit: {total_limit})")
         except QueryError as e:
-            logger.error(f"Footer widget not found: {e}")
+            logger.debug(f"Footer widget not found (may be in screen mode): {e}")
                 
     except Exception as e:
         logger.error(f"Error updating chat token counter: {e}", exc_info=True)

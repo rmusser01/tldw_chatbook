@@ -2303,6 +2303,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Thread-safely get the streaming state."""
         with self._chat_state_lock:
             return self.current_chat_is_streaming
+    
+    # NOTE: Removed query_one and query overrides - screens should handle their own queries
+    # This follows Textual best practices for screen-based navigation
+    # Each screen is responsible for querying its own widgets
 
     async def _load_prompt_for_editing(self, prompt_id: Optional[int], prompt_uuid: Optional[str] = None) -> None:
         if not self.prompts_service_initialized:
@@ -4356,11 +4360,23 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     #
     ########################################################################
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Dispatches button presses to the appropriate event handler using a map."""
+        """Dispatches button presses to the appropriate event handler."""
         button_id = event.button.id
         if not button_id:
             return
 
+        self.loguru_logger.info(f"Button pressed: ID='{button_id}'")
+
+        # For screen-based navigation, let the screen handle its own buttons
+        if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
+            # The screen should handle its own button events
+            # If it bubbles up here, it's a navigation button or unhandled
+            # Navigation buttons are already handled by NavigateToScreen messages
+            # So we can safely ignore button events that reach here
+            self.loguru_logger.debug(f"Button event '{button_id}' reached app level in screen navigation mode")
+            return
+
+        # Legacy tab-based button handling below (only if not using screen navigation)
         self.loguru_logger.info(f"Button pressed: ID='{button_id}' on Tab='{self.current_tab}'")
 
         # 1. Handle global tab switching first
@@ -4393,7 +4409,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             window_id = window_id_map.get(self.current_tab)
             self.loguru_logger.info(f"Window ID for tab '{self.current_tab}': {window_id}")
             if window_id:
-                window = self.query_one(f"#{window_id}")
+                # Use super().query_one to access app-level widgets in tab mode
+                window = super().query_one(f"#{window_id}")
                 self.loguru_logger.info(f"Found window: {type(window).__name__}")
                 # Check if the window has an on_button_pressed method
                 has_method = hasattr(window, "on_button_pressed") and callable(window.on_button_pressed)
@@ -4940,7 +4957,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         try:
             preset = event.value
             
-            # Get RAG-related widgets
+            # Get RAG-related widgets - check if in screen navigation mode
+            if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
+                # In screen navigation mode, these widgets don't exist at app level
+                self.loguru_logger.debug(f"RAG preset change in screen mode - preset: {preset}")
+                # Store the preset for the screen to handle
+                self.rag_preset = preset
+                return
+            
+            # Legacy tab mode - widgets exist at app level
             rag_enable = self.query_one("#chat-rag-enable-checkbox", Checkbox)
             top_k = self.query_one("#chat-rag-top-k", Input)
             
@@ -4979,7 +5004,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             pipeline_id = event.value
             
-            # Update the description display
+            # Check if in screen navigation mode
+            if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
+                # In screen navigation mode, these widgets don't exist at app level
+                self.loguru_logger.debug(f"RAG pipeline change in screen mode - pipeline: {pipeline_id}")
+                # Store the pipeline for the screen to handle
+                self.rag_pipeline = pipeline_id
+                return
+            
+            # Legacy tab mode - update the description display
             description_widget = self.query_one("#chat-rag-pipeline-description", Static)
             description = get_pipeline_description(pipeline_id)
             description_widget.update(description)
@@ -5003,7 +5036,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         try:
             method = event.value
             
-            # Get the relevant widgets
+            # Check if in screen navigation mode
+            if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
+                # In screen navigation mode, these widgets don't exist at app level
+                self.loguru_logger.debug(f"Query expansion method change in screen mode - method: {method}")
+                # Store the method for the screen to handle
+                self.query_expansion_method = method
+                return
+            
+            # Legacy tab mode - get the relevant widgets
             provider_label = self.query_one(".rag-expansion-provider-label", Static)
             provider_select = self.query_one("#chat-rag-expansion-provider", Select)
             llm_model_label = self.query_one(".rag-expansion-llm-label", Static)

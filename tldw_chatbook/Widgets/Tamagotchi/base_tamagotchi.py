@@ -4,6 +4,7 @@ Base Tamagotchi Widget Implementation
 Core widget class following Textual best practices.
 """
 
+import time
 from typing import Optional, Dict, Any
 from textual.reactive import reactive
 from textual.widgets import Static
@@ -13,13 +14,14 @@ from textual.events import Click
 from textual.binding import Binding
 
 from .tamagotchi_sprites import SpriteManager
-from .tamagotchi_behaviors import BehaviorEngine
+from .tamagotchi_behaviors import BehaviorEngine, PERSONALITIES
 from .tamagotchi_storage import StorageAdapter, MemoryStorage
 from .tamagotchi_messages import (
     TamagotchiInteraction,
     TamagotchiStateChange,
     TamagotchiDeath
 )
+from .validators import TamagotchiValidator, StateValidator, RateLimiter, ValidationError
 
 
 class BaseTamagotchi(Static):
@@ -110,6 +112,8 @@ class BaseTamagotchi(Static):
         storage: Optional[StorageAdapter] = None,
         sprite_theme: str = "emoji",
         size: str = "normal",
+        enable_rate_limiting: bool = True,
+        global_cooldown: float = 0.5,
         *args,
         **kwargs
     ) -> None:
@@ -123,19 +127,51 @@ class BaseTamagotchi(Static):
             storage: Storage adapter for persistence
             sprite_theme: Visual theme for sprites
             size: Display size (normal, compact, minimal)
+            enable_rate_limiting: Whether to enable rate limiting
+            global_cooldown: Minimum time between interactions
+        
+        Raises:
+            ValidationError: If parameters are invalid
         """
         super().__init__(*args, **kwargs)
         
-        self.pet_name = name
-        self.personality_type = personality
+        # Validate inputs
+        try:
+            self.pet_name = TamagotchiValidator.validate_name(name)
+            self.personality_type = TamagotchiValidator.validate_personality(
+                personality, PERSONALITIES
+            )
+            self._update_interval = TamagotchiValidator.validate_update_interval(update_interval)
+            self.size = TamagotchiValidator.validate_size(size)
+            sprite_theme = TamagotchiValidator.validate_sprite_theme(sprite_theme)
+        except ValidationError as e:
+            # Log error and use defaults
+            self.log.error(f"Validation error: {e}")
+            raise
+        
+        # Initialize components
         self.storage = storage or MemoryStorage()
         self.sprite_manager = SpriteManager(theme=sprite_theme)
-        self.behavior_engine = BehaviorEngine(personality)
-        self.size = size
+        self.behavior_engine = BehaviorEngine(self.personality_type)
+        
+        # Rate limiting
+        self.enable_rate_limiting = enable_rate_limiting
+        if enable_rate_limiting:
+            # Set up rate limiter with per-action cooldowns
+            action_cooldowns = {
+                'feed': 2.0,
+                'play': 1.5,
+                'sleep': 5.0,
+                'clean': 2.0,
+                'medicine': 3.0,
+                'pet': 0.5
+            }
+            self.rate_limiter = RateLimiter(global_cooldown, action_cooldowns)
+        else:
+            self.rate_limiter = None
         
         # Timer management
         self._update_timer: Optional[Timer] = None
-        self._update_interval = update_interval
         self._animation_timer: Optional[Timer] = None
         
         # State tracking
@@ -323,7 +359,35 @@ class BaseTamagotchi(Static):
             action: The interaction type (feed, play, pet, etc.)
         """
         if not self._is_alive:
+            self.notify("Your pet has passed away", severity="warning")
             return
+        
+        # Check rate limiting
+        if self.enable_rate_limiting and self.rate_limiter:
+            current_time = time.time()
+            allowed, cooldown = self.rate_limiter.can_interact(current_time, action)
+            
+            if not allowed:
+                # Notify user about cooldown
+                if cooldown > 1:
+                    msg = f"Please wait {cooldown:.0f} seconds before {action}"
+                else:
+                    msg = f"Too fast! Wait {cooldown:.1f}s"
+                
+                # Create a rate-limited response
+                response = {
+                    'success': False,
+                    'message': msg,
+                    'cooldown_remaining': cooldown,
+                    'changes': {}
+                }
+                
+                # Post interaction message with rate limit info
+                self.post_message(TamagotchiInteraction(self, action, response))
+                return
+            
+            # Record the interaction time
+            self.rate_limiter.record_interaction(current_time, action)
         
         # Get current stats
         current_stats = {
@@ -336,14 +400,19 @@ class BaseTamagotchi(Static):
         # Process action through behavior engine
         response = self.behavior_engine.process_action(action, current_stats)
         
-        # Apply stat changes
+        # Apply stat changes with validation
         for stat, change in response.get('changes', {}).items():
             if hasattr(self, stat):
                 current = getattr(self, stat)
-                setattr(self, stat, max(0, min(100, current + change)))
+                # Use validator for stat clamping
+                new_value = TamagotchiValidator.validate_stat(
+                    current + change, stat
+                )
+                setattr(self, stat, new_value)
         
         # Update interaction counter
         self._total_interactions += 1
+        self._last_interaction_time = time.time()
         
         # Trigger animation if specified
         if response.get('animation'):

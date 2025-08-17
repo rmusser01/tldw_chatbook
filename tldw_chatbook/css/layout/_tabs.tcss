@@ -5,9 +5,22 @@
  * ======================================== */
 
 #tabs { dock: top; height: 3; background: $background; padding: 0 1; }
-#tabs Button { width: 1fr; height: 100%; border: none; background: $panel; color: $text-muted; }
-#tabs Button:hover { background: $panel-lighten-1; color: $text; }
-#tabs Button.-active { background: $accent; color: $text; text-style: bold; border: none; }
+#tabs Button { 
+    width: 1fr; 
+    height: 100%; 
+    border: none;  /* No border for tab buttons */
+    background: $panel; 
+    color: $text-muted; 
+}
+#tabs Button:hover { 
+    background: $panel-lighten-1; 
+    color: $text;
+}
+#tabs Button.-active { 
+    background: $accent; 
+    color: $text; 
+    text-style: bold;
+}
 
 /* Single-line tab links navigation */
 #tab-links-container {

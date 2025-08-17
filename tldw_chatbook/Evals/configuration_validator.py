@@ -15,31 +15,29 @@ from loguru import logger
 
 from .eval_errors import ValidationError, ErrorContext, ErrorCategory, ErrorSeverity
 from tldw_chatbook.Utils.path_validation import validate_path_simple
+from .config_loader import get_eval_config
 
 
 class ConfigurationValidator:
     """Validates evaluation configurations before execution."""
     
-    # Valid task types
-    VALID_TASK_TYPES = {'question_answer', 'generation', 'classification', 'logprob'}
+    def __init__(self):
+        """Initialize validator with configuration."""
+        self.config = get_eval_config()
+        
+        # Load configuration values
+        self.VALID_TASK_TYPES = set(self.config.get_task_types())
+        self.VALID_METRICS = {}
+        for task_type in self.VALID_TASK_TYPES:
+            self.VALID_METRICS[task_type] = set(self.config.get_metrics_for_task(task_type))
+        
+        self.REQUIRED_FIELDS = {
+            'task': self.config.get_required_fields('task'),
+            'model': self.config.get_required_fields('model'),
+            'run': self.config.get_required_fields('run')
+        }
     
-    # Valid metrics per task type
-    VALID_METRICS = {
-        'question_answer': {'exact_match', 'f1', 'contains', 'accuracy'},
-        'generation': {'bleu', 'rouge', 'perplexity', 'coherence'},
-        'classification': {'accuracy', 'f1', 'precision', 'recall'},
-        'logprob': {'perplexity', 'log_likelihood', 'accuracy'}
-    }
-    
-    # Required fields per configuration type
-    REQUIRED_FIELDS = {
-        'task': ['name', 'task_type'],
-        'model': ['provider', 'model_id'],
-        'run': ['task_id', 'model_id']
-    }
-    
-    @classmethod
-    def validate_task_config(cls, task_config: Dict[str, Any]) -> List[str]:
+    def validate_task_config(self, task_config: Dict[str, Any]) -> List[str]:
         """
         Validate task configuration.
         
@@ -49,23 +47,23 @@ class ConfigurationValidator:
         errors = []
         
         # Check required fields
-        for field in cls.REQUIRED_FIELDS['task']:
+        for field in self.REQUIRED_FIELDS['task']:
             if field not in task_config or not task_config[field]:
                 errors.append(f"Missing required field: {field}")
         
         # Validate task type
         if 'task_type' in task_config:
-            if task_config['task_type'] not in cls.VALID_TASK_TYPES:
+            if task_config['task_type'] not in self.VALID_TASK_TYPES:
                 errors.append(
                     f"Invalid task_type: {task_config['task_type']}. "
-                    f"Must be one of: {', '.join(cls.VALID_TASK_TYPES)}"
+                    f"Must be one of: {', '.join(self.VALID_TASK_TYPES)}"
                 )
         
         # Validate metric if specified
         if 'metric' in task_config and 'task_type' in task_config:
             task_type = task_config['task_type']
-            if task_type in cls.VALID_METRICS:
-                valid_metrics = cls.VALID_METRICS[task_type]
+            if task_type in self.VALID_METRICS:
+                valid_metrics = self.VALID_METRICS[task_type]
                 if task_config['metric'] not in valid_metrics:
                     errors.append(
                         f"Invalid metric '{task_config['metric']}' for task type '{task_type}'. "
@@ -101,8 +99,7 @@ class ConfigurationValidator:
         
         return errors
     
-    @classmethod
-    def validate_model_config(cls, model_config: Dict[str, Any]) -> List[str]:
+    def validate_model_config(self, model_config: Dict[str, Any]) -> List[str]:
         """
         Validate model configuration.
         
@@ -112,7 +109,7 @@ class ConfigurationValidator:
         errors = []
         
         # Check required fields
-        for field in cls.REQUIRED_FIELDS['model']:
+        for field in self.REQUIRED_FIELDS['model']:
             if field not in model_config or not model_config[field]:
                 errors.append(f"Missing required field: {field}")
         
@@ -130,8 +127,7 @@ class ConfigurationValidator:
         
         return errors
     
-    @classmethod
-    def validate_run_config(cls, run_config: Dict[str, Any]) -> List[str]:
+    def validate_run_config(self, run_config: Dict[str, Any]) -> List[str]:
         """
         Validate run configuration.
         
@@ -141,7 +137,7 @@ class ConfigurationValidator:
         errors = []
         
         # Check required fields
-        for field in cls.REQUIRED_FIELDS['run']:
+        for field in self.REQUIRED_FIELDS['run']:
             if field not in run_config or not run_config[field]:
                 errors.append(f"Missing required field: {field}")
         

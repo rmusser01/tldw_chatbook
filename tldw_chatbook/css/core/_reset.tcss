@@ -4,21 +4,14 @@
  * Base resets and default styles
  * ======================================== */
 
-/* Remove all default focus outlines and borders */
+/* Remove default focus outlines - we'll use background color changes instead */
 *:focus {
     outline: none;
 }
 
-/* REMOVED: This was causing widgets to "pop" on hover
-   by removing their borders and causing layout shifts */
-/* *:hover {
-    border: none;
-} */
+/* REMOVED: These rules were causing layout shifts and visual issues */
+/* *:hover { border: none; } */
+/* *:focus-within { border: none; } */
 
-/* No borders on focus-within */
-*:focus-within {
-    border: none;
-}
-
-/* Widgets can explicitly add focus/hover styles if needed */
-/* Example: .custom-widget:focus { outline: 2px solid $accent; } */
+/* Widgets should maintain consistent dimensions across all states */
+/* Focus and hover states should only change colors, not layout */
