@@ -906,10 +906,20 @@ class BaseEvalRunner(ABC):
         if max_tokens is not None:
             call_params['max_tokens'] = max_tokens
         if top_p is not None:
-            call_params['top_p'] = top_p
+            call_params['maxp'] = top_p  # chat_api_call uses maxp, not top_p
             
-        # Add any remaining kwargs that won't conflict
-        call_params.update(kwargs)
+        # Only add kwargs that chat_api_call actually accepts
+        # Based on the function signature, these are the accepted parameters:
+        valid_chat_params = {
+            'minp', 'topk', 'query_system_prompt', 'user_uploaded_images', 'media_content',
+            'title', 'author', 'custom_prompt', 'json_mode', 'custom_rag_collection',
+            'show_rag_in_prompt'
+        }
+        
+        # Filter kwargs to only include valid parameters
+        for param in valid_chat_params:
+            if param in kwargs:
+                call_params[param] = kwargs[param]
         
         # Use the existing chat_api_call function which already handles all providers
         response = await chat_api_call(**call_params)
