@@ -80,7 +80,7 @@ class ChatWindowEnhanced(Container):
         
         # Now set reactive properties (which may trigger watchers)
         self.pending_attachment = None  # New unified attachment system
-        self.pending_image = None  # Deprecated - kept for backward compatibility
+        # Note: pending_image is a reactive property defined at class level, don't override it here
         
         # Voice input state
         self.voice_input_widget: Optional[VoiceInputWidget] = None
@@ -954,8 +954,8 @@ class ChatWindowEnhanced(Container):
             new_state = not (is_streaming or has_worker)
             if self.is_send_button != new_state:
                 self.is_send_button = new_state
-        except Exception as e:
-            logger.debug(f"Error updating button state: {e}")
+        except AttributeError as e:
+            logger.debug(f"Error updating button state - widget not ready: {e}")
     
     def watch_is_send_button(self, is_send: bool) -> None:
         """Watch for changes to button state and update UI accordingly."""
@@ -975,8 +975,8 @@ class ChatWindowEnhanced(Container):
                 button.remove_class("stop-state")
             else:
                 button.add_class("stop-state")
-        except Exception as e:
-            logger.debug(f"Could not update button in watcher: {e}")
+        except AttributeError as e:
+            logger.debug(f"Could not update button in watcher - widget not ready: {e}")
     
     def watch_pending_image(self, image_data) -> None:
         """Watch for changes to pending image and update UI."""
@@ -1008,7 +1008,7 @@ class ChatWindowEnhanced(Container):
         if button:
             try:
                 button.disabled = True
-            except Exception as e:
+            except (AttributeError, RuntimeError) as e:
                 logger.warning(f"Could not disable send/stop button: {e}")
         
         try:
@@ -1036,7 +1036,7 @@ class ChatWindowEnhanced(Container):
             if button:
                 try:
                     button.disabled = False
-                except Exception as e:
+                except (AttributeError, RuntimeError) as e:
                     logger.warning(f"Could not re-enable send/stop button: {e}")
             self._update_button_state()
     
@@ -1086,8 +1086,12 @@ class ChatWindowEnhanced(Container):
                 enable_commands=False
             )
             logger.info("Voice dictation service created")
-        except Exception as e:
-            logger.error(f"Failed to create voice dictation service: {e}")
+        except ImportError as e:
+            logger.error(f"Voice dictation dependencies not available: {e}")
+            self.voice_dictation_service = None
+        except AttributeError as e:
+            logger.error(f"Failed to initialize voice dictation service: {e}")
+            self.voice_dictation_service = None
             self.voice_dictation_service = None
             # Don't show error here - will show when user actually tries to use it
     
@@ -1123,7 +1127,7 @@ class ChatWindowEnhanced(Container):
                 timeout=10
             )
             self.call_from_thread(self._reset_mic_button)
-        except Exception as e:
+        except (RuntimeError, AttributeError) as e:
             logger.error(f"Error starting voice recording: {e}", extra={"error_type": "voice_recording"})
             error_msg = self._get_voice_error_message(e)
             self.call_from_thread(
@@ -1148,7 +1152,7 @@ class ChatWindowEnhanced(Container):
                 exclusive=True,
                 name="voice_recorder"
             )
-        except Exception as e:
+        except (WorkerCancelled, RuntimeError) as e:
             logger.error(f"Failed to start voice recording worker: {e}")
             self._reset_mic_button()
     
@@ -1200,7 +1204,7 @@ class ChatWindowEnhanced(Container):
             else:
                 self.app_instance.notify("No speech detected", severity="warning")
                 
-        except Exception as e:
+        except (RuntimeError, AttributeError) as e:
             logger.error(f"Error stopping voice recording: {e}")
             self.app_instance.notify("Error stopping recording", severity="error")
     
@@ -1244,8 +1248,8 @@ class ChatWindowEnhanced(Container):
             
             # Focus the input
             self._chat_input.focus()
-        except Exception as e:
-            logger.error(f"Failed to insert voice text: {e}")
+        except AttributeError as e:
+            logger.error(f"Failed to insert voice text - widget not available: {e}")
     
     def on_voice_input_message(self, event: VoiceInputMessage) -> None:
         """Handle voice input messages."""
@@ -1266,8 +1270,8 @@ class ChatWindowEnhanced(Container):
                 
                 # Focus the input
                 self._chat_input.focus()
-            except Exception as e:
-                logger.error(f"Failed to add voice input to chat: {e}")
+            except AttributeError as e:
+                logger.error(f"Failed to add voice input to chat - widget not available: {e}")
 
 #
 # End of Chat_Window_Enhanced.py

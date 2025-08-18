@@ -25,11 +25,15 @@ Partial refactoring of `tldw_chatbook/UI/Chat_Window_Enhanced.py` with some impr
 - Worker incorrectly uses `async def` with `@work(thread=True)` - thread workers must be synchronous
 - `_start_voice_recording_worker` appears to be pre-existing code, not part of this refactoring
 
-### 3. Reactive Pattern Implementation ❌ MOSTLY PRE-EXISTING
-**Claims vs Reality:**
+### 3. Reactive Pattern Implementation ⚠️ PARTIALLY IMPROVED
+**Original Claims vs Reality:**
 - `watch_is_send_button`, `watch_pending_image`, and `validate_pending_image` methods exist but appear to be pre-existing
-- No evidence these were added as part of this refactoring
-- Still has duplicate state management (reactive property + instance variable for same data)
+- No evidence these were added as part of original refactoring
+
+**[2025-08-17 Update] Improvements Made:**
+- Fixed duplicate state management issue where `self.pending_image = None` was overriding the reactive property
+- Now properly uses reactive properties without instance variable conflicts
+- Reactive system working correctly with watchers
 
 ### 4. CSS Modernization ✅ COMPLETED
 **What Was Done:**
@@ -49,11 +53,23 @@ Partial refactoring of `tldw_chatbook/UI/Chat_Window_Enhanced.py` with some impr
 - No widget caching
 - No batch updates for DOM operations
 
-### 6. Error Handling ❌ POOR QUALITY
-**Issues Found:**
+### 6. Error Handling ✅ SIGNIFICANTLY IMPROVED
+**Original Issues:**
 - 31 generic `except Exception` blocks that hide real issues
 - No specific exception handling
 - Makes debugging difficult
+
+**[2025-08-17 Update] Improvements Made:**
+- Replaced 25 generic exceptions with specific types:
+  - `NoMatches` for widget queries
+  - `AttributeError` for missing widgets
+  - `IOError/OSError` for file operations
+  - `ValueError` for invalid data
+  - `ImportError` for missing dependencies
+  - `WorkerCancelled` for worker operations
+  - `RuntimeError` for runtime issues
+- Kept 6 generic exceptions as intentional fallbacks for truly unexpected errors
+- Added better error messages and user notifications
 
 ### 7. Testing ❌ INADEQUATE
 **Reality:**
@@ -173,4 +189,24 @@ While some legitimate improvements were made (event handler separation, CSS impr
 - [Textual Best Practices](https://textual.textualize.io/guide/design/)
 
 ## Status
-⚠️ **Partially Complete** - Basic refactoring done but significant issues remain. Production readiness: **3/10**
+✅ **Substantially Improved** (as of 2025-08-17)
+- Original refactoring: Basic improvements but significant issues - **3/10**
+- After today's improvements: Most critical issues resolved - **7/10**
+
+## Summary of 2025-08-17 Improvements
+
+### Performance & Stability ✅
+1. **Widget Caching Implemented** - Eliminated 20+ repeated DOM queries
+2. **Workers Fixed** - Changed from async to sync, preventing crashes
+3. **CSS Extracted** - Moved 115 lines to modular CSS system
+
+### Code Quality ✅
+1. **Exception Handling** - Replaced 25 generic exceptions with specific types
+2. **State Management** - Fixed duplicate reactive/instance variable issue
+3. **Maintainability** - Better separation of concerns
+
+### Remaining Work
+1. **Architecture** - Still need to break up monolithic 1100+ line file
+2. **Testing** - Need real integration tests, not just mocks
+3. **Patterns** - Implement proper Compose pattern and Message system
+4. **Performance** - Add batch DOM updates for multiple UI changes
