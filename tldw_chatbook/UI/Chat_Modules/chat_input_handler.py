@@ -54,7 +54,7 @@ class ChatInputHandler:
         self._last_send_stop_click = current_time
         
         # Disable button during operation
-        button = self.chat_window._send_button
+        button = self.chat_window._get_send_button()
         if button:
             try:
                 button.disabled = True
@@ -131,23 +131,26 @@ class ChatInputHandler:
         Returns:
             Current text in the chat input, or empty string if not available
         """
-        if self.chat_window._chat_input:
-            return self.chat_window._chat_input.value
+        chat_input = self.chat_window._get_chat_input()
+        if chat_input:
+            return chat_input.value
         return ""
     
     def clear_chat_input(self):
         """Clear the chat input field."""
-        if self.chat_window._chat_input:
+        chat_input = self.chat_window._get_chat_input()
+        if chat_input:
             try:
-                self.chat_window._chat_input.clear()
+                chat_input.clear()
             except (AttributeError, RuntimeError) as e:
                 logger.warning(f"Could not clear chat input: {e}")
     
     def focus_chat_input(self):
         """Set focus to the chat input field."""
-        if self.chat_window._chat_input:
+        chat_input = self.chat_window._get_chat_input()
+        if chat_input:
             try:
-                self.chat_window._chat_input.focus()
+                chat_input.focus()
             except (AttributeError, RuntimeError) as e:
                 logger.warning(f"Could not focus chat input: {e}")
     
@@ -157,12 +160,12 @@ class ChatInputHandler:
         Args:
             text: Text to insert
         """
-        if not self.chat_window._chat_input:
+        chat_input = self.chat_window._get_chat_input()
+        if not chat_input:
             logger.warning("Chat input not available")
             return
         
         try:
-            chat_input = self.chat_window._chat_input
             current_text = chat_input.value
             cursor_pos = chat_input.cursor_location
             
@@ -190,4 +193,5 @@ class ChatInputHandler:
         except (IndexError, ValueError, AttributeError) as e:
             logger.error(f"Error inserting text at cursor: {e}")
             # Fallback: just append
-            self.chat_window._chat_input.value += text
+            if chat_input:
+                chat_input.value += text

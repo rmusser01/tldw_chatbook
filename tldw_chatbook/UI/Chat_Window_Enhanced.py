@@ -3,7 +3,7 @@
 #
 # Imports
 import asyncio
-from typing import TYPE_CHECKING, Optional, Any
+from typing import TYPE_CHECKING, Optional, Any, Dict
 #
 # 3rd-Party Imports
 from loguru import logger
@@ -11,7 +11,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, TextArea, Input, Static, Select
 from textual.reactive import reactive
-from textual import work
+from textual import work, on
 from textual.worker import Worker, get_current_worker, WorkerCancelled
 from textual.css.query import NoMatches
 #
@@ -54,9 +54,18 @@ if TYPE_CHECKING:
 # Functions:
 
 class ChatWindowEnhanced(Container):
+    """Enhanced Container for the Chat Tab's UI with image support.
+    
+    This container manages the chat interface following Textual best practices:
+    - Uses Container as base (wrapped by ChatScreen which provides Screen functionality)
+    - Implements reactive properties with proper validators
+    - Uses @on decorators for clean event handling
+    - Follows CSS separation of concerns
+    - Implements proper worker thread safety
     """
-    Enhanced Container for the Chat Tab's UI with image support.
-    """
+    
+    # Explicit CSS path declaration following best practices
+    CSS_PATH = "css/features/_chat.tcss"
     
     BINDINGS = [
         ("ctrl+shift+left", "resize_sidebar_shrink", "Shrink sidebar"),
@@ -65,20 +74,23 @@ class ChatWindowEnhanced(Container):
         ("ctrl+m", "toggle_voice_input", "Toggle voice input"),
     ]
     
-    # CSS moved to tldw_chatbook/css/features/_chat.tcss for better maintainability
-    # The styles are automatically loaded by Textual from the CSS directory
+    # Reactive properties with proper type hints
+    pending_image: reactive[Optional[Dict[str, Any]]] = reactive(None, layout=False)
+    is_send_button: reactive[bool] = reactive(True, layout=False)
     
-    # Track pending image attachment with proper reactive pattern
-    pending_image = reactive(None, layout=False, recompose=False)
-    
-    # Track button state for Send/Stop functionality with automatic UI updates
-    is_send_button = reactive(True, layout=False, recompose=False)
-    
-    # Debouncing for button clicks
-    _last_send_stop_click = 0
-    DEBOUNCE_MS = 300
+    # Cached widget references to avoid repeated queries
+    _chat_input: Optional[TextArea] = None
+    _send_button: Optional[Button] = None
+    _attachment_indicator: Optional[Static] = None
+    _tab_container: Optional['ChatTabContainer'] = None
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
+        """Initialize the chat window with modular handlers.
+        
+        Args:
+            app_instance: Reference to the main application instance
+            **kwargs: Additional keyword arguments for Container
+        """
         super().__init__(**kwargs)
         self.app_instance = app_instance
         
@@ -90,28 +102,27 @@ class ChatWindowEnhanced(Container):
         self.message_manager = ChatMessageManager(self)
         
         # Initialize attachment state
-        self.pending_attachment = None  # New unified attachment system
+        self.pending_attachment: Optional[Dict[str, Any]] = None
         
         # Voice input state (for compatibility)
         self.voice_input_widget: Optional[VoiceInputWidget] = None
         self.is_voice_recording = False
         
-        logger.debug("ChatWindowEnhanced initialized with modular handlers.")
+        logger.debug("ChatWindowEnhanced initialized with modular handlers")
     
     async def on_mount(self) -> None:
-        """Called when the widget is mounted.
+        """Handle post-composition setup.
         
-        Handles post-composition setup:
-        - Configure visibility based on settings
-        - Initialize button states
+        Configures widget visibility, caches widget references, and initializes UI state.
         """
+        # Cache frequently accessed widgets to avoid repeated queries
+        self._cache_widget_references()
+        
         # Configure widget visibility based on settings
         await self._configure_widget_visibility()
         
-        # Token counter will be initialized when tab is switched to chat
-        # Watch for streaming state changes
+        # Initialize button state
         self._update_button_state()
-        # Button state will be updated on-demand when streaming state actually changes
     
     # Message Handlers using Textual's Message System
     
@@ -161,68 +172,134 @@ class ChatWindowEnhanced(Container):
         logger.debug(f"Stream completed for message {message.message_id}")
         self.is_send_button = True  # Switch back to send button
     
+    def _cache_widget_references(self) -> None:
+        """Cache frequently accessed widget references to optimize performance."""
+        self._chat_input = self.query_one_or_none("#chat-input", TextArea)
+        self._send_button = self.query_one_or_none("#send-stop-chat", Button)
+        self._attachment_indicator = self.query_one_or_none("#image-attachment-indicator", Static)
+        
+        if get_cli_setting("chat_defaults", "enable_tabs", False):
+            self._tab_container = self.query_one_or_none(ChatTabContainer)
+    
     async def _configure_widget_visibility(self) -> None:
         """Configure visibility of optional widgets based on settings."""
-        # Use batch update for multiple DOM operations
         with self.app.batch_update():
             # Hide mic button if disabled in settings
-            show_mic_button = get_cli_setting("chat.voice", "show_mic_button", True)
-            if not show_mic_button:
-                try:
-                    mic_button = self.query_one("#mic-button", Button)
+            if not get_cli_setting("chat.voice", "show_mic_button", True):
+                mic_button = self.query_one_or_none("#mic-button", Button)
+                if mic_button:
                     mic_button.display = False
-                except NoMatches:
-                    pass  # Button doesn't exist, nothing to hide
             
             # Hide attach button if disabled in settings
-            show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
-            if not show_attach_button:
-                try:
-                    attach_button = self.query_one("#attach-image", Button)
+            if not get_cli_setting("chat.images", "show_attach_button", True):
+                attach_button = self.query_one_or_none("#attach-image", Button)
+                if attach_button:
                     attach_button.display = False
-                except NoMatches:
-                    pass  # Button doesn't exist, nothing to hide
     
     def _get_send_button(self) -> Optional[Button]:
-        """Get the send/stop button widget."""
-        try:
-            return self.query_one("#send-stop-chat", Button)
-        except NoMatches:
-            return None
+        """Get the cached send/stop button widget.
+        
+        Returns:
+            The send button widget or None if not found
+        """
+        return self._send_button
     
     def _get_chat_input(self) -> Optional[TextArea]:
-        """Get the chat input widget."""
-        try:
-            return self.query_one("#chat-input", TextArea)
-        except NoMatches:
-            return None
+        """Get the cached chat input widget.
+        
+        Returns:
+            The chat input widget or None if not found
+        """
+        return self._chat_input
     
     def _get_attachment_indicator(self) -> Optional[Static]:
-        """Get the attachment indicator widget."""
-        try:
-            return self.query_one("#image-attachment-indicator", Static)
-        except NoMatches:
-            return None
+        """Get the cached attachment indicator widget.
+        
+        Returns:
+            The attachment indicator widget or None if not found
+        """
+        return self._attachment_indicator
     
     def _get_tab_container(self) -> Optional['ChatTabContainer']:
-        """Get the tab container if tabs are enabled."""
-        enable_tabs = get_cli_setting("chat_defaults", "enable_tabs", False)
-        if enable_tabs:
-            try:
-                from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
-                return self.query_one(ChatTabContainer)
-            except NoMatches:
-                return None
-        return None
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Get the cached tab container if tabs are enabled.
+        
+        Returns:
+            The tab container widget or None if not found
         """
-        Handle button press events using Textual's event system.
-        Delegates to specific handlers based on button ID patterns.
+        return self._tab_container
+    
+    def _get_chat_log(self) -> Optional[VerticalScroll]:
+        """Get the chat log widget from the app instance.
+        
+        Returns:
+            The chat log widget or None if not found
+        """
+        return self.app_instance.query_one_or_none("#chat-log", VerticalScroll)
+
+    # Event Handlers using @on decorators for cleaner code
+    
+    @on(Button.Pressed, "#send-stop-chat")
+    async def handle_send_stop_button_press(self, event: Button.Pressed) -> None:
+        """Handle send/stop button press.
+        
+        Args:
+            event: The button press event
+        """
+        event.stop()  # Prevent bubbling
+        await self.handle_send_stop_button(self.app_instance, event)
+    
+    @on(Button.Pressed, "#attach-image")
+    async def handle_attach_image_press(self, event: Button.Pressed) -> None:
+        """Handle image attachment button press.
+        
+        Args:
+            event: The button press event
+        """
+        event.stop()
+        await self.attachment_handler.handle_attach_image_button(event)
+    
+    @on(Button.Pressed, "#clear-image")
+    async def handle_clear_image_press(self, event: Button.Pressed) -> None:
+        """Handle clear image button press.
+        
+        Args:
+            event: The button press event
+        """
+        event.stop()
+        await self.attachment_handler.handle_clear_image_button(event)
+    
+    @on(Button.Pressed, "#mic-button")
+    async def handle_mic_button_press(self, event: Button.Pressed) -> None:
+        """Handle microphone button press.
+        
+        Args:
+            event: The button press event
+        """
+        event.stop()
+        await self.voice_handler.handle_mic_button(event)
+    
+    @on(Button.Pressed, ".chat-sidebar-toggle-button")
+    async def handle_sidebar_toggle_press(self, event: Button.Pressed) -> None:
+        """Handle sidebar toggle button press.
+        
+        Args:
+            event: The button press event
+        """
+        from ..Event_Handlers.Chat_Events import chat_events
+        await chat_events.handle_chat_tab_sidebar_toggle(self.app_instance, event)
+    
+    # Legacy button handler for buttons not yet migrated to @on decorators
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle remaining button press events.
+        
+        This method handles buttons that haven't been migrated to @on decorators yet.
+        It will be removed once all buttons are migrated.
+        
+        Args:
+            event: The button press event
         """
         button_id = event.button.id
         if not button_id:
-            logger.warning("Button pressed with no ID")
             return
 
         logger.debug(f"Button pressed: {button_id}")
@@ -240,13 +317,8 @@ class ChatWindowEnhanced(Container):
             event.stop()
             return
             
-        if await self._handle_attachment_buttons(button_id, event):
-            event.stop()
-            return
-            
         # Check if this is an app-level button that should bubble up
         if self._is_app_level_button(button_id):
-            # Let it bubble up to app level
             return
             
         logger.warning(f"No handler found for button: {button_id}")
@@ -329,19 +401,7 @@ class ChatWindowEnhanced(Container):
             
         return False
     
-    async def _handle_attachment_buttons(self, button_id: str, event: Button.Pressed) -> bool:
-        """Handle attachment and voice input buttons."""
-        attachment_handlers = {
-            "attach-image": self.handle_attach_image_button,
-            "clear-image": self.handle_clear_image_button,
-            "mic-button": self.handle_mic_button,
-        }
-        
-        if button_id in attachment_handlers:
-            logger.debug(f"Handling attachment button: {button_id}")
-            await attachment_handlers[button_id](self.app_instance, event)
-            return True
-        return False
+    # Note: _handle_attachment_buttons removed as functionality moved to @on decorators
 
     async def handle_attach_image_button(self, app_instance, event):
         """Delegate to attachment handler."""
@@ -359,13 +419,21 @@ class ChatWindowEnhanced(Container):
         """Delegate to attachment handler."""
         await self.attachment_handler.process_file_attachment(file_path)
     
-    @work(exclusive=True)
+    @work(exclusive=True, thread=True)
     async def handle_image_path_submitted(self, event):
         """Handle image path submission from file input field.
         
         This method is for backward compatibility with tests that expect
-        the old file input field behavior.
+        the old file input field behavior. Uses proper thread safety.
+        
+        Args:
+            event: The event containing the file path
         """
+        worker = get_current_worker()
+        
+        if worker.is_cancelled:
+            return
+        
         from ..Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
         from ..Utils.path_validation import is_safe_path
         from pathlib import Path
@@ -376,9 +444,14 @@ class ChatWindowEnhanced(Container):
             if not file_path:
                 return
             
+            # Check for cancellation before validation
+            if worker.is_cancelled:
+                return
+            
             # Validate the file path is safe
             if not is_safe_path(file_path, os.path.expanduser("~")):
-                self.app_instance.notify(
+                self.call_from_thread(
+                    self.app_instance.notify,
                     "Error: File path is outside allowed directory",
                     severity="error"
                 )
@@ -388,51 +461,76 @@ class ChatWindowEnhanced(Container):
             
             # Validate file exists
             if not path.exists():
-                self.app_instance.notify(
+                self.call_from_thread(
+                    self.app_instance.notify,
                     f"Error attaching image: Image file not found: {file_path}",
                     severity="error"
                 )
+                return
+            
+            # Check for cancellation before processing
+            if worker.is_cancelled:
                 return
             
             # Process the image
             try:
                 image_data, mime_type = await ChatImageHandler.process_image_file(str(path))
                 
-                # Store the pending image
-                self.pending_image = {
+                # Check for cancellation before updating UI
+                if worker.is_cancelled:
+                    return
+                
+                # Store the pending image using thread-safe method
+                image_dict = {
                     'data': image_data,
                     'mime_type': mime_type,
                     'path': str(path)
                 }
                 
-                # Use centralized UI update
-                self._update_attachment_ui()
+                self.call_from_thread(self._store_pending_image, image_dict)
                 
                 # Hide file input if it exists
                 if hasattr(event, 'input') and event.input:
-                    event.input.styles.display = "none"
+                    self.call_from_thread(
+                        lambda: setattr(event.input.styles, 'display', 'none')
+                    )
                 
                 # Notify user
-                self.app_instance.notify(f"Image attached: {path.name}")
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    f"Image attached: {path.name}"
+                )
                 
             except (IOError, OSError) as e:
                 logger.error(f"Error reading image file: {e}")
-                self.app_instance.notify(f"Cannot read image: {e}", severity="error")
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    f"Cannot read image: {e}",
+                    severity="error"
+                )
             except ValueError as e:
                 logger.error(f"Invalid image data: {e}")
-                self.app_instance.notify("Invalid image format", severity="error")
-                self.app_instance.notify(
-                    f"Error attaching image: {str(e)}",
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    "Invalid image format",
                     severity="error"
                 )
                 
         except ValueError as e:
             logger.error(f"Invalid image path: {e}")
-            self.app_instance.notify("Invalid file path", severity="error")
-            self.app_instance.notify(
-                f"Error processing image path: {e}",
+            self.call_from_thread(
+                self.app_instance.notify,
+                "Invalid file path",
                 severity="error"
             )
+    
+    def _store_pending_image(self, image_data: Dict[str, Any]) -> None:
+        """Store pending image data (thread-safe).
+        
+        Args:
+            image_data: The processed image data dictionary
+        """
+        self.pending_image = image_data
 
 
     def compose(self) -> ComposeResult:
@@ -602,32 +700,46 @@ class ChatWindowEnhanced(Container):
         self.input_handler.update_button_state()
     
     def watch_is_send_button(self, is_send: bool) -> None:
-        """Watch for changes to button state and update UI accordingly."""
-        button = self._get_send_button()
-        if not button:
+        """React to button state changes.
+        
+        Args:
+            is_send: True if button should show send, False for stop
+        """
+        if not self._send_button:
             logger.debug("Send button not found in watcher")
             return
         
-        # Batch multiple button updates
+        # Batch multiple button updates for performance
         with self.app.batch_update():
-            button.label = get_char(
+            self._send_button.label = get_char(
                 EMOJI_SEND if is_send else EMOJI_STOP,
                 FALLBACK_SEND if is_send else FALLBACK_STOP
             )
-            button.tooltip = "Send message" if is_send else "Stop generation"
+            self._send_button.tooltip = "Send message" if is_send else "Stop generation"
             
             # Update button styling
             if is_send:
-                button.remove_class("stop-state")
+                self._send_button.remove_class("stop-state")
             else:
-                button.add_class("stop-state")
+                self._send_button.add_class("stop-state")
     
-    def watch_pending_image(self, image_data) -> None:
-        """Watch for changes to pending image and update UI."""
+    def watch_pending_image(self, image_data: Optional[Dict[str, Any]]) -> None:
+        """React to pending image changes.
+        
+        Args:
+            image_data: The new pending image data
+        """
         self._update_attachment_ui()
     
-    def validate_pending_image(self, image_data) -> Any:
-        """Validate pending image data."""
+    def validate_pending_image(self, image_data: Any) -> Optional[Dict[str, Any]]:
+        """Validate pending image data.
+        
+        Args:
+            image_data: The image data to validate
+            
+        Returns:
+            Validated image data dictionary or None if invalid
+        """
         if image_data is not None and not isinstance(image_data, dict):
             logger.warning(f"Invalid pending_image type: {type(image_data)}")
             return None

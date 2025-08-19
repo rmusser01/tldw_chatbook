@@ -39,7 +39,7 @@ class ChatMessageManager:
         
         try:
             # Get the chat log container
-            chat_log = self.chat_window._chat_log
+            chat_log = self.chat_window._get_chat_log()
             if not chat_log:
                 logger.debug("Chat log not cached")
                 return
@@ -108,7 +108,7 @@ class ChatMessageManager:
         from ...Widgets.Chat_Widgets.chat_message import ChatMessage
         from ...Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
         
-        chat_log = self.chat_window._chat_log
+        chat_log = self.chat_window._get_chat_log()
         if not chat_log:
             return []
         
@@ -141,7 +141,7 @@ class ChatMessageManager:
         """
         from ...Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
         
-        chat_log = self.chat_window._chat_log
+        chat_log = self.chat_window._get_chat_log()
         if not chat_log:
             logger.error("Chat log not available")
             return
@@ -237,7 +237,7 @@ class ChatMessageManager:
     
     def clear_all_messages(self):
         """Clear all messages from the chat log."""
-        chat_log = self.chat_window._chat_log
+        chat_log = self.chat_window._get_chat_log()
         if chat_log:
             # Remove all child widgets that are messages
             all_messages = self.get_all_messages()

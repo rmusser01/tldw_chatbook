@@ -14,6 +14,7 @@ from loguru import logger
 from textual import work
 from textual.widgets import Button
 from textual.worker import WorkerCancelled
+from textual.css.query import NoMatches
 
 if TYPE_CHECKING:
     from ..Chat_Window_Enhanced import ChatWindowEnhanced
@@ -84,10 +85,13 @@ class ChatVoiceHandler:
         """Start voice recording with proper worker management."""
         try:
             # Update UI immediately with batch update
-            if self.chat_window._mic_button:
+            try:
+                mic_button = self.chat_window.query_one("#mic-button", Button)
                 with self.chat_window.app.batch_update():
-                    self.chat_window._mic_button.label = "🛑"  # Stop icon
-                    self.chat_window._mic_button.variant = "error"
+                    mic_button.label = "🛑"  # Stop icon
+                    mic_button.variant = "error"
+            except NoMatches:
+                pass  # Mic button not found
             
             # Run recording in worker
             self.chat_window.run_worker(
@@ -197,14 +201,15 @@ class ChatVoiceHandler:
     
     def _reset_mic_button(self):
         """Reset microphone button to default state."""
-        if self.chat_window._mic_button:
-            try:
-                with self.chat_window.app.batch_update():
-                    self.chat_window._mic_button.label = "🎤"
-                    self.chat_window._mic_button.variant = "default"
-            except AttributeError:
-                # Widget might not exist yet
-                pass
+        try:
+            from textual.widgets import Button
+            mic_button = self.chat_window.query_one("#mic-button", Button)
+            with self.chat_window.app.batch_update():
+                mic_button.label = "🎤"
+                mic_button.variant = "default"
+        except (AttributeError, NoMatches):
+            # Widget might not exist yet
+            pass
     
     def _get_voice_error_message(self, error: Exception) -> str:
         """Get user-friendly error message for voice recording errors.

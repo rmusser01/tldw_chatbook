@@ -9,8 +9,8 @@ from typing import Dict, List, Any
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
-from tldw_chatbook.Evals.eval_runner import EvalSample, EvalSampleResult, TaskConfig
-from tldw_chatbook.Evals.task_loader import TaskLoader
+from tldw_chatbook.Evals.eval_runner import EvalSample, EvalSampleResult
+from tldw_chatbook.Evals.task_loader import TaskLoader, TaskConfig
 from tldw_chatbook.Evals.specialized_runners import (
     MultilingualEvaluationRunner,
     CreativeEvaluationRunner,
@@ -68,8 +68,8 @@ class TestMultilingualRunnerIntegration:
             description="Test French translation capabilities",
             task_type="generation",  # Using valid task type for DB
             dataset_name="test_french",
+            split="test",
             metric="bleu",
-            generation_kwargs={"temperature": 0.0},
             metadata={
                 "target_language": "french",
                 "subcategory": "translation"
@@ -108,16 +108,14 @@ class TestMultilingualRunnerIntegration:
         )
         
         # Create runner with mocked LLM
-        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLM:
-            mock_llm = Mock()
-            mock_llm.generate = AsyncMock(side_effect=[
+        runner = MultilingualEvaluationRunner(task_config, model_config)
+        
+        # Mock the _call_llm method
+        with patch.object(runner, '_call_llm') as mock_llm:
+            mock_llm.side_effect = [
                 "Bonjour le monde",
                 "Bon matin"  # Slightly different translation
-            ])
-            # Mock chat_api_call to return expected responses
-            MockLLM.return_value = mock_llm
-            
-            runner = MultilingualEvaluationRunner(task_config, model_config)
+            ]
             
             # Run evaluation on samples
             samples = task_loader.load_dataset("test_french", limit=2)
@@ -167,8 +165,8 @@ class TestMultilingualRunnerIntegration:
             description="Test language detection",
             task_type="generation",  # Using valid task type for DB
             dataset_name="mixed_languages",
+            split="test",
             metric="language_detection",
-            generation_kwargs={},
             metadata={"subcategory": "detection"}
         )
         
@@ -179,16 +177,16 @@ class TestMultilingualRunnerIntegration:
             EvalSample(id="4", input_text="このテキストを分析", expected_output="日本語のテキスト")
         ]
         
-        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
-            runner = MultilingualEvaluationRunner(task_config, {"provider": "test", "model_id": "test"})
-            
-            # Mock LLM responses in different languages
-            runner.llm_interface.generate = AsyncMock(side_effect=[
+        runner = MultilingualEvaluationRunner(task_config, {"provider": "test", "model_id": "test"})
+        
+        # Mock LLM responses in different languages
+        with patch.object(runner, '_call_llm') as mock_llm:
+            mock_llm.side_effect = [
                 "This is English text",
                 "C'est un texte français",
                 "这是中文文本",
                 "これは日本語のテキストです"
-            ])
+            ]
             
             language_results = []
             for sample in samples:
@@ -217,8 +215,8 @@ class TestCreativeRunnerIntegration:
             description="Test creative story completion",
             task_type="generation",  # Using valid task type for DB
             dataset_name="story_prompts",
+            split="test",
             metric="creativity_score",
-            generation_kwargs={"temperature": 0.9, "max_tokens": 500},
             metadata={"subcategory": "story_completion"}
         )
         
@@ -244,18 +242,18 @@ class TestCreativeRunnerIntegration:
             model_id=model_id
         )
         
-        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
-            runner = CreativeEvaluationRunner(task_config, {"provider": "openai", "model_id": "gpt-4"})
-            
-            # Mock creative response
-            creative_story = """Once upon a time in a hidden valley, there lived a peculiar 
-            creature with iridescent wings. The creature, known as Lumina, possessed the 
-            unique ability to paint the sky with colors that didn't exist in our world. 
-            Every evening, as the sun began to set, Lumina would dance through the clouds, 
-            leaving trails of impossible hues - colors that made viewers feel emotions 
-            they had never experienced before."""
-            
-            runner.llm_interface.generate = AsyncMock(return_value=creative_story)
+        runner = CreativeEvaluationRunner(task_config, {"provider": "openai", "model_id": "gpt-4"})
+        
+        # Mock creative response
+        creative_story = """Once upon a time in a hidden valley, there lived a peculiar 
+        creature with iridescent wings. The creature, known as Lumina, possessed the 
+        unique ability to paint the sky with colors that didn't exist in our world. 
+        Every evening, as the sun began to set, Lumina would dance through the clouds, 
+        leaving trails of impossible hues - colors that made viewers feel emotions 
+        they had never experienced before."""
+        
+        with patch.object(runner, '_call_llm') as mock_llm:
+            mock_llm.return_value = creative_story
             
             sample = EvalSample(
                 id="1",
@@ -285,21 +283,21 @@ class TestCreativeRunnerIntegration:
             description="Test dialogue creation",
             task_type="generation",  # Using valid task type for DB
             dataset_name="dialogue_prompts",
+            split="test",
             metric="dialogue_quality",
-            generation_kwargs={"temperature": 0.8},
             metadata={"subcategory": "dialogue_generation"}
         )
         
-        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
-            runner = CreativeEvaluationRunner(task_config, {"provider": "test", "model_id": "test"})
-            
-            dialogue = '''Detective: "The evidence doesn't add up. Someone's lying."
-            Suspect: "I told you everything I know! I was at home all evening."
-            Detective: "Really? Then how do you explain this?" *shows photo*
-            Suspect: *pauses nervously* "I... I can explain that."
-            Detective: "I'm listening."'''
-            
-            runner.llm_interface.generate = AsyncMock(return_value=dialogue)
+        runner = CreativeEvaluationRunner(task_config, {"provider": "test", "model_id": "test"})
+        
+        dialogue = '''Detective: "The evidence doesn't add up. Someone's lying."
+        Suspect: "I told you everything I know! I was at home all evening."
+        Detective: "Really? Then how do you explain this?" *shows photo*
+        Suspect: *pauses nervously* "I... I can explain that."
+        Detective: "I'm listening."'''
+        
+        with patch.object(runner, '_call_llm') as mock_llm:
+            mock_llm.return_value = dialogue
             
             sample = EvalSample(
                 id="1",
@@ -325,29 +323,27 @@ class TestRobustnessRunnerIntegration:
             description="Test robustness against adversarial questions",
             task_type="question_answer",  # Using valid task type for DB
             dataset_name="adversarial_qa",
+            split="test",
             metric="robustness_score",
-            generation_kwargs={"temperature": 0.0},
             metadata={
                 "robustness_type": "adversarial_qa",
                 "trap_detection": True
             }
         )
         
-        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as mock_call:
-            runner = RobustnessEvaluationRunner(task_config, {"provider": "test", "model_id": "test"})
-            
-            # Test adversarial question (trying to trick the model)
-            sample = EvalSample(
-                id="1",
-                input_text="When did the Eiffel Tower move to Rome?",
-                expected_output="The Eiffel Tower has never moved to Rome. It is located in Paris, France.",
-                metadata={"trap_type": "false_premise"}
-            )
-            
-            # Model correctly identifies the trap
-            runner.llm_interface.generate = AsyncMock(
-                return_value="The Eiffel Tower has never moved to Rome. It has always been in Paris."
-            )
+        runner = RobustnessEvaluationRunner(task_config, {"provider": "test", "model_id": "test"})
+        
+        # Test adversarial question (trying to trick the model)
+        sample = EvalSample(
+            id="1",
+            input_text="When did the Eiffel Tower move to Rome?",
+            expected_output="The Eiffel Tower has never moved to Rome. It is located in Paris, France.",
+            metadata={"trap_type": "false_premise"}
+        )
+        
+        # Model correctly identifies the trap
+        with patch.object(runner, '_call_llm') as mock_llm:
+            mock_llm.return_value = "The Eiffel Tower has never moved to Rome. It has always been in Paris."
             
             result = await runner.run_sample(sample)
             
@@ -533,8 +529,8 @@ class TestEvaluationSystemIntegration:
             description="Test error handling",
             task_type="generation",  # Using valid task type
             dataset_name="test",
-            metric="accuracy",
-            generation_kwargs={}
+            split="test",
+            metric="accuracy"
         )
         
         task_id = orchestrator.db.create_task(

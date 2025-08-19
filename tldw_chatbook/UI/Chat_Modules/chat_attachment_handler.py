@@ -224,7 +224,7 @@ class ChatAttachmentHandler:
         try:
             if processed_file.insert_mode == "inline":
                 # Insert text content into chat input
-                chat_input = self.chat_window._chat_input
+                chat_input = self.chat_window._get_chat_input()
                 if chat_input:
                     try:
                         # Insert at cursor or append
@@ -352,11 +352,11 @@ class ChatAttachmentHandler:
     
     def update_attachment_ui(self):
         """Update the attachment indicator UI."""
-        if not self.chat_window._attachment_indicator:
+        indicator = self.chat_window._get_attachment_indicator()
+        if not indicator:
             return
         
         try:
-            indicator = self.chat_window._attachment_indicator
             
             if self.chat_window.pending_image or self.chat_window.pending_attachment:
                 # Show attachment indicator
