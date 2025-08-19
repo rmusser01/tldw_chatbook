@@ -5,7 +5,8 @@ Tests instruction_adherence, format_compliance, coherence_score, and dialogue_qu
 import pytest
 from unittest.mock import Mock, patch
 
-from tldw_chatbook.Evals.eval_runner import BaseEvalRunner, EvalSample, TaskConfig, EvalSampleResult
+from tldw_chatbook.Evals.eval_runner import BaseEvalRunner, EvalSample, EvalSampleResult
+from tldw_chatbook.Evals.task_loader import TaskConfig
 
 
 class TestRunner(BaseEvalRunner):
