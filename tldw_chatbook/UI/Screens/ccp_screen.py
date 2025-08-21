@@ -5,6 +5,7 @@ prompts, and dictionaries following Textual best practices with Screen-based arc
 """
 
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
+from dataclasses import dataclass, field
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
@@ -12,9 +13,23 @@ from textual.widgets import Static, Button, Input, ListView, Select, Collapsible
 from textual.reactive import reactive
 from textual import on, work
 from textual.css.query import NoMatches
+from textual.message import Message
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ...Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
+
+# Import widget components
+from ...Widgets.CCP_Widgets import (
+    CCPSidebarWidget,
+    ConversationSearchRequested,
+    ConversationLoadRequested,
+    CharacterLoadRequested,
+    PromptLoadRequested,
+    DictionaryLoadRequested,
+    ImportRequested,
+    CreateRequested,
+    RefreshRequested,
+)
 
 # Import modular handlers and enhancements
 from ..CCP_Modules import (
@@ -38,6 +53,117 @@ if TYPE_CHECKING:
     from ...app import TldwCli
 
 logger = logger.bind(module="CCPScreen")
+
+
+# ========== Custom Messages ==========
+
+class ConversationSelected(Message):
+    """Message sent when a conversation is selected."""
+    def __init__(self, conversation_id: int, title: str) -> None:
+        super().__init__()
+        self.conversation_id = conversation_id
+        self.title = title
+
+
+class CharacterSelected(Message):
+    """Message sent when a character is selected."""
+    def __init__(self, character_id: int, name: str) -> None:
+        super().__init__()
+        self.character_id = character_id
+        self.name = name
+
+
+class PromptSelected(Message):
+    """Message sent when a prompt is selected."""
+    def __init__(self, prompt_id: int, name: str) -> None:
+        super().__init__()
+        self.prompt_id = prompt_id
+        self.name = name
+
+
+class DictionarySelected(Message):
+    """Message sent when a dictionary is selected."""
+    def __init__(self, dictionary_id: int, name: str) -> None:
+        super().__init__()
+        self.dictionary_id = dictionary_id
+        self.name = name
+
+
+class ViewSwitchRequested(Message):
+    """Message sent when a view switch is requested."""
+    def __init__(self, view_name: str) -> None:
+        super().__init__()
+        self.view_name = view_name
+
+
+# ========== State Management ==========
+
+@dataclass
+class CCPScreenState:
+    """Encapsulates all state for the CCP screen.
+    
+    This dataclass centralizes all state management for the Conversations,
+    Characters & Prompts screen, following Textual best practices.
+    """
+    
+    # Current view
+    active_view: str = "conversations"  # conversations, character_card, character_editor, etc.
+    
+    # Selected items
+    selected_conversation_id: Optional[int] = None
+    selected_conversation_title: str = ""
+    selected_conversation_messages: List[Dict[str, Any]] = field(default_factory=list)
+    
+    selected_character_id: Optional[int] = None
+    selected_character_name: str = ""
+    selected_character_data: Dict[str, Any] = field(default_factory=dict)
+    is_editing_character: bool = False
+    
+    selected_prompt_id: Optional[int] = None
+    selected_prompt_name: str = ""
+    selected_prompt_data: Dict[str, Any] = field(default_factory=dict)
+    is_editing_prompt: bool = False
+    
+    selected_dictionary_id: Optional[int] = None
+    selected_dictionary_name: str = ""
+    selected_dictionary_data: Dict[str, Any] = field(default_factory=dict)
+    is_editing_dictionary: bool = False
+    
+    # Search state
+    conversation_search_term: str = ""
+    conversation_search_type: str = "title"  # title, content, tags
+    conversation_search_results: List[Dict[str, Any]] = field(default_factory=list)
+    include_character_chats: bool = True
+    search_all_characters: bool = True
+    
+    prompt_search_term: str = ""
+    prompt_search_results: List[Dict[str, Any]] = field(default_factory=list)
+    
+    worldbook_search_term: str = ""
+    worldbook_search_results: List[Dict[str, Any]] = field(default_factory=list)
+    
+    # UI state
+    sidebar_collapsed: bool = False
+    conversation_details_visible: bool = False
+    character_actions_visible: bool = False
+    prompt_actions_visible: bool = False
+    dictionary_actions_visible: bool = False
+    
+    # Lists cache
+    character_list: List[Dict[str, Any]] = field(default_factory=list)
+    dictionary_list: List[Dict[str, Any]] = field(default_factory=list)
+    worldbook_list: List[Dict[str, Any]] = field(default_factory=list)
+    
+    # Loading states
+    is_loading_conversation: bool = False
+    is_loading_character: bool = False
+    is_loading_prompt: bool = False
+    is_loading_dictionary: bool = False
+    is_saving: bool = False
+    
+    # Validation flags
+    has_unsaved_changes: bool = False
+    validation_errors: Dict[str, str] = field(default_factory=dict)
 
 
 class CCPScreen(BaseAppScreen):
@@ -366,13 +492,8 @@ class CCPScreen(BaseAppScreen):
     }
     """
     
-    # Reactive properties for state management
-    active_view: reactive[str] = reactive("conversations", layout=False)
-    selected_character_id: reactive[Optional[int]] = reactive(None, layout=False)
-    selected_conversation_id: reactive[Optional[int]] = reactive(None, layout=False)
-    selected_prompt_id: reactive[Optional[int]] = reactive(None, layout=False)
-    selected_dictionary_id: reactive[Optional[int]] = reactive(None, layout=False)
-    sidebar_collapsed: reactive[bool] = reactive(False, layout=False)
+    # Reactive state using proper Textual patterns
+    state: reactive[CCPScreenState] = reactive(CCPScreenState)
     
     # Cached widget references
     _sidebar: Optional[Container] = None
@@ -388,6 +509,9 @@ class CCPScreen(BaseAppScreen):
         """
         super().__init__(app_instance, "ccp", **kwargs)
         
+        # Initialize state with a fresh instance
+        self.state = CCPScreenState()
+        
         # Initialize modular handlers
         self.conversation_handler = CCPConversationHandler(self)
         self.character_handler = CCPCharacterHandler(self)
@@ -402,7 +526,7 @@ class CCPScreen(BaseAppScreen):
         # Setup enhancements (validation, loading indicators)
         setup_ccp_enhancements(self)
         
-        logger.debug("CCPScreen initialized with modular handlers and enhancements")
+        logger.debug("CCPScreen initialized with reactive state and modular handlers")
 
     def compose_content(self) -> ComposeResult:
         """Compose the CCP UI with single sidebar design.
@@ -424,135 +548,8 @@ class CCPScreen(BaseAppScreen):
                 tooltip="Toggle sidebar (Ctrl+[)"
             )
             
-            # Single unified sidebar with all controls
-            with VerticalScroll(id="ccp-sidebar", classes="ccp-sidebar"):
-                yield Static("CCP Navigation", classes="sidebar-title")
-                
-                # Conversations section
-                with Collapsible(title="Conversations", id="ccp-conversations-collapsible"):
-                    yield Button("Import Conversation", id="ccp-import-conversation-button", 
-                               classes="sidebar-button")
-                    
-                    # Search controls
-                    yield Label("Search by Title:", classes="sidebar-label")
-                    yield Input(id="conv-char-search-input", placeholder="Search by title...", 
-                              classes="sidebar-input")
-                    
-                    yield Label("Search by Content:", classes="sidebar-label")
-                    yield Input(id="conv-char-keyword-search-input", placeholder="Search keywords...", 
-                              classes="sidebar-input")
-                    
-                    yield Label("Filter by Tags:", classes="sidebar-label")
-                    yield Input(id="conv-char-tags-search-input", placeholder="Tags (comma-separated)...", 
-                              classes="sidebar-input")
-                    
-                    # Search options
-                    yield Checkbox("Include Character Chats", id="conv-char-search-include-character-checkbox", 
-                                 value=True)
-                    yield Checkbox("All Characters", id="conv-char-search-all-characters-checkbox", 
-                                 value=True)
-                    
-                    # Results list
-                    yield ListView(id="conv-char-search-results-list", classes="sidebar-listview")
-                    yield Button("Load Selected", id="conv-char-load-button", classes="sidebar-button")
-                    
-                    # Conversation details (shown when a conversation is loaded)
-                    with Container(id="conv-details-container", classes="hidden"):
-                        yield Label("Title:", classes="sidebar-label")
-                        yield Input(id="conv-char-title-input", placeholder="Conversation title...", 
-                                  classes="sidebar-input")
-                        yield Label("Keywords:", classes="sidebar-label")
-                        yield TextArea(id="conv-char-keywords-input", classes="sidebar-textarea")
-                        yield Button("Save Details", id="conv-char-save-details-button", 
-                                   classes="sidebar-button")
-                        
-                        # Export options
-                        yield Label("Export:", classes="sidebar-label")
-                        with Horizontal(classes="export-buttons"):
-                            yield Button("Text", id="conv-char-export-text-button", 
-                                       classes="sidebar-button small")
-                            yield Button("JSON", id="conv-char-export-json-button", 
-                                       classes="sidebar-button small")
-                
-                # Characters section
-                with Collapsible(title="Characters", id="ccp-characters-collapsible", collapsed=True):
-                    yield Button("Import Character Card", id="ccp-import-character-button", 
-                               classes="sidebar-button")
-                    yield Button("Create Character", id="ccp-create-character-button", 
-                               classes="sidebar-button")
-                    yield Select([], prompt="Select Character...", allow_blank=True, 
-                               id="conv-char-character-select")
-                    yield Button("Load Character", id="ccp-right-pane-load-character-button", 
-                               classes="sidebar-button")
-                    yield Button("Refresh List", id="ccp-refresh-character-list-button", 
-                               classes="sidebar-button")
-                    
-                    # Character actions (shown when a character is loaded)
-                    with Container(id="char-actions-container", classes="hidden"):
-                        yield Button("Edit Character", id="ccp-edit-character-button", 
-                                   classes="sidebar-button")
-                        yield Button("Clone Character", id="ccp-clone-character-button", 
-                                   classes="sidebar-button")
-                        yield Button("Export Character", id="ccp-export-character-button", 
-                                   classes="sidebar-button")
-                        yield Button("Delete Character", id="ccp-delete-character-button", 
-                                   classes="sidebar-button danger")
-                
-                # Prompts section
-                with Collapsible(title="Prompts", id="ccp-prompts-collapsible", collapsed=True):
-                    yield Button("Import Prompt", id="ccp-import-prompt-button", classes="sidebar-button")
-                    yield Button("Create New Prompt", id="ccp-prompt-create-new-button", 
-                               classes="sidebar-button")
-                    yield Input(id="ccp-prompt-search-input", placeholder="Search prompts...", 
-                              classes="sidebar-input")
-                    yield ListView(id="ccp-prompts-listview", classes="sidebar-listview")
-                    yield Button("Load Selected", id="ccp-prompt-load-selected-button", 
-                               classes="sidebar-button")
-                    
-                    # Prompt actions (shown when a prompt is loaded)
-                    with Container(id="prompt-actions-container", classes="hidden"):
-                        yield Button("Clone Prompt", id="ccp-prompt-clone-button", 
-                                   classes="sidebar-button")
-                        yield Button("Delete Prompt", id="ccp-prompt-delete-button", 
-                                   classes="sidebar-button danger")
-                
-                # Dictionaries section
-                with Collapsible(title="Chat Dictionaries", id="ccp-dictionaries-collapsible", collapsed=True):
-                    yield Button("Import Dictionary", id="ccp-import-dictionary-button", 
-                               classes="sidebar-button")
-                    yield Button("Create Dictionary", id="ccp-create-dictionary-button", 
-                               classes="sidebar-button")
-                    yield Select([], prompt="Select Dictionary...", allow_blank=True, 
-                               id="ccp-dictionary-select")
-                    yield Button("Load Dictionary", id="ccp-load-dictionary-button", 
-                               classes="sidebar-button")
-                    yield Button("Refresh List", id="ccp-refresh-dictionary-list-button", 
-                               classes="sidebar-button")
-                    
-                    # Dictionary actions (shown when a dictionary is loaded)
-                    with Container(id="dict-actions-container", classes="hidden"):
-                        yield Button("Edit Dictionary", id="ccp-edit-dictionary-button", 
-                                   classes="sidebar-button")
-                        yield Button("Clone Dictionary", id="ccp-clone-dictionary-button", 
-                                   classes="sidebar-button")
-                        yield Button("Delete Dictionary", id="ccp-delete-dictionary-button", 
-                                   classes="sidebar-button danger")
-                
-                # World Books section
-                with Collapsible(title="World/Lore Books", id="ccp-worldbooks-collapsible", collapsed=True):
-                    yield Button("Import World Book", id="ccp-import-worldbook-button", 
-                               classes="sidebar-button")
-                    yield Button("Create World Book", id="ccp-create-worldbook-button", 
-                               classes="sidebar-button")
-                    yield Input(id="ccp-worldbook-search-input", placeholder="Search world books...", 
-                              classes="sidebar-input")
-                    yield ListView(id="ccp-worldbooks-listview", classes="sidebar-listview")
-                    yield Button("Load Selected", id="ccp-worldbook-load-button", 
-                               classes="sidebar-button")
-                    yield Button("Edit Selected", id="ccp-worldbook-edit-button", 
-                               classes="sidebar-button")
-                    yield Button("Refresh List", id="ccp-refresh-worldbook-list-button", 
-                               classes="sidebar-button")
+            # Yield the sidebar widget instead of defining it inline
+            yield CCPSidebarWidget(parent_screen=self)
 
             # Main Content Area
             with Container(id="ccp-content-area", classes="ccp-content-area"):
@@ -802,7 +799,9 @@ class CCPScreen(BaseAppScreen):
         await self.dictionary_handler.refresh_dictionary_list()
         
         # Set initial view
-        self.active_view = "conversations"
+        new_state = self.state
+        new_state.active_view = "conversations"
+        self.state = new_state
 
     # ===== Event Handlers using @on decorators =====
     
@@ -810,44 +809,19 @@ class CCPScreen(BaseAppScreen):
     async def handle_sidebar_toggle(self, event: Button.Pressed) -> None:
         """Handle sidebar toggle button press."""
         event.stop()
+        
+        # Update state
+        new_state = self.state
+        new_state.sidebar_collapsed = not new_state.sidebar_collapsed
+        self.state = new_state
+        
+        # Let the handler do any additional work
         await self.sidebar_handler.toggle_sidebar()
     
-    @on(Button.Pressed, "#conv-char-load-button")
-    async def handle_load_conversation(self, event: Button.Pressed) -> None:
-        """Handle loading selected conversation."""
-        event.stop()
-        await self.conversation_handler.handle_load_selected()
+    # Note: These button handlers are now handled by the sidebar widget
+    # The sidebar widget posts messages that we handle in the message handlers above
     
-    @on(Button.Pressed, "#ccp-right-pane-load-character-button")
-    async def handle_load_character(self, event: Button.Pressed) -> None:
-        """Handle loading selected character."""
-        event.stop()
-        await self.character_handler.handle_load_character()
-    
-    @on(Button.Pressed, "#ccp-prompt-load-selected-button")
-    async def handle_load_prompt(self, event: Button.Pressed) -> None:
-        """Handle loading selected prompt."""
-        event.stop()
-        await self.prompt_handler.handle_load_selected()
-    
-    @on(Button.Pressed, "#ccp-load-dictionary-button")
-    async def handle_load_dictionary(self, event: Button.Pressed) -> None:
-        """Handle loading selected dictionary."""
-        event.stop()
-        await self.dictionary_handler.handle_load_dictionary()
-    
-    @on(Button.Pressed, "#ccp-refresh-character-list-button")
-    async def handle_refresh_characters(self, event: Button.Pressed) -> None:
-        """Handle refreshing character list."""
-        event.stop()
-        await self.character_handler.refresh_character_list()
-    
-    @on(Button.Pressed, "#ccp-refresh-dictionary-list-button")
-    async def handle_refresh_dictionaries(self, event: Button.Pressed) -> None:
-        """Handle refreshing dictionary list."""
-        event.stop()
-        await self.dictionary_handler.refresh_dictionary_list()
-    
+    # Editor button handlers - these remain here as they're part of the main content area
     @on(Button.Pressed, "#ccp-editor-char-save-button")
     async def handle_save_character(self, event: Button.Pressed) -> None:
         """Handle saving character from editor."""
@@ -866,20 +840,8 @@ class CCPScreen(BaseAppScreen):
         event.stop()
         await self.dictionary_handler.handle_save_dictionary()
     
-    @on(Input.Changed, "#conv-char-search-input")
-    async def handle_conversation_search(self, event: Input.Changed) -> None:
-        """Handle conversation title search."""
-        await self.conversation_handler.handle_search(event.value, "title")
-    
-    @on(Input.Changed, "#conv-char-keyword-search-input")
-    async def handle_content_search(self, event: Input.Changed) -> None:
-        """Handle conversation content search."""
-        await self.conversation_handler.handle_search(event.value, "content")
-    
-    @on(Input.Changed, "#ccp-prompt-search-input")
-    async def handle_prompt_search(self, event: Input.Changed) -> None:
-        """Handle prompt search."""
-        await self.prompt_handler.handle_search(event.value)
+    # Note: Input change handlers are now handled by the sidebar widget
+    # which posts messages that we handle above
     
     # ===== Message Handlers =====
     
@@ -887,10 +849,84 @@ class CCPScreen(BaseAppScreen):
         """Handle view change requests."""
         await self._switch_view(message.view_name)
     
+    # ===== Sidebar Widget Message Handlers =====
+    
+    async def on_conversation_search_requested(self, message: ConversationSearchRequested) -> None:
+        """Handle conversation search request from sidebar."""
+        await self.conversation_handler.handle_search(message.search_term, message.search_type)
+    
+    async def on_conversation_load_requested(self, message: ConversationLoadRequested) -> None:
+        """Handle conversation load request from sidebar."""
+        if message.conversation_id:
+            await self.conversation_handler.load_conversation(message.conversation_id)
+        else:
+            await self.conversation_handler.handle_load_selected()
+    
+    async def on_character_load_requested(self, message: CharacterLoadRequested) -> None:
+        """Handle character load request from sidebar."""
+        if message.character_id:
+            await self.character_handler.load_character(message.character_id)
+        else:
+            await self.character_handler.handle_load_character()
+    
+    async def on_prompt_load_requested(self, message: PromptLoadRequested) -> None:
+        """Handle prompt load request from sidebar."""
+        if message.prompt_id:
+            await self.prompt_handler.load_prompt(message.prompt_id)
+        else:
+            await self.prompt_handler.handle_load_selected()
+    
+    async def on_dictionary_load_requested(self, message: DictionaryLoadRequested) -> None:
+        """Handle dictionary load request from sidebar."""
+        if message.dictionary_id:
+            await self.dictionary_handler.load_dictionary(message.dictionary_id)
+        else:
+            await self.dictionary_handler.handle_load_dictionary()
+    
+    async def on_import_requested(self, message: ImportRequested) -> None:
+        """Handle import request from sidebar."""
+        if message.item_type == "conversation":
+            await self.conversation_handler.handle_import()
+        elif message.item_type == "character":
+            await self.character_handler.handle_import()
+        elif message.item_type == "prompt":
+            await self.prompt_handler.handle_import()
+        elif message.item_type == "dictionary":
+            await self.dictionary_handler.handle_import()
+        elif message.item_type == "worldbook":
+            # Handle worldbook import
+            pass
+    
+    async def on_create_requested(self, message: CreateRequested) -> None:
+        """Handle create request from sidebar."""
+        if message.item_type == "character":
+            await self.character_handler.handle_create()
+        elif message.item_type == "prompt":
+            await self.prompt_handler.handle_create()
+        elif message.item_type == "dictionary":
+            await self.dictionary_handler.handle_create()
+        elif message.item_type == "worldbook":
+            # Handle worldbook creation
+            pass
+    
+    async def on_refresh_requested(self, message: RefreshRequested) -> None:
+        """Handle refresh request from sidebar."""
+        if message.list_type == "character":
+            await self.character_handler.refresh_character_list()
+        elif message.list_type == "dictionary":
+            await self.dictionary_handler.refresh_dictionary_list()
+        elif message.list_type == "worldbook":
+            # Handle worldbook refresh
+            pass
+    
     async def on_conversation_message_loaded(self, message: ConversationMessage.Loaded) -> None:
         """Handle conversation loaded message."""
-        # Update UI to show conversation details
-        self.selected_conversation_id = message.conversation_id
+        # Update state with loaded conversation
+        new_state = self.state
+        new_state.selected_conversation_id = message.conversation_id
+        new_state.conversation_details_visible = True
+        self.state = new_state
+        
         await self.message_manager.load_conversation_messages(message.conversation_id)
         
         # Show conversation details section
@@ -902,7 +938,12 @@ class CCPScreen(BaseAppScreen):
     
     async def on_character_message_loaded(self, message: CharacterMessage.Loaded) -> None:
         """Handle character loaded message."""
-        self.selected_character_id = message.character_id
+        # Update state with loaded character
+        new_state = self.state
+        new_state.selected_character_id = message.character_id
+        new_state.selected_character_data = message.card_data
+        new_state.character_actions_visible = True
+        self.state = new_state
         
         # Show character actions
         try:
@@ -913,7 +954,11 @@ class CCPScreen(BaseAppScreen):
     
     async def on_prompt_message_loaded(self, message: PromptMessage.Loaded) -> None:
         """Handle prompt loaded message."""
-        self.selected_prompt_id = message.prompt_id
+        # Update state with loaded prompt
+        new_state = self.state
+        new_state.selected_prompt_id = message.prompt_id
+        new_state.prompt_actions_visible = True
+        self.state = new_state
         
         # Show prompt actions
         try:
@@ -924,7 +969,11 @@ class CCPScreen(BaseAppScreen):
     
     async def on_dictionary_message_loaded(self, message: DictionaryMessage.Loaded) -> None:
         """Handle dictionary loaded message."""
-        self.selected_dictionary_id = message.dictionary_id
+        # Update state with loaded dictionary
+        new_state = self.state
+        new_state.selected_dictionary_id = message.dictionary_id
+        new_state.dictionary_actions_visible = True
+        self.state = new_state
         
         # Show dictionary actions
         try:
@@ -935,16 +984,38 @@ class CCPScreen(BaseAppScreen):
     
     # ===== Reactive Watchers =====
     
-    def watch_active_view(self, old_view: str, new_view: str) -> None:
-        """Watch for active view changes."""
-        logger.debug(f"Active view changed from {old_view} to {new_view}")
+    def watch_state(self, old_state: CCPScreenState, new_state: CCPScreenState) -> None:
+        """Watch for state changes and update UI accordingly."""
+        # Check for active view change
+        if old_state.active_view != new_state.active_view:
+            logger.debug(f"Active view changed from {old_state.active_view} to {new_state.active_view}")
+            self.post_message(ViewChangeMessage.Changed(old_state.active_view, new_state.active_view))
+            self._update_view_visibility(new_state.active_view)
         
-        # Post view changed message
-        self.post_message(ViewChangeMessage.Changed(old_view, new_view))
+        # Check for sidebar collapse change
+        if old_state.sidebar_collapsed != new_state.sidebar_collapsed:
+            logger.debug(f"Sidebar collapsed: {new_state.sidebar_collapsed}")
+            self._update_sidebar_visibility(new_state.sidebar_collapsed)
+        
+        # Check for loading state changes
+        if old_state.is_loading_conversation != new_state.is_loading_conversation:
+            self._update_loading_indicator("conversation", new_state.is_loading_conversation)
+        
+        if old_state.is_loading_character != new_state.is_loading_character:
+            self._update_loading_indicator("character", new_state.is_loading_character)
     
-    def watch_sidebar_collapsed(self, collapsed: bool) -> None:
-        """Watch for sidebar collapse state changes."""
-        logger.debug(f"Sidebar collapsed: {collapsed}")
+    def validate_state(self, state: CCPScreenState) -> CCPScreenState:
+        """Validate state changes."""
+        # Ensure active view is valid
+        valid_views = [
+            "conversations", "conversation_messages", "character_card", 
+            "character_editor", "prompt_editor", "dictionary_view", 
+            "dictionary_editor"
+        ]
+        if state.active_view not in valid_views:
+            state.active_view = "conversations"
+        
+        return state
     
     # ===== Private Helper Methods =====
     
@@ -987,7 +1058,12 @@ class CCPScreen(BaseAppScreen):
             if target_id:
                 target_view = self.query_one(target_id)
                 target_view.remove_class("hidden")
-                self.active_view = view_name
+                
+                # Update state with new view
+                new_state = self.state
+                new_state.active_view = view_name
+                self.state = new_state
+                
                 logger.info(f"Switched to view: {view_name}")
             else:
                 logger.warning(f"Unknown view requested: {view_name}")
@@ -995,30 +1071,87 @@ class CCPScreen(BaseAppScreen):
         except Exception as e:
             logger.error(f"Error switching view: {e}", exc_info=True)
     
+    def _update_view_visibility(self, view_name: str) -> None:
+        """Update view visibility based on active view.
+        
+        This is called from the state watcher to ensure UI stays in sync.
+        
+        Args:
+            view_name: Name of the view to show
+        """
+        # This will be handled by the _switch_view method
+        # We just need to ensure it's called when state changes
+        pass
+    
+    def _update_sidebar_visibility(self, collapsed: bool) -> None:
+        """Update sidebar visibility based on collapsed state.
+        
+        Args:
+            collapsed: Whether the sidebar should be collapsed
+        """
+        try:
+            sidebar = self.query_one("#ccp-sidebar")
+            if collapsed:
+                sidebar.add_class("collapsed")
+            else:
+                sidebar.remove_class("collapsed")
+        except NoMatches:
+            logger.warning("Sidebar not found for visibility update")
+    
+    def _update_loading_indicator(self, component: str, is_loading: bool) -> None:
+        """Update loading indicator for a component.
+        
+        Args:
+            component: Name of the component (conversation, character, etc.)
+            is_loading: Whether the component is loading
+        """
+        # This will be implemented when we have proper loading indicators
+        # For now, just log the state change
+        logger.debug(f"Loading state for {component}: {is_loading}")
+    
     # ===== State Management (Override from BaseAppScreen) =====
     
     def save_state(self) -> Dict[str, Any]:
         """Save the current state of the CCP screen."""
         return {
-            "active_view": self.active_view,
-            "selected_character_id": self.selected_character_id,
-            "selected_conversation_id": self.selected_conversation_id,
-            "selected_prompt_id": self.selected_prompt_id,
-            "selected_dictionary_id": self.selected_dictionary_id,
-            "sidebar_collapsed": self.sidebar_collapsed,
+            "ccp_state": {
+                "active_view": self.state.active_view,
+                "selected_character_id": self.state.selected_character_id,
+                "selected_conversation_id": self.state.selected_conversation_id,
+                "selected_prompt_id": self.state.selected_prompt_id,
+                "selected_dictionary_id": self.state.selected_dictionary_id,
+                "sidebar_collapsed": self.state.sidebar_collapsed,
+                "conversation_search_term": self.state.conversation_search_term,
+                "conversation_search_type": self.state.conversation_search_type,
+                "include_character_chats": self.state.include_character_chats,
+                "search_all_characters": self.state.search_all_characters,
+            }
         }
     
     def restore_state(self, state: Dict[str, Any]) -> None:
         """Restore a previously saved state."""
-        if "active_view" in state:
-            self.active_view = state["active_view"]
-        if "selected_character_id" in state:
-            self.selected_character_id = state["selected_character_id"]
-        if "selected_conversation_id" in state:
-            self.selected_conversation_id = state["selected_conversation_id"]
-        if "selected_prompt_id" in state:
-            self.selected_prompt_id = state["selected_prompt_id"]
-        if "selected_dictionary_id" in state:
-            self.selected_dictionary_id = state["selected_dictionary_id"]
-        if "sidebar_collapsed" in state:
-            self.sidebar_collapsed = state["sidebar_collapsed"]
+        if "ccp_state" in state:
+            ccp_state = state["ccp_state"]
+            
+            # Create new state instance with restored values
+            new_state = CCPScreenState(
+                active_view=ccp_state.get("active_view", "conversations"),
+                selected_character_id=ccp_state.get("selected_character_id"),
+                selected_conversation_id=ccp_state.get("selected_conversation_id"),
+                selected_prompt_id=ccp_state.get("selected_prompt_id"),
+                selected_dictionary_id=ccp_state.get("selected_dictionary_id"),
+                sidebar_collapsed=ccp_state.get("sidebar_collapsed", False),
+                conversation_search_term=ccp_state.get("conversation_search_term", ""),
+                conversation_search_type=ccp_state.get("conversation_search_type", "title"),
+                include_character_chats=ccp_state.get("include_character_chats", True),
+                search_all_characters=ccp_state.get("search_all_characters", True),
+            )
+            self.state = new_state
+            
+            # Reload selected items if needed
+            if self.state.selected_conversation_id:
+                logger.debug(f"Restoring conversation {self.state.selected_conversation_id}")
+                # Use call_after_refresh to properly await the async method
+                async def load_restored_conversation():
+                    await self.conversation_handler.load_conversation(self.state.selected_conversation_id)
+                self.call_after_refresh(load_restored_conversation)

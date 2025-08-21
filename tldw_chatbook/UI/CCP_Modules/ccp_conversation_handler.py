@@ -30,7 +30,27 @@ class CCPConversationHandler:
         logger.debug("CCPConversationHandler initialized")
     
     async def handle_search(self, search_term: str, search_type: str = "title") -> None:
-        """Handle conversation search.
+        """Handle conversation search (async wrapper).
+        
+        Args:
+            search_term: The term to search for
+            search_type: Type of search ("title", "content", "tags")
+        """
+        logger.debug(f"Starting conversation search: term='{search_term}', type={search_type}")
+        
+        # Run the sync search in a worker thread
+        self.window.run_worker(
+            self._search_conversations_sync,
+            search_term,
+            search_type,
+            thread=True,
+            exclusive=True,
+            name="conversation_search"
+        )
+    
+    @work(thread=True)
+    def _search_conversations_sync(self, search_term: str, search_type: str = "title") -> None:
+        """Sync method to perform conversation search in a worker thread.
         
         Args:
             search_term: The term to search for
@@ -45,7 +65,7 @@ class CCPConversationHandler:
             if search_type == "title":
                 # Search by title
                 if search_term:
-                    self.search_results = await self._search_by_title(search_term)
+                    self.search_results = self._search_by_title_sync(search_term)
                 else:
                     # Fetch all conversations if no search term
                     self.search_results = fetch_all_conversations()
@@ -54,10 +74,10 @@ class CCPConversationHandler:
                 self.search_results = search_conversations_by_keywords(search_term) if search_term else []
             elif search_type == "tags":
                 # Search by tags
-                self.search_results = await self._search_by_tags(search_term)
+                self.search_results = self._search_by_tags_sync(search_term)
             
-            # Update the search results list
-            await self._update_search_results_ui()
+            # Update the search results list on main thread
+            self.window.call_from_thread(self._update_search_results_ui)
             
             logger.info(f"Found {len(self.search_results)} conversations matching '{search_term}'")
             
@@ -142,7 +162,6 @@ class CCPConversationHandler:
         except Exception as e:
             logger.error(f"Error loading selected conversation: {e}", exc_info=True)
     
-    @work(thread=True)
     async def load_conversation(self, conversation_id: int) -> None:
         """Load a conversation and display it.
         
@@ -151,22 +170,40 @@ class CCPConversationHandler:
         """
         logger.info(f"Loading conversation {conversation_id}")
         
+        # Run the sync database operation in a worker thread
+        self.window.run_worker(
+            self._load_conversation_sync,
+            conversation_id,
+            thread=True,
+            exclusive=True,
+            name=f"load_conversation_{conversation_id}"
+        )
+    
+    @work(thread=True)
+    def _load_conversation_sync(self, conversation_id: int) -> None:
+        """Sync method to load conversation data in a worker thread.
+        
+        Args:
+            conversation_id: The ID of the conversation to load
+        """
         try:
             from ...Chat.Chat_Functions import load_conversation
             
-            # Load the conversation
+            # Load the conversation (sync database operation)
             success = load_conversation(conversation_id)
             
             if success:
                 self.current_conversation_id = conversation_id
                 
-                # Post message for other components
-                self.window.post_message(
+                # Post messages from worker thread using call_from_thread
+                self.window.call_from_thread(
+                    self.window.post_message,
                     ConversationMessage.Loaded(conversation_id, [])
                 )
                 
                 # Switch view to show conversation
-                self.window.post_message(
+                self.window.call_from_thread(
+                    self.window.post_message,
                     ViewChangeMessage.Requested("conversation_messages")
                 )
                 
@@ -312,7 +349,12 @@ class CCPConversationHandler:
             search_input = self.window.query_one("#conv-char-search-input", Input)
             if search_input.value:
                 self.window.run_worker(
-                    self.handle_search(search_input.value, "title")
+                    self.handle_search,
+                    search_input.value,
+                    "title",
+                    thread=True,
+                    exclusive=True,
+                    name="refresh_search"
                 )
         except Exception as e:
             logger.error(f"Error refreshing conversation list: {e}")
