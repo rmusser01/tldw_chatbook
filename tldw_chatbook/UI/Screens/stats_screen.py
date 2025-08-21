@@ -84,19 +84,21 @@ class StatsScreen(Container):
     is_loading: reactive[bool] = reactive(False)  # Start as False
     error_message: reactive[Optional[str]] = reactive(None)
     
-    def __init__(self, **kwargs):
+    def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
-        self.app_instance: Optional['TldwCli'] = None
+        self.app_instance = app_instance
         
     def on_mount(self) -> None:
         """Load statistics when the screen is mounted."""
-        # Get the app instance from the ancestry
-        from ..app import TldwCli
-        self.app_instance = self.app
-        if not isinstance(self.app_instance, TldwCli):
-            logger.error(f"App instance is not TldwCli: {type(self.app_instance)}")
-            self.error_message = "Unable to access application instance"
-            return
+        # Verify we have the app instance
+        if not self.app_instance:
+            # Try to get from ancestry as fallback
+            from ..app import TldwCli
+            self.app_instance = self.app
+            if not isinstance(self.app_instance, TldwCli):
+                logger.error(f"App instance is not TldwCli: {type(self.app_instance)}")
+                self.error_message = "Unable to access application instance"
+                return
         logger.info("StatsScreen mounted, loading statistics...")
         # Set loading state and trigger initial display
         self.is_loading = True

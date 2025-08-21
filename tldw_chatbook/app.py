@@ -133,7 +133,6 @@ from tldw_chatbook.config import get_chachanotes_db_path, settings, get_chachano
 from .UI.Chat_Window import ChatWindow
 from .UI.Chat_Window_Enhanced import ChatWindowEnhanced
 from .UI.Conv_Char_Window import CCPWindow
-from .UI.Notes_Window import NotesWindow
 from .UI.Logs_Window import LogsWindow
 from .UI.Stats_Window import StatsWindow
 from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
@@ -1710,7 +1709,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         windows = [
             ("chat", chat_window_class, "chat-window"),
             ("ccp", CCPWindow, "conversations_characters_prompts-window"),
-            ("notes", NotesWindow, "notes-window"),
+            # Notes now uses NotesScreen directly, no NotesWindow needed
             ("media", MediaWindow_v2, "media-window"),
             ("search", SearchWindow, "search-window"),
             ("ingest", MediaIngestWindow, "ingest-window"),
@@ -3418,13 +3417,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
                     except QueryError:
                         pass
-            # Handle Notes tab auto-save cleanup when leaving the tab
-            if old_tab == TAB_NOTES:
-                # Cancel any pending auto-save timer
-                if hasattr(self, 'notes_auto_save_timer') and self.notes_auto_save_timer is not None:
-                    self.notes_auto_save_timer.stop()
-                    self.notes_auto_save_timer = None
-                    loguru_logger.debug("Cancelled auto-save timer when leaving Notes tab")
+            # NotesScreen now handles its own auto-save cleanup in on_unmount()
                 
                 # Perform one final auto-save if auto-save is enabled and there are unsaved changes
                 if (hasattr(self, 'notes_auto_save_enabled') and self.notes_auto_save_enabled and
@@ -3558,8 +3551,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Call immediately after refresh
             self.call_after_refresh(populate_ccp_widgets)
         elif new_tab == TAB_NOTES:
-            # Use call_after_refresh for async function
-            self.call_after_refresh(notes_handlers.load_and_display_notes_handler, self)
+            # NotesScreen handles its own data loading in on_mount()
+            pass
         elif new_tab == TAB_MEDIA:
             def activate_media_initial_view():
                 try:
@@ -4485,9 +4478,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 "chat-character-first-message-edit"
             ]:
                 await chat_handlers.handle_chat_character_attribute_changed(self, event)
-        elif current_active_tab == TAB_NOTES and control_id == "notes-editor-area":
-            # Handle notes editor changes
-            await notes_handlers.handle_notes_editor_changed(self, event)
+        # Notes editor changes are now handled directly by NotesScreen
 
     def _update_model_download_log(self, message: str) -> None:
         """Helper to write messages to the model download log widget."""
@@ -4500,15 +4491,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     async def on_input_changed(self, event: Input.Changed) -> None:
         input_id = event.input.id
         current_active_tab = self.current_tab
-        # --- Notes Search ---
-        if input_id == "notes-search-input" and current_active_tab == TAB_NOTES: # Changed from elif to if
-            await notes_handlers.handle_notes_search_input_changed(self, event.value)
-        elif input_id == "notes-keyword-filter-input" and current_active_tab == TAB_NOTES:
-            await notes_handlers.handle_notes_keyword_filter_input_changed(self, event.value)
-        elif input_id == "notes-title-input" and current_active_tab == TAB_NOTES:
-            await notes_handlers.handle_notes_title_changed(self, event)
+        # --- Notes input events are now handled directly by NotesScreen ---
         # --- Chat Sidebar Conversation Search ---
-        elif input_id == "chat-conversation-search-bar" and current_active_tab == TAB_CHAT:
+        if input_id == "chat-conversation-search-bar" and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
         elif input_id == "chat-conversation-keyword-search-bar" and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
@@ -4576,9 +4561,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.debug("Dispatching to media_events.handle_media_list_item_selected")
             await media_events.handle_media_list_item_selected(self, event)
 
-        elif list_view_id == "notes-list-view" and current_active_tab == TAB_NOTES:
-            self.loguru_logger.debug("Dispatching to notes_handlers.handle_notes_list_view_selected")
-            await notes_handlers.handle_notes_list_view_selected(self, list_view_id, event.item)
+        # Notes list view selection is now handled directly by NotesScreen
 
         elif list_view_id == "ccp-prompts-listview" and current_active_tab == TAB_CCP:
             self.loguru_logger.debug("Dispatching to ccp_handlers.handle_ccp_prompts_list_view_selected")
@@ -4680,8 +4663,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await ingest_events.handle_tldw_api_auth_method_changed(self, str(event.value))
         elif select_id == "tldw-api-media-type" and current_active_tab == TAB_INGEST:
             await ingest_events.handle_tldw_api_media_type_changed(self, str(event.value))
-        elif select_id == "notes-sort-select" and current_active_tab == TAB_NOTES:
-            await notes_handlers.handle_notes_sort_changed(self, event)
+        # Notes sort select is now handled directly by NotesScreen
         elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
             await self.handle_rag_preset_changed(event)
         elif select_id == "chat-rag-search-mode" and current_active_tab == TAB_CHAT:

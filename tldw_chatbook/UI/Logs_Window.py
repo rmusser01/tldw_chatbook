@@ -37,7 +37,7 @@ class LogsWindow(Container): # Inherit from Container
             id="app-log-display", 
             wrap=True, 
             highlight=True, 
-            markup=True, 
+            markup=False,  # Set to False to prevent log messages from being interpreted as markup
             auto_scroll=True,
             max_lines=10000  # Limit for performance while still keeping plenty of history
         )

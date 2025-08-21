@@ -17,7 +17,7 @@ from textual.css.query import NoMatches
 #
 # Local Imports
 from ..Widgets.settings_sidebar import create_settings_sidebar
-from tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar import create_chat_right_sidebar
+# Right sidebar removed - functionality moved to settings_sidebar
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ..Widgets.voice_input_widget import VoiceInputWidget, VoiceInputMessage
@@ -174,27 +174,51 @@ class ChatWindowEnhanced(Container):
     
     def _cache_widget_references(self) -> None:
         """Cache frequently accessed widget references to optimize performance."""
-        self._chat_input = self.query_one_or_none("#chat-input", TextArea)
-        self._send_button = self.query_one_or_none("#send-stop-chat", Button)
-        self._attachment_indicator = self.query_one_or_none("#image-attachment-indicator", Static)
+        try:
+            self._chat_input = self.query_one("#chat-input", TextArea)
+        except NoMatches:
+            self._chat_input = None
+            
+        try:
+            self._send_button = self.query_one("#send-stop-chat", Button)
+        except NoMatches:
+            self._send_button = None
+            
+        try:
+            self._attachment_indicator = self.query_one("#image-attachment-indicator", Static)
+        except NoMatches:
+            self._attachment_indicator = None
         
         if get_cli_setting("chat_defaults", "enable_tabs", False):
-            self._tab_container = self.query_one_or_none(ChatTabContainer)
+            try:
+                self._tab_container = self.query_one(ChatTabContainer)
+            except NoMatches:
+                self._tab_container = None
     
     async def _configure_widget_visibility(self) -> None:
         """Configure visibility of optional widgets based on settings."""
-        with self.app.batch_update():
+        try:
+            app = self.app
+        except Exception:
+            # App not available yet
+            return
+        
+        with app.batch_update():
             # Hide mic button if disabled in settings
             if not get_cli_setting("chat.voice", "show_mic_button", True):
-                mic_button = self.query_one_or_none("#mic-button", Button)
-                if mic_button:
+                try:
+                    mic_button = self.query_one("#mic-button", Button)
                     mic_button.display = False
+                except NoMatches:
+                    pass  # Button doesn't exist, nothing to hide
             
             # Hide attach button if disabled in settings
             if not get_cli_setting("chat.images", "show_attach_button", True):
-                attach_button = self.query_one_or_none("#attach-image", Button)
-                if attach_button:
+                try:
+                    attach_button = self.query_one("#attach-image", Button)
                     attach_button.display = False
+                except NoMatches:
+                    pass  # Button doesn't exist, nothing to hide
     
     def _get_send_button(self) -> Optional[Button]:
         """Get the cached send/stop button widget.
@@ -234,7 +258,10 @@ class ChatWindowEnhanced(Container):
         Returns:
             The chat log widget or None if not found
         """
-        return self.app_instance.query_one_or_none("#chat-log", VerticalScroll)
+        try:
+            return self.app_instance.query_one("#chat-log", VerticalScroll)
+        except NoMatches:
+            return None
 
     # Event Handlers using @on decorators for cleaner code
     
@@ -403,20 +430,39 @@ class ChatWindowEnhanced(Container):
     
     # Note: _handle_attachment_buttons removed as functionality moved to @on decorators
 
-    async def handle_attach_image_button(self, app_instance, event):
-        """Delegate to attachment handler."""
+    async def handle_attach_image_button(self, app_instance, event) -> None:
+        """Handle attach image button click.
+        
+        Args:
+            app_instance: The app instance
+            event: The button press event
+        """
         await self.attachment_handler.handle_attach_image_button(event)
     
-    async def handle_clear_image_button(self, app_instance, event):
-        """Delegate to attachment handler."""
+    async def handle_clear_image_button(self, app_instance, event) -> None:
+        """Handle clear image button click.
+        
+        Args:
+            app_instance: The app instance
+            event: The button press event
+        """
         await self.attachment_handler.handle_clear_image_button(event)
 
-    async def handle_enhanced_send_button(self, app_instance, event):
-        """Delegate to input handler."""
+    async def handle_enhanced_send_button(self, app_instance, event) -> None:
+        """Handle enhanced send button click.
+        
+        Args:
+            app_instance: The app instance
+            event: The button press event
+        """
         await self.input_handler.handle_enhanced_send_button(event)
 
     async def process_file_attachment(self, file_path: str) -> None:
-        """Delegate to attachment handler."""
+        """Process a file attachment.
+        
+        Args:
+            file_path: Path to the file to attach
+        """
         await self.attachment_handler.process_file_attachment(file_path)
     
     @work(exclusive=True, thread=True)
@@ -534,12 +580,15 @@ class ChatWindowEnhanced(Container):
 
 
     def compose(self) -> ComposeResult:
-        """Compose the ChatWindowEnhanced UI structure.
+        """Compose the chat UI structure.
         
-        Following Textual best practices:
-        - Don't read reactive properties during composition
-        - Yield all widgets directly
-        - Use consistent structure regardless of config
+        Follows Textual best practices:
+        - Doesn't read reactive properties during composition
+        - Yields all widgets directly
+        - Uses consistent structure regardless of config
+        
+        Yields:
+            The widgets that make up the chat interface
         """
         logger.debug("Composing ChatWindowEnhanced UI")
         
@@ -603,101 +652,109 @@ class ChatWindowEnhanced(Container):
                         tooltip="Attach file"
                     )
 
-        # Right sidebar toggle button
-        yield Button(
-            get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
-            id="toggle-chat-right-sidebar",
-            classes="chat-sidebar-toggle-button",
-            tooltip="Toggle right sidebar (Ctrl+])"
-        )
+        # No right sidebar - all functionality moved to left sidebar
 
-        # Character Details Sidebar (Right)
-        yield from create_chat_right_sidebar(
-            "chat",
-            initial_ephemeral_state=self.app_instance.current_chat_is_ephemeral
-        )
-
-    def get_pending_image(self) -> Optional[dict]:
-        """Get the pending image attachment data."""
+    def get_pending_image(self) -> Optional[Dict[str, Any]]:
+        """Get the pending image attachment data.
+        
+        Returns:
+            The pending image data dictionary or None
+        """
         return self.pending_image
     
-    def get_pending_attachment(self) -> Optional[dict]:
-        """Get the pending attachment data (new unified system)."""
+    def get_pending_attachment(self) -> Optional[Dict[str, Any]]:
+        """Get the pending attachment data.
+        
+        Returns:
+            The pending attachment data dictionary or None
+        """
         return self.pending_attachment
     
-    def _clear_attachment_state(self):
-        """Delegate to attachment handler."""
-        self.attachment_handler.clear_attachment_state()
+    def _clear_attachment_state(self) -> None:
+        """Clear all attachment state."""
+        self.pending_image = None
+        self.pending_attachment = None
+        self._update_attachment_ui()
     
-    def _update_attachment_ui(self):
-        """Delegate to attachment handler."""
-        self.attachment_handler.update_attachment_ui()
+    def _update_attachment_ui(self) -> None:
+        """Update attachment indicator UI based on current state."""
+        if self._attachment_indicator:
+            if self.pending_image:
+                from pathlib import Path
+                path = Path(self.pending_image.get('path', ''))
+                self._attachment_indicator.update(f"📎 {path.name}")
+            else:
+                self._attachment_indicator.update("")
     
     async def toggle_attach_button_visibility(self, show: bool) -> None:
-        """Toggle the visibility of the attach file button."""
+        """Toggle the visibility of the attach file button.
+        
+        Args:
+            show: True to show the button, False to hide it
+        """
         try:
+            attach_button = self.query_one("#attach-image", Button)
             if show:
-                # Check if button already exists
-                try:
-                    attach_button = self.query_one("#attach-image", Button)
-                    # Button already exists, no need to add
-                    return
-                except NoMatches:
-                    pass  # Button doesn't exist, need to add it
-                
-                # Find the input area and send button
-                try:
-                    input_area = self.query_one("#chat-input-area", Horizontal)
-                    send_button = self.query_one("#send-stop-chat", Button)
-                except NoMatches:
-                    logger.warning("Input area or send button not found")
-                    return
-                
-                # Create and mount the button after the send button
-                attach_button = Button(
-                    "📎", 
-                    id="attach-image", 
-                    classes="action-button attach-button",
-                    tooltip="Attach file"
-                )
-                await input_area.mount(attach_button, after=send_button)
-                
-            else:
-                # Remove the button if it exists
-                try:
-                    attach_button = self.query_one("#attach-image", Button)
-                    await attach_button.remove()
-                    # Clear attachment state when hiding the button
-                    self._clear_attachment_state()
-                except NoMatches:
-                    # Button doesn't exist, nothing to remove
-                    pass
-                    
-        except (AttributeError, RuntimeError) as e:
-            logger.error(f"Error toggling attach button visibility: {e}")
+                # Button already exists
+                return
+        except NoMatches:
+            attach_button = None
+        
+        if show:
+            # Find the input area and send button
+            try:
+                input_area = self.query_one("#chat-input-area", Horizontal)
+                send_button = self.query_one("#send-stop-chat", Button)
+            except NoMatches:
+                logger.warning("Input area or send button not found")
+                return
+            
+            # Create and mount the button after the send button
+            new_button = Button(
+                "📎", 
+                id="attach-image", 
+                classes="action-button attach-button",
+                tooltip="Attach file"
+            )
+            await input_area.mount(new_button, after=send_button)
+        else:
+            # Remove the button if it exists
+            if attach_button:
+                await attach_button.remove()
+                # Clear attachment state when hiding the button
+                self._clear_attachment_state()
     
     
     async def handle_notes_expand_button(self, app, event) -> None:
-        """Delegate to sidebar handler."""
+        """Handle notes expand button click.
+        
+        Args:
+            app: The app instance
+            event: The button press event
+        """
         await self.sidebar_handler.handle_notes_expand_button(event)
     
     async def action_resize_sidebar_shrink(self) -> None:
-        """Action for keyboard shortcut to shrink sidebar."""
+        """Shrink sidebar width (keyboard shortcut action)."""
         from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
         await chat_events_sidebar_resize.handle_sidebar_shrink(self.app_instance, None)
     
     async def action_resize_sidebar_expand(self) -> None:
-        """Action for keyboard shortcut to expand sidebar."""
+        """Expand sidebar width (keyboard shortcut action)."""
         from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
         await chat_events_sidebar_resize.handle_sidebar_expand(self.app_instance, None)
     
     async def action_edit_focused_message(self) -> None:
-        """Delegate to message manager."""
+        """Edit the currently focused message (keyboard shortcut action)."""
         await self.message_manager.edit_focused_message()
     
     def _update_button_state(self) -> None:
-        """Delegate to input handler."""
-        self.input_handler.update_button_state()
+        """Update send/stop button state.
+        
+        Triggers the reactive watcher to update the button UI.
+        """
+        # Trigger reactive watcher by reassigning
+        self.is_send_button = self.is_send_button
     
     def watch_is_send_button(self, is_send: bool) -> None:
         """React to button state changes.
@@ -709,8 +766,15 @@ class ChatWindowEnhanced(Container):
             logger.debug("Send button not found in watcher")
             return
         
+        # Check if app is available (needed for tests)
+        try:
+            app = self.app
+        except Exception:
+            # App not available yet (during initialization or tests)
+            return
+        
         # Batch multiple button updates for performance
-        with self.app.batch_update():
+        with app.batch_update():
             self._send_button.label = get_char(
                 EMOJI_SEND if is_send else EMOJI_STOP,
                 FALLBACK_SEND if is_send else FALLBACK_STOP
@@ -746,67 +810,82 @@ class ChatWindowEnhanced(Container):
         return image_data
     
     
-    async def handle_send_stop_button(self, app_instance, event):
-        """Delegate to input handler."""
-        await self.input_handler.handle_send_stop_button(event)
-    
-    async def handle_enhanced_send_button(self, app_instance, event):
-        """Delegate to input handler."""
-        await self.input_handler.handle_enhanced_send_button(event)
+    async def handle_send_stop_button(self, app_instance, event) -> None:
+        """Handle send/stop button click.
+        
+        Args:
+            app_instance: The app instance
+            event: The button press event
+        """
+        if self.is_send_button:
+            await self.input_handler.handle_enhanced_send_button(event)
+        else:
+            from ..Event_Handlers.Chat_Events import chat_events
+            await chat_events.handle_stop_chat_generation_pressed(app_instance, event)
     
     async def handle_mic_button(self, app_instance, event: Button.Pressed) -> None:
-        """Delegate to voice handler."""
+        """Handle microphone button click.
+        
+        Args:
+            app_instance: The app instance
+            event: The button press event
+        """
         await self.voice_handler.handle_mic_button(event)
     
     def action_toggle_voice_input(self) -> None:
-        """Delegate to voice handler."""
+        """Toggle voice input mode (keyboard shortcut action)."""
         self.voice_handler.toggle_voice_input()
         # Update local state for compatibility
         self.is_voice_recording = self.voice_handler.is_voice_recording
     
-    def _insert_voice_text(self, text: str):
-        """Insert voice text into chat input."""
-        chat_input = self._get_chat_input()
-        if not chat_input:
+    def _insert_voice_text(self, text: str) -> None:
+        """Insert voice text into chat input.
+        
+        Args:
+            text: The text to insert
+        """
+        if not self._chat_input:
             logger.warning("Chat input widget not found for voice text")
             return
         
+        try:
+            app = self.app
+        except Exception:
+            # App not available yet
+            return
+        
         # Use batch update for multiple operations
-        with self.app.batch_update():
-            current_text = chat_input.text
+        with app.batch_update():
+            current_text = self._chat_input.text
             
             # Add space if there's existing text
             if current_text and not current_text.endswith(' '):
                 text = ' ' + text
             
             # Append transcribed text
-            chat_input.load_text(current_text + text)
+            self._chat_input.load_text(current_text + text)
             
             # Focus the input
-            chat_input.focus()
+            self._chat_input.focus()
     
     def on_voice_input_message(self, event: VoiceInputMessage) -> None:
-        """Handle voice input messages."""
-        if event.is_final and event.text:
-            # Add transcribed text to chat input
-            chat_input = self._get_chat_input()
-            if not chat_input:
-                logger.warning("Chat input widget not found")
+        """Handle voice input messages.
+        
+        Args:
+            event: The voice input message event
+        """
+        if event.is_final and event.text and self._chat_input:
+            try:
+                app = self.app
+            except Exception:
+                # App not available yet
                 return
             
-            # Use batch update for multiple operations
-            with self.app.batch_update():
-                current_text = chat_input.text
-                
-                # Add space if there's existing text
-                if current_text and not current_text.endswith(' '):
-                    event.text = ' ' + event.text
-                
-                # Append transcribed text
-                chat_input.load_text(current_text + event.text)
-                
-                # Focus the input
-                chat_input.focus()
+            with app.batch_update():
+                current_text = self._chat_input.text
+                separator = ' ' if current_text and not current_text.endswith(' ') else ''
+                self._chat_input.load_text(current_text + separator + event.text)
+                self._chat_input.focus()
 
 #
 # End of Chat_Window_Enhanced.py
