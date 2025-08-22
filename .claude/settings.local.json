@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/appledev/Working/tldw_chatbook/.claude/audit_system.sh post",
+            "command": "./tldw_chatbook/.claude/audit_system.sh post",
             "description": "Analyze file modifications after operation",
             "timeout": 5000,
             "continueOnError": true
@@ -20,9 +20,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/appledev/Working/tldw_chatbook/.claude/audit_system.sh pre",
+            "command": "./tldw_chatbook/.claude/audit_system.sh pre",
             "description": "Capture state before file modification",
-            "timeout": 2000,
+            "timeout": 200,
             "continueOnError": true
           }
         ]
@@ -58,7 +58,7 @@
       "Bash(PYTHONPATH=. pytest Tests/Widgets/test_chat_message_enhanced.py -v --tb=short -k \"test_button_action_events or test_toggle_image_mode\")",
       "Bash(PYTHONPATH=. pytest Tests/Widgets/test_chat_message_enhanced.py::TestChatMessageEnhancedInteractions::test_toggle_image_mode -v --tb=short)",
       "Bash(python -m pytest Tests/ChaChaNotesDB/ -v)",
-      "Bash(/Users/appledev/Working/tldw_chatbook_dev/.venv/bin/python -m pytest /Users/appledev/Working/tldw_chatbook_dev/Tests/ChaChaNotesDB/ -v)",
+      "Bash(python -m pytest /Users/appledev/Working/tldw_chatbook_dev/Tests/ChaChaNotesDB/ -v)",
       "Bash(python -m pytest Tests/Chat/test_chat_sidebar_media_search.py::test_media_search_functionality -xvs)",
       "Bash(python -m pytest Tests/Chat/test_chat_sidebar_media_search.py::test_media_review_clearing_on_new_empty_search -xvs)",
       "Bash(python -m pytest Tests/Chat/test_chat_sidebar_media_search.py::test_media_search_functionality Tests/Chat/test_chat_sidebar_media_search.py::test_media_load_for_review Tests/Chat/test_chat_sidebar_media_search.py::test_media_review_clearing_on_new_empty_search -xvs)",
@@ -119,7 +119,6 @@
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:modelcontextprotocol.io)",
-      "Bash(python:*)",
       "Bash(python -m pytest Tests/UI/test_evals_window_v2.py::test_run_button_validation -xvs --tb=line)"
     ],
     "deny": []
