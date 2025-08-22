@@ -477,7 +477,6 @@ class CCPDictionaryEditorWidget(Container):
                         
                         yield TextArea(
                             "",
-                            placeholder="Entry value/definition",
                             id="ccp-entry-value",
                             classes="entry-value-textarea"
                         )

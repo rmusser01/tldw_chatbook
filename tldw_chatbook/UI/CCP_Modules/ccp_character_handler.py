@@ -69,9 +69,26 @@ class CCPCharacterHandler:
         except Exception as e:
             logger.error(f"Error loading selected character: {e}", exc_info=True)
     
-    @work(thread=True)
     async def load_character(self, character_id: int) -> None:
-        """Load a character and display the card.
+        """Load a character and display the card (async wrapper).
+        
+        Args:
+            character_id: The ID of the character to load
+        """
+        logger.info(f"Starting character load for {character_id}")
+        
+        # Run the sync database operation in a worker thread
+        self.window.run_worker(
+            self._load_character_sync,
+            character_id,
+            thread=True,
+            exclusive=True,
+            name=f"load_character_{character_id}"
+        )
+    
+    @work(thread=True)
+    def _load_character_sync(self, character_id: int) -> None:
+        """Sync method to load character data in a worker thread.
         
         Args:
             character_id: The ID of the character to load
@@ -81,20 +98,22 @@ class CCPCharacterHandler:
         try:
             from ...Character_Chat.Character_Chat_Lib import fetch_character_card_by_id
             
-            # Load the character card
+            # Load the character card (sync database operation)
             card_data = fetch_character_card_by_id(character_id)
             
             if card_data:
                 self.current_character_id = character_id
                 self.current_character_data = card_data
                 
-                # Post message for other components
-                self.window.post_message(
+                # Post messages from worker thread using call_from_thread
+                self.window.call_from_thread(
+                    self.window.post_message,
                     CharacterMessage.Loaded(character_id, card_data)
                 )
                 
                 # Switch view to show character card
-                self.window.post_message(
+                self.window.call_from_thread(
+                    self.window.post_message,
                     ViewChangeMessage.Requested("character_card", {"character_id": character_id})
                 )
                 
@@ -328,8 +347,8 @@ class CCPCharacterHandler:
         return data
     
     @work(thread=True)
-    async def _update_character(self, character_id: int, data: Dict[str, Any]) -> None:
-        """Update an existing character."""
+    def _update_character(self, character_id: int, data: Dict[str, Any]) -> None:
+        """Update an existing character (sync worker method)."""
         try:
             from ...Character_Chat.Character_Chat_Lib import update_character_card
             
@@ -338,12 +357,13 @@ class CCPCharacterHandler:
             if success:
                 logger.info(f"Updated character {character_id}")
                 
-                # Post update message
-                self.window.post_message(
+                # Post update message from worker thread
+                self.window.call_from_thread(
+                    self.window.post_message,
                     CharacterMessage.Updated(character_id, data)
                 )
                 
-                # Refresh the character list
+                # Refresh the character list on main thread
                 self.window.call_from_thread(self.refresh_character_list)
             else:
                 logger.error(f"Failed to update character {character_id}")
@@ -352,8 +372,8 @@ class CCPCharacterHandler:
             logger.error(f"Error updating character: {e}", exc_info=True)
     
     @work(thread=True)
-    async def _create_character(self, data: Dict[str, Any]) -> None:
-        """Create a new character."""
+    def _create_character(self, data: Dict[str, Any]) -> None:
+        """Create a new character (sync worker method)."""
         try:
             from ...Character_Chat.Character_Chat_Lib import add_character_card
             
@@ -362,12 +382,13 @@ class CCPCharacterHandler:
             if character_id:
                 logger.info(f"Created new character with ID {character_id}")
                 
-                # Post creation message
-                self.window.post_message(
+                # Post creation message from worker thread
+                self.window.call_from_thread(
+                    self.window.post_message,
                     CharacterMessage.Created(character_id, data.get("name", ""), data)
                 )
                 
-                # Refresh the character list
+                # Refresh the character list on main thread
                 self.window.call_from_thread(self.refresh_character_list)
                 
                 # Set as current character
@@ -414,6 +435,35 @@ class CCPCharacterHandler:
                 
         except Exception as e:
             logger.error(f"Error deleting character: {e}", exc_info=True)
+    
+    async def handle_import(self) -> None:
+        """Handle import request - prompts for file selection."""
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+        
+        try:
+            # Create filters for character card files
+            filters = Filters(
+                ("Character Cards", "*.json;*.png;*.yaml;*.yml"),
+                ("JSON Files", "*.json"),
+                ("PNG Files (with embedded data)", "*.png"),
+                ("YAML Files", "*.yaml;*.yml"),
+                ("All Files", "*.*")
+            )
+            
+            # Create and show the file picker
+            picker = EnhancedFileOpen(
+                title="Import Character Card",
+                filters=filters,
+                context="character_import"
+            )
+            
+            # Push the file picker screen
+            file_path = await self.window.app.push_screen(picker, wait_for_dismiss=True)
+            
+            if file_path:
+                await self.handle_import_character(str(file_path))
+        except Exception as e:
+            logger.error(f"Error showing file picker: {e}")
     
     async def handle_import_character(self, file_path: str) -> None:
         """Import a character card from file.

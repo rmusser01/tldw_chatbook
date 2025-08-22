@@ -13,6 +13,7 @@ from textual.message import Message
 #
 # Local Imports
 from ..config import get_cli_providers_and_models
+from ..Widgets.Media_Creation.swarmui_widget import SwarmUIWidget
 
 # Try to import pipeline integration
 try:
@@ -272,6 +273,13 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 id=f"{id_prefix}-strip-thinking-tags-checkbox",
                 classes="sidebar-checkbox"
             )
+
+        # -------------------------------------------------------------------
+        # Image Generation (only for chat tab)
+        # -------------------------------------------------------------------
+        if id_prefix == "chat":
+            with Collapsible(title="🎨 Image Generation", collapsed=True, id=f"{id_prefix}-image-generation-collapsible", classes="settings-collapsible basic-mode advanced-mode"):
+                yield SwarmUIWidget(id=f"{id_prefix}-swarmui-widget")
 
         # -------------------------------------------------------------------
         # RAG Settings (Prominent Panel - Always visible)

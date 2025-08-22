@@ -67,9 +67,26 @@ class CCPDictionaryHandler:
         except Exception as e:
             logger.error(f"Error loading selected dictionary: {e}", exc_info=True)
     
-    @work(thread=True)
     async def load_dictionary(self, dictionary_id: int) -> None:
-        """Load a dictionary and display it.
+        """Load a dictionary and display it (async wrapper).
+        
+        Args:
+            dictionary_id: The ID of the dictionary to load
+        """
+        logger.info(f"Starting dictionary load for {dictionary_id}")
+        
+        # Run the sync database operation in a worker thread
+        self.window.run_worker(
+            self._load_dictionary_sync,
+            dictionary_id,
+            thread=True,
+            exclusive=True,
+            name=f"load_dictionary_{dictionary_id}"
+        )
+    
+    @work(thread=True)
+    def _load_dictionary_sync(self, dictionary_id: int) -> None:
+        """Sync method to load dictionary data in a worker thread.
         
         Args:
             dictionary_id: The ID of the dictionary to load
@@ -79,7 +96,7 @@ class CCPDictionaryHandler:
         try:
             from ...Character_Chat.Character_Chat_Lib import fetch_dictionary_by_id
             
-            # Load the dictionary
+            # Load the dictionary (sync database operation)
             dict_data = fetch_dictionary_by_id(dictionary_id)
             
             if dict_data:
@@ -87,13 +104,15 @@ class CCPDictionaryHandler:
                 self.current_dictionary_data = dict_data
                 self.dictionary_entries = dict_data.get('entries', [])
                 
-                # Post message for other components
-                self.window.post_message(
+                # Post messages from worker thread using call_from_thread
+                self.window.call_from_thread(
+                    self.window.post_message,
                     DictionaryMessage.Loaded(dictionary_id, dict_data)
                 )
                 
                 # Switch view to show dictionary
-                self.window.post_message(
+                self.window.call_from_thread(
+                    self.window.post_message,
                     ViewChangeMessage.Requested("dictionary_view", {"dictionary_id": dictionary_id})
                 )
                 
@@ -371,8 +390,8 @@ class CCPDictionaryHandler:
         return data
     
     @work(thread=True)
-    async def _create_dictionary(self, data: Dict[str, Any]) -> None:
-        """Create a new dictionary."""
+    def _create_dictionary(self, data: Dict[str, Any]) -> None:
+        """Create a new dictionary (sync worker method)."""
         try:
             from ...Character_Chat.Character_Chat_Lib import create_dictionary
             
@@ -385,12 +404,13 @@ class CCPDictionaryHandler:
                 self.current_dictionary_id = dictionary_id
                 self.current_dictionary_data = data
                 
-                # Post creation message
-                self.window.post_message(
+                # Post creation message from worker thread
+                self.window.call_from_thread(
+                    self.window.post_message,
                     DictionaryMessage.Created(dictionary_id, data["name"], data)
                 )
                 
-                # Refresh the dictionary list
+                # Refresh the dictionary list on main thread
                 self.window.call_from_thread(self.refresh_dictionary_list)
             else:
                 logger.error("Failed to create new dictionary")
@@ -399,8 +419,8 @@ class CCPDictionaryHandler:
             logger.error(f"Error creating dictionary: {e}", exc_info=True)
     
     @work(thread=True)
-    async def _update_dictionary(self, dictionary_id: int, data: Dict[str, Any]) -> None:
-        """Update an existing dictionary."""
+    def _update_dictionary(self, dictionary_id: int, data: Dict[str, Any]) -> None:
+        """Update an existing dictionary (sync worker method)."""
         try:
             from ...Character_Chat.Character_Chat_Lib import update_dictionary
             
@@ -412,12 +432,13 @@ class CCPDictionaryHandler:
                 # Update current dictionary data
                 self.current_dictionary_data = data
                 
-                # Post update message
-                self.window.post_message(
+                # Post update message from worker thread
+                self.window.call_from_thread(
+                    self.window.post_message,
                     DictionaryMessage.Updated(dictionary_id, data)
                 )
                 
-                # Refresh the dictionary list
+                # Refresh the dictionary list on main thread
                 self.window.call_from_thread(self.refresh_dictionary_list)
             else:
                 logger.error(f"Failed to update dictionary {dictionary_id}")
@@ -461,6 +482,44 @@ class CCPDictionaryHandler:
                 
         except Exception as e:
             logger.error(f"Error deleting dictionary: {e}", exc_info=True)
+    
+    async def handle_import(self) -> None:
+        """Handle import request - prompts for file selection."""
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+        
+        try:
+            # Create filters for dictionary/world book files
+            filters = Filters(
+                ("Dictionary Files", "*.json;*.csv;*.yaml;*.yml"),
+                ("JSON Files", "*.json"),
+                ("CSV Files", "*.csv"),
+                ("YAML Files", "*.yaml;*.yml"),
+                ("All Files", "*.*")
+            )
+            
+            # Create and show the file picker
+            picker = EnhancedFileOpen(
+                title="Import Dictionary/World Book",
+                filters=filters,
+                context="dictionary_import"
+            )
+            
+            # Push the file picker screen
+            file_path = await self.window.app.push_screen(picker, wait_for_dismiss=True)
+            
+            if file_path:
+                await self.handle_import_dictionary(str(file_path))
+        except Exception as e:
+            logger.error(f"Error showing file picker: {e}")
+    
+    async def handle_import_dictionary(self, file_path: str) -> None:
+        """Import a dictionary from file.
+        
+        Args:
+            file_path: Path to the dictionary file
+        """
+        # TODO: Implement actual dictionary import logic
+        logger.info(f"Would import dictionary from: {file_path}")
     
     async def handle_clone_dictionary(self) -> None:
         """Clone the current dictionary."""

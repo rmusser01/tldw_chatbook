@@ -240,7 +240,6 @@ class CCPCharacterEditorWidget(Container):
     
     .tags-display {
         layout: horizontal;
-        flex-wrap: wrap;
         width: 100%;
         padding: 1;
         background: $surface;
@@ -259,7 +258,6 @@ class CCPCharacterEditorWidget(Container):
     .tag-remove {
         margin-left: 1;
         color: $error;
-        cursor: pointer;
     }
     
     .v2-toggle-container {

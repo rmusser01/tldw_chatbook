@@ -330,6 +330,17 @@ class ChatWindowEnhanced(Container):
             return
 
         logger.debug(f"Button pressed: {button_id}")
+        
+        # Skip buttons that are handled by @on decorators
+        decorator_handled_buttons = {
+            "send-stop-chat",
+            "attach-image",
+            "chat-mic",
+            "clear-image"
+        }
+        if button_id in decorator_handled_buttons:
+            # Already handled by @on decorator, skip
+            return
 
         # Check for tab-specific buttons first
         if self._is_tab_specific_button(button_id):
@@ -370,17 +381,34 @@ class ChatWindowEnhanced(Container):
             "chat-notes-delete-button",
             "chat-notes-save-button"
         }
+        
+        # Navigation buttons are also handled at app level
+        if button_id and button_id.startswith("nav-"):
+            return True
+            
         return button_id in app_level_buttons
     
     async def _handle_core_buttons(self, button_id: str, event: Button.Pressed) -> bool:
         """Handle core chat functionality buttons."""
         from ..Event_Handlers.Chat_Events import chat_events
         
+        # Use the comprehensive CHAT_BUTTON_HANDLERS from chat_events
+        # This includes all button handlers for chat functionality
+        if hasattr(chat_events, 'CHAT_BUTTON_HANDLERS'):
+            if button_id in chat_events.CHAT_BUTTON_HANDLERS:
+                logger.debug(f"Handling button via CHAT_BUTTON_HANDLERS: {button_id}")
+                await chat_events.CHAT_BUTTON_HANDLERS[button_id](self.app_instance, event)
+                return True
+        
+        # Fallback to individual handlers for backwards compatibility
         core_handlers = {
-            "send-stop-chat": self.handle_send_stop_button,
+            # "send-stop-chat" is handled by @on decorator, removed to avoid duplicate handling
             "chat-new-conversation-button": chat_events.handle_chat_new_conversation_button_pressed,
+            "chat-new-temp-chat-button": chat_events.handle_chat_new_temp_chat_button_pressed,
             "chat-save-current-chat-button": chat_events.handle_chat_save_current_chat_button_pressed,
+            "chat-clone-current-chat-button": chat_events.handle_chat_clone_current_chat_button_pressed,
             "chat-save-conversation-details-button": chat_events.handle_chat_save_details_button_pressed,
+            "chat-convert-to-note-button": chat_events.handle_chat_convert_to_note_button_pressed,
             "chat-conversation-load-selected-button": chat_events.handle_chat_load_selected_button_pressed,
             "chat-apply-template-button": chat_events.handle_chat_apply_template_button_pressed,
         }
@@ -402,14 +430,14 @@ class ChatWindowEnhanced(Container):
             await chat_events.handle_chat_tab_sidebar_toggle(self.app_instance, event)
             return True
             
-        # Character and prompt buttons
+        # Additional sidebar-specific handlers
         sidebar_handlers = {
-            "chat-prompt-load-selected-button": chat_events.handle_chat_view_selected_prompt_button_pressed,
-            "chat-prompt-copy-system-button": chat_events.handle_chat_copy_system_prompt_button_pressed,
-            "chat-prompt-copy-user-button": chat_events.handle_chat_copy_user_prompt_button_pressed,
-            "chat-load-character-button": chat_events.handle_chat_load_character_button_pressed,
-            "chat-clear-active-character-button": chat_events.handle_chat_clear_active_character_button_pressed,
             "chat-notes-expand-button": self.handle_notes_expand_button,
+            "chat-notes-search-button": chat_events.handle_chat_notes_search_button_pressed if hasattr(chat_events, 'handle_chat_notes_search_button_pressed') else None,
+            "chat-notes-load-button": chat_events.handle_chat_notes_load_button_pressed if hasattr(chat_events, 'handle_chat_notes_load_button_pressed') else None,
+            "chat-notes-create-new-button": chat_events.handle_chat_notes_create_new_button_pressed if hasattr(chat_events, 'handle_chat_notes_create_new_button_pressed') else None,
+            "chat-notes-save-button": chat_events.handle_chat_notes_save_button_pressed if hasattr(chat_events, 'handle_chat_notes_save_button_pressed') else None,
+            "chat-notes-copy-button": chat_events.handle_chat_notes_copy_button_pressed if hasattr(chat_events, 'handle_chat_notes_copy_button_pressed') else None,
         }
         
         if button_id in sidebar_handlers:

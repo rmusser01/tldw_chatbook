@@ -225,18 +225,8 @@ IngestionResultsPanel RichLog#results-log {
     color: $primary;
 }
 
-/* Responsive adjustments for different terminal sizes */
-@media (max-width: 80) {
-    LocalIngestionPanel .options-container Horizontal {
-        layout: vertical;
-        height: auto;
-    }
-    
-    LocalIngestionPanel .options-container Input {
-        width: 100%;
-        margin: 0 0 1 0;
-    }
-}
+/* Note: Textual doesn't support @media queries for responsive design */
+/* Terminal size adjustments would need to be handled programmatically */
 
 /* Dark theme overrides */
 .dark MediaIngestWindowRebuilt {

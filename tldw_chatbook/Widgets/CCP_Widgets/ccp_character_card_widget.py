@@ -159,7 +159,6 @@ class CCPCharacterCardWidget(Container):
     
     .tags-container {
         layout: horizontal;
-        flex-wrap: wrap;
         width: 100%;
         padding: 1;
         background: $surface;

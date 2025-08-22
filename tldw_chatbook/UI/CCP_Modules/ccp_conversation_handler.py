@@ -84,8 +84,8 @@ class CCPConversationHandler:
         except Exception as e:
             logger.error(f"Error searching conversations: {e}", exc_info=True)
     
-    async def _search_by_title(self, search_term: str) -> List[Dict[str, Any]]:
-        """Search conversations by title.
+    def _search_by_title_sync(self, search_term: str) -> List[Dict[str, Any]]:
+        """Search conversations by title (sync version for worker).
         
         Args:
             search_term: The title to search for
@@ -103,8 +103,8 @@ class CCPConversationHandler:
             if search_lower in conv.get('name', '').lower()
         ]
     
-    async def _search_by_tags(self, tags_str: str) -> List[Dict[str, Any]]:
-        """Search conversations by tags.
+    def _search_by_tags_sync(self, tags_str: str) -> List[Dict[str, Any]]:
+        """Search conversations by tags (sync version for worker).
         
         Args:
             tags_str: Comma-separated tags to search for

@@ -7,7 +7,9 @@
 ChatMessage {
     width: 100%;
     height: auto;
+    max-height: 50vh;  /* Limit message height to 50% of viewport */
     margin-bottom: 1;
+    overflow-y: auto;  /* Allow scrolling within long messages */
 }
 ChatMessage > Vertical {
     border: round $surface;
@@ -39,6 +41,8 @@ ChatMessage.-tool-result > Vertical {
     padding: 1; /* Padding around the text itself */
     width: 100%;
     height: auto;
+    max-height: 40vh;  /* Limit text area to 40% of viewport */
+    overflow-y: auto;  /* Allow scrolling within long text */
 }
 
 .message-text.tts-generating {

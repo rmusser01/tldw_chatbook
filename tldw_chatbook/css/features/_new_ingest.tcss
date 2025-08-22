@@ -912,105 +912,20 @@
  * ANIMATIONS AND EFFECTS
  * ================================================ */
 
-@keyframes pulse {
-    0% { transform: scale(1); }
-    50% { transform: scale(1.05); }
-    100% { transform: scale(1); }
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes slideInLeft {
-    from { opacity: 0; transform: translateX(-20px); }
-    to { opacity: 1; transform: translateX(0); }
-}
-
-/* Apply animations to dynamic content */
-.media-card,
-.activity-item,
-.file-preview-item,
-.job-status-widget {
-    animation: fadeIn 0.3s ease;
-}
-
-.activity-item {
-    animation: slideInLeft 0.4s ease;
-}
+/* Note: Textual doesn't support @keyframes animations */
+/* Animation effects would need to be implemented programmatically */
 
 /* ================================================
  * RESPONSIVE ADJUSTMENTS
  * ================================================ */
-
-/* Narrow terminal adjustments */
-@media (max-width: 100) {
-    .media-cards-grid {
-        grid-size: 1;
-        grid-columns: 1fr;
-    }
-    
-    .main-content {
-        layout: vertical;
-    }
-    
-    .media-selection-panel {
-        width: 100%;
-        border-right: none;
-        border-bottom: thick $primary;
-    }
-    
-    .activity-panel {
-        width: 100%;
-    }
-    
-    .processor-content {
-        layout: vertical;
-    }
-    
-    .file-panel {
-        width: 100%;
-        border-right: none;
-        border-bottom: thick $primary;
-    }
-    
-    .options-panel {
-        width: 100%;
-    }
-}
+/* Note: Textual doesn't support @media queries */
+/* Responsive behavior would need to be handled programmatically */
 
 /* ================================================
  * ACCESSIBILITY ENHANCEMENTS
  * ================================================ */
-
-/* High contrast mode support */
-@media (prefers-contrast: high) {
-    .media-card,
-    .drop-zone,
-    .file-preview-item,
-    .job-status-widget {
-        border-width: 2px;
-        border-style: solid;
-    }
-    
-    .card-button,
-    .process-button,
-    .control-button {
-        border: 2px solid;
-    }
-}
-
-/* Reduced motion support */
-@media (prefers-reduced-motion: reduce) {
-    .media-card,
-    .drop-zone,
-    .file-preview-item,
-    .job-status-widget,
-    .control-button,
-    .process-button {
-        transition: none;
-        animation: none;
+/* Note: Textual doesn't support @media queries for accessibility preferences */
+/* High contrast and reduced motion settings would need application-level handling */
         transform: none;
     }
 }

@@ -357,18 +357,8 @@
     text-style: bold;
 }
 
-/* Responsive adjustments */
-@media (max-width: 100) {
-    .unified-sidebar, UnifiedChatSidebar {
-        width: 40%;
-    }
-}
-
-@media (max-width: 80) {
-    .unified-sidebar, UnifiedChatSidebar {
-        width: 50%;
-    }
-}
+/* Note: Textual doesn't support @media queries for responsive design */
+/* Width adjustments would need to be handled programmatically */
 
 /* Dark mode overrides */
 .dark .unified-sidebar, .dark UnifiedChatSidebar {

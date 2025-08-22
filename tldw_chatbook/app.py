@@ -1651,152 +1651,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         return widgets
         
-        # ALL THE TAB-BASED CODE BELOW IS NOW OBSOLETE
-        # Keeping it commented for reference during migration
-
-        # Traditional tab-based navigation continues below (obsolete code, never reached)
-        
-        # Phase: Title Bar
-        phase_start = time.perf_counter()
-        """  # START OF OBSOLETE TAB-BASED CODE
-        component_start = time.perf_counter()
-        widgets.append(TitleBar())
-        titlebar_time = time.perf_counter() - component_start
-        compose_phases["titlebar"] = titlebar_time
-        log_histogram("app_component_creation_duration_seconds", titlebar_time,
-                     labels={"component": "titlebar"}, 
-                     documentation="Time to create UI component")
-        logger.info(f"TitleBar created in {titlebar_time:.3f}s")
-
-        # Phase: Navigation (TabBar, TabLinks, or TabDropdown)
-        phase_start = time.perf_counter()
-        use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
-        use_links = get_cli_setting("general", "use_link_navigation", True)  # Default to links
-        component_start = time.perf_counter()
-        
-        if use_dropdown:
-            # Use dropdown navigation
-            widgets.append(TabDropdown(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
-            logger.info("Using dropdown navigation for tabs")
-        elif use_links:
-            # Use single-line link navigation
-            widgets.append(TabLinks(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
-            logger.info("Using single-line link navigation for tabs")
-        else:
-            # Use traditional tab bar
-            widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
-            logger.info("Using traditional tab bar navigation")
-        
-        nav_time = time.perf_counter() - component_start
-        compose_phases["navigation"] = nav_time
-        log_histogram("app_component_creation_duration_seconds", nav_time,
-                     labels={"component": "navigation"}, 
-                     documentation="Time to create UI component")
-        logger.info(f"Navigation created in {nav_time:.3f}s")
-
-        # Content area - all windows
-        content_area_start = time.perf_counter()
-        
-        # Check config for which chat window to use
-        # Default to enhanced window (True) unless explicitly disabled
-        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", True)
-        chat_window_class = ChatWindowEnhanced if use_enhanced_chat else ChatWindow
-        logger.info(f"Using {'enhanced' if use_enhanced_chat else 'basic'} chat window (use_enhanced_window={use_enhanced_chat})")
-        
-        # Create content container with all windows
-        content_container = Container(id="content")
-        
-        windows = [
-            ("chat", chat_window_class, "chat-window"),
-            ("ccp", CCPWindow, "conversations_characters_prompts-window"),
-            # Notes now uses NotesScreen directly, no NotesWindow needed
-            ("media", MediaWindow_v2, "media-window"),
-            ("search", SearchWindow, "search-window"),
-            ("ingest", MediaIngestWindow, "ingest-window"),
-            ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
-            ("llm_management", LLMManagementWindow, "llm_management-window"),
-            ("customize", CustomizeWindow, "customize-window"),
-            ("logs", LogsWindow, "logs-window"),
-            ("coding", CodingWindow, "coding-window"),
-            ("stats", StatsWindow, "stats-window"),
-            ("evals", EvalsWindow, "evals-window"),
-            ("stts", STTSWindow, "stts-window"),
-            ("study", StudyWindow, "study-window"),
-            ("chatbooks", ChatbooksWindow, "chatbooks-window"),
-        ]
-        
-        # Add subscriptions tab if available
-        if SUBSCRIPTIONS_AVAILABLE and SubscriptionWindow:
-            windows.append(("subscriptions", SubscriptionWindow, "subscriptions-window"))
-        
-        # Create window widgets and compose them into the container properly
-        initial_tab = self._initial_tab_value
-        window_creation_times = {}  # Track individual window creation times
-        
-        for window_name, window_class, window_id in windows:
-            window_start = time.perf_counter()
-            is_initial_window = window_id == f"{initial_tab}-window"
-            
-            # Always load LogsWindow immediately to capture logs, and the initial window
-            if is_initial_window or window_id == "logs-window":
-                # Create the actual window for the initial tab and logs tab
-                logger.info(f"Creating actual window for {window_name}")
-                creation_start = time.perf_counter()
-                window_widget = window_class(self, id=window_id, classes="window")
-                creation_time = time.perf_counter() - creation_start
-                window_creation_times[window_name] = creation_time
-                logger.info(f"Window {window_name} created in {creation_time:.3f}s")
-                # For non-initial windows, make them invisible initially
-                if not is_initial_window:
-                    window_widget.display = False
-            else:
-                # Create a placeholder for other tabs
-                logger.debug(f"Creating placeholder for tab: {window_name}")
-                window_widget = PlaceholderWindow(self, window_class, window_id, classes="window")
-                window_widget.display = False  # Hide placeholder initially
-                window_creation_times[window_name] = time.perf_counter() - window_start
-            
-            # Mount the window widget into the container
-            mount_start = time.perf_counter()
-            content_container._add_child(window_widget)
-            mount_time = time.perf_counter() - mount_start
-            if mount_time > 0.01:  # Log if mounting takes more than 10ms
-                logger.warning(f"Mounting {window_name} took {mount_time:.3f}s")
-        
-        # Log window creation summary
-        if window_creation_times:
-            sorted_times = sorted(window_creation_times.items(), key=lambda x: x[1], reverse=True)
-            logger.info("=== WINDOW CREATION TIMES ===")
-            for window_name, creation_time in sorted_times[:5]:  # Top 5 slowest
-                logger.info(f"  {window_name}: {creation_time:.3f}s")
-            logger.info("=============================")
-        
-        # Store for later analysis
-        self._window_creation_times = window_creation_times
-        
-        widgets.append(content_container)
-        
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - content_area_start,
-                     labels={"component": "content_area_all_windows"}, 
-                     documentation="Time to create UI component")
-
-        # Yield the new AppFooterStatus widget instead of the old Footer
-        component_start = time.perf_counter()
-        widgets.append(AppFooterStatus(id="app-footer-status"))
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-                     labels={"component": "footer"}, 
-                     documentation="Time to create UI component")
-        
-        compose_duration = time.perf_counter() - self._ui_compose_start_time
-        self._ui_compose_end_time = time.perf_counter()  # Store compose end time
-        log_histogram("app_compose_duration_seconds", compose_duration,
-                     documentation="Total time for compose() method")
-        log_counter("ui_compose_completed", 1, documentation="UI composition completed")
-        logging.debug(f"App compose finished in {compose_duration:.3f} seconds")
-        log_resource_usage()  # Check memory after compose
-        
+        # Screen-based navigation is used exclusively - no tab-based UI components needed
         return widgets
-        """  # END OF OBSOLETE TAB-BASED CODE
     
 
     @on(NavigateToScreen)
@@ -1804,6 +1660,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Handle navigation to a different screen using switch_screen for better performance."""
         screen_name = message.screen_name
         logger.info(f"Navigating to screen: {screen_name}")
+        
+        # Save state of current screen before switching
+        current_screen = self.screen
+        if current_screen and hasattr(current_screen, 'save_state'):
+            try:
+                state = current_screen.save_state()
+                # Store state in a dictionary keyed by screen name
+                if not hasattr(self, '_screen_states'):
+                    self._screen_states = {}
+                if hasattr(current_screen, 'screen_name'):
+                    self._screen_states[current_screen.screen_name] = state
+                    logger.debug(f"Saved state for screen: {current_screen.screen_name}")
+            except Exception as e:
+                logger.error(f"Error saving screen state: {e}")
         
         # Import the new screens
         from .UI.Screens.stts_screen import STTSScreen
@@ -1838,6 +1708,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if screen_class:
             # Create a fresh screen instance (per Textual best practices)
             new_screen = screen_class(self)
+            
+            # Restore state if available
+            if hasattr(self, '_screen_states') and screen_name in self._screen_states:
+                if hasattr(new_screen, 'restore_state'):
+                    try:
+                        new_screen.restore_state(self._screen_states[screen_name])
+                        logger.debug(f"Restored state for screen: {screen_name}")
+                    except Exception as e:
+                        logger.error(f"Error restoring screen state: {e}")
             
             # Use switch_screen to replace the current screen
             await self.switch_screen(new_screen)
@@ -2283,17 +2162,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # Update the chat window button state when streaming changes
         # This replaces the polling approach with event-driven updates
         try:
-            if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
-                # For screen navigation, find the active chat screen
+            # For screen navigation, find the active chat screen
                 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
                 if self.screen and isinstance(self.screen, ChatScreen):
                     if hasattr(self.screen, 'chat_window') and self.screen.chat_window:
                         self.screen.chat_window._update_button_state()
-            else:
-                # For tab navigation, find the chat window
-                chat_window = self.query_one("#chat-window")
-                if hasattr(chat_window, '_update_button_state'):
-                    chat_window._update_button_state()
+
         except Exception:
             # Silently ignore if chat window isn't available
             pass
@@ -2675,52 +2549,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Configure logging and schedule post-mount setup."""
         mount_start = time.perf_counter()
         
-        # ALWAYS use screen-based navigation now
-        if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
-            # Determine initial screen based on _initial_tab_value
-            initial_tab = getattr(self, '_initial_tab_value', 'chat')
-            
-            # Map tab IDs to screen classes
-            from .UI.Screens.stts_screen import STTSScreen
-            from .UI.Screens.study_screen import StudyScreen
-            from .UI.Screens.chatbooks_screen import ChatbooksScreen
-            from .UI.Screens.subscription_screen import SubscriptionScreen
-            
-            screen_map = {
-                'chat': ChatScreen,
-                'ingest': MediaIngestScreen,
-                'coding': CodingScreen,
-                'ccp': ConversationScreen,
-                'media': MediaScreen,
-                'notes': NotesScreen,
-                'search': SearchScreen,
-                'evals': EvalsScreen,
-                'tools_settings': ToolsSettingsScreen,
-                'llm': LLMScreen,
-                'customize': CustomizeScreen,
-                'logs': LogsScreen,
-                'stats': StatsScreen,
-                'stts': STTSScreen,
-                'study': StudyScreen,
-                'chatbooks': ChatbooksScreen,
-                'subscriptions': SubscriptionScreen,
-            }
-            
-            # Get the appropriate screen class
-            screen_class = screen_map.get(initial_tab, ChatScreen)
-            
-            # Push the initial screen (must use push for first screen)
-            self.push_screen(screen_class(self))
-            logger.info(f"Screen-based navigation: Pushed initial {screen_class.__name__}")
-            
-            # Update current_tab reactive to match
-            self.current_tab = initial_tab
-            
-            # For screen navigation, set up a buffered logging handler
-            # that will store logs until the LogsWindow is ready
-            self._setup_buffered_logging()
-            return
-        
         # Update splash screen progress only if splash screen is active
         if self.splash_screen_active and self._splash_screen_widget:
             try:
@@ -2756,7 +2584,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 "Proving P=NP...",
                 "Downloading more RAM...",
                 "Feeding the hamsters powering the servers...",
-                "Convincing AI not to take over the world..."
+                "Convincing AI not to take over the world...",
                 "Converting caffeine to code...",
                 "Generating excuses for missing deadlines...",
                 "Compiling alternative facts...",
@@ -4360,16 +4188,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         self.loguru_logger.info(f"Button pressed: ID='{button_id}'")
 
-        # For screen-based navigation, let the screen handle its own buttons
-        if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
-            # The screen should handle its own button events
-            # If it bubbles up here, it's a navigation button or unhandled
-            # Navigation buttons are already handled by NavigateToScreen messages
-            # So we can safely ignore button events that reach here
-            self.loguru_logger.debug(f"Button event '{button_id}' reached app level in screen navigation mode")
-            return
+        # Screen-based navigation: let the screen handle its own buttons
+        # The screen should handle its own button events
+        # If it bubbles up here, it's a navigation button or unhandled
+        # Navigation buttons are already handled by NavigateToScreen messages
+        self.loguru_logger.debug(f"Button event '{button_id}' reached app level in screen navigation mode")
+        return
 
-        # Legacy tab-based button handling below (only if not using screen navigation)
+        # Legacy tab-based button handling below (never reached)
         self.loguru_logger.info(f"Button pressed: ID='{button_id}' on Tab='{self.current_tab}'")
 
         # 1. Handle global tab switching first
@@ -4674,6 +4500,33 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Update the reactive value to trigger the watcher
             self.rag_expansion_provider_value = event.value
         elif select_id == "chat-api-provider" and current_active_tab == TAB_CHAT:
+            # Update model dropdown when provider changes
+            try:
+                from .config import get_cli_providers_and_models
+                
+                # Get the new provider's models
+                providers_models = get_cli_providers_and_models()
+                new_provider = str(event.value)
+                available_models = providers_models.get(new_provider, [])
+                
+                # Query from current screen (always using screen navigation now)
+                model_select = self.screen.query_one("#chat-api-model", Select)
+                new_model_options = [(model, model) for model in available_models]
+                
+                # Update options
+                model_select.set_options(new_model_options)
+                
+                # Set to first model or blank if no models
+                if available_models:
+                    model_select.value = available_models[0]
+                else:
+                    model_select.value = Select.BLANK
+                
+                model_select.prompt = "Select Model..." if available_models else "No models available"
+                self.loguru_logger.debug(f"Updated model dropdown for provider {new_provider} with {len(available_models)} models")
+            except Exception as e:
+                self.loguru_logger.error(f"Error updating model dropdown on provider change: {e}")
+            
             # Update token counter when provider changes
             try:
                 from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
@@ -4761,8 +4614,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await self._splash_screen_widget.remove()
             self._splash_screen_widget = None
         
-        # ALWAYS use screen-based navigation now
-        if self._use_screen_navigation:
+        # Always use screen-based navigation
             # Determine initial screen based on _initial_tab_value
             initial_tab = getattr(self, '_initial_tab_value', 'chat')
             
@@ -4939,17 +4791,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         try:
             preset = event.value
             
-            # Get RAG-related widgets - check if in screen navigation mode
-            if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
-                # In screen navigation mode, these widgets don't exist at app level
-                self.loguru_logger.debug(f"RAG preset change in screen mode - preset: {preset}")
-                # Store the preset for the screen to handle
-                self.rag_preset = preset
-                return
-            
-            # Legacy tab mode - widgets exist at app level
-            rag_enable = self.query_one("#chat-rag-enable-checkbox", Checkbox)
-            top_k = self.query_one("#chat-rag-top-k", Input)
+            # In screen navigation mode, these widgets don't exist at app level
+            self.loguru_logger.debug(f"RAG preset change in screen mode - preset: {preset}")
+            # Store the preset for the screen to handle
+            self.rag_preset = preset
+            return
             
             # Apply preset configurations
             if preset == "none":
@@ -4986,18 +4832,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             pipeline_id = event.value
             
-            # Check if in screen navigation mode
-            if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
-                # In screen navigation mode, these widgets don't exist at app level
-                self.loguru_logger.debug(f"RAG pipeline change in screen mode - pipeline: {pipeline_id}")
-                # Store the pipeline for the screen to handle
-                self.rag_pipeline = pipeline_id
-                return
-            
-            # Legacy tab mode - update the description display
-            description_widget = self.query_one("#chat-rag-pipeline-description", Static)
-            description = get_pipeline_description(pipeline_id)
-            description_widget.update(description)
+            # In screen navigation mode, these widgets don't exist at app level
+            self.loguru_logger.debug(f"RAG pipeline change in screen mode - pipeline: {pipeline_id}")
+            # Store the pipeline for the screen to handle
+            self.rag_pipeline = pipeline_id
+            return
             
             # If "none" is selected, just show manual config message
             if pipeline_id == "none":
@@ -5018,21 +4857,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         try:
             method = event.value
             
-            # Check if in screen navigation mode
-            if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
-                # In screen navigation mode, these widgets don't exist at app level
-                self.loguru_logger.debug(f"Query expansion method change in screen mode - method: {method}")
-                # Store the method for the screen to handle
-                self.query_expansion_method = method
-                return
-            
-            # Legacy tab mode - get the relevant widgets
-            provider_label = self.query_one(".rag-expansion-provider-label", Static)
-            provider_select = self.query_one("#chat-rag-expansion-provider", Select)
-            llm_model_label = self.query_one(".rag-expansion-llm-label", Static)
-            llm_model_select = self.query_one("#chat-rag-expansion-llm-model", Select)
-            local_model_label = self.query_one(".rag-expansion-local-label", Static)
-            local_model_input = self.query_one("#chat-rag-expansion-local-model", Input)
+            # In screen navigation mode, these widgets don't exist at app level
+            self.loguru_logger.debug(f"Query expansion method change in screen mode - method: {method}")
+            # Store the method for the screen to handle
+            self.query_expansion_method = method
+            return
             
             # Show/hide based on method
             if method == "llm":
@@ -5528,22 +5357,16 @@ if __name__ == "__main__":
         
         if should_rebuild and build_script_path.exists():
             logging.info("Building modular CSS...")
-            from textual.worker import work
-            
-            @work(thread=True)
-            def build_css_in_background():
-                import subprocess
-                result = subprocess.run([sys.executable, str(build_script_path)], 
-                                      cwd=str(css_dir), 
-                                      capture_output=True, 
-                                      text=True)
-                if result.returncode == 0:
-                    logging.info("Successfully built modular CSS")
-                else:
-                    logging.error(f"Failed to build modular CSS: {result.stderr}")
-            
-            # Run CSS build in background to avoid blocking
-            self.run_worker(build_css_in_background, name="css_build")
+            import subprocess
+            # Build CSS synchronously before starting the app
+            result = subprocess.run([sys.executable, str(build_script_path)], 
+                                  cwd=str(css_dir), 
+                                  capture_output=True, 
+                                  text=True)
+            if result.returncode == 0:
+                logging.info("Successfully built modular CSS")
+            else:
+                logging.error(f"Failed to build modular CSS: {result.stderr}")
         
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
@@ -5778,22 +5601,16 @@ def main_cli_runner():
         
         if should_rebuild and build_script_path.exists():
             logging.info("Building modular CSS...")
-            from textual.worker import work
-            
-            @work(thread=True)
-            def build_css_in_background():
-                import subprocess
-                result = subprocess.run([sys.executable, str(build_script_path)], 
-                                      cwd=str(css_dir), 
-                                      capture_output=True, 
-                                      text=True)
-                if result.returncode == 0:
-                    logging.info("Successfully built modular CSS")
-                else:
-                    logging.error(f"Failed to build modular CSS: {result.stderr}")
-            
-            # Run CSS build in background to avoid blocking
-            self.run_worker(build_css_in_background, name="css_build")
+            import subprocess
+            # Build CSS synchronously before starting the app
+            result = subprocess.run([sys.executable, str(build_script_path)], 
+                                  cwd=str(css_dir), 
+                                  capture_output=True, 
+                                  text=True)
+            if result.returncode == 0:
+                logging.info("Successfully built modular CSS")
+            else:
+                logging.error(f"Failed to build modular CSS: {result.stderr}")
         
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)

@@ -405,7 +405,7 @@ class CCPPromptEditorWidget(Container):
                     with Container(classes="field-container"):
                         yield Label("Category:", classes="field-label")
                         yield Select(
-                            options=[(value, label) for value, label in self.CATEGORIES],
+                            options=[(label, value) for value, label in self.CATEGORIES],
                             id="ccp-prompt-category",
                             classes="category-select",
                             value="general"
@@ -460,10 +460,10 @@ class CCPPromptEditorWidget(Container):
                         )
                         yield Select(
                             options=[
-                                ("text", "Text"),
-                                ("number", "Number"),
-                                ("boolean", "Boolean"),
-                                ("list", "List"),
+                                ("Text", "text"),
+                                ("Number", "number"),
+                                ("Boolean", "boolean"),
+                                ("List", "list"),
                             ],
                             id="ccp-variable-type-select",
                             classes="add-variable-type",
@@ -640,7 +640,7 @@ class CCPPromptEditorWidget(Container):
                     type_widget = Static(f"({var.get('type', 'text')})", classes="variable-type")
                     var_container.mount(type_widget)
                     
-                    remove_btn = Button("Remove", classes="variable-remove-btn", 
+                    remove_btn = Button("Remove", classes="variable-remove-btn remove-var-btn", 
                                       id=f"remove-var-{i}")
                     var_container.mount(remove_btn)
                     
@@ -763,11 +763,11 @@ class CCPPromptEditorWidget(Container):
         except Exception as e:
             logger.warning(f"Could not add variable: {e}")
     
-    @on(Button.Pressed, "[id^='remove-var-']")
+    @on(Button.Pressed, ".remove-var-btn")
     async def handle_remove_variable(self, event: Button.Pressed) -> None:
         """Handle remove variable button press."""
         event.stop()
-        if event.button.id:
+        if event.button.id and event.button.id.startswith("remove-var-"):
             index = int(event.button.id.replace("remove-var-", ""))
             if 0 <= index < len(self.variables):
                 var_name = self.variables[index]['name']

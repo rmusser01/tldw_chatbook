@@ -28,6 +28,8 @@
 #chat-log {
     height: 1fr; /* Takes remaining space */
     width: 100%;
+    overflow-y: auto;  /* Ensure proper scrolling */
+    overflow-x: hidden;  /* Hide horizontal overflow */
     /* border: round $surface; Optional: Add border to scroll area */
     padding: 0 1; /* Padding around messages */
 }

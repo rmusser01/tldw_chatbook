@@ -334,7 +334,7 @@ Collapsible > .collapsible--header {
 
 Collapsible.-active > .collapsible--header {
     background: $primary-background;
-    color: $text-lighten-1;
+    color: $text;
 }
 
 /* Select widget styling */
@@ -376,26 +376,7 @@ VerticalScroll {
     scrollbar-size: 1 1;
 }
 
-/* Responsive adjustments */
-@media (max-width: 100) {
-    .ccp-sidebar {
-        width: 40%;
-    }
-}
-
-@media (max-width: 80) {
-    .ccp-sidebar {
-        width: 100%;
-    }
-    
-    .ccp-content-area {
-        display: none;
-    }
-    
-    .ccp-sidebar.collapsed ~ .ccp-content-area {
-        display: block;
-        width: 100%;
-    }
-}
+/* Note: Textual doesn't support @media queries for responsive design */
+/* Width adjustments would need to be handled programmatically */
 
 /* --- End of refactored Conversations, Characters & Prompts styles --- */

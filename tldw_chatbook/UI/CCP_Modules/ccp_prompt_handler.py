@@ -101,9 +101,26 @@ class CCPPromptHandler:
         except Exception as e:
             logger.error(f"Error loading selected prompt: {e}", exc_info=True)
     
-    @work(thread=True)
     async def load_prompt(self, prompt_id: int) -> None:
-        """Load a prompt and display it in the editor.
+        """Load a prompt and display it in the editor (async wrapper).
+        
+        Args:
+            prompt_id: The ID of the prompt to load
+        """
+        logger.info(f"Starting prompt load for {prompt_id}")
+        
+        # Run the sync database operation in a worker thread
+        self.window.run_worker(
+            self._load_prompt_sync,
+            prompt_id,
+            thread=True,
+            exclusive=True,
+            name=f"load_prompt_{prompt_id}"
+        )
+    
+    @work(thread=True)
+    def _load_prompt_sync(self, prompt_id: int) -> None:
+        """Sync method to load prompt data in a worker thread.
         
         Args:
             prompt_id: The ID of the prompt to load
@@ -113,20 +130,22 @@ class CCPPromptHandler:
         try:
             from ...DB.Prompts_DB import fetch_prompt_by_id
             
-            # Load the prompt
+            # Load the prompt (sync database operation)
             prompt_data = fetch_prompt_by_id(prompt_id)
             
             if prompt_data:
                 self.current_prompt_id = prompt_id
                 self.current_prompt_data = prompt_data
                 
-                # Post message for other components
-                self.window.post_message(
+                # Post messages from worker thread using call_from_thread
+                self.window.call_from_thread(
+                    self.window.post_message,
                     PromptMessage.Loaded(prompt_id, prompt_data)
                 )
                 
                 # Switch view to prompt editor
-                self.window.post_message(
+                self.window.call_from_thread(
+                    self.window.post_message,
                     ViewChangeMessage.Requested("prompt_editor", {"prompt_id": prompt_id})
                 )
                 
@@ -247,12 +266,12 @@ class CCPPromptHandler:
         return data
     
     @work(thread=True)
-    async def _create_prompt(self, data: Dict[str, Any]) -> None:
-        """Create a new prompt in the database."""
+    def _create_prompt(self, data: Dict[str, Any]) -> None:
+        """Create a new prompt in the database (sync worker method)."""
         try:
             from ...DB.Prompts_DB import add_prompt
             
-            # Create the prompt
+            # Create the prompt (sync database operation)
             prompt_id = add_prompt(
                 name=data["name"],
                 details=data.get("details", ""),
@@ -269,14 +288,23 @@ class CCPPromptHandler:
                 self.current_prompt_id = prompt_id
                 self.current_prompt_data = data
                 
-                # Post creation message
-                self.window.post_message(
+                # Post creation message from worker thread
+                self.window.call_from_thread(
+                    self.window.post_message,
                     PromptMessage.Created(prompt_id, data["name"], data)
                 )
                 
-                # Refresh search results
-                search_input = self.window.query_one("#ccp-prompt-search-input", Input)
-                await self.handle_search(search_input.value)
+                # Refresh search results on main thread
+                def refresh_search():
+                    search_input = self.window.query_one("#ccp-prompt-search-input", Input)
+                    self.window.run_worker(
+                        self.handle_search,
+                        search_input.value,
+                        thread=True,
+                        exclusive=True,
+                        name="refresh_prompt_search"
+                    )
+                self.window.call_from_thread(refresh_search)
             else:
                 logger.error("Failed to create new prompt")
                 
@@ -284,8 +312,8 @@ class CCPPromptHandler:
             logger.error(f"Error creating prompt: {e}", exc_info=True)
     
     @work(thread=True)
-    async def _update_prompt(self, prompt_id: int, data: Dict[str, Any]) -> None:
-        """Update an existing prompt in the database."""
+    def _update_prompt(self, prompt_id: int, data: Dict[str, Any]) -> None:
+        """Update an existing prompt in the database (sync worker method)."""
         try:
             from ...DB.Prompts_DB import update_prompt
             
@@ -306,14 +334,23 @@ class CCPPromptHandler:
                 # Update current prompt data
                 self.current_prompt_data = data
                 
-                # Post update message
-                self.window.post_message(
+                # Post update message from worker thread
+                self.window.call_from_thread(
+                    self.window.post_message,
                     PromptMessage.Updated(prompt_id, data)
                 )
                 
-                # Refresh search results
-                search_input = self.window.query_one("#ccp-prompt-search-input", Input)
-                await self.handle_search(search_input.value)
+                # Refresh search results on main thread
+                def refresh_search():
+                    search_input = self.window.query_one("#ccp-prompt-search-input", Input)
+                    self.window.run_worker(
+                        self.handle_search,
+                        search_input.value,
+                        thread=True,
+                        exclusive=True,
+                        name="refresh_prompt_search"
+                    )
+                self.window.call_from_thread(refresh_search)
             else:
                 logger.error(f"Failed to update prompt {prompt_id}")
                 
@@ -376,6 +413,35 @@ class CCPPromptHandler:
                 
         except Exception as e:
             logger.error(f"Error deleting prompt: {e}", exc_info=True)
+    
+    async def handle_import(self) -> None:
+        """Handle import request - prompts for file selection."""
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+        
+        try:
+            # Create filters for prompt files
+            filters = Filters(
+                ("Prompt Files", "*.json;*.yaml;*.yml;*.txt"),
+                ("JSON Files", "*.json"),
+                ("YAML Files", "*.yaml;*.yml"),
+                ("Text Files", "*.txt"),
+                ("All Files", "*.*")
+            )
+            
+            # Create and show the file picker
+            picker = EnhancedFileOpen(
+                title="Import Prompt",
+                filters=filters,
+                context="prompt_import"
+            )
+            
+            # Push the file picker screen
+            file_path = await self.window.app.push_screen(picker, wait_for_dismiss=True)
+            
+            if file_path:
+                await self.handle_import_prompt(str(file_path))
+        except Exception as e:
+            logger.error(f"Error showing file picker: {e}")
     
     async def handle_import_prompt(self, file_path: str) -> None:
         """Import a prompt from file.

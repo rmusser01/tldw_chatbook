@@ -118,33 +118,37 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
 
     # --- 1. Query UI Widgets ---
     try:
-        text_area = app.query_one(f"#{prefix}-input", TextArea)
-        chat_container = app.query_one(f"#{prefix}-log", VerticalScroll)
-        provider_widget = app.query_one(f"#{prefix}-api-provider", Select)
-        model_widget = app.query_one(f"#{prefix}-api-model", Select)
-        system_prompt_widget = app.query_one(f"#{prefix}-system-prompt", TextArea)
-        temp_widget = app.query_one(f"#{prefix}-temperature", Input)
-        top_p_widget = app.query_one(f"#{prefix}-top-p", Input)
-        min_p_widget = app.query_one(f"#{prefix}-min-p", Input)
-        top_k_widget = app.query_one(f"#{prefix}-top-k", Input)
+        # Get the current screen first
+        current_screen = app.screen
+        
+        # Try to find widgets from the current screen's context
+        text_area = current_screen.query_one(f"#{prefix}-input", TextArea)
+        chat_container = current_screen.query_one(f"#{prefix}-log", VerticalScroll)
+        provider_widget = current_screen.query_one(f"#{prefix}-api-provider", Select)
+        model_widget = current_screen.query_one(f"#{prefix}-api-model", Select)
+        system_prompt_widget = current_screen.query_one(f"#{prefix}-system-prompt", TextArea)
+        temp_widget = current_screen.query_one(f"#{prefix}-temperature", Input)
+        top_p_widget = current_screen.query_one(f"#{prefix}-top-p", Input)
+        min_p_widget = current_screen.query_one(f"#{prefix}-min-p", Input)
+        top_k_widget = current_screen.query_one(f"#{prefix}-top-k", Input)
 
-        llm_max_tokens_widget = app.query_one(f"#{prefix}-llm-max-tokens", Input)
-        llm_seed_widget = app.query_one(f"#{prefix}-llm-seed", Input)
-        llm_stop_widget = app.query_one(f"#{prefix}-llm-stop", Input)
-        llm_response_format_widget = app.query_one(f"#{prefix}-llm-response-format", Select)
-        llm_n_widget = app.query_one(f"#{prefix}-llm-n", Input)
-        llm_user_identifier_widget = app.query_one(f"#{prefix}-llm-user-identifier", Input)
-        llm_logprobs_widget = app.query_one(f"#{prefix}-llm-logprobs", Checkbox)
-        llm_top_logprobs_widget = app.query_one(f"#{prefix}-llm-top-logprobs", Input)
-        llm_logit_bias_widget = app.query_one(f"#{prefix}-llm-logit-bias", TextArea)
-        llm_presence_penalty_widget = app.query_one(f"#{prefix}-llm-presence-penalty", Input)
-        llm_frequency_penalty_widget = app.query_one(f"#{prefix}-llm-frequency-penalty", Input)
-        llm_tools_widget = app.query_one(f"#{prefix}-llm-tools", TextArea)
-        llm_tool_choice_widget = app.query_one(f"#{prefix}-llm-tool-choice", Input)
-        llm_fixed_tokens_kobold_widget = app.query_one(f"#{prefix}-llm-fixed-tokens-kobold", Checkbox)
+        llm_max_tokens_widget = current_screen.query_one(f"#{prefix}-llm-max-tokens", Input)
+        llm_seed_widget = current_screen.query_one(f"#{prefix}-llm-seed", Input)
+        llm_stop_widget = current_screen.query_one(f"#{prefix}-llm-stop", Input)
+        llm_response_format_widget = current_screen.query_one(f"#{prefix}-llm-response-format", Select)
+        llm_n_widget = current_screen.query_one(f"#{prefix}-llm-n", Input)
+        llm_user_identifier_widget = current_screen.query_one(f"#{prefix}-llm-user-identifier", Input)
+        llm_logprobs_widget = current_screen.query_one(f"#{prefix}-llm-logprobs", Checkbox)
+        llm_top_logprobs_widget = current_screen.query_one(f"#{prefix}-llm-top-logprobs", Input)
+        llm_logit_bias_widget = current_screen.query_one(f"#{prefix}-llm-logit-bias", TextArea)
+        llm_presence_penalty_widget = current_screen.query_one(f"#{prefix}-llm-presence-penalty", Input)
+        llm_frequency_penalty_widget = current_screen.query_one(f"#{prefix}-llm-frequency-penalty", Input)
+        llm_tools_widget = current_screen.query_one(f"#{prefix}-llm-tools", TextArea)
+        llm_tool_choice_widget = current_screen.query_one(f"#{prefix}-llm-tool-choice", Input)
+        llm_fixed_tokens_kobold_widget = current_screen.query_one(f"#{prefix}-llm-fixed-tokens-kobold", Checkbox)
         # Query for the strip thinking tags checkbox
         try:
-            strip_tags_checkbox = app.query_one("#chat-strip-thinking-tags-checkbox", Checkbox)
+            strip_tags_checkbox = current_screen.query_one("#chat-strip-thinking-tags-checkbox", Checkbox)
             strip_thinking_tags_value = strip_tags_checkbox.value
             loguru_logger.info(f"Read strip_thinking_tags checkbox value: {strip_thinking_tags_value}")
         except QueryError:
@@ -155,7 +159,9 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         loguru_logger.error(f"Send Button: Could not find UI widgets for '{prefix}': {e}")
         log_counter("chat_ui_widget_error", labels={"tab": prefix, "error": "query_error"})
         try:
-            container_for_error = chat_container if 'chat_container' in locals() and chat_container.is_mounted else app.query_one(
+            # Get current screen for error handling
+            current_screen = app.screen
+            container_for_error = chat_container if 'chat_container' in locals() and chat_container.is_mounted else current_screen.query_one(
                 f"#{prefix}-log", VerticalScroll) # Re-query if initial one failed
             await container_for_error.mount(
                 ChatMessage(Text.from_markup(f"[bold red]Internal Error:[/]\nMissing UI elements for {prefix}."), role="System", classes="-error"))
@@ -269,7 +275,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     
     # Check streaming checkbox to override provider setting
     try:
-        streaming_checkbox = app.query_one("#chat-streaming-enabled-checkbox", Checkbox)
+        streaming_checkbox = current_screen.query_one("#chat-streaming-enabled-checkbox", Checkbox)
         streaming_override = streaming_checkbox.value
         if streaming_override != should_stream:
             loguru_logger.info(f"Streaming override: checkbox={streaming_override}, provider default={should_stream}")
@@ -1741,7 +1747,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
             
         # Check streaming checkbox to override provider setting for regeneration
         try:
-            streaming_checkbox_regen = app.query_one("#chat-streaming-enabled-checkbox", Checkbox)
+            streaming_checkbox_regen = current_screen.query_one("#chat-streaming-enabled-checkbox", Checkbox)
             streaming_override_regen = streaming_checkbox_regen.value
             if streaming_override_regen != should_stream_regen:
                 loguru_logger.info(f"Streaming override for REGENERATION: checkbox={streaming_override_regen}, provider default={should_stream_regen}")
@@ -4008,7 +4014,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
     
     # Check streaming checkbox to override even for continuation
     try:
-        streaming_checkbox_cont = app.query_one("#chat-streaming-enabled-checkbox", Checkbox)
+        streaming_checkbox_cont = current_screen.query_one("#chat-streaming-enabled-checkbox", Checkbox)
         streaming_override_cont = streaming_checkbox_cont.value
         if not streaming_override_cont:
             loguru_logger.info(f"Streaming override for CONTINUATION: checkbox=False, overriding default continuation streaming")

@@ -592,6 +592,178 @@ class CCPScreen(BaseAppScreen):
         await self._initialize_ui_state()
         
         logger.debug("CCPScreen mounted and initialized with enhancements")
+                        yield Input(id="ccp-editor-char-name-input", placeholder="Character name...", 
+                                  classes="editor-input")
+                        yield Button("✨ Generate All Fields", id="ccp-generate-all-button", 
+                                   classes="ai-generate-button full-width")
+                        
+                        # Image controls
+                        yield Label("Character Image:", classes="field-label")
+                        with Horizontal(classes="image-controls"):
+                            yield Button("Choose Image", id="ccp-editor-char-image-button", 
+                                       classes="sidebar-button")
+                            yield Button("Clear Image", id="ccp-editor-char-clear-image-button", 
+                                       classes="sidebar-button")
+                        yield Static("No image selected", id="ccp-editor-char-image-status", 
+                                   classes="image-status")
+                        yield Label("Image URL (optional):", classes="field-label")
+                        yield Input(id="ccp-editor-char-avatar-input", placeholder="URL to avatar image...", 
+                                  classes="editor-input")
+                        
+                        # Character fields with AI generation
+                        yield Label("Description:", classes="field-label")
+                        with Horizontal(classes="field-with-ai"):
+                            yield TextArea(id="ccp-editor-char-description-textarea", classes="editor-textarea")
+                            yield Button("✨", id="ccp-generate-description-button", 
+                                       classes="ai-generate-button")
+                        
+                        yield Label("Personality:", classes="field-label")
+                        with Horizontal(classes="field-with-ai"):
+                            yield TextArea(id="ccp-editor-char-personality-textarea", classes="editor-textarea")
+                            yield Button("✨", id="ccp-generate-personality-button", 
+                                       classes="ai-generate-button")
+                        
+                        yield Label("Scenario:", classes="field-label")
+                        with Horizontal(classes="field-with-ai"):
+                            yield TextArea(id="ccp-editor-char-scenario-textarea", classes="editor-textarea")
+                            yield Button("✨", id="ccp-generate-scenario-button", 
+                                       classes="ai-generate-button")
+                        
+                        yield Label("First Message:", classes="field-label")
+                        with Horizontal(classes="field-with-ai"):
+                            yield TextArea(id="ccp-editor-char-first-message-textarea", 
+                                         classes="editor-textarea")
+                            yield Button("✨", id="ccp-generate-first-message-button", 
+                                       classes="ai-generate-button")
+                        
+                        # Additional fields
+                        yield Label("Keywords (comma-separated):", classes="field-label")
+                        yield TextArea(id="ccp-editor-char-keywords-textarea", classes="editor-textarea small")
+                        
+                        # V2 fields
+                        yield Label("Creator Notes:", classes="field-label")
+                        yield TextArea(id="ccp-editor-char-creator-notes-textarea", classes="editor-textarea")
+                        
+                        yield Label("System Prompt:", classes="field-label")
+                        with Horizontal(classes="field-with-ai"):
+                            yield TextArea(id="ccp-editor-char-system-prompt-textarea", 
+                                         classes="editor-textarea")
+                            yield Button("✨", id="ccp-generate-system-prompt-button", 
+                                       classes="ai-generate-button")
+                        
+                        yield Label("Post History Instructions:", classes="field-label")
+                        yield TextArea(id="ccp-editor-char-post-history-instructions-textarea", 
+                                     classes="editor-textarea")
+                        
+                        yield Label("Alternate Greetings (one per line):", classes="field-label")
+                        yield TextArea(id="ccp-editor-char-alternate-greetings-textarea", 
+                                     classes="editor-textarea")
+                        
+                        yield Label("Tags (comma-separated):", classes="field-label")
+                        yield Input(id="ccp-editor-char-tags-input", placeholder="e.g., fantasy, anime", 
+                                  classes="editor-input")
+                        
+                        yield Label("Creator:", classes="field-label")
+                        yield Input(id="ccp-editor-char-creator-input", placeholder="Creator name", 
+                                  classes="editor-input")
+                        
+                        yield Label("Character Version:", classes="field-label")
+                        yield Input(id="ccp-editor-char-version-input", placeholder="e.g., 1.0", 
+                                  classes="editor-input")
+                        
+                        # Action buttons
+                        with Horizontal(classes="editor-actions"):
+                            yield Button("Save Character", id="ccp-editor-char-save-button", 
+                                       classes="primary-button")
+                            yield Button("Cancel", id="ccp-editor-char-cancel-button", 
+                                       classes="secondary-button")
+                
+                # Container for prompt editor
+                with Container(id="ccp-prompt-editor-view", classes="ccp-view-area hidden"):
+                    yield Static("Prompt Editor", classes="pane-title")
+                    with VerticalScroll(classes="editor-scroll"):
+                        yield Label("Prompt Name:", classes="field-label")
+                        yield Input(id="ccp-editor-prompt-name-input", placeholder="Unique prompt name...", 
+                                  classes="editor-input")
+                        yield Label("Author:", classes="field-label")
+                        yield Input(id="ccp-editor-prompt-author-input", placeholder="Author name...", 
+                                  classes="editor-input")
+                        yield Label("Details/Description:", classes="field-label")
+                        yield TextArea(id="ccp-editor-prompt-description-textarea", classes="editor-textarea")
+                        yield Label("System Prompt:", classes="field-label")
+                        yield TextArea(id="ccp-editor-prompt-system-textarea", classes="editor-textarea")
+                        yield Label("User Prompt (Template):", classes="field-label")
+                        yield TextArea(id="ccp-editor-prompt-user-textarea", classes="editor-textarea")
+                        yield Label("Keywords (comma-separated):", classes="field-label")
+                        yield TextArea(id="ccp-editor-prompt-keywords-textarea", classes="editor-textarea small")
+                        
+                        # Action buttons
+                        with Horizontal(classes="editor-actions"):
+                            yield Button("Save Prompt", id="ccp-editor-prompt-save-button", 
+                                       classes="primary-button")
+                            yield Button("Cancel", id="ccp-editor-prompt-cancel-button", 
+                                       classes="secondary-button")
+                
+                # Container for dictionary view
+                with Container(id="ccp-dictionary-view", classes="ccp-view-area hidden"):
+                    yield Static("Chat Dictionary", classes="pane-title")
+                    yield Label("Dictionary Name:", classes="field-label")
+                    yield Static(id="ccp-dict-name-display", classes="field-value")
+                    yield Label("Description:", classes="field-label")
+                    yield TextArea(id="ccp-dict-description-display", read_only=True, classes="field-textarea")
+                    yield Label("Strategy:", classes="field-label")
+                    yield Static(id="ccp-dict-strategy-display", classes="field-value")
+                    yield Label("Max Tokens:", classes="field-label")
+                    yield Static(id="ccp-dict-max-tokens-display", classes="field-value")
+                    yield Label("Entries:", classes="field-label")
+                    yield ListView(id="ccp-dict-entries-list", classes="dict-entries-list")
+                
+                # Container for dictionary editor
+                with Container(id="ccp-dictionary-editor-view", classes="ccp-view-area hidden"):
+                    yield Static("Dictionary Editor", classes="pane-title")
+                    with VerticalScroll(classes="editor-scroll"):
+                        yield Label("Dictionary Name:", classes="field-label")
+                        yield Input(id="ccp-editor-dict-name-input", placeholder="Dictionary name...", 
+                                  classes="editor-input")
+                        yield Label("Description:", classes="field-label")
+                        yield TextArea(id="ccp-editor-dict-description-textarea", classes="editor-textarea")
+                        yield Label("Replacement Strategy:", classes="field-label")
+                        yield Select([
+                            ("sorted_evenly", "sorted_evenly"),
+                            ("character_lore_first", "character_lore_first"),
+                            ("global_lore_first", "global_lore_first")
+                        ], value="sorted_evenly", id="ccp-editor-dict-strategy-select")
+                        yield Label("Max Tokens:", classes="field-label")
+                        yield Input(id="ccp-editor-dict-max-tokens-input", placeholder="1000", value="1000", 
+                                  classes="editor-input")
+                        
+                        yield Label("Dictionary Entries:", classes="field-label")
+                        yield ListView(id="ccp-editor-dict-entries-list", classes="dict-entries-list")
+                        
+                        with Horizontal(classes="dict-entry-controls"):
+                            yield Button("Add Entry", id="ccp-dict-add-entry-button", 
+                                       classes="sidebar-button")
+                            yield Button("Remove Entry", id="ccp-dict-remove-entry-button", 
+                                       classes="sidebar-button")
+                        
+                        yield Label("Entry Key/Pattern:", classes="field-label")
+                        yield Input(id="ccp-dict-entry-key-input", placeholder="Key or /regex/flags", 
+                                  classes="editor-input")
+                        yield Label("Entry Value:", classes="field-label")
+                        yield TextArea(id="ccp-dict-entry-value-textarea", classes="editor-textarea small")
+                        yield Label("Group (optional):", classes="field-label")
+                        yield Input(id="ccp-dict-entry-group-input", placeholder="e.g., character, global", 
+                                  classes="editor-input")
+                        yield Label("Probability (0-100):", classes="field-label")
+                        yield Input(id="ccp-dict-entry-probability-input", placeholder="100", value="100", 
+                                  classes="editor-input")
+                        
+                        # Action buttons
+                        with Horizontal(classes="editor-actions"):
+                            yield Button("Save Dictionary", id="ccp-editor-dict-save-button", 
+                                       classes="primary-button")
+                            yield Button("Cancel", id="ccp-editor-dict-cancel-button", 
+
     def _cache_widget_references(self) -> None:
         """Cache frequently accessed widgets."""
         try:
