@@ -6,8 +6,9 @@ from loguru import logger
 
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.widgets import Button, TextArea
+from textual.widgets import Button, TextArea, Select
 from textual.events import Key
+from textual import on
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData
@@ -30,6 +31,48 @@ class ChatScreen(BaseAppScreen):
     This screen preserves all chat state including tabs, messages,
     input text, and UI preferences when navigating away and returning.
     """
+    
+    @on(Select.Changed, "#chat-api-provider")
+    async def handle_provider_change(self, event: Select.Changed) -> None:
+        """Handle API provider change and update model dropdown."""
+        logger.info(f"API provider changed to: {event.value}")
+        
+        try:
+            from tldw_chatbook.config import get_cli_providers_and_models
+            
+            # Get the new provider's models
+            providers_models = get_cli_providers_and_models()
+            new_provider = str(event.value)
+            available_models = providers_models.get(new_provider, [])
+            logger.info(f"Found {len(available_models)} models for provider {new_provider}")
+            
+            # Find the model select widget within the chat window
+            if self.chat_window:
+                try:
+                    model_select = self.chat_window.query_one("#chat-api-model", Select)
+                    
+                    # Update options
+                    new_model_options = [(model, model) for model in available_models]
+                    model_select.set_options(new_model_options)
+                    
+                    # Set to first model or blank if no models
+                    if available_models:
+                        model_select.value = available_models[0]
+                        logger.info(f"Set model to: {available_models[0]}")
+                    else:
+                        model_select.value = Select.BLANK
+                        logger.info("No models available, set to BLANK")
+                    
+                    model_select.prompt = "Select Model..." if available_models else "No models available"
+                    logger.info(f"Successfully updated model dropdown with {len(available_models)} models")
+                except Exception as e:
+                    logger.error(f"Could not find model select widget: {e}")
+            else:
+                logger.error("chat_window is None")
+                
+        except Exception as e:
+            logger.error(f"Error updating model dropdown: {e}", exc_info=True)
+    
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(app_instance, "chat", **kwargs)
@@ -369,8 +412,8 @@ class ChatScreen(BaseAppScreen):
             logger.debug("Attempting to save sidebar settings...")
             
             # Log widget IDs for debugging (only in debug mode)
-            if logger.level <= 10:  # DEBUG level
-                self._log_sidebar_widgets()
+            # Note: loguru doesn't have a simple .level property, skip debug logging for now
+            # self._log_sidebar_widgets()
             
             # Save system prompt from sidebar
             system_prompt_saved = False
@@ -858,23 +901,17 @@ class ChatScreen(BaseAppScreen):
         button_id = event.button.id
         
         # Log for debugging
-        logger.debug(f"ChatScreen handling button: {button_id}")
+        logger.info(f"ChatScreen on_button_pressed called with button: {button_id}")
         
-        # Handle sidebar toggle buttons directly at screen level
-        if button_id in ["toggle-chat-left-sidebar", "toggle-chat-right-sidebar"]:
-            # These buttons affect app-level state, so we need to handle them specially
-            await self._handle_sidebar_toggle(button_id)
-            event.stop()
-            return
+        # Sidebar toggle is handled in ChatWindowEnhanced via @on decorator
         
         # Buttons that are handled by @on decorators in ChatWindowEnhanced
         # These should NOT be delegated to avoid double handling
         handled_by_decorators = [
             "send-stop-chat",
             "attach-image",
-            "chat-mic",
-            "toggle-chat-left-sidebar",
-            "toggle-chat-right-sidebar"
+            "chat-mic"
+            # Removed sidebar toggles from here since they're handled above
         ]
         
         if button_id in handled_by_decorators:
@@ -888,13 +925,6 @@ class ChatScreen(BaseAppScreen):
             await self.chat_window.on_button_pressed(event)
             event.stop()  # Prevent bubbling to app level
     
-    async def _handle_sidebar_toggle(self, button_id: str) -> None:
-        """Handle sidebar toggle buttons."""
-        # Access the app instance to toggle the sidebars
-        if button_id == "toggle-chat-left-sidebar":
-            self.app_instance.chat_sidebar_collapsed = not self.app_instance.chat_sidebar_collapsed
-        elif button_id == "toggle-chat-right-sidebar":
-            self.app_instance.chat_right_sidebar_collapsed = not self.app_instance.chat_right_sidebar_collapsed
     
     async def _run_diagnostic(self) -> None:
         """Run diagnostic tool on the chat widget structure."""

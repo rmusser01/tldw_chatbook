@@ -93,6 +93,8 @@ class ChatWindowEnhanced(Container):
         """
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        # Track the sidebar state locally as well
+        self._sidebar_collapsed = False
         
         # Initialize modular handlers
         self.input_handler = ChatInputHandler(self)
@@ -118,11 +120,23 @@ class ChatWindowEnhanced(Container):
         # Cache frequently accessed widgets to avoid repeated queries
         self._cache_widget_references()
         
+        # Initialize local sidebar state from app state
+        self._sidebar_collapsed = self.app_instance.chat_sidebar_collapsed
+        logger.info(f"Initialized sidebar state: collapsed={self._sidebar_collapsed}")
+        
         # Configure widget visibility based on settings
         await self._configure_widget_visibility()
         
         # Initialize button state
         self._update_button_state()
+        
+        # Apply initial sidebar visibility
+        try:
+            sidebar = self.query_one("#chat-left-sidebar")
+            sidebar.display = not self._sidebar_collapsed
+            logger.info(f"Set initial sidebar display to {sidebar.display}")
+        except Exception as e:
+            logger.debug(f"Could not set initial sidebar state: {e}")
     
     # Message Handlers using Textual's Message System
     
@@ -312,8 +326,26 @@ class ChatWindowEnhanced(Container):
         Args:
             event: The button press event
         """
-        from ..Event_Handlers.Chat_Events import chat_events
-        await chat_events.handle_chat_tab_sidebar_toggle(self.app_instance, event)
+        button_id = event.button.id
+        logger.info(f"Sidebar toggle button pressed: {button_id}")
+        
+        if button_id == "toggle-chat-left-sidebar":
+            # Toggle our local state
+            self._sidebar_collapsed = not self._sidebar_collapsed
+            logger.info(f"Toggled sidebar state to: collapsed={self._sidebar_collapsed}")
+            
+            # Update the app state
+            self.app_instance.chat_sidebar_collapsed = self._sidebar_collapsed
+            
+            # Update the sidebar visibility immediately
+            # When collapsed=True, display should be False (hidden)
+            # When collapsed=False, display should be True (visible)
+            try:
+                sidebar = self.query_one("#chat-left-sidebar")
+                sidebar.display = not self._sidebar_collapsed  # If collapsed, hide; if not collapsed, show
+                logger.info(f"Left sidebar display set to {sidebar.display} (collapsed={self._sidebar_collapsed})")
+            except Exception as e:
+                logger.error(f"Failed to update left sidebar: {e}")
     
     # Legacy button handler for buttons not yet migrated to @on decorators
     async def on_button_pressed(self, event: Button.Pressed) -> None:

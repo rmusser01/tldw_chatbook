@@ -3477,19 +3477,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     # Watchers for sidebar collapsed states (keep as is)
     def watch_chat_sidebar_collapsed(self, collapsed: bool) -> None:
-        if not self._ui_ready: # Keep the UI ready guard
+        """Watch for sidebar collapse state changes."""
+        if not self._ui_ready:
             self.loguru_logger.debug("watch_chat_sidebar_collapsed: UI not ready.")
             return
-        try:
-            # Query for the new ID
-            sidebar = self.query_one("#chat-left-sidebar") # <<< CHANGE THIS LINE
-            sidebar.display = not collapsed # True = visible, False = hidden
-            self.loguru_logger.debug(f"Chat left sidebar (#chat-left-sidebar) display set to {not collapsed}")
-        except QueryError:
-            # Update the error message to reflect the new ID
-            self.loguru_logger.error("Chat left sidebar (#chat-left-sidebar) not found by watcher.") # <<< UPDATE ERROR MSG
-        except Exception as e:
-            self.loguru_logger.error(f"Error toggling chat left sidebar: {e}", exc_info=True)
+        # Just log the state change - the actual UI update should happen in the screen/window
+        self.loguru_logger.debug(f"Chat sidebar collapsed state changed to: {collapsed}")
 
     def watch_chat_right_sidebar_collapsed(self, collapsed: bool) -> None:
         """Hide or show the character settings sidebar."""
@@ -4477,6 +4470,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Handles changes in Select widgets if specific actions are needed beyond watchers."""
         select_id = event.select.id
         current_active_tab = self.current_tab
+        self.loguru_logger.info(f"Select changed: {select_id} = {event.value}, current tab = {current_active_tab}")
 
         if select_id == "conv-char-character-select" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_character_select_changed(self, event.value)
@@ -4500,32 +4494,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Update the reactive value to trigger the watcher
             self.rag_expansion_provider_value = event.value
         elif select_id == "chat-api-provider" and current_active_tab == TAB_CHAT:
-            # Update model dropdown when provider changes
-            try:
-                from .config import get_cli_providers_and_models
-                
-                # Get the new provider's models
-                providers_models = get_cli_providers_and_models()
-                new_provider = str(event.value)
-                available_models = providers_models.get(new_provider, [])
-                
-                # Query from current screen (always using screen navigation now)
-                model_select = self.screen.query_one("#chat-api-model", Select)
-                new_model_options = [(model, model) for model in available_models]
-                
-                # Update options
-                model_select.set_options(new_model_options)
-                
-                # Set to first model or blank if no models
-                if available_models:
-                    model_select.value = available_models[0]
-                else:
-                    model_select.value = Select.BLANK
-                
-                model_select.prompt = "Select Model..." if available_models else "No models available"
-                self.loguru_logger.debug(f"Updated model dropdown for provider {new_provider} with {len(available_models)} models")
-            except Exception as e:
-                self.loguru_logger.error(f"Error updating model dropdown on provider change: {e}")
+            # This is now handled in ChatScreen via @on decorator
+            self.loguru_logger.debug(f"chat-api-provider change event (handled in ChatScreen): {event.value}")
             
             # Update token counter when provider changes
             try:

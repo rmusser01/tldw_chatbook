@@ -21,9 +21,9 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 /* Generic .sidebar (used by #chat-left-sidebar and potentially others) */
 .sidebar {
     dock: left;
-    width: 25%; /* <-- CHANGE to percentage (adjust 20% to 35% as needed) */
-    min-width: 20; /* <-- ADD a minimum width to prevent it becoming unusable */
-    max-width: 80; /* <-- ADD a maximum width (optional) */
+    width: 35%; /* Set to 35% of screen width */
+    min-width: 25; /* Minimum width to prevent it becoming unusable */
+    max-width: 100; /* Maximum width (optional) */
     background: $boost;
     padding: 1 2;
     border-right: thick $background-darken-1;
@@ -435,6 +435,42 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 
 #conv-char-right-pane Collapsible.-active > .collapsible--header { /* Optional: when expanded */
     background: $primary-background;
+}
+
+/* Fix for Collapsible widgets in sidebars */
+.settings-collapsible {
+    height: auto;
+    min-height: 3;  /* Ensure title is visible */
+}
+
+.settings-collapsible CollapsibleTitle {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+}
+
+.settings-collapsible Contents {
+    height: auto;
+    padding: 1;
+}
+
+/* Ensure checkboxes and other controls are visible */
+.settings-collapsible Checkbox {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.settings-collapsible Input {
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+}
+
+.settings-collapsible Select {
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
 }
 
 /* TextAreas for Character Card Display */
