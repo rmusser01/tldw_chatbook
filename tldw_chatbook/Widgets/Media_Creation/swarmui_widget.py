@@ -39,6 +39,11 @@ class SwarmUIWidget(Container):
         self.service = ImageGenerationService()
         self.current_models: List[str] = []
         self.last_result = None
+    
+    async def on_unmount(self) -> None:
+        """Clean up resources when widget is unmounted."""
+        if self.service:
+            await self.service.cleanup()
         
     def compose(self) -> ComposeResult:
         """Compose the widget UI."""

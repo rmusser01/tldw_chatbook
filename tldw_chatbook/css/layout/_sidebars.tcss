@@ -257,4 +257,49 @@
     background: $primary-background;
 }
 
+/* Enhanced sidebar sections with UX improvements */
+.sidebar-section-collapsible {
+    margin-bottom: 1;
+    border: round $surface-lighten-1;
+    background: $surface;
+}
+
+.sidebar-section-collapsible:focus-within {
+    border: round $accent;
+    background: $surface-lighten-1;
+}
+
+/* Section loading state */
+.section-loading {
+    align: center middle;
+    height: 3;
+}
+
+.loading-fade {
+    opacity: 50%;
+}
+
+/* Keyboard navigation indicators */
+.sidebar *:focus {
+    outline: solid $accent;
+}
+
+/* Search mode indicator */
+.sidebar.search-active {
+    border: solid $warning;
+}
+
+/* Focus states for accessibility */
+.sidebar Button:focus {
+    outline: solid $accent;
+}
+
+.sidebar Select:focus {
+    outline: solid $accent;
+}
+
+.sidebar Input:focus {
+    outline: solid $accent;
+}
+
 /* --- End of Sidebar Styling --- */

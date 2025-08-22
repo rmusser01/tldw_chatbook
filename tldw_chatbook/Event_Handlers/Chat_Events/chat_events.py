@@ -1993,7 +1993,15 @@ async def handle_chat_new_temp_chat_button_pressed(app: 'TldwCli', event: Button
     """Handle New Temp Chat button - creates an ephemeral chat."""
     loguru_logger.info("New Temp Chat button pressed.")
     try:
-        chat_log_widget = app.query_one("#chat-log", VerticalScroll)
+        # Try to find chat-log in the current screen/chat window context
+        try:
+            chat_log_widget = app.screen.query_one("#chat-log", VerticalScroll)
+        except QueryError:
+            try:
+                chat_window = app.screen.query_one("#chat-window")
+                chat_log_widget = chat_window.query_one("#chat-log", VerticalScroll)
+            except QueryError:
+                chat_log_widget = app.query_one("#chat-log", VerticalScroll)
         
         # Properly clear existing widgets to prevent memory leak
         existing_widgets = list(chat_log_widget.children)
@@ -2061,7 +2069,15 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
     
     # Clear chat log
     try:
-        chat_log_widget = app.query_one("#chat-log", VerticalScroll)
+        # Try to find chat-log in the current screen/chat window context
+        try:
+            chat_log_widget = app.screen.query_one("#chat-log", VerticalScroll)
+        except QueryError:
+            try:
+                chat_window = app.screen.query_one("#chat-window")
+                chat_log_widget = chat_window.query_one("#chat-log", VerticalScroll)
+            except QueryError:
+                chat_log_widget = app.query_one("#chat-log", VerticalScroll)
         
         # Properly clear existing widgets to prevent memory leak
         existing_widgets = list(chat_log_widget.children)
@@ -3161,7 +3177,18 @@ async def handle_chat_character_search_input_changed(app: 'TldwCli', event: Inpu
 async def handle_chat_load_character_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     loguru_logger.info("Load Character button pressed.")
     try:
-        results_list_view = app.query_one("#chat-character-search-results-list", ListView)
+        # Try to find the ListView in the current screen/chat window context
+        try:
+            # First try the screen
+            results_list_view = app.screen.query_one("#chat-character-search-results-list", ListView)
+        except QueryError:
+            # If not found in screen, try the chat window
+            try:
+                chat_window = app.screen.query_one("#chat-window")
+                results_list_view = chat_window.query_one("#chat-character-search-results-list", ListView)
+            except QueryError:
+                # Last resort: try app-level query
+                results_list_view = app.query_one("#chat-character-search-results-list", ListView)
         highlighted_widget = results_list_view.highlighted_child
 
         # --- Type checking and attribute access fix for highlighted_item ---
@@ -3560,7 +3587,18 @@ async def handle_chat_view_selected_prompt_button_pressed(app: 'TldwCli', event:
 
 async def _populate_chat_character_search_list(app: 'TldwCli', search_term: Optional[str] = None) -> None:
     try:
-        results_list_view = app.query_one("#chat-character-search-results-list", ListView)
+        # Try to find the ListView in the current screen/chat window context
+        try:
+            # First try the screen
+            results_list_view = app.screen.query_one("#chat-character-search-results-list", ListView)
+        except QueryError:
+            # If not found in screen, try the chat window
+            try:
+                chat_window = app.screen.query_one("#chat-window")
+                results_list_view = chat_window.query_one("#chat-character-search-results-list", ListView)
+            except QueryError:
+                # Last resort: try app-level query
+                results_list_view = app.query_one("#chat-character-search-results-list", ListView)
         await results_list_view.clear()
 
         if not app.notes_service:
