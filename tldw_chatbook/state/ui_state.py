@@ -33,6 +33,11 @@ class UIState:
         "notes_left": 25,
     })
     
+    # Collapsible states - track which sections are collapsed
+    collapsible_states: Dict[str, bool] = field(default_factory=dict)
+    last_active_section: Optional[str] = None
+    sidebar_search_query: str = ""
+    
     # Modals and dialogs
     modal_open: bool = False
     current_modal: Optional[str] = None
@@ -96,3 +101,34 @@ class UIState:
         """Set the UI theme."""
         self.theme = theme
         self.dark_mode = theme in ["dark", "monokai", "dracula"]
+    
+    def toggle_collapsible(self, collapsible_id: str) -> bool:
+        """Toggle a collapsible's state."""
+        current = self.collapsible_states.get(collapsible_id, True)  # Default to collapsed
+        self.collapsible_states[collapsible_id] = not current
+        self.last_active_section = collapsible_id
+        return self.collapsible_states[collapsible_id]
+    
+    def set_collapsible_state(self, collapsible_id: str, collapsed: bool) -> None:
+        """Set a collapsible's state explicitly."""
+        self.collapsible_states[collapsible_id] = collapsed
+        if not collapsed:
+            self.last_active_section = collapsible_id
+    
+    def get_collapsible_state(self, collapsible_id: str, default: bool = True) -> bool:
+        """Get a collapsible's state."""
+        return self.collapsible_states.get(collapsible_id, default)
+    
+    def collapse_all(self, except_priority: bool = True) -> None:
+        """Collapse all collapsibles, optionally keeping priority ones open."""
+        for coll_id in list(self.collapsible_states.keys()):
+            # Keep priority sections open if requested
+            # Don't change priority sections when except_priority is True
+            if except_priority and "priority-high" in coll_id:
+                continue
+            self.collapsible_states[coll_id] = True
+    
+    def expand_all(self) -> None:
+        """Expand all collapsibles."""
+        for coll_id in self.collapsible_states.keys():
+            self.collapsible_states[coll_id] = False

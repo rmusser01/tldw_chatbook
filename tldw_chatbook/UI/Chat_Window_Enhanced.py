@@ -16,7 +16,7 @@ from textual.worker import Worker, get_current_worker, WorkerCancelled
 from textual.css.query import NoMatches
 #
 # Local Imports
-from ..Widgets.settings_sidebar import create_settings_sidebar
+from ..Widgets.enhanced_settings_sidebar import EnhancedSettingsSidebar
 # Right sidebar removed - functionality moved to settings_sidebar
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
@@ -652,8 +652,12 @@ class ChatWindowEnhanced(Container):
         """
         logger.debug("Composing ChatWindowEnhanced UI")
         
-        # Settings Sidebar (Left)
-        yield from create_settings_sidebar(TAB_CHAT, self.app_instance.app_config)
+        # Settings Sidebar (Left) - Using Enhanced Tabbed Version
+        yield EnhancedSettingsSidebar(
+            id_prefix=TAB_CHAT,
+            config=self.app_instance.app_config,
+            id=f"{TAB_CHAT}-enhanced-sidebar"
+        )
 
         # Left sidebar toggle button
         yield Button(

@@ -3,16 +3,21 @@
 from typing import TYPE_CHECKING, Dict, Any, Optional
 from datetime import datetime
 from loguru import logger
+import toml
+from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.widgets import Button, TextArea, Select
+from textual.widgets import Button, TextArea, Select, Collapsible
 from textual.events import Key
 from textual import on
+from textual.reactive import reactive
+from textual.css.query import QueryError
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData
 from ...Utils.chat_diagnostics import ChatDiagnostics
+from ...state.ui_state import UIState
 
 # Import the existing chat window to reuse its functionality
 from ..Chat_Window_Enhanced import ChatWindowEnhanced
@@ -74,12 +79,17 @@ class ChatScreen(BaseAppScreen):
             logger.error(f"Error updating model dropdown: {e}", exc_info=True)
     
     
+    # Reactive property for sidebar state persistence
+    sidebar_state = reactive({}, layout=False)
+    
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(app_instance, "chat", **kwargs)
         self.chat_window: Optional[ChatWindowEnhanced] = None
         self.chat_state = ChatScreenState()
         self._state_dirty = False
         self._diagnostics_run = False
+        self.ui_state = UIState()
+        self._load_sidebar_state()
         
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
@@ -96,6 +106,9 @@ class ChatScreen(BaseAppScreen):
             self._diagnostics_run = True
             # Run diagnostic in the background
             self.set_timer(0.5, self._run_diagnostic)
+        
+        # Restore collapsible states after mount
+        self.set_timer(0.1, self._restore_collapsible_states)
     
     def save_state(self) -> Dict[str, Any]:
         """
@@ -974,6 +987,167 @@ class ChatScreen(BaseAppScreen):
                     logger.info(f"Input ID: {inp.id}, Value: {getattr(inp, 'value', 'N/A')}")
             
             logger.info("=========================")
-            
         except Exception as e:
             logger.debug(f"Error logging sidebar widgets: {e}")
+    
+    def watch_sidebar_state(self, new_state: dict) -> None:
+        """Auto-save when sidebar state changes."""
+        self._save_sidebar_state()
+    
+    def _load_sidebar_state(self) -> None:
+        """Load sidebar state from config file."""
+        config_path = Path.home() / ".config" / "tldw_cli" / "ui_state.toml"
+        
+        try:
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    data = toml.load(f)
+                    sidebar_data = data.get("sidebar", {})
+                    
+                    # Load collapsible states into UIState
+                    self.ui_state.collapsible_states = sidebar_data.get("collapsible_states", {})
+                    self.ui_state.sidebar_search_query = sidebar_data.get("search_query", "")
+                    self.ui_state.last_active_section = sidebar_data.get("last_active_section", None)
+                    
+                    # Update reactive property
+                    self.sidebar_state = dict(self.ui_state.collapsible_states)
+                    
+                    logger.debug(f"Loaded sidebar state with {len(self.ui_state.collapsible_states)} collapsibles")
+        except Exception as e:
+            logger.error(f"Failed to load sidebar state: {e}")
+            self.sidebar_state = {}
+    
+    def _save_sidebar_state(self) -> None:
+        """Save sidebar state to config file."""
+        config_path = Path.home() / ".config" / "tldw_cli" / "ui_state.toml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Load existing config or create new
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    data = toml.load(f)
+            else:
+                data = {}
+            
+            # Update sidebar section
+            data["sidebar"] = {
+                "collapsible_states": dict(self.ui_state.collapsible_states),
+                "search_query": self.ui_state.sidebar_search_query,
+                "last_active_section": self.ui_state.last_active_section
+            }
+            
+            # Save back to file
+            with open(config_path, 'w') as f:
+                toml.dump(data, f)
+                
+            logger.debug(f"Saved sidebar state with {len(self.ui_state.collapsible_states)} collapsibles")
+        except Exception as e:
+            logger.error(f"Failed to save sidebar state: {e}")
+    
+    def _restore_collapsible_states(self) -> None:
+        """Restore collapsible states from saved state."""
+        if not self.ui_state.collapsible_states:
+            logger.debug("No collapsible states to restore")
+            return
+            
+        try:
+            # Find all collapsibles in the sidebar
+            collapsibles = self.query(Collapsible)
+            restored_count = 0
+            
+            for collapsible in collapsibles:
+                if collapsible.id and collapsible.id in self.ui_state.collapsible_states:
+                    collapsed_state = self.ui_state.collapsible_states[collapsible.id]
+                    collapsible.collapsed = collapsed_state
+                    restored_count += 1
+                    logger.debug(f"Restored {collapsible.id}: collapsed={collapsed_state}")
+            
+            logger.info(f"Restored {restored_count} collapsible states")
+        except Exception as e:
+            logger.error(f"Error restoring collapsible states: {e}")
+    
+    @on(Collapsible.Toggled)
+    def handle_collapsible_toggle(self, event: Collapsible.Toggled) -> None:
+        """Save collapsible state when toggled."""
+        try:
+            collapsible_id = event.collapsible.id
+            if collapsible_id:
+                # Update UIState
+                self.ui_state.set_collapsible_state(collapsible_id, event.collapsible.collapsed)
+                
+                # Update reactive property to trigger watcher
+                new_state = dict(self.ui_state.collapsible_states)
+                self.sidebar_state = new_state
+                
+                logger.debug(f"Toggled {collapsible_id}: collapsed={event.collapsible.collapsed}")
+        except Exception as e:
+            logger.error(f"Error handling collapsible toggle: {e}")
+    
+    @on(Button.Pressed, "#chat-expand-all")
+    def handle_expand_all(self, event: Button.Pressed) -> None:
+        """Expand all collapsible sections."""
+        try:
+            collapsibles = self.query(Collapsible)
+            expanded_count = 0
+            
+            for collapsible in collapsibles:
+                if collapsible.collapsed:
+                    collapsible.collapsed = False
+                    expanded_count += 1
+                    if collapsible.id:
+                        self.ui_state.set_collapsible_state(collapsible.id, False)
+            
+            # Update reactive property
+            self.sidebar_state = dict(self.ui_state.collapsible_states)
+            
+            logger.info(f"Expanded {expanded_count} sections")
+            self.notify(f"Expanded {expanded_count} sections", severity="information")
+        except Exception as e:
+            logger.error(f"Error expanding all sections: {e}")
+    
+    @on(Button.Pressed, "#chat-collapse-all")
+    def handle_collapse_all(self, event: Button.Pressed) -> None:
+        """Collapse all non-priority collapsible sections."""
+        try:
+            collapsibles = self.query(Collapsible)
+            collapsed_count = 0
+            
+            for collapsible in collapsibles:
+                # Keep priority sections open
+                if "priority-high" not in collapsible.classes and not collapsible.collapsed:
+                    collapsible.collapsed = True
+                    collapsed_count += 1
+                    if collapsible.id:
+                        self.ui_state.set_collapsible_state(collapsible.id, True)
+            
+            # Update reactive property
+            self.sidebar_state = dict(self.ui_state.collapsible_states)
+            
+            logger.info(f"Collapsed {collapsed_count} non-essential sections")
+            self.notify(f"Collapsed {collapsed_count} sections", severity="information")
+        except Exception as e:
+            logger.error(f"Error collapsing sections: {e}")
+    
+    @on(Button.Pressed, "#chat-reset-settings")
+    def handle_reset_settings(self, event: Button.Pressed) -> None:
+        """Reset settings to defaults."""
+        try:
+            # Clear all saved collapsible states
+            self.ui_state.collapsible_states.clear()
+            self.sidebar_state = {}
+            
+            # Reset collapsibles to default states
+            collapsibles = self.query(Collapsible)
+            for collapsible in collapsibles:
+                # Default state: priority sections open, others closed
+                if "priority-high" in collapsible.classes:
+                    collapsible.collapsed = False
+                else:
+                    collapsible.collapsed = True
+            
+            self._save_sidebar_state()
+            logger.info("Reset sidebar to default state")
+            self.notify("Settings reset to defaults", severity="success")
+        except Exception as e:
+            logger.error(f"Error resetting settings: {e}")

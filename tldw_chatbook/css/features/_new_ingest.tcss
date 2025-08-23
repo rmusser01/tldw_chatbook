@@ -176,7 +176,8 @@
     text-align: center;
     padding: 3;
     margin-bottom: 2;
-    border-radius: 12px;
+    /* border-radius: 12px; - not supported in TCSS */
+    border: round $surface-lighten-1;
     transition: all 0.3s ease;
     position: relative;
     overflow: hidden;
@@ -374,7 +375,8 @@
     text-align: center;
     padding: 1;
     margin-bottom: 1;
-    border-radius: 8px;
+    /* border-radius: 8px; - not supported in TCSS */
+    border: round $surface;
     position: relative;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -654,7 +656,8 @@
     margin-right: 3;
     background: $surface;
     border: solid $primary;
-    border-radius: 20px;
+    /* border-radius: 20px; - not supported in TCSS */
+    border: round $accent;
     padding: 1 2;
     transition: all 0.2s ease;
 }
@@ -724,7 +727,8 @@
     background: linear-gradient(135deg, $primary, $accent);
     color: $surface;
     border: none;
-    border-radius: 8px;
+    /* border-radius: 8px; - not supported in TCSS */
+    border: round $surface;
     transition: all 0.3s ease;
     font-size: 16px;
 }
@@ -979,12 +983,14 @@ RadioButton:focus {
 
 ::-webkit-scrollbar-track {
     background: $surface-lighten-2;
-    border-radius: 3px;
+    /* border-radius: 3px; - not supported in TCSS */
+    border: round $surface;
 }
 
 ::-webkit-scrollbar-thumb {
     background: $primary;
-    border-radius: 3px;
+    /* border-radius: 3px; - not supported in TCSS */
+    border: round $surface;
 }
 
 ::-webkit-scrollbar-thumb:hover {

@@ -72,6 +72,20 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
 
     with VerticalScroll(id=sidebar_id, classes="sidebar"):
         # -------------------------------------------------------------------
+        # Quick Actions Bar at the top
+        # -------------------------------------------------------------------
+        with Horizontal(classes="quick-actions-bar"):
+            yield Button("➕", id=f"{id_prefix}-expand-all", classes="quick-action-btn", tooltip="Expand all sections")
+            yield Button("➖", id=f"{id_prefix}-collapse-all", classes="quick-action-btn", tooltip="Collapse all sections")
+            yield Button("🔄", id=f"{id_prefix}-reset-settings", classes="quick-action-btn", tooltip="Reset to defaults")
+        
+        # Search bar for filtering settings
+        yield Input(
+            placeholder="🔍 Search settings...",
+            id=f"{id_prefix}-settings-search",
+            classes="sidebar-search-input"
+        )
+        # -------------------------------------------------------------------
         # Retrieve defaults / provider information
         # -------------------------------------------------------------------
         defaults = config.get(f"{id_prefix}_defaults", config.get("chat_defaults", {}))
@@ -100,12 +114,16 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
         yield Static("Chat Settings", classes="sidebar-title")
 
         # -------------------------------------------------------------------
-        # Quick Settings (Always visible)
+        # ESSENTIAL GROUP - Always visible, priority high
         # -------------------------------------------------------------------
-        with Collapsible(title="Quick Settings", collapsed=False, id=f"{id_prefix}-quick-settings", classes="settings-collapsible basic-mode advanced-mode"):
-            yield Static("Provider & Model", classes="sidebar-label")
-            provider_options = [(provider, provider) for provider in available_providers]
-            yield Select(
+        with Container(classes="settings-group primary-group"):
+            yield Static("ESSENTIAL", classes="group-header")
+            
+            # Quick Settings (Always visible)
+            with Collapsible(title="🎯 Quick Settings", collapsed=False, id=f"{id_prefix}-quick-settings", classes="settings-collapsible priority-high basic-mode advanced-mode"):
+                yield Static("Provider & Model", classes="sidebar-label")
+                provider_options = [(provider, provider) for provider in available_providers]
+                yield Select(
                 options=provider_options,
                 prompt="Select Provider…",
                 allow_blank=False,
@@ -116,7 +134,7 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             initial_models = providers_models.get(default_provider, [])
             model_options = [(model, model) for model in initial_models]
             current_model_value = (
-                default_model if default_model in initial_models else (initial_models[0] if initial_models else None)
+                default_model if default_model in initial_models else (initial_models[0] if initial_models else Select.BLANK)
             )
             yield Select(
                 options=model_options,
@@ -193,12 +211,10 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 tooltip="Enable advanced settings and options"
             )
 
-        # -------------------------------------------------------------------
-        # Current Chat Details (from right sidebar)
-        # -------------------------------------------------------------------
-        with Collapsible(title="Current Chat Details", collapsed=False, id=f"{id_prefix}-chat-details-collapsible", classes="settings-collapsible basic-mode advanced-mode"):
-            # "New Chat" Buttons
-            yield Button(
+            # Current Chat Details - also in essential group
+            with Collapsible(title="💬 Current Chat", collapsed=False, id=f"{id_prefix}-chat-details-collapsible", classes="settings-collapsible priority-high basic-mode advanced-mode"):
+                # "New Chat" Buttons
+                yield Button(
                 "New Temp Chat",
                 id=f"{id_prefix}-new-temp-chat-button",
                 classes="sidebar-button",
@@ -275,23 +291,27 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             )
 
         # -------------------------------------------------------------------
-        # Image Generation (only for chat tab)
+        # FEATURES GROUP - Secondary importance
         # -------------------------------------------------------------------
-        if id_prefix == "chat":
-            with Collapsible(title="🎨 Image Generation", collapsed=True, id=f"{id_prefix}-image-generation-collapsible", classes="settings-collapsible basic-mode advanced-mode"):
-                yield SwarmUIWidget(id=f"{id_prefix}-swarmui-widget")
+        yield Static(classes="sidebar-section-divider")
+        
+        with Container(classes="settings-group secondary-group"):
+            yield Static("FEATURES", classes="group-header")
+            
+            # Image Generation (only for chat tab)
+            if id_prefix == "chat":
+                with Collapsible(title="🎨 Image Generation", collapsed=True, id=f"{id_prefix}-image-generation-collapsible", classes="settings-collapsible basic-mode advanced-mode"):
+                    yield SwarmUIWidget(id=f"{id_prefix}-swarmui-widget")
 
-        # -------------------------------------------------------------------
-        # RAG Settings (Prominent Panel - Always visible)
-        # -------------------------------------------------------------------
-        with Collapsible(title="🔍 RAG Settings", collapsed=True, id=f"{id_prefix}-rag-panel", classes="settings-collapsible rag-settings-panel basic-mode advanced-mode"):
-            # Main RAG toggle
-            yield Checkbox(
-                "Enable RAG",
-                id=f"{id_prefix}-rag-enable-checkbox",
-                value=False,
-                classes="rag-enable-toggle"
-            )
+            # RAG Settings (Prominent Panel)
+            with Collapsible(title="🔍 RAG Settings", collapsed=True, id=f"{id_prefix}-rag-panel", classes="settings-collapsible rag-settings-panel basic-mode advanced-mode"):
+                # Main RAG toggle
+                yield Checkbox(
+                    "Enable RAG",
+                    id=f"{id_prefix}-rag-enable-checkbox",
+                    value=False,
+                    classes="rag-enable-toggle"
+                )
             
             # RAG preset selection
             yield Static("RAG Preset", classes="sidebar-label")
@@ -687,11 +707,17 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 )
 
         # -------------------------------------------------------------------
-        # Advanced Model Parameters (Hidden in Basic Mode)
+        # ADVANCED GROUP - Hidden by default, technical settings
         # -------------------------------------------------------------------
-        with Collapsible(title="Model Parameters", collapsed=True, id=f"{id_prefix}-model-params", classes="settings-collapsible advanced-mode advanced-only"):
-            yield Static("Top P", classes="sidebar-label")
-            yield Input(
+        yield Static(classes="sidebar-section-divider")
+        
+        with Container(classes="settings-group advanced-group"):
+            yield Static("ADVANCED", classes="group-header")
+            
+            # Model Parameters
+            with Collapsible(title="⚙️ Model Parameters", collapsed=True, id=f"{id_prefix}-model-params", classes="settings-collapsible advanced-mode advanced-only"):
+                yield Static("Top P", classes="sidebar-label")
+                yield Input(
                 placeholder="e.g., 0.95",
                 id=f"{id_prefix}-top-p",
                 value=default_top_p,
