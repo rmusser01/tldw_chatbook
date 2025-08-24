@@ -157,8 +157,9 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         try:
             container_for_error = chat_container if 'chat_container' in locals() and chat_container.is_mounted else app.query_one(
                 f"#{prefix}-log", VerticalScroll) # Re-query if initial one failed
+            error_text = f"**Internal Error:**\nMissing UI elements for {prefix}."
             await container_for_error.mount(
-                ChatMessage(Text.from_markup(f"[bold red]Internal Error:[/]\nMissing UI elements for {prefix}."), role="System", classes="-error"))
+                ChatMessage(error_text, role="System", classes="-error"))
         except QueryError:
             loguru_logger.error(f"Send Button: Critical - could not even find chat container #{prefix}-log to display error.")
         return

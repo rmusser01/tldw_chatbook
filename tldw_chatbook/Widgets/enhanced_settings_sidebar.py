@@ -233,13 +233,11 @@ class EnhancedSettingsSidebar(Container):
                 
                 # Features Tab  
                 with TabPane("🚀 Features", id=f"{self.id_prefix}-tab-features"):
-                    # Lazy load - content added when tab activated
-                    yield Container(id=f"{self.id_prefix}-features-content")
+                    yield from self._compose_features_content()
                 
                 # Advanced Tab
                 with TabPane("🔧 Advanced", id=f"{self.id_prefix}-tab-advanced"):
-                    # Lazy load - content added when tab activated
-                    yield Container(id=f"{self.id_prefix}-advanced-content")
+                    yield from self._compose_advanced_content()
                 
                 # Search Tab (hidden by default, shown when searching)
                 with TabPane("🔍 Search Results", id=f"{self.id_prefix}-tab-search"):
@@ -427,19 +425,10 @@ class EnhancedSettingsSidebar(Container):
     
     @on(TabbedContent.TabActivated)
     async def handle_tab_activated(self, event: TabbedContent.TabActivated) -> None:
-        """Lazy load tab content when activated."""
+        """Handle tab activation (no longer needed for lazy loading)."""
         tab_id = event.tab.id
         self.logger.debug(f"Tab activated: {tab_id}")
-        
-        # Check if tab needs loading
-        if tab_id not in self.loaded_tabs:
-            if "features" in tab_id:
-                await self._load_features_tab()
-            elif "advanced" in tab_id:
-                await self._load_advanced_tab()
-            
-            self.loaded_tabs.add(tab_id)
-            self.logger.debug(f"Loaded tabs: {self.loaded_tabs}")
+        # All tabs are now loaded immediately, so no lazy loading needed
     
     @on(Input.Changed)
     def handle_search(self, event: Input.Changed) -> None:
@@ -683,12 +672,12 @@ class EnhancedSettingsSidebar(Container):
     
     async def _mount_advanced_widgets(self, container) -> None:
         """Mount advanced tab widgets to container."""
-        from textual.widgets import Collapsible, Label, Input
+        from textual.widgets import Collapsible, Label, Input, Select, Checkbox, TextArea
         
         defaults = self.config.get(f"{self.id_prefix}_defaults", 
                                   self.config.get("chat_defaults", {}))
         
-        # Model Parameters
+        # Model Parameters Section
         model_params = Collapsible(
             title="⚙️ Model Parameters",
             collapsed=True,
@@ -697,7 +686,7 @@ class EnhancedSettingsSidebar(Container):
         )
         await container.mount(model_params)
         
-        # Add parameter inputs
+        # Top-p
         await model_params.mount(Label("Top P", classes="setting-label"))
         await model_params.mount(Input(
             placeholder="e.g., 0.95",
@@ -706,6 +695,7 @@ class EnhancedSettingsSidebar(Container):
             classes="setting-input"
         ))
         
+        # Min-p
         await model_params.mount(Label("Min P", classes="setting-label"))
         await model_params.mount(Input(
             placeholder="e.g., 0.05",
@@ -714,7 +704,34 @@ class EnhancedSettingsSidebar(Container):
             classes="setting-input"
         ))
         
-        # Advanced Settings
+        # Top-k
+        await model_params.mount(Label("Top K", classes="setting-label"))
+        await model_params.mount(Input(
+            placeholder="e.g., 50",
+            id=f"{self.id_prefix}-top-k",
+            value=str(defaults.get("top_k", 50)),
+            classes="setting-input"
+        ))
+        
+        # Max tokens
+        await model_params.mount(Label("Max Tokens", classes="setting-label"))
+        await model_params.mount(Input(
+            placeholder="e.g., 2048",
+            id=f"{self.id_prefix}-llm-max-tokens",
+            value="2048",
+            classes="setting-input"
+        ))
+        
+        # Seed
+        await model_params.mount(Label("Seed", classes="setting-label"))
+        await model_params.mount(Input(
+            placeholder="e.g., 42",
+            id=f"{self.id_prefix}-llm-seed",
+            value="",
+            classes="setting-input"
+        ))
+        
+        # Advanced Settings Section
         advanced_settings = Collapsible(
             title="🔧 Advanced Settings",
             collapsed=True,
@@ -723,23 +740,119 @@ class EnhancedSettingsSidebar(Container):
         )
         await container.mount(advanced_settings)
         
-        await advanced_settings.mount(Label("Custom Token Limit", classes="setting-label"))
+        # Stop sequences
+        await advanced_settings.mount(Label("Stop Sequences", classes="setting-label"))
         await advanced_settings.mount(Input(
-            placeholder="0 = use Max Tokens",
-            id=f"{self.id_prefix}-custom-token-limit",
-            value="12888",
+            placeholder="e.g., <|endoftext|>,<|eot_id|>",
+            id=f"{self.id_prefix}-llm-stop",
+            value="",
             classes="setting-input"
         ))
         
-        # Tools & Templates
+        # Response format
+        await advanced_settings.mount(Label("Response Format", classes="setting-label"))
+        response_format_select = Select(
+            options=[("auto", "auto"), ("json", "json"), ("text", "text")],
+            id=f"{self.id_prefix}-llm-response-format",
+            classes="setting-input",
+            value="auto"
+        )
+        await advanced_settings.mount(response_format_select)
+        
+        # Number of responses
+        await advanced_settings.mount(Label("Number of Responses", classes="setting-label"))
+        await advanced_settings.mount(Input(
+            placeholder="1",
+            id=f"{self.id_prefix}-llm-n",
+            value="1",
+            classes="setting-input"
+        ))
+        
+        # User identifier
+        await advanced_settings.mount(Label("User Identifier", classes="setting-label"))
+        await advanced_settings.mount(Input(
+            placeholder="user_123",
+            id=f"{self.id_prefix}-llm-user-identifier",
+            value="",
+            classes="setting-input"
+        ))
+        
+        # Logprobs
+        await advanced_settings.mount(Checkbox(
+            "Enable Logprobs",
+            id=f"{self.id_prefix}-llm-logprobs",
+            value=False,
+            classes="setting-checkbox"
+        ))
+        
+        # Top logprobs
+        await advanced_settings.mount(Label("Top Logprobs", classes="setting-label"))
+        await advanced_settings.mount(Input(
+            placeholder="5",
+            id=f"{self.id_prefix}-llm-top-logprobs",
+            value="",
+            classes="setting-input"
+        ))
+        
+        # Logit bias
+        await advanced_settings.mount(Label("Logit Bias", classes="setting-label"))
+        await advanced_settings.mount(TextArea(
+            placeholder="{}",
+            id=f"{self.id_prefix}-llm-logit-bias",
+            classes="setting-textarea"
+        ))
+        
+        # Presence penalty
+        await advanced_settings.mount(Label("Presence Penalty", classes="setting-label"))
+        await advanced_settings.mount(Input(
+            placeholder="e.g., 0.0 to 2.0",
+            id=f"{self.id_prefix}-llm-presence-penalty",
+            value="0.0",
+            classes="setting-input"
+        ))
+        
+        # Frequency penalty
+        await advanced_settings.mount(Label("Frequency Penalty", classes="setting-label"))
+        await advanced_settings.mount(Input(
+            placeholder="e.g., 0.0 to 2.0",
+            id=f"{self.id_prefix}-llm-frequency-penalty",
+            value="0.0",
+            classes="setting-input"
+        ))
+        
+        # Tools Section
         tools_section = Collapsible(
-            title="🛠️ Tools & Templates",
+            title="🛠️ Tools & Function Calling",
             collapsed=True,
             id=f"{self.id_prefix}-tools",
             classes="setting-group setting-group-advanced"
         )
         await container.mount(tools_section)
-        await tools_section.mount(Label("Tools and templates configuration", classes="setting-label"))
+        
+        # Tools configuration
+        await tools_section.mount(Label("Tools Configuration", classes="setting-label"))
+        await tools_section.mount(TextArea(
+            placeholder="[]",
+            id=f"{self.id_prefix}-llm-tools",
+            classes="setting-textarea"
+        ))
+        
+        # Tool choice
+        await tools_section.mount(Label("Tool Choice", classes="setting-label"))
+        await tools_section.mount(Input(
+            placeholder="auto",
+            id=f"{self.id_prefix}-llm-tool-choice",
+            value="auto",
+            classes="setting-input"
+        ))
+        
+        # Fixed tokens (Kobold-specific)
+        await tools_section.mount(Checkbox(
+            "Fixed Tokens (Kobold)",
+            id=f"{self.id_prefix}-llm-fixed-tokens-kobold",
+            value=False,
+            classes="setting-checkbox"
+        ))
     
     def _compose_advanced_content(self) -> ComposeResult:
         """Compose advanced tab content."""
@@ -748,17 +861,176 @@ class EnhancedSettingsSidebar(Container):
             defaults = self.config.get(f"{self.id_prefix}_defaults", 
                                       self.config.get("chat_defaults", {}))
             
-            # Model Parameters
-            self.logger.debug("Composing model parameters section")
-            yield from self._compose_model_parameters_section(defaults)
+            # Model Parameters Section
+            with Collapsible(
+                title="⚙️ Model Parameters",
+                collapsed=True,
+                id=f"{self.id_prefix}-model-params",
+                classes="setting-group setting-group-advanced"
+            ):
+                # Top-p
+                yield Label("Top P", classes="setting-label")
+                yield Input(
+                    placeholder="e.g., 0.95",
+                    id=f"{self.id_prefix}-top-p",
+                    value=str(defaults.get("top_p", 0.95)),
+                    classes="setting-input"
+                )
+                
+                # Min-p
+                yield Label("Min P", classes="setting-label")
+                yield Input(
+                    placeholder="e.g., 0.05",
+                    id=f"{self.id_prefix}-min-p",
+                    value=str(defaults.get("min_p", 0.05)),
+                    classes="setting-input"
+                )
+                
+                # Top-k
+                yield Label("Top K", classes="setting-label")
+                yield Input(
+                    placeholder="e.g., 50",
+                    id=f"{self.id_prefix}-top-k",
+                    value=str(defaults.get("top_k", 50)),
+                    classes="setting-input"
+                )
+                
+                # Max tokens
+                yield Label("Max Tokens", classes="setting-label")
+                yield Input(
+                    placeholder="e.g., 2048",
+                    id=f"{self.id_prefix}-llm-max-tokens",
+                    value="2048",
+                    classes="setting-input"
+                )
+                
+                # Seed
+                yield Label("Seed", classes="setting-label")
+                yield Input(
+                    placeholder="e.g., 42",
+                    id=f"{self.id_prefix}-llm-seed",
+                    value="0",
+                    classes="setting-input"
+                )
             
-            # Advanced Settings
-            self.logger.debug("Composing advanced settings section")
-            yield from self._compose_advanced_settings_section()
+            # Advanced Settings Section
+            with Collapsible(
+                title="🔧 Advanced Settings",
+                collapsed=True,
+                id=f"{self.id_prefix}-advanced-settings",
+                classes="setting-group setting-group-advanced"
+            ):
+                # Stop sequences
+                yield Label("Stop Sequences", classes="setting-label")
+                yield Input(
+                    placeholder="e.g., <|endoftext|>,<|eot_id|>",
+                    id=f"{self.id_prefix}-llm-stop",
+                    value="",
+                    classes="setting-input"
+                )
+                
+                # Response format
+                yield Label("Response Format", classes="setting-label")
+                yield Select(
+                    options=[("auto", "auto"), ("json", "json"), ("text", "text")],
+                    id=f"{self.id_prefix}-llm-response-format",
+                    classes="setting-input",
+                    value="auto"
+                )
+                
+                # Number of responses
+                yield Label("Number of Responses", classes="setting-label")
+                yield Input(
+                    placeholder="1",
+                    id=f"{self.id_prefix}-llm-n",
+                    value="1",
+                    classes="setting-input"
+                )
+                
+                # User identifier
+                yield Label("User Identifier", classes="setting-label")
+                yield Input(
+                    placeholder="user_123",
+                    id=f"{self.id_prefix}-llm-user-identifier",
+                    value="",
+                    classes="setting-input"
+                )
+                
+                # Logprobs
+                yield Checkbox(
+                    "Enable Logprobs",
+                    id=f"{self.id_prefix}-llm-logprobs",
+                    value=False,
+                    classes="setting-checkbox"
+                )
+                
+                # Top logprobs
+                yield Label("Top Logprobs", classes="setting-label")
+                yield Input(
+                    placeholder="5",
+                    id=f"{self.id_prefix}-llm-top-logprobs",
+                    value="",
+                    classes="setting-input"
+                )
+                
+                # Logit bias
+                yield Label("Logit Bias", classes="setting-label")
+                yield TextArea(
+                    text="{}",
+                    id=f"{self.id_prefix}-llm-logit-bias",
+                    classes="setting-textarea"
+                )
+                
+                # Presence penalty
+                yield Label("Presence Penalty", classes="setting-label")
+                yield Input(
+                    placeholder="e.g., 0.0 to 2.0",
+                    id=f"{self.id_prefix}-llm-presence-penalty",
+                    value="0.0",
+                    classes="setting-input"
+                )
+                
+                # Frequency penalty
+                yield Label("Frequency Penalty", classes="setting-label")
+                yield Input(
+                    placeholder="e.g., 0.0 to 2.0",
+                    id=f"{self.id_prefix}-llm-frequency-penalty",
+                    value="0.0",
+                    classes="setting-input"
+                )
             
-            # Tools & Templates
-            self.logger.debug("Composing tools section")
-            yield from self._compose_tools_section()
+            # Tools Section
+            with Collapsible(
+                title="🛠️ Tools & Function Calling",
+                collapsed=True,
+                id=f"{self.id_prefix}-tools",
+                classes="setting-group setting-group-advanced"
+            ):
+                # Tools configuration
+                yield Label("Tools Configuration", classes="setting-label")
+                yield TextArea(
+                    text="[]",
+                    id=f"{self.id_prefix}-llm-tools",
+                    classes="setting-textarea"
+                )
+                
+                # Tool choice
+                yield Label("Tool Choice", classes="setting-label")
+                yield Input(
+                    placeholder="auto",
+                    id=f"{self.id_prefix}-llm-tool-choice",
+                    value="auto",
+                    classes="setting-input"
+                )
+                
+                # Fixed tokens (Kobold-specific)
+                yield Checkbox(
+                    "Fixed Tokens (Kobold)",
+                    id=f"{self.id_prefix}-llm-fixed-tokens-kobold",
+                    value=False,
+                    classes="setting-checkbox"
+                )
+                
         except Exception as e:
             self.logger.error(f"Error in _compose_advanced_content: {e}", exc_info=True)
             raise
