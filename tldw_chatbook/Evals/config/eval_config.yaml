@@ -1,0 +1,270 @@
+# eval_config.yaml
+# Description: Configuration for the evaluation module
+#
+# This file externalizes hardcoded configurations to make the system more flexible
+
+# Valid task types supported by the evaluation system
+task_types:
+  - question_answer
+  - generation
+  - classification
+  - logprob
+  - code_execution
+  - safety_evaluation
+  - multilingual_evaluation
+  - creative_evaluation
+  - robustness_evaluation
+  - math_reasoning
+  - summarization
+  - dialogue
+
+# Valid metrics per task type
+metrics:
+  question_answer:
+    - exact_match
+    - f1
+    - contains
+    - accuracy
+    - rouge_1
+    - rouge_2
+    - rouge_l
+    - semantic_similarity
+  generation:
+    - bleu
+    - rouge_1
+    - rouge_2
+    - rouge_l
+    - perplexity
+    - coherence
+    - semantic_similarity
+    - creativity_score
+  classification:
+    - accuracy
+    - f1
+    - precision
+    - recall
+    - confusion_matrix
+  logprob:
+    - perplexity
+    - log_likelihood
+    - accuracy
+  code_execution:
+    - pass_rate
+    - syntax_valid
+    - execution_success
+    - test_pass_rate
+  safety_evaluation:
+    - safety_score
+    - toxicity_level
+    - bias_score
+    - harmful_content_detection
+  multilingual_evaluation:
+    - bleu
+    - language_accuracy
+    - translation_quality
+  creative_evaluation:
+    - creativity_score
+    - coherence
+    - originality
+    - style_adherence
+  robustness_evaluation:
+    - adversarial_accuracy
+    - consistency_score
+    - edge_case_handling
+  math_reasoning:
+    - exact_match
+    - numeric_accuracy
+    - step_accuracy
+  summarization:
+    - rouge_1
+    - rouge_2
+    - rouge_l
+    - compression_ratio
+    - factual_consistency
+  dialogue:
+    - coherence
+    - relevance
+    - engagement
+    - context_retention
+
+# Required fields per configuration type
+required_fields:
+  task:
+    - name
+    - task_type
+    - dataset_name
+  model:
+    - provider
+    - model_id
+  run:
+    - task_id
+    - model_id
+  dataset:
+    - input
+    - id
+
+# Optional fields with defaults
+optional_fields:
+  task:
+    metric: f1
+    split: test
+    max_samples: null
+    generation_kwargs:
+      temperature: 0.7
+      max_tokens: 512
+      top_p: 1.0
+  model:
+    api_key: null  # Will use environment variable if not provided
+    temperature: 0.7
+    max_tokens: 512
+    timeout: 120
+  run:
+    max_concurrent: 1
+    save_outputs: true
+    export_format: json
+
+# Provider-specific configurations
+providers:
+  openai:
+    models:
+      - gpt-3.5-turbo
+      - gpt-4
+      - gpt-4-turbo
+    max_tokens: 4096
+    supports_logprobs: true
+    supports_streaming: true
+  anthropic:
+    models:
+      - claude-3-opus
+      - claude-3-sonnet
+      - claude-3-haiku
+    max_tokens: 4096
+    supports_logprobs: false
+    supports_streaming: true
+  google:
+    models:
+      - gemini-pro
+      - gemini-pro-vision
+    max_tokens: 2048
+    supports_logprobs: false
+    supports_streaming: true
+  local:
+    models:
+      - llama-2-7b
+      - mistral-7b
+      - phi-2
+    max_tokens: 2048
+    supports_logprobs: true
+    supports_streaming: false
+
+# Dataset sources
+dataset_sources:
+  huggingface:
+    enabled: true
+    cache_dir: ~/.cache/huggingface
+  local:
+    enabled: true
+    default_path: ./datasets
+  custom:
+    enabled: true
+
+# File format support
+supported_formats:
+  input:
+    - json
+    - csv
+    - tsv
+    - jsonl
+  output:
+    - json
+    - csv
+    - markdown
+    - latex
+    - html
+
+# Validation rules
+validation:
+  max_dataset_size_mb: 1000
+  max_samples_per_run: 10000
+  max_concurrent_runs: 5
+  min_samples_for_statistics: 30
+  confidence_level: 0.95
+
+# Error handling
+error_handling:
+  max_retries: 3
+  retry_delay_seconds: 1.0
+  exponential_backoff: true
+  max_delay_seconds: 60.0
+
+# Budget monitoring
+budget:
+  warning_threshold: 0.8
+  default_limit: 10.0
+  track_by: cost  # or 'tokens'
+
+# Performance settings
+performance:
+  batch_size: 10
+  streaming_chunk_size: 1024
+  cache_results: true
+  cache_ttl_seconds: 3600
+
+# Logging
+logging:
+  level: INFO
+  file: eval.log
+  max_size_mb: 100
+  backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Export settings
+export:
+  default_format: json
+  include_metadata: true
+  include_raw_outputs: false
+  timestamp_format: "%Y%m%d_%H%M%S"
+  output_directory: ./eval_results
+
+# Statistical tests
+statistical_tests:
+  t_test:
+    enabled: true
+    min_samples: 30
+  mann_whitney:
+    enabled: true
+    min_samples: 20
+  chi_square:
+    enabled: true
+    min_samples: 50
+  bootstrap:
+    enabled: true
+    n_iterations: 1000
+
+# Template categories
+template_categories:
+  - reasoning
+  - language
+  - coding
+  - safety
+  - creative
+  - multimodal
+
+# Safety settings
+safety:
+  check_harmful_content: true
+  block_pii: true
+  toxicity_threshold: 0.7
+  bias_detection: true
+  prompt_injection_protection: true
+
+# Feature flags
+features:
+  enable_streaming: true
+  enable_caching: true
+  enable_parallel_processing: true
+  enable_auto_retry: true
+  enable_budget_monitoring: true
+  enable_progress_tracking: true
+  enable_ab_testing: true
+  enable_statistical_analysis: true

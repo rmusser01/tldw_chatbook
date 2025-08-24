@@ -624,6 +624,10 @@ class ToolsSettingsWindow(Container):
                 from tldw_chatbook.config import get_ingest_ui_style
                 current_ui_style = get_ingest_ui_style()
                 
+                # Map "default" to "simplified" for UI display
+                if current_ui_style == "default":
+                    current_ui_style = "simplified"
+                
                 yield Select(
                     options=ui_style_options,
                     value=current_ui_style,
@@ -2424,10 +2428,6 @@ class ToolsSettingsWindow(Container):
                 id="appearance-smooth-scrolling"
             )
             
-            # Splash Screen Gallery
-            yield Static("Splash Screen Customization", classes="form-section-title")
-            yield Static("View and customize splash screen animations in the Splash Screen Gallery section", classes="section-description")
-            
             # Color Customization
             yield Static("Color Customization", classes="form-section-title")
             
@@ -2617,13 +2617,15 @@ class ToolsSettingsWindow(Container):
 
     def _compose_splash_gallery(self) -> ComposeResult:
         """Compose the Splash Screen Gallery section."""
-        from ..Widgets.splash_screen_viewer import SplashScreenViewer
-        
         yield Static("🎨 Splash Screen Gallery", classes="section-title")
         yield Static("Browse and preview all available splash screen animations", classes="section-description")
         
-        # Include the splash screen viewer directly
-        yield SplashScreenViewer(classes="embedded-splash-viewer")
+        # Create a placeholder container that will be populated when actually viewed
+        yield Container(
+            Static("Loading splash screen gallery...", classes="loading-placeholder"),
+            id="splash-viewer-container",
+            classes="embedded-splash-viewer"
+        )
     
     def _compose_about(self) -> ComposeResult:
         """Compose the About section."""
@@ -2675,8 +2677,6 @@ Thank you for using tldw-chatbook! 🎉
             yield Button("Configuration File Settings", id="ts-nav-config-file-settings", classes="ts-nav-button")
             yield Button("Database Tools", id="ts-nav-db-tools", classes="ts-nav-button")
             yield Button("Appearance", id="ts-nav-appearance", classes="ts-nav-button")
-            yield Button("Theme Editor", id="ts-nav-theme-editor", classes="ts-nav-button")
-            yield Button("Splash Screen Gallery", id="ts-nav-splash-gallery", classes="ts-nav-button")
             yield Button("Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button")
             yield Button("About", id="ts-nav-about", classes="ts-nav-button")
 
@@ -2702,18 +2702,8 @@ Thank you for using tldw-chatbook! 🎉
                 classes="ts-view-area",
             )
             yield Container(
-                *self._compose_theme_editor(),
-                id="ts-view-theme-editor",
-                classes="ts-view-area",
-            )
-            yield Container(
                 *self._compose_tool_settings(),
                 id="ts-view-tool-settings",
-                classes="ts-view-area",
-            )
-            yield Container(
-                *self._compose_splash_gallery(),
-                id="ts-view-splash-gallery",
                 classes="ts-view-area",
             )
             yield Container(
@@ -2744,10 +2734,6 @@ Thank you for using tldw-chatbook! 🎉
             await self._show_view("ts-view-db-tools")
         elif button_id == "ts-nav-appearance":
             await self._show_view("ts-view-appearance")
-        elif button_id == "ts-nav-theme-editor":
-            await self._show_view("ts-view-theme-editor")
-        elif button_id == "ts-nav-splash-gallery":
-            await self._show_view("ts-view-splash-gallery")
         elif button_id == "ts-nav-tool-settings":
             await self._show_view("ts-view-tool-settings")
         elif button_id == "ts-nav-about":
@@ -3007,8 +2993,20 @@ Thank you for using tldw-chatbook! 🎉
             
             # Media Ingestion UI Style
             ingest_ui_style = self.query_one("#general-ingest-ui-style", Select).value
+            old_ui_style = self.config_data.get("media_ingestion", {}).get("ui_style", "simplified")
             if save_setting_to_cli_config("media_ingestion", "ui_style", ingest_ui_style):
                 saved_count += 1
+                # If the UI style changed, refresh the IngestWindow if it exists
+                if ingest_ui_style != old_ui_style:
+                    try:
+                        from ..UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as IngestWindow
+                        ingest_window = self.app_instance.query_one("#ingest-window", IngestWindow)
+                        await ingest_window.refresh_ui_style()
+                        logger.info(f"Refreshed IngestWindow UI style from {old_ui_style} to {ingest_ui_style}")
+                    except QueryError:
+                        # Window doesn't exist yet, will use new style when created
+                        logger.debug("IngestWindow not found, will use new style when created")
+                        pass
             
             # Log Level
             if save_setting_to_cli_config("general", "log_level", self.query_one("#general-log-level", Select).value):
@@ -4178,6 +4176,32 @@ Thank you for using tldw-chatbook! 🎉
         except Exception as e:
             self.app_instance.notify(f"Error resetting embedding config: {e}", severity="error")
     
+    async def _lazy_load_splash_gallery(self) -> None:
+        """Lazily load the SplashScreenViewer when the gallery tab is first accessed."""
+        try:
+            container = self.query_one("#splash-viewer-container", Container)
+            
+            # Check if already loaded (container will have more than just the loading message)
+            if len(container.children) > 1 or (len(container.children) == 1 and not isinstance(container.children[0], Static)):
+                return  # Already loaded
+            
+            # Clear the loading message
+            container.remove_children()
+            
+            # Now import and create the actual viewer
+            from ..Widgets.splash_screen_viewer import SplashScreenViewer
+            viewer = SplashScreenViewer(classes="embedded-splash-viewer")
+            
+            # Mount the viewer into the container
+            await container.mount(viewer)
+            logger.debug("SplashScreenViewer loaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to load SplashScreenViewer: {e}")
+            # Show error message instead
+            container.remove_children()
+            await container.mount(Static(f"Failed to load splash gallery: {e}", classes="error-message"))
+    
     async def _show_view(self, view_id: str) -> None:
         """Show the specified view and hide all others."""
         # Use ContentSwitcher to switch views
@@ -4198,9 +4222,7 @@ Thank you for using tldw-chatbook! 🎉
             "ts-view-config-file-settings": "ts-nav-config-file-settings",
             "ts-view-db-tools": "ts-nav-db-tools",
             "ts-view-appearance": "ts-nav-appearance",
-            "ts-view-theme-editor": "ts-nav-theme-editor",
             "ts-view-tool-settings": "ts-nav-tool-settings",
-            "ts-view-splash-gallery": "ts-nav-splash-gallery",
             "ts-view-about": "ts-nav-about"
         }
         

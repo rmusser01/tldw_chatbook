@@ -227,3 +227,118 @@ SAMPLE_NOTE = {
     "tags": ["test", "sample"],
     "created_at": "2024-01-01T00:00:00"
 }
+
+
+# Notes-specific fixtures
+
+@pytest.fixture
+def mock_notes_service():
+    """Create a mock notes service with common methods."""
+    from unittest.mock import Mock
+    
+    service = Mock()
+    
+    # Setup default return values
+    service.list_notes = Mock(return_value=[
+        {
+            'id': 1,
+            'title': 'Note 1',
+            'content': 'Content 1',
+            'version': 1,
+            'created_at': '2024-01-01T00:00:00',
+            'updated_at': '2024-01-01T00:00:00',
+            'keywords': ''
+        },
+        {
+            'id': 2,
+            'title': 'Note 2',
+            'content': 'Content 2',
+            'version': 1,
+            'created_at': '2024-01-02T00:00:00',
+            'updated_at': '2024-01-02T00:00:00',
+            'keywords': 'test'
+        }
+    ])
+    
+    service.get_note_by_id = Mock(return_value={
+        'id': 1,
+        'title': 'Test Note',
+        'content': 'Test content for the note',
+        'version': 1,
+        'created_at': '2024-01-01T00:00:00',
+        'updated_at': '2024-01-01T00:00:00'
+    })
+    
+    service.add_note = Mock(return_value=3)  # Returns new note ID
+    service.update_note = Mock(return_value=True)  # Returns success
+    service.delete_note = Mock(return_value=True)  # Returns success
+    
+    return service
+
+
+@pytest.fixture
+def notes_screen_state():
+    """Create a test NotesScreenState."""
+    from tldw_chatbook.UI.Screens.notes_screen import NotesScreenState
+    
+    return NotesScreenState(
+        selected_note_id=1,
+        selected_note_version=1,
+        selected_note_title="Test Note",
+        selected_note_content="Test content",
+        has_unsaved_changes=False,
+        auto_save_enabled=True
+    )
+
+
+@pytest.fixture
+def mock_app_with_notes(mock_notes_service):
+    """Create a mock app instance with notes service."""
+    from unittest.mock import Mock
+    
+    app = Mock()
+    app.notes_service = mock_notes_service
+    app.notify = Mock()
+    app.push_screen = Mock()
+    app.pop_screen = Mock()
+    app.screen_stack = []
+    
+    # Add query methods
+    app.query_one = Mock()
+    app.query = Mock(return_value=[])
+    
+    return app
+
+
+@pytest.fixture
+def sample_notes_data():
+    """Provide sample notes data for tests."""
+    return [
+        {
+            'id': 1,
+            'title': 'Daily Notes',
+            'content': 'Today I learned about Textual testing.',
+            'version': 2,
+            'created_at': '2024-01-15T10:00:00',
+            'updated_at': '2024-01-15T14:30:00',
+            'keywords': 'daily, learning'
+        },
+        {
+            'id': 2,
+            'title': 'Project Ideas',
+            'content': 'Build a better notes app with Textual.',
+            'version': 1,
+            'created_at': '2024-01-14T09:00:00',
+            'updated_at': '2024-01-14T09:00:00',
+            'keywords': 'project, ideas'
+        },
+        {
+            'id': 3,
+            'title': 'Meeting Notes',
+            'content': 'Discussed the new UI refactoring approach.',
+            'version': 3,
+            'created_at': '2024-01-13T15:00:00',
+            'updated_at': '2024-01-15T16:00:00',
+            'keywords': 'meeting, refactoring'
+        }
+    ]

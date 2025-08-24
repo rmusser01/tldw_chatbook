@@ -601,84 +601,582 @@ class MyCommands(Provider):
 
 ## Testing
 
-### Basic Testing
+https://github.com/Textualize/pytest-textual-snapshot
+
+Textual provides a comprehensive testing framework built on pytest and async testing patterns. While testing isn't mandatory, it's strongly recommended to catch bugs early and ensure application reliability.
+
+### Testing Setup
+
+First install the required dependencies:
+```bash
+pip install pytest pytest-asyncio pytest-textual-snapshot
+```
+
+### Core Testing Concepts
+
+#### App Testing with run_test()
+The `run_test()` method creates a test harness that simulates a running Textual app:
+
 ```python
 import pytest
-from textual.testing import AppTest
+from textual.app import App
+from textual.widgets import Button, Label
+
+class CounterApp(App):
+    def __init__(self):
+        super().__init__()
+        self.counter = 0
+    
+    def compose(self):
+        yield Label(f"Count: {self.counter}", id="counter")
+        yield Button("Increment", id="increment")
+    
+    def on_button_pressed(self, event):
+        if event.button.id == "increment":
+            self.counter += 1
+            self.query_one("#counter").update(f"Count: {self.counter}")
 
 @pytest.mark.asyncio
-async def test_app():
-    app = MyApp()
+async def test_counter_app():
+    app = CounterApp()
     async with app.run_test() as pilot:
         # Test initial state
-        assert pilot.app.title == "My App"
+        counter_label = app.query_one("#counter")
+        assert counter_label.renderable == "Count: 0"
         
-        # Simulate key press
-        await pilot.press("q")
+        # Simulate button click
+        await pilot.click("#increment")
         
-        # Check app exited
-        assert pilot.app.return_value == 0
+        # Verify state change
+        assert app.counter == 1
+        assert counter_label.renderable == "Count: 1"
 ```
 
-### Simulating Input
+#### The Pilot Object
+The `pilot` object provides methods to interact with your app during testing:
+
 ```python
-async with app.run_test() as pilot:
-    # Key presses
-    await pilot.press("tab", "enter")
-    await pilot.press("ctrl+s")
-    
-    # Mouse clicks
-    await pilot.click("#button")
-    await pilot.click(10, 20)  # Coordinates
-    
-    # Text input
-    await pilot.press(*"Hello World")
-    
-    # Wait for updates
-    await pilot.pause()
+async def test_pilot_interactions(app):
+    async with app.run_test() as pilot:
+        # Key presses
+        await pilot.press("enter")          # Single key
+        await pilot.press("ctrl+c")         # Key combination
+        await pilot.press("tab", "tab")     # Multiple keys
+        await pilot.press(*"Hello")         # Type text
+        
+        # Mouse interactions
+        await pilot.click("#button-id")     # Click by CSS selector
+        await pilot.click("Button")         # Click by widget type
+        await pilot.click(10, 5)           # Click coordinates
+        await pilot.hover("#widget")        # Hover over widget
+        
+        # Wait for async operations
+        await pilot.pause()                 # Process pending messages
+        await pilot.pause(0.1)             # Wait specific time
+        
+        # Screen size simulation
+        pilot.resize_terminal(120, 40)      # Set terminal size
 ```
 
-### Testing Widgets
+### Advanced Testing Patterns
+
+#### Form Testing
+Test complex forms with multiple inputs and validation:
+
 ```python
-async def test_counter_widget():
-    class TestApp(App):
+@pytest.mark.asyncio
+async def test_media_ingestion_form():
+    from tldw_chatbook.Widgets.Media_Ingest.Ingest_Local_Video_Window import VideoIngestWindowRedesigned
+
+    class FormTestApp(App):
         def compose(self):
-            yield Counter(id="counter")
-    
-    app = TestApp()
+            yield VideoIngestWindowRedesigned(self)
+
+    app = FormTestApp()
     async with app.run_test() as pilot:
-        counter = pilot.app.query_one("#counter")
+        # Test form field inputs
+        await pilot.click("#title-input")
+        await pilot.press(*"Test Video Title")
+
+        # Verify form state
+        title_input = app.query_one("#title-input")
+        assert title_input.value == "Test Video Title"
+
+        # Test validation
+        await pilot.click("#author-input")
+        await pilot.press("a")  # Too short - should trigger validation
+
+        # Check validation error
+        author_input = app.query_one("#author-input")
+        assert "error" in author_input.classes
+```
+
+#### Widget State Testing
+Test reactive properties and state changes:
+
+```python
+@pytest.mark.asyncio
+async def test_reactive_widget():
+    class ReactiveTestApp(App):
+        counter = reactive(0)
         
-        # Test initial state
-        assert counter.count == 0
+        def compose(self):
+            yield Label(f"Value: {self.counter}", id="display")
+            yield Button("Increment", id="inc")
         
-        # Simulate click
-        await pilot.click("#counter")
+        def watch_counter(self, value):
+            self.query_one("#display").update(f"Value: {value}")
         
-        # Verify update
-        assert counter.count == 1
+        def on_button_pressed(self):
+            self.counter += 1
+    
+    app = ReactiveTestApp()
+    async with app.run_test() as pilot:
+        # Test reactive property updates
+        assert app.counter == 0
+        
+        await pilot.click("#inc")
+        await pilot.pause()  # Let reactive system update
+        
+        assert app.counter == 1
+        display = app.query_one("#display")
+        assert "Value: 1" in str(display.renderable)
+```
+
+#### Async Worker Testing
+Test background workers and async operations:
+
+```python
+@pytest.mark.asyncio
+async def test_background_processing():
+    class ProcessingApp(App):
+        def __init__(self):
+            super().__init__()
+            self.result = None
+        
+        def compose(self):
+            yield Button("Start Processing", id="start")
+            yield Label("", id="status")
+        
+        @work(exclusive=True)
+        async def process_data(self):
+            self.query_one("#status").update("Processing...")
+            await asyncio.sleep(0.1)  # Simulate work
+            self.result = "Complete"
+            self.query_one("#status").update("Done!")
+        
+        def on_button_pressed(self):
+            self.process_data()
+    
+    app = ProcessingApp()
+    async with app.run_test() as pilot:
+        await pilot.click("#start")
+        
+        # Wait for worker to complete
+        await pilot.pause(0.2)
+        
+        assert app.result == "Complete"
+        status = app.query_one("#status")
+        assert "Done!" in str(status.renderable)
 ```
 
 ### Snapshot Testing
+
+Visual regression testing with snapshots captures the rendered appearance of your app:
+
 ```python
 # Install: pip install pytest-textual-snapshot
 
-def test_snapshot(snap_compare):
-    assert snap_compare("path/to/app.py", terminal_size=(80, 24))
+def test_app_appearance(snap_compare):
+    """Test that app looks the same as before."""
+    # Snapshot of a Python file that creates an app
+    assert snap_compare("path/to/my_app.py", terminal_size=(80, 24))
+
+def test_app_with_interaction(snap_compare):
+    """Test app appearance after user interaction."""
+    from textual.app import App
+    from textual.widgets import Button
+    
+    class SnapApp(App):
+        def compose(self):
+            yield Button("Click me", id="btn")
+        
+        def on_button_pressed(self):
+            self.query_one("#btn").label = "Clicked!"
+    
+    async def run_before_snapshot(pilot):
+        await pilot.click("#btn")
+    
+    # Snapshot after interaction
+    assert snap_compare(SnapApp(), run_before=run_before_snapshot)
 ```
+
+### Mocking and Stubbing
+
+Mock external dependencies and services:
+
+```python
+from unittest.mock import patch, AsyncMock
+
+@pytest.mark.asyncio
+@patch('tldw_chatbook.Local_Ingestion.transcription_service.TranscriptionService')
+async def test_video_processing(mock_service):
+    # Mock the transcription service
+    mock_service.return_value.get_available_providers.return_value = ["whisper"]
+    mock_service.return_value.get_available_models.return_value = ["base", "large"]
+    
+    app = VideoProcessingApp()
+    async with app.run_test() as pilot:
+        await pilot.click("#transcription-provider")
+        
+        # Verify mocked service was called
+        mock_service.return_value.get_available_providers.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_api_call_mocking():
+    class ApiApp(App):
+        def __init__(self):
+            super().__init__()
+            self.api_result = None
+        
+        async def call_api(self):
+            # Simulate API call
+            import httpx
+            async with httpx.AsyncClient() as client:
+                response = await client.get("https://api.example.com/data")
+                self.api_result = response.json()
+    
+    with patch('httpx.AsyncClient') as mock_client:
+        mock_response = AsyncMock()
+        mock_response.json.return_value = {"data": "test"}
+        mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
+        
+        app = ApiApp()
+        await app.call_api()
+        assert app.api_result == {"data": "test"}
+```
+
+### Testing Best Practices
+
+#### Test Structure
+```python
+# Good: Focused, single-purpose tests
+@pytest.mark.asyncio
+async def test_button_increments_counter():
+    app = CounterApp()
+    async with app.run_test() as pilot:
+        await pilot.click("#increment")
+        assert app.counter == 1
+
+# Good: Clear test names describing behavior
+@pytest.mark.asyncio
+async def test_form_validation_shows_error_for_empty_required_field():
+    # Test implementation...
+    pass
+
+# Good: Test setup with fixtures
+@pytest.fixture
+def sample_app():
+    return MyApp()
+
+@pytest.mark.asyncio
+async def test_with_fixture(sample_app):
+    async with sample_app.run_test() as pilot:
+        # Test using the fixture
+        pass
+```
+
+#### Error Testing
+```python
+@pytest.mark.asyncio
+async def test_error_handling():
+    app = MyApp()
+    async with app.run_test() as pilot:
+        # Test error conditions
+        with pytest.raises(ValueError):
+            await app.invalid_operation()
+        
+        # Test error state in UI
+        error_widget = app.query_one("#error-display")
+        assert "error" in error_widget.classes
+```
+
+#### Testing Different Terminal Sizes
+```python
+@pytest.mark.parametrize("size", [(80, 24), (120, 40), (60, 20)])
+@pytest.mark.asyncio
+async def test_responsive_layout(size):
+    app = ResponsiveApp()
+    async with app.run_test() as pilot:
+        pilot.resize_terminal(*size)
+        await pilot.pause()
+        
+        # Verify layout adapts to size
+        main_container = app.query_one("#main")
+        assert main_container.size.width <= size[0]
+```
+
+### Integration Testing
+
+Test multiple components working together:
+
+```python
+@pytest.mark.asyncio
+async def test_full_ingestion_workflow():
+    """Test complete media ingestion from file selection to processing."""
+    app = TldwCli()
+    async with app.run_test(size=(120, 40)) as pilot:
+        # Navigate to media ingestion
+        await pilot.press("ctrl+i")  # Shortcut to ingestion
+        
+        # Select video ingestion
+        await pilot.click("#video-tab")
+        
+        # Add test file
+        test_file = "test_video.mp4"
+        video_window = app.query_one("VideoIngestWindowRedesigned")
+        video_window.add_files([Path(test_file)])
+        
+        # Configure options
+        await pilot.click("#extract-audio-only")
+        
+        # Start processing
+        await pilot.click("#process-button")
+        
+        # Wait for processing to complete
+        await pilot.pause(1.0)
+        
+        # Verify success
+        status = video_window.processing_status
+        assert status.state == "complete"
+```
+
+### Performance Testing
+
+Test app performance and responsiveness:
+
+```python
+import time
+
+@pytest.mark.asyncio
+async def test_performance_large_dataset():
+    """Test app performance with large amounts of data."""
+    app = DataApp()
+    
+    start_time = time.time()
+    async with app.run_test() as pilot:
+        # Load large dataset
+        large_data = list(range(10000))
+        app.load_data(large_data)
+        
+        await pilot.pause()  # Wait for rendering
+        
+        # Should render within reasonable time
+        render_time = time.time() - start_time
+        assert render_time < 2.0  # Should render in under 2 seconds
+        
+        # UI should remain responsive
+        await pilot.press("j")  # Scroll down
+        await pilot.pause(0.1)
+        
+        # Verify scroll worked
+        scrollview = app.query_one("ScrollView")
+        assert scrollview.scroll_y > 0
+```
+
+### Testing Utilities and Helpers
+
+Create reusable testing utilities:
+
+```python
+# test_helpers.py
+async def wait_for_condition(pilot, condition, timeout=1.0):
+    """Wait for a condition to become true."""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if condition():
+            return True
+        await pilot.pause(0.01)
+    return False
+
+async def fill_form(pilot, form_data):
+    """Helper to fill multiple form fields."""
+    for field_id, value in form_data.items():
+        await pilot.click(f"#{field_id}")
+        # Clear existing content
+        await pilot.press("ctrl+a")
+        # Type new value
+        await pilot.press(*value)
+
+# Usage in tests
+@pytest.mark.asyncio
+async def test_with_helpers(sample_app):
+    async with sample_app.run_test() as pilot:
+        await fill_form(pilot, {
+            "title-input": "Test Title",
+            "author-input": "Test Author"
+        })
+        
+        # Wait for validation to complete
+        await wait_for_condition(
+            pilot,
+            lambda: sample_app.query_one("#submit-button").disabled == False
+        )
+```
+
+Testing in Textual is powerful and flexible, allowing you to verify both the behavior and appearance of your TUI applications. The key is to test user interactions, state changes, and visual consistency while keeping tests focused and maintainable.
 
 ## Built-in Widgets
 
 ### Input Widgets
-- **Button**: Clickable button with various styles
-- **Input**: Single-line text input
-- **TextArea**: Multi-line text editor with syntax highlighting
-- **Checkbox**: Toggle on/off state
-- **RadioButton**: Single selection from group
-- **RadioSet**: Container for radio buttons
-- **Switch**: Toggle switch control
-- **Select**: Dropdown selection
-- **SelectionList**: Multi-select list
+
+#### Button
+```python
+# Basic button
+yield Button("Submit", id="submit", variant="primary")
+
+# Button with custom styling
+yield Button("Cancel", id="cancel", variant="default", classes="cancel-btn")
+
+# Handle button press
+@on(Button.Pressed, "#submit")
+def handle_submit(self):
+    self.process_form()
+```
+
+#### Input (Single-line text)
+```python
+# Basic input
+yield Input(placeholder="Enter your name", id="name")
+
+# Input with validation
+yield Input(
+    value="",
+    placeholder="Email address",
+    id="email",
+    validators=[Email()]  # Custom validator
+)
+
+# Handle input changes
+@on(Input.Changed)
+def handle_input_change(self, event):
+    self.validate_field(event.input.id, event.value)
+
+# CSS for proper visibility
+Input {
+    height: 3;
+    width: 100%;
+    margin-bottom: 1;
+    border: solid $primary;
+}
+
+Input:focus {
+    border: solid $accent;
+}
+```
+
+#### TextArea (Multi-line text)
+```python
+# Basic textarea
+yield TextArea(
+    "Default text",
+    id="description",
+    classes="form-textarea"
+)
+
+# Textarea with language support
+yield TextArea(
+    "",
+    language="python",  # Syntax highlighting
+    id="code-input",
+    soft_wrap=True
+)
+
+# CSS for textareas
+TextArea {
+    min-height: 5;
+    max-height: 15;
+    width: 100%;
+    margin-bottom: 1;
+}
+```
+
+#### Checkbox
+```python
+# Basic checkbox
+yield Checkbox("Enable notifications", value=True, id="notifications")
+
+# Checkbox with custom styling
+yield Checkbox(
+    "I agree to terms",
+    id="terms",
+    classes="required-checkbox"
+)
+
+# Handle checkbox changes
+@on(Checkbox.Changed)
+def handle_checkbox(self, event):
+    if event.checkbox.id == "terms":
+        self.update_submit_button_state()
+```
+
+#### RadioButton and RadioSet
+```python
+# Radio button group
+with RadioSet(id="difficulty"):
+    yield RadioButton("Easy", id="easy", value=True)
+    yield RadioButton("Medium", id="medium")
+    yield RadioButton("Hard", id="hard")
+
+# Handle radio selection
+@on(RadioSet.Changed)
+def handle_radio_change(self, event):
+    selected_value = event.radio_set.pressed_button.id
+    self.update_difficulty(selected_value)
+```
+
+#### Select (Dropdown)
+```python
+# Basic select
+options = [("option1", "Option 1"), ("option2", "Option 2")]
+yield Select(options, id="dropdown", value="option1")
+
+# Dynamic select options
+yield Select([], id="dynamic-select")
+
+# Populate select after mount
+def on_mount(self):
+    select = self.query_one("#dynamic-select")
+    select.set_options([("new1", "New Option 1")])
+
+# Handle selection change
+@on(Select.Changed)
+def handle_selection(self, event):
+    self.process_selection(event.value)
+```
+
+#### Switch
+```python
+# Toggle switch
+yield Switch(value=False, id="dark-mode")
+
+# Handle switch toggle
+@on(Switch.Changed)
+def handle_switch(self, event):
+    self.toggle_theme(event.value)
+```
+
+### Display Widgets
+- **Label**: Simple text display
+- **Static**: Static content with Rich rendering
+- **Markdown**: Render markdown documents
+- **MarkdownViewer**: Interactive markdown viewer
+- **Pretty**: Display Python objects prettily
+- **Log**: Scrolling log display
+- **RichLog**: Rich text log display
+- **DataTable**: Tabular data display
+- **Tree**: Hierarchical tree view
+- **DirectoryTree**: File system tree
 
 ### Display Widgets
 - **Label**: Simple text display
@@ -758,21 +1256,286 @@ class DataView(Widget):
         return Pretty(self.data)
 ```
 
-#### Form Handling
+#### Form Handling with Validation
 ```python
-class Form(Container):
+class FormData(BaseModel):
+    """Pydantic model for form validation."""
+    name: str
+    email: EmailStr
+    age: int = Field(ge=0, le=120)
+
+class AdvancedForm(Container):
+    form_data = reactive({})
+    errors = reactive({})
+    is_valid = reactive(False)
+    
     def compose(self):
-        yield Input(placeholder="Name", id="name")
-        yield Input(placeholder="Email", id="email")
-        yield Button("Submit", id="submit")
+        with Vertical(classes="form-container"):
+            # Form fields
+            yield Label("Name:", classes="form-label")
+            yield Input(placeholder="Enter your name", id="name", classes="form-input")
+            
+            yield Label("Email:", classes="form-label") 
+            yield Input(placeholder="Enter email", id="email", classes="form-input")
+            
+            yield Label("Age:", classes="form-label")
+            yield Input(placeholder="Enter age", id="age", classes="form-input")
+            
+            # Error display
+            yield Static("", id="form-errors", classes="error-display hidden")
+            
+            # Submit button
+            yield Button("Submit", id="submit", disabled=True, classes="submit-button")
+    
+    @on(Input.Changed)
+    def handle_input_change(self, event):
+        """Handle input changes and validate in real-time."""
+        field_id = event.input.id
+        value = event.value
+        
+        # Update form data
+        self.form_data = {**self.form_data, field_id: value}
+        
+        # Validate field
+        self.validate_field(field_id, value)
+        
+        # Update submit button state
+        self.update_submit_state()
+    
+    def validate_field(self, field_id: str, value: str):
+        """Validate individual field."""
+        errors = dict(self.errors)
+        
+        if field_id == "name":
+            if not value.strip():
+                errors[field_id] = "Name is required"
+            elif len(value) < 2:
+                errors[field_id] = "Name must be at least 2 characters"
+            else:
+                errors.pop(field_id, None)
+                
+        elif field_id == "email":
+            if not value:
+                errors[field_id] = "Email is required"
+            elif "@" not in value or "." not in value:
+                errors[field_id] = "Please enter a valid email"
+            else:
+                errors.pop(field_id, None)
+                
+        elif field_id == "age":
+            if not value:
+                errors[field_id] = "Age is required"
+            else:
+                try:
+                    age = int(value)
+                    if age < 0 or age > 120:
+                        errors[field_id] = "Age must be between 0 and 120"
+                    else:
+                        errors.pop(field_id, None)
+                except ValueError:
+                    errors[field_id] = "Age must be a number"
+        
+        self.errors = errors
+        self.display_errors()
+    
+    def display_errors(self):
+        """Display validation errors."""
+        error_widget = self.query_one("#form-errors")
+        
+        if self.errors:
+            error_text = "\n".join(f"• {error}" for error in self.errors.values())
+            error_widget.update(error_text)
+            error_widget.remove_class("hidden")
+            error_widget.add_class("visible")
+        else:
+            error_widget.add_class("hidden")
+            error_widget.remove_class("visible")
+    
+    def update_submit_state(self):
+        """Enable/disable submit button based on validation."""
+        submit_button = self.query_one("#submit")
+        required_fields = {"name", "email", "age"}
+        
+        has_all_fields = all(
+            field in self.form_data and self.form_data[field].strip()
+            for field in required_fields
+        )
+        
+        has_no_errors = not self.errors
+        
+        submit_button.disabled = not (has_all_fields and has_no_errors)
     
     @on(Button.Pressed, "#submit")
     def submit_form(self):
-        name = self.query_one("#name").value
-        email = self.query_one("#email").value
+        """Submit the form."""
+        try:
+            # Final validation with Pydantic
+            validated_data = FormData(**self.form_data)
+            self.post_message(FormSubmitted(validated_data.dict()))
+            
+            # Clear form
+            self.clear_form()
+            
+        except ValidationError as e:
+            # Handle Pydantic validation errors
+            self.handle_validation_errors(e.errors())
+    
+    def clear_form(self):
+        """Clear the form after successful submission."""
+        for field_id in ["name", "email", "age"]:
+            input_widget = self.query_one(f"#{field_id}")
+            input_widget.value = ""
         
-        if self.validate(name, email):
-            self.post_message(FormSubmitted(name, email))
+        self.form_data = {}
+        self.errors = {}
+        self.query_one("#form-errors").add_class("hidden")
+```
+
+#### Progressive Disclosure Form
+```python
+class ProgressiveDisclosureForm(Container):
+    """Form with simple/advanced mode toggle."""
+    
+    advanced_mode = reactive(False)
+    
+    def compose(self):
+        with Vertical(classes="progressive-form"):
+            # Mode toggle
+            with Horizontal(classes="mode-toggle"):
+                yield RadioSet(id="mode-selector"):
+                    yield RadioButton("Simple", value=True, id="simple-mode")
+                    yield RadioButton("Advanced", id="advanced-mode")
+            
+            # Essential fields (always visible)
+            with Container(classes="essential-fields"):
+                yield Label("Essential Information", classes="section-title")
+                yield Label("Title:", classes="form-label")
+                yield Input(id="title", placeholder="Required title")
+                
+                yield Label("Description:", classes="form-label")
+                yield TextArea(id="description", classes="form-textarea")
+            
+            # Advanced fields (collapsible)
+            with Collapsible(
+                "Advanced Options",
+                collapsed=True,
+                id="advanced-options",
+                classes="advanced-section"
+            ):
+                yield Label("Tags:", classes="form-label")
+                yield Input(id="tags", placeholder="Comma-separated tags")
+                
+                yield Label("Priority:", classes="form-label")
+                yield Select([
+                    ("low", "Low"),
+                    ("medium", "Medium"),
+                    ("high", "High")
+                ], id="priority")
+                
+                yield Checkbox("Email notifications", id="notifications")
+                yield Checkbox("Public visibility", id="public")
+    
+    @on(RadioSet.Changed, "#mode-selector")
+    def handle_mode_change(self, event):
+        """Handle mode toggle."""
+        self.advanced_mode = event.pressed.id == "advanced-mode"
+    
+    def watch_advanced_mode(self, advanced: bool):
+        """React to mode changes."""
+        collapsible = self.query_one("#advanced-options")
+        collapsible.collapsed = not advanced
+        
+        # Update form styling
+        if advanced:
+            self.add_class("advanced-mode")
+        else:
+            self.remove_class("advanced-mode")
+```
+
+#### Responsive Layout Pattern
+```python
+class ResponsiveForm(Container):
+    """Form that adapts to terminal size."""
+    
+    def compose(self):
+        with Container(classes="responsive-container"):
+            # Header section
+            with Container(classes="form-header"):
+                yield Static("Media Ingestion", classes="form-title")
+                yield Static("Configure your media processing options", classes="form-subtitle")
+            
+            # Main content - switches between single/double column
+            with Container(classes="form-content"):
+                # File selection (always full width)
+                with Container(classes="file-section"):
+                    yield Button("Browse Files", id="browse", classes="file-button")
+                    yield Static("No files selected", id="file-status")
+                
+                # Metadata fields (responsive columns)
+                with Container(classes="metadata-section responsive-columns"):
+                    with Container(classes="form-column"):
+                        yield Label("Title:", classes="form-label")
+                        yield Input(id="title", classes="form-input")
+                        
+                        yield Label("Author:", classes="form-label")
+                        yield Input(id="author", classes="form-input")
+                    
+                    with Container(classes="form-column"):
+                        yield Label("Keywords:", classes="form-label")
+                        yield TextArea(id="keywords", classes="form-textarea-small")
+                
+                # Action buttons
+                with Container(classes="form-actions"):
+                    yield Button("Process", id="process", variant="primary")
+                    yield Button("Cancel", id="cancel", variant="default")
+    
+    def on_mount(self):
+        """Adjust layout based on terminal size."""
+        self.adjust_layout()
+        
+    def on_resize(self, event):
+        """Handle terminal resize."""
+        self.adjust_layout()
+    
+    def adjust_layout(self):
+        """Adjust layout for current terminal size."""
+        terminal_size = self.app.size
+        
+        if terminal_size.width < 100:
+            # Narrow terminal - single column
+            self.add_class("narrow-layout")
+            self.remove_class("wide-layout")
+        else:
+            # Wide terminal - double column
+            self.add_class("wide-layout")
+            self.remove_class("narrow-layout")
+
+# Corresponding CSS
+"""
+.responsive-container {
+    width: 100%;
+    height: 100%;
+    padding: 1;
+}
+
+.responsive-columns {
+    layout: vertical; /* Default to single column */
+}
+
+.wide-layout .responsive-columns {
+    layout: horizontal; /* Switch to side-by-side */
+}
+
+.form-column {
+    width: 1fr;
+    padding-right: 2;
+}
+
+.narrow-layout .form-column {
+    padding-right: 0;
+    margin-bottom: 1;
+}
+"""
 ```
 
 #### Error Handling
@@ -817,6 +1580,266 @@ async def risky_operation(self):
 6. **Event bubbling**: Events bubble up unless stopped
 7. **Reactive timing**: Watchers fire after validation
 8. **Worker cleanup**: Workers cancelled when widget unmounted
+
+## Troubleshooting Common UI Issues
+
+### Input Widgets Not Visible
+
+**Problem**: Input widgets are present in DOM but not rendering visually
+```python
+# This may not display properly
+yield Input(id="name")
+```
+
+**Solutions**:
+```python
+# 1. Add explicit height and width
+yield Input(id="name", classes="form-input")
+
+# CSS:
+.form-input {
+    height: 3;        # Explicit height required!
+    width: 100%;      # Or specific width
+    margin-bottom: 1;
+}
+
+# 2. Check parent container layout
+with Container(classes="input-container"):
+    yield Input(id="name")
+    
+# CSS for container:
+.input-container {
+    height: auto;     # Allow container to size to content
+    width: 100%;
+}
+```
+
+### Double Scrolling Issues
+
+**Problem**: Nested scrollable containers cause broken scrolling
+```python
+# WRONG - nested VerticalScroll containers
+with VerticalScroll():
+    with SomeWidget():  # Also has VerticalScroll internally
+        yield content
+```
+
+**Solution**:
+```python
+# RIGHT - only one level of scrolling
+with VerticalScroll(classes="main-scroll"):
+    # Use regular containers inside
+    with Container():
+        yield content
+```
+
+### Layout Not Updating
+
+**Problem**: Layout doesn't respond to size changes
+```python
+# Missing reactive updates
+class MyWidget(Widget):
+    def compose(self):
+        yield Static("Fixed content")
+```
+
+**Solution**:
+```python
+# Add reactive updates and proper watchers
+class MyWidget(Widget):
+    content = reactive("Default")
+    
+    def compose(self):
+        yield Static(self.content, id="dynamic-content")
+    
+    def watch_content(self, new_content: str):
+        """Update display when content changes."""
+        self.query_one("#dynamic-content").update(new_content)
+        
+    def on_resize(self, event):
+        """Handle terminal resize."""
+        self.refresh_layout()
+```
+
+### Form Validation Issues
+
+**Problem**: Form validation not working correctly
+```python
+# Validation runs but doesn't show feedback
+@on(Input.Changed)
+def validate_input(self, event):
+    if not self.is_valid(event.value):
+        # Error not displayed to user
+        pass
+```
+
+**Solution**:
+```python
+@on(Input.Changed)
+def validate_input(self, event):
+    field_id = event.input.id
+    value = event.value
+    
+    # Validate and store errors
+    error = self.validate_field(field_id, value)
+    
+    if error:
+        # Show error to user
+        self.display_error(field_id, error)
+        event.input.add_class("error")
+    else:
+        # Clear error display
+        self.clear_error(field_id)
+        event.input.remove_class("error")
+
+def display_error(self, field_id: str, error: str):
+    """Show error message to user."""
+    error_widget = self.query_one(f"#{field_id}-error", expect_type=Static)
+    error_widget.update(f"Error: {error}")
+    error_widget.remove_class("hidden")
+```
+
+### CSS Not Applying
+
+**Problem**: CSS rules not taking effect
+```tcss
+/* This might not work */
+Input {
+    background: red;
+}
+```
+
+**Common causes and solutions**:
+
+1. **Specificity issues**:
+```tcss
+/* More specific selector needed */
+.form-container Input {
+    background: red;
+}
+
+/* Or use ID selector */
+#my-input {
+    background: red;
+}
+```
+
+2. **CSS file not loaded**:
+```python
+class MyApp(App):
+    CSS_PATH = "styles.tcss"  # Make sure file exists
+    
+    # Or inline CSS
+    CSS = """
+    Input {
+        height: 3;
+        background: $surface;
+    }
+    """
+```
+
+3. **Modular CSS build issues**:
+```bash
+# Rebuild CSS after changes
+./build_css.sh
+
+# Check if your CSS file is included in the build
+```
+
+### Widget Query Failures
+
+**Problem**: `query_one()` raising exceptions
+```python
+# This might fail
+widget = self.query_one("#missing-id")
+```
+
+**Solutions**:
+```python
+# 1. Check if widget exists first
+try:
+    widget = self.query_one("#my-widget")
+except NoMatches:
+    self.log.warning("Widget #my-widget not found")
+    return
+
+# 2. Use optional query
+widgets = self.query("#my-widget")
+if widgets:
+    widget = widgets.first()
+
+# 3. Wait for widget to mount
+def on_mount(self):
+    # Schedule callback after mount complete
+    self.call_after_refresh(self.setup_widgets)
+
+def setup_widgets(self):
+    widget = self.query_one("#my-widget")
+    # Now safe to access widget
+```
+
+### Focus and Keyboard Navigation Issues
+
+**Problem**: Widgets not receiving focus or keyboard events
+```python
+# Widget exists but can't be focused
+yield Input(id="name")
+```
+
+**Solution**:
+```python
+# Ensure widget can receive focus
+yield Input(id="name", can_focus=True)  # Usually automatic for Input
+
+# Set initial focus
+def on_mount(self):
+    self.query_one("#name").focus()
+
+# Handle tab order with explicit focus calls
+@on(Key)
+def handle_key(self, event):
+    if event.key == "tab":
+        next_widget = self.get_next_focusable()
+        if next_widget:
+            next_widget.focus()
+            event.prevent_default()
+```
+
+### Performance Issues
+
+**Problem**: UI becomes sluggish with many widgets or updates
+```python
+# Too many reactive updates
+class SlowWidget(Widget):
+    data = reactive([], recompose=True)  # Expensive!
+    
+    def update_data(self):
+        for i in range(1000):
+            self.data.append(i)  # Triggers recompose 1000 times!
+```
+
+**Solution**:
+```python
+# Batch updates
+class FastWidget(Widget):
+    data = reactive([], recompose=True)
+    
+    def update_data(self):
+        # Build new data first, then update once
+        new_data = list(range(1000))
+        self.data = new_data  # Single update
+
+# Or use refresh instead of recompose when possible
+class EfficientWidget(Widget):
+    data = reactive([])  # No recompose
+    
+    def watch_data(self, new_data):
+        # Manual DOM update instead of full recompose
+        list_widget = self.query_one("#data-list")
+        list_widget.clear()
+        for item in new_data:
+            list_widget.append(ListItem(Label(str(item))))
+```
 
 ## Resources
 

@@ -3,6 +3,9 @@
 #
 # Disable progress bars early to prevent interference with TUI
 import os
+
+from tldw_chatbook.UI import MediaWindow_v2
+
 os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
 os.environ['TQDM_DISABLE'] = '1'
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -67,7 +70,7 @@ from .config import (
     get_prompts_db_path,
 )
 from .Logging_Config import configure_application_logging
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, \
+from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
@@ -130,21 +133,41 @@ from tldw_chatbook.config import get_chachanotes_db_path, settings, get_chachano
 from .UI.Chat_Window import ChatWindow
 from .UI.Chat_Window_Enhanced import ChatWindowEnhanced
 from .UI.Conv_Char_Window import CCPWindow
-from .UI.Notes_Window import NotesWindow
 from .UI.Logs_Window import LogsWindow
 from .UI.Stats_Window import StatsWindow
-from .UI.Ingest_Window import IngestWindow, INGEST_NAV_BUTTON_IDS, MEDIA_TYPES
+from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
+from .UI.Navigation.main_navigation import NavigateToScreen
+from .UI.Screens.chat_screen import ChatScreen
+from .UI.Screens.media_ingest_screen import MediaIngestScreen
+from .UI.Screens.coding_screen import CodingScreen
+from .UI.Screens.conversation_screen import ConversationScreen
+from .UI.Screens.media_screen import MediaScreen
+from .UI.Screens.notes_screen import NotesScreen
+from .UI.Screens.search_screen import SearchScreen
+from .UI.Screens.evals_screen import EvalsScreen
+from .UI.Screens.tools_settings_screen import ToolsSettingsScreen
+from .UI.Screens.llm_screen import LLMScreen
+from .UI.Screens.customize_screen import CustomizeScreen
+from .UI.Screens.logs_screen import LogsScreen
+from .UI.Screens.stats_screen import StatsScreen
+# Note: INGEST_NAV_BUTTON_IDS, INGEST_VIEW_IDS, MEDIA_TYPES need to be defined or imported differently
+# from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt
+INGEST_NAV_BUTTON_IDS = []  # Temporary placeholder
+INGEST_VIEW_IDS = []  # Temporary placeholder
+MEDIA_TYPES = []  # Temporary placeholder
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
-# Using unified Evals dashboard
-from .UI.Evals_Window_v3_unified import EvalsWindow
+from .UI.Customize_Window import CustomizeWindow
+# Using pragmatic V2 Evals window
+from .UI.Evals.evals_window_v3 import EvalsWindowV3 as EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Study_Window import StudyWindow
 from .UI.Chatbooks_Window import ChatbooksWindow
 from .UI.Tab_Bar import TabBar
+from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
-from .UI.MediaWindow_v2 import MediaWindow
+from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
 from .UI.SearchWindow import SearchWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
@@ -297,6 +320,7 @@ class TabNavigationProvider(Provider):
             ("Tab Navigation: Switch to Search", TAB_SEARCH, "Switch to search interface"),
             ("Tab Navigation: Switch to Ingest", TAB_INGEST, "Switch to content ingestion"),
             ("Tab Navigation: Switch to Tools & Settings", TAB_TOOLS_SETTINGS, "Switch to settings and configuration"),
+            ("Tab Navigation: Switch to Customize", TAB_CUSTOMIZE, "Switch to appearance customization"),
             ("Tab Navigation: Switch to LLM Management", TAB_LLM, "Switch to LLM provider management"),
             ("Tab Navigation: Switch to Logs", TAB_LOGS, "Switch to application logs"),
             ("Tab Navigation: Switch to Stats", TAB_STATS, "Switch to statistics view"),
@@ -321,6 +345,7 @@ class TabNavigationProvider(Provider):
             ("Tab Navigation: Switch to Notes", TAB_NOTES, "Switch to notes management"),
             ("Tab Navigation: Switch to Search", TAB_SEARCH, "Switch to search interface"),
             ("Tab Navigation: Switch to Tools & Settings", TAB_TOOLS_SETTINGS, "Switch to settings and configuration"),
+            ("Tab Navigation: Switch to Customize", TAB_CUSTOMIZE, "Switch to appearance customization"),
         ]
         
         for command_text, tab_id, help_text in popular_tabs:
@@ -775,11 +800,11 @@ class PlaceholderWindow(Container):
                 child.remove()
             
             # Create the actual window
-            # EvalsLab is a Container that doesn't take app instance as first argument
-            if self.window_class.__name__ == 'EvalsLab':
-                self._actual_window = self.window_class(id=self.window_id, classes=self.actual_classes)
+            # EvalsLab, EvalsWindow and EvalsWindowV3 are Containers that take app_instance as keyword argument
+            if self.window_class.__name__ in ['EvalsLab', 'EvalsWindow', 'EvalsWindowV3']:
+                self._actual_window = self.window_class(app_instance=self.app_instance, id=self.window_id, classes=self.actual_classes)
             else:
-                self._actual_window = self.window_class(self.app_instance, classes=self.actual_classes)
+                self._actual_window = self.window_class(self.app_instance, id=self.window_id, classes=self.actual_classes)
             
             # Clear placeholder styling and mount actual window
             self.remove_class("placeholder-window")
@@ -792,6 +817,7 @@ class PlaceholderWindow(Container):
             # Make sure the actual window fills the container
             self._actual_window.styles.height = "100%"
             self._actual_window.styles.width = "100%"
+            self._actual_window.styles.display = "block"  # Ensure the actual window is visible
             
             self.mount(self._actual_window)
             self._initialized = True
@@ -860,16 +886,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         DeveloperProvider
     }
 
-    ALL_INGEST_VIEW_IDS = [
-        "ingest-view-prompts", "ingest-view-characters",
-        "ingest-view-media", "ingest-view-notes",
-        *[f"ingest-view-tldw-api-{mt}" for mt in MEDIA_TYPES]
-    ]
+    ALL_INGEST_VIEW_IDS = INGEST_VIEW_IDS
     ALL_MAIN_WINDOW_IDS = [ # Assuming these are your main content window IDs
         "chat-window", "conversations_characters_prompts-window", "notes-window",
         "ingest-window", "tools_settings-window", "llm_management-window",
         "media-window", "search-window", "logs-window", "stats-window", "evals-window", 
-        "coding-window", "stts-window", "study-window", "chatbooks-window"
+        "coding-window", "stts-window", "study-window", "chatbooks-window", "customize-window"
     ]
 
     # Define reactive at class level with a placeholder default and type hint
@@ -1067,8 +1089,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self._startup_start_time = time.perf_counter()
         self._startup_phases = {}
         
-        # Log initial memory usage
-        log_resource_usage()
+        # Tab switching optimization
+        self._initialized_tabs = set()  # Track which tabs have been initialized
+        
+        # Reduce logging in production
+        if not os.environ.get("TLDW_DEBUG"):
+            logging.getLogger().setLevel(logging.INFO)  # Reduce to INFO level in production
+            # Disable debug logging for performance
+            logging.getLogger("tldw_chatbook").setLevel(logging.INFO)
+        
+        # Log initial memory usage only in debug mode
+        if os.environ.get("TLDW_DEBUG"):
+            log_resource_usage()
         log_counter("app_startup_initiated", 1, documentation="Application startup initiated")
         
         super().__init__()
@@ -1089,6 +1121,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # Phase 2: Attribute initialization
         phase_start = time.perf_counter()
+        # Initialize screen navigation flag early to prevent AttributeError
+        self._use_screen_navigation = True  # ALWAYS use screen-based navigation now
         self.parsed_prompts_for_preview = [] # <<< INITIALIZATION for prompts
         self.last_prompt_import_dir = None
 
@@ -1441,6 +1475,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             TAB_LLM: llm_handlers_map,
             TAB_LOGS: app_lifecycle.APP_LIFECYCLE_BUTTON_HANDLERS,
             TAB_TOOLS_SETTINGS: tools_settings_handlers,
+            TAB_CUSTOMIZE: {},  # Customize handles its own events
             TAB_SEARCH: search_handlers,
             TAB_EVALS: evals_handlers,
             TAB_CODING: {},  # Empty for now - coding handles its own events
@@ -1455,6 +1490,67 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             },
         }
 
+    def _setup_buffered_logging(self):
+        """Set up a persistent buffered logging handler for screen navigation mode."""
+        from collections import deque
+        import logging
+        
+        # Create a buffer to store ALL log messages (no max length)
+        if not hasattr(self, '_log_buffer'):
+            self._log_buffer = deque()  # No maxlen - keep all logs
+        
+        # Create a custom handler that stores logs in the buffer
+        class PersistentLogHandler(logging.Handler):
+            def __init__(self, buffer, app):
+                super().__init__()
+                self.buffer = buffer
+                self.app = app
+                
+            def emit(self, record):
+                try:
+                    msg = self.format(record)
+                    self.buffer.append(msg)
+                    
+                    # If we have a RichLog widget active, also write to it directly
+                    if hasattr(self.app, '_current_log_widget') and self.app._current_log_widget:
+                        try:
+                            self.app._current_log_widget.write(msg)
+                        except:
+                            pass  # Widget might not be mounted
+                except Exception:
+                    self.handleError(record)
+        
+        # Add the persistent handler to the root logger
+        if not hasattr(self, '_persistent_log_handler'):
+            self._persistent_log_handler = PersistentLogHandler(self._log_buffer, self)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            self._persistent_log_handler.setFormatter(formatter)
+            logging.getLogger().addHandler(self._persistent_log_handler)
+            logger.info("Persistent logging handler set up for screen navigation")
+            
+        # Initialize current log widget reference
+        self._current_log_widget = None
+    
+    def _display_buffered_logs(self, log_widget):
+        """Display all buffered logs in the RichLog widget."""
+        if not hasattr(self, '_log_buffer'):
+            return
+            
+        # Store reference to current log widget
+        self._current_log_widget = log_widget
+        
+        # Clear the widget first to avoid duplicates
+        log_widget.clear()
+        
+        # Write all buffered messages to the widget
+        for msg in self._log_buffer:
+            log_widget.write(msg)
+        
+        # Scroll to the latest entry
+        log_widget.scroll_end()
+        
+        logger.debug(f"Displayed {len(self._log_buffer)} buffered log entries")
+    
     def _setup_logging(self):
         """Set up logging for the application.
 
@@ -1528,115 +1624,111 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Create the main UI widgets (called after splash screen or immediately if disabled)."""
         widgets = []
         
-        # Header removed - no title/header bar needed
-        # component_start = time.perf_counter()
-        # widgets.append(Header())
-        # log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-        #              labels={"component": "header"}, 
-        #              documentation="Time to create UI component")
+        # ALWAYS use screen-based navigation now
+        logger.info("Using screen-based navigation - skipping widget creation")
+        # Note: _use_screen_navigation is already set to True in __init__
         
-        # Custom title bar with surface color
-        component_start = time.perf_counter()
+        # Add title bar and navigation for screen mode
         widgets.append(TitleBar())
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-                     labels={"component": "titlebar"}, 
-                     documentation="Time to create UI component")
-
-        # Check config for navigation type
+        
+        # Add navigation bar that will emit NavigateToScreen messages
         use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
-        component_start = time.perf_counter()
+        use_links = get_cli_setting("general", "use_link_navigation", True)
         
         if use_dropdown:
-            # Use dropdown navigation
             widgets.append(TabDropdown(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
-            logger.info("Using dropdown navigation for tabs")
+            logger.info("Using dropdown navigation for screens")
+        elif use_links:
+            widgets.append(TabLinks(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
+            logger.info("Using single-line link navigation for screens")
         else:
-            # Use traditional tab bar
             widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
-            logger.info("Using traditional tab bar navigation")
-            
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-                     labels={"component": "navigation"}, 
-                     documentation="Time to create UI component")
-
-        # Content area - all windows
-        content_area_start = time.perf_counter()
+            logger.info("Using tab bar navigation for screens")
         
-        # Check config for which chat window to use
-        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
-        chat_window_class = ChatWindowEnhanced if use_enhanced_chat else ChatWindow
-        logger.info(f"Using {'enhanced' if use_enhanced_chat else 'basic'} chat window (use_enhanced_window={use_enhanced_chat})")
-        
-        # Create content container with all windows
-        content_container = Container(id="content")
-        
-        windows = [
-            ("chat", chat_window_class, "chat-window"),
-            ("ccp", CCPWindow, "conversations_characters_prompts-window"),
-            ("notes", NotesWindow, "notes-window"),
-            ("media", MediaWindow, "media-window"),
-            ("search", SearchWindow, "search-window"),
-            ("ingest", IngestWindow, "ingest-window"),
-            ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
-            ("llm_management", LLMManagementWindow, "llm_management-window"),
-            ("logs", LogsWindow, "logs-window"),
-            ("coding", CodingWindow, "coding-window"),
-            ("stats", StatsWindow, "stats-window"),
-            ("evals", EvalsWindow, "evals-window"),
-            ("stts", STTSWindow, "stts-window"),
-            ("study", StudyWindow, "study-window"),
-            ("chatbooks", ChatbooksWindow, "chatbooks-window"),
-        ]
-        
-        # Add subscriptions tab if available
-        if SUBSCRIPTIONS_AVAILABLE and SubscriptionWindow:
-            windows.append(("subscriptions", SubscriptionWindow, "subscriptions-window"))
-        
-        # Create window widgets and compose them into the container properly
-        initial_tab = self._initial_tab_value
-        for window_name, window_class, window_id in windows:
-            is_initial_window = window_id == f"{initial_tab}-window"
-            
-            # Always load LogsWindow and ChatbooksWindow immediately
-            if is_initial_window or window_id == "logs-window" or window_id == "chatbooks-window":
-                # Create the actual window for the initial tab, logs tab, and chatbooks tab
-                logger.info(f"Creating actual window for {window_name}")
-                window_widget = window_class(self, id=window_id, classes="window")
-                # For non-initial windows, make them invisible initially
-                if not is_initial_window:
-                    window_widget.display = False
-            else:
-                # Create a placeholder for other tabs
-                logger.debug(f"Creating placeholder for tab: {window_name}")
-                window_widget = PlaceholderWindow(self, window_class, window_id, classes="window")
-            
-            # Mount the window widget into the container
-            content_container._add_child(window_widget)
-        
-        widgets.append(content_container)
-        
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - content_area_start,
-                     labels={"component": "content_area_all_windows"}, 
-                     documentation="Time to create UI component")
-
-        # Yield the new AppFooterStatus widget instead of the old Footer
-        component_start = time.perf_counter()
+        # Add container for screens and footer
+        widgets.append(Container(id="screen-container"))
         widgets.append(AppFooterStatus(id="app-footer-status"))
-        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
-                     labels={"component": "footer"}, 
-                     documentation="Time to create UI component")
         
-        compose_duration = time.perf_counter() - self._ui_compose_start_time
-        self._ui_compose_end_time = time.perf_counter()  # Store compose end time
-        log_histogram("app_compose_duration_seconds", compose_duration,
-                     documentation="Total time for compose() method")
-        log_counter("ui_compose_completed", 1, documentation="UI composition completed")
-        logging.debug(f"App compose finished in {compose_duration:.3f} seconds")
-        log_resource_usage()  # Check memory after compose
+        return widgets
         
+        # Screen-based navigation is used exclusively - no tab-based UI components needed
         return widgets
     
 
+    @on(NavigateToScreen)
+    async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
+        """Handle navigation to a different screen using switch_screen for better performance."""
+        screen_name = message.screen_name
+        logger.info(f"Navigating to screen: {screen_name}")
+        
+        # Save state of current screen before switching
+        current_screen = self.screen
+        if current_screen and hasattr(current_screen, 'save_state'):
+            try:
+                state = current_screen.save_state()
+                # Store state in a dictionary keyed by screen name
+                if not hasattr(self, '_screen_states'):
+                    self._screen_states = {}
+                if hasattr(current_screen, 'screen_name'):
+                    self._screen_states[current_screen.screen_name] = state
+                    logger.debug(f"Saved state for screen: {current_screen.screen_name}")
+            except Exception as e:
+                logger.error(f"Error saving screen state: {e}")
+        
+        # Import the new screens
+        from .UI.Screens.stts_screen import STTSScreen
+        from .UI.Screens.study_screen import StudyScreen
+        from .UI.Screens.chatbooks_screen import ChatbooksScreen
+        from .UI.Screens.subscription_screen import SubscriptionScreen
+        
+        # Complete map of all screen names to screen classes
+        screen_map = {
+            'chat': ChatScreen,
+            'ingest': MediaIngestScreen,  # Using the rebuilt window through the screen wrapper
+            'coding': CodingScreen,
+            'conversation': ConversationScreen,
+            'ccp': ConversationScreen,  # Alias for Conv/Char
+            'media': MediaScreen,
+            'notes': NotesScreen,
+            'search': SearchScreen,
+            'evals': EvalsScreen,
+            'tools_settings': ToolsSettingsScreen,
+            'llm': LLMScreen,
+            'customize': CustomizeScreen,
+            'logs': LogsScreen,
+            'stats': StatsScreen,
+            'stts': STTSScreen,  # Speech-to-Text/Text-to-Speech
+            'study': StudyScreen,  # Study features
+            'chatbooks': ChatbooksScreen,  # Chatbooks management
+            'subscription': SubscriptionScreen,  # Subscription management
+            'subscriptions': SubscriptionScreen,  # Alias for consistency
+        }
+        
+        screen_class = screen_map.get(screen_name)
+        if screen_class:
+            # Create a fresh screen instance (per Textual best practices)
+            new_screen = screen_class(self)
+            
+            # Restore state if available
+            if hasattr(self, '_screen_states') and screen_name in self._screen_states:
+                if hasattr(new_screen, 'restore_state'):
+                    try:
+                        new_screen.restore_state(self._screen_states[screen_name])
+                        logger.debug(f"Restored state for screen: {screen_name}")
+                    except Exception as e:
+                        logger.error(f"Error restoring screen state: {e}")
+            
+            # Use switch_screen to replace the current screen
+            await self.switch_screen(new_screen)
+            
+            # Update current_tab to track the active screen
+            # The watcher will skip processing due to _use_screen_navigation flag
+            self.current_tab = screen_name
+            
+            logger.info(f"Successfully switched to {screen_name} screen")
+        else:
+            logger.error(f"Unknown screen requested: {screen_name}")
+    
     @on(ChatMessage.Action)
     async def handle_chat_message_action(self, event: ChatMessage.Action) -> None:
         """Handles actions (edit, copy, etc.) from within a ChatMessage widget."""
@@ -2063,14 +2155,31 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             return self.current_chat_worker
     
     def set_current_chat_is_streaming(self, is_streaming: bool) -> None:
-        """Thread-safely set the streaming state."""
+        """Thread-safely set the streaming state and update UI."""
         with self._chat_state_lock:
             self.current_chat_is_streaming = is_streaming
+        
+        # Update the chat window button state when streaming changes
+        # This replaces the polling approach with event-driven updates
+        try:
+            # For screen navigation, find the active chat screen
+                from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+                if self.screen and isinstance(self.screen, ChatScreen):
+                    if hasattr(self.screen, 'chat_window') and self.screen.chat_window:
+                        self.screen.chat_window._update_button_state()
+
+        except Exception:
+            # Silently ignore if chat window isn't available
+            pass
     
     def get_current_chat_is_streaming(self) -> bool:
         """Thread-safely get the streaming state."""
         with self._chat_state_lock:
             return self.current_chat_is_streaming
+    
+    # NOTE: Removed query_one and query overrides - screens should handle their own queries
+    # This follows Textual best practices for screen-based navigation
+    # Each screen is responsible for querying its own widgets
 
     async def _load_prompt_for_editing(self, prompt_id: Optional[int], prompt_uuid: Optional[str] = None) -> None:
         if not self.prompts_service_initialized:
@@ -2475,7 +2584,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 "Proving P=NP...",
                 "Downloading more RAM...",
                 "Feeding the hamsters powering the servers...",
-                "Convincing AI not to take over the world..."
+                "Convincing AI not to take over the world...",
                 "Converting caffeine to code...",
                 "Generating excuses for missing deadlines...",
                 "Compiling alternative facts...",
@@ -2764,10 +2873,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             # Start token count updates
             # Initial update after a short delay to ensure UI is ready
+            # Initial update after a short delay
             self.set_timer(0.5, self.update_token_count_display)
-            # Set up periodic updates - using a lambda to ensure it's called correctly
-            self._token_count_update_timer = self.set_interval(3, lambda: self.call_after_refresh(self.update_token_count_display))
-            self.loguru_logger.info("Token count update timer started.")
+            # REDUCED FREQUENCY: Update token count less frequently to improve performance
+            # Changed from 3 seconds to 10 seconds - tokens don't change that often
+            self._token_count_update_timer = self.set_interval(10, lambda: self.call_after_refresh(self.update_token_count_display))
+            self.loguru_logger.info("Token count update timer started (10s interval).")
         except QueryError:
             self.loguru_logger.error("Failed to find AppFooterStatus widget for DB size display.")
         except Exception as e_db_size:
@@ -3010,13 +3121,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
                             pass
                 except ImportError:
-                    # Fallback if psutil not available - use subprocess
-                    try:
-                        # Kill all afplay processes (less precise but works)
-                        subprocess.run(['killall', 'afplay'], capture_output=True, timeout=1)
-                        self.loguru_logger.info("Killed all afplay processes")
-                    except Exception as e:
-                        self.loguru_logger.debug(f"Could not kill afplay processes: {e}")
+                    # Fallback if psutil not available - run in background
+                    from textual.worker import work
+                    
+                    @work(thread=True)
+                    def kill_afplay_processes():
+                        try:
+                            # Kill all afplay processes (less precise but works)
+                            subprocess.run(['killall', 'afplay'], capture_output=True, timeout=1)
+                            self.loguru_logger.info("Killed all afplay processes")
+                        except Exception as e:
+                            self.loguru_logger.debug(f"Could not kill afplay processes: {e}")
+                    
+                    # Run in background to avoid blocking
+                    self.run_worker(kill_afplay_processes, name="kill_afplay")
             import concurrent.futures
             import asyncio
             
@@ -3079,14 +3197,22 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # ######################################################################
     def watch_current_tab(self, old_tab: Optional[str], new_tab: str) -> None:
         """Shows/hides the relevant content window when the tab changes."""
+        # Skip entirely when using screen navigation
+        if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
+            return
         if not new_tab:  # Skip if empty
             return
         if not self._ui_ready:
             return
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
             return
-        # (Your existing watcher code is likely fine, just ensure the QueryErrors aren't hiding a problem)
-        loguru_logger.debug(f"\n>>> DEBUG: watch_current_tab triggered! Old: '{old_tab}', New: '{new_tab}'")
+        
+        # Execute tab switch immediately - no debouncing needed
+        self._execute_tab_switch(old_tab, new_tab)
+    
+    def _execute_tab_switch(self, old_tab: Optional[str], new_tab: str) -> None:
+        """Execute the actual tab switch immediately."""
+        loguru_logger.debug(f"\n>>> DEBUG: Executing tab switch! Old: '{old_tab}', New: '{new_tab}'")
         if not isinstance(new_tab, str) or not new_tab:
             print(f">>> DEBUG: watch_current_tab: Invalid new_tab '{new_tab!r}', aborting.")
             logging.error(f"Watcher received invalid new_tab value: {new_tab!r}. Aborting tab switch.")
@@ -3100,13 +3226,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Hide Old Tab ---
         if old_tab and old_tab != new_tab:
-            # Handle Notes tab auto-save cleanup when leaving the tab
-            if old_tab == TAB_NOTES:
-                # Cancel any pending auto-save timer
-                if hasattr(self, 'notes_auto_save_timer') and self.notes_auto_save_timer is not None:
-                    self.notes_auto_save_timer.stop()
-                    self.notes_auto_save_timer = None
-                    loguru_logger.debug("Cancelled auto-save timer when leaving Notes tab")
+            # Update navigation UI to remove active state from old tab
+            use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
+            use_links = get_cli_setting("general", "use_link_navigation", True)
+            
+            if not use_dropdown:  # Only for non-dropdown navigation
+                if use_links:
+                    # Update TabLinks active state
+                    try:
+                        from .UI.Tab_Links import TabLinks
+                        tab_links = self.query_one(TabLinks)
+                        tab_links.set_active_tab(new_tab)
+                    except QueryError:
+                        pass
+                else:
+                    # Remove active class from old tab button
+                    try:
+                        self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
+                    except QueryError:
+                        pass
+            # NotesScreen now handles its own auto-save cleanup in on_unmount()
                 
                 # Perform one final auto-save if auto-save is enabled and there are unsaved changes
                 if (hasattr(self, 'notes_auto_save_enabled') and self.notes_auto_save_enabled and
@@ -3127,6 +3266,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         try:
             # Update navigation UI based on type
             use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
+            use_links = get_cli_setting("general", "use_link_navigation", True)
+            
             if use_dropdown:
                 # Update dropdown selection if it exists and differs
                 try:
@@ -3134,16 +3275,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     dropdown.update_active_tab(new_tab)
                 except QueryError:
                     pass
+            elif use_links:
+                # Update link navigation
+                # TabLinks active state is now handled by TabLinks.set_active_tab() above
+                pass
             else:
                 # Update traditional tab bar button
                 self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
             
             new_window = self.query_one(f"#{new_tab}-window")
             
-            # Initialize placeholder window if needed
+            # Initialize placeholder window if needed (with caching)
             if isinstance(new_window, PlaceholderWindow) and not new_window.is_initialized:
-                loguru_logger.info(f"Initializing lazy-loaded window for tab: {new_tab}")
-                new_window.initialize()
+                # Check if we've already started initializing this tab
+                if new_tab not in self._initialized_tabs:
+                    loguru_logger.info(f"Initializing lazy-loaded window for tab: {new_tab}")
+                    self._initialized_tabs.add(new_tab)
+                    new_window.initialize()
+                else:
+                    # Tab is already being initialized, skip
+                    loguru_logger.debug(f"Tab {new_tab} already initialized or initializing")
             
             # Always set display to True for the new window
             new_window.display = True
@@ -3184,8 +3335,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     except QueryError: pass # No primary input found
 
                 if input_to_focus:
-                    self.set_timer(0.1, input_to_focus.focus) # Slight delay for focus
-                    logging.debug(f"Watcher: Scheduled focus for input in '{new_tab}'")
+                    input_to_focus.focus()  # Focus immediately, no delay needed
+                    logging.debug(f"Watcher: Focused input in '{new_tab}'")
                 else:
                     logging.debug(f"Watcher: No primary input (TextArea or Input) found to focus in '{new_tab}'")
         except QueryError:
@@ -3225,21 +3376,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 except QueryError:
                     loguru_logger.error("CCP window not found during widget population")
             
-            # Use a timer to ensure the window is fully initialized
-            self.set_timer(0.1, populate_ccp_widgets)
+            # Call immediately after refresh
+            self.call_after_refresh(populate_ccp_widgets)
         elif new_tab == TAB_NOTES:
-            # Use call_after_refresh for async function
-            self.call_after_refresh(notes_handlers.load_and_display_notes_handler, self)
+            # NotesScreen handles its own data loading in on_mount()
+            pass
         elif new_tab == TAB_MEDIA:
             def activate_media_initial_view():
                 try:
-                    media_window = self.query_one(MediaWindow)
+                    media_window = self.query_one(MediaWindow_v2)
                     media_window.activate_initial_view()
                 except QueryError:
                     loguru_logger.error("Could not find MediaWindow to activate its initial view.")
             
-            # Use a timer to ensure the window is fully initialized
-            self.set_timer(0.1, activate_media_initial_view)
+            # Call immediately after refresh
+            self.call_after_refresh(activate_media_initial_view)
         elif new_tab == TAB_SEARCH:
             # Handle search tab initialization with a delay to ensure window is ready
             def initialize_search_tab():
@@ -3257,8 +3408,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 except QueryError:
                     loguru_logger.error("Search window not found during initialization")
             
-            # Use a timer to ensure the window is fully initialized
-            self.set_timer(0.1, initialize_search_tab)
+            # Call immediately after refresh
+            self.call_after_refresh(initialize_search_tab)
         elif new_tab == TAB_INGEST:
             if not self.ingest_active_view:
                 self.loguru_logger.debug(
@@ -3266,14 +3417,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 # Use call_later to ensure the UI has settled after tab switch before changing sub-view
                 self.call_later(self._activate_initial_ingest_view)
         elif new_tab == TAB_TOOLS_SETTINGS:
-            # Handle tools settings tab initialization with proper placeholder check
+            # Handle tools settings tab initialization
             def initialize_tools_settings():
                 try:
                     # Check if the window is actually initialized
                     tools_window = self.query_one("#tools_settings-window")
                     if isinstance(tools_window, PlaceholderWindow):
-                        # Window isn't initialized yet, try again later silently
-                        self.set_timer(0.1, initialize_tools_settings)
+                        # Window isn't initialized yet, skip for now
                         return
                     
                     # Now it's safe to activate the initial view
@@ -3286,8 +3436,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 except QueryError:
                     self.loguru_logger.error("Tools settings window not found during initialization")
             
-            # Use a timer to ensure the window is ready
-            self.set_timer(0.1, initialize_tools_settings)
+            # Call immediately after refresh
+            self.call_after_refresh(initialize_tools_settings)
         elif new_tab == TAB_LLM:  # New elif block for LLM tab
             if not self.llm_active_view:  # If no view is active yet
                 self.loguru_logger.debug(
@@ -3327,19 +3477,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     # Watchers for sidebar collapsed states (keep as is)
     def watch_chat_sidebar_collapsed(self, collapsed: bool) -> None:
-        if not self._ui_ready: # Keep the UI ready guard
+        """Watch for sidebar collapse state changes."""
+        if not self._ui_ready:
             self.loguru_logger.debug("watch_chat_sidebar_collapsed: UI not ready.")
             return
-        try:
-            # Query for the new ID
-            sidebar = self.query_one("#chat-left-sidebar") # <<< CHANGE THIS LINE
-            sidebar.display = not collapsed # True = visible, False = hidden
-            self.loguru_logger.debug(f"Chat left sidebar (#chat-left-sidebar) display set to {not collapsed}")
-        except QueryError:
-            # Update the error message to reflect the new ID
-            self.loguru_logger.error("Chat left sidebar (#chat-left-sidebar) not found by watcher.") # <<< UPDATE ERROR MSG
-        except Exception as e:
-            self.loguru_logger.error(f"Error toggling chat left sidebar: {e}", exc_info=True)
+        # Just log the state change - the actual UI update should happen in the screen/window
+        self.loguru_logger.debug(f"Chat sidebar collapsed state changed to: {collapsed}")
 
     def watch_chat_right_sidebar_collapsed(self, collapsed: bool) -> None:
         """Hide or show the character settings sidebar."""
@@ -3424,7 +3567,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 indicator.update("✓ Saved")
                 indicator.remove_class("has-unsaved", "auto-saving")
                 indicator.add_class("saved")
-                # Clear the saved status after 2 seconds
+                # Clear the saved status after 2 seconds (keeping this one timer for UX feedback)
                 self.set_timer(2.0, lambda: setattr(self, 'notes_auto_save_status', ''))
             else:
                 # Empty status - let the unsaved changes watcher handle it
@@ -3514,20 +3657,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_video_models(self) -> None:
         """Initialize models for the video ingestion window."""
         try:
-            ingest_window = self.query_one("#ingest-window", IngestWindow)
-            if ingest_window._local_video_window:
-                self.log.debug("Initializing video window models")
-                ingest_window._local_video_window._try_initialize_models()
+            ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
+            # New ingest window doesn't need model initialization
+            self.log.debug("New ingest window loaded")
         except Exception as e:
             self.log.debug(f"Could not initialize video models: {e}")
 
     def _initialize_audio_models(self) -> None:
         """Initialize models for the audio ingestion window."""
         try:
-            ingest_window = self.query_one("#ingest-window", IngestWindow)
-            if ingest_window._local_audio_window:
-                self.log.debug("Initializing audio window models")
-                ingest_window._local_audio_window._try_initialize_models()
+            ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
+            # New ingest window doesn't need model initialization
+            self.log.debug("New ingest window loaded")
         except Exception as e:
             self.log.debug(f"Could not initialize audio models: {e}")
 
@@ -4033,11 +4174,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     #
     ########################################################################
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Dispatches button presses to the appropriate event handler using a map."""
+        """Dispatches button presses to the appropriate event handler."""
         button_id = event.button.id
         if not button_id:
             return
 
+        self.loguru_logger.info(f"Button pressed: ID='{button_id}'")
+
+        # Screen-based navigation: let the screen handle its own buttons
+        # The screen should handle its own button events
+        # If it bubbles up here, it's a navigation button or unhandled
+        # Navigation buttons are already handled by NavigateToScreen messages
+        self.loguru_logger.debug(f"Button event '{button_id}' reached app level in screen navigation mode")
+        return
+
+        # Legacy tab-based button handling below (never reached)
         self.loguru_logger.info(f"Button pressed: ID='{button_id}' on Tab='{self.current_tab}'")
 
         # 1. Handle global tab switching first
@@ -4057,6 +4208,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 TAB_INGEST: "ingest-window",
                 TAB_TOOLS_SETTINGS: "tools_settings-window",
                 TAB_LLM: "llm_management-window",
+                TAB_CUSTOMIZE: "customize-window",
                 TAB_LOGS: "logs-window",
                 TAB_STATS: "stats-window",
                 TAB_EVALS: "evals-window",
@@ -4069,7 +4221,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             window_id = window_id_map.get(self.current_tab)
             self.loguru_logger.info(f"Window ID for tab '{self.current_tab}': {window_id}")
             if window_id:
-                window = self.query_one(f"#{window_id}")
+                # Use super().query_one to access app-level widgets in tab mode
+                window = super().query_one(f"#{window_id}")
                 self.loguru_logger.info(f"Found window: {type(window).__name__}")
                 # Check if the window has an on_button_pressed method
                 has_method = hasattr(window, "on_button_pressed") and callable(window.on_button_pressed)
@@ -4144,9 +4297,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 "chat-character-first-message-edit"
             ]:
                 await chat_handlers.handle_chat_character_attribute_changed(self, event)
-        elif current_active_tab == TAB_NOTES and control_id == "notes-editor-area":
-            # Handle notes editor changes
-            await notes_handlers.handle_notes_editor_changed(self, event)
+        # Notes editor changes are now handled directly by NotesScreen
 
     def _update_model_download_log(self, message: str) -> None:
         """Helper to write messages to the model download log widget."""
@@ -4159,15 +4310,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     async def on_input_changed(self, event: Input.Changed) -> None:
         input_id = event.input.id
         current_active_tab = self.current_tab
-        # --- Notes Search ---
-        if input_id == "notes-search-input" and current_active_tab == TAB_NOTES: # Changed from elif to if
-            await notes_handlers.handle_notes_search_input_changed(self, event.value)
-        elif input_id == "notes-keyword-filter-input" and current_active_tab == TAB_NOTES:
-            await notes_handlers.handle_notes_keyword_filter_input_changed(self, event.value)
-        elif input_id == "notes-title-input" and current_active_tab == TAB_NOTES:
-            await notes_handlers.handle_notes_title_changed(self, event)
+        # --- Notes input events are now handled directly by NotesScreen ---
         # --- Chat Sidebar Conversation Search ---
-        elif input_id == "chat-conversation-search-bar" and current_active_tab == TAB_CHAT:
+        if input_id == "chat-conversation-search-bar" and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
         elif input_id == "chat-conversation-keyword-search-bar" and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
@@ -4235,9 +4380,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.debug("Dispatching to media_events.handle_media_list_item_selected")
             await media_events.handle_media_list_item_selected(self, event)
 
-        elif list_view_id == "notes-list-view" and current_active_tab == TAB_NOTES:
-            self.loguru_logger.debug("Dispatching to notes_handlers.handle_notes_list_view_selected")
-            await notes_handlers.handle_notes_list_view_selected(self, list_view_id, event.item)
+        # Notes list view selection is now handled directly by NotesScreen
 
         elif list_view_id == "ccp-prompts-listview" and current_active_tab == TAB_CCP:
             self.loguru_logger.debug("Dispatching to ccp_handlers.handle_ccp_prompts_list_view_selected")
@@ -4327,6 +4470,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Handles changes in Select widgets if specific actions are needed beyond watchers."""
         select_id = event.select.id
         current_active_tab = self.current_tab
+        self.loguru_logger.info(f"Select changed: {select_id} = {event.value}, current tab = {current_active_tab}")
 
         if select_id == "conv-char-character-select" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_character_select_changed(self, event.value)
@@ -4339,8 +4483,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await ingest_events.handle_tldw_api_auth_method_changed(self, str(event.value))
         elif select_id == "tldw-api-media-type" and current_active_tab == TAB_INGEST:
             await ingest_events.handle_tldw_api_media_type_changed(self, str(event.value))
-        elif select_id == "notes-sort-select" and current_active_tab == TAB_NOTES:
-            await notes_handlers.handle_notes_sort_changed(self, event)
+        # Notes sort select is now handled directly by NotesScreen
         elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
             await self.handle_rag_preset_changed(event)
         elif select_id == "chat-rag-search-mode" and current_active_tab == TAB_CHAT:
@@ -4351,6 +4494,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Update the reactive value to trigger the watcher
             self.rag_expansion_provider_value = event.value
         elif select_id == "chat-api-provider" and current_active_tab == TAB_CHAT:
+            # This is now handled in ChatScreen via @on decorator
+            self.loguru_logger.debug(f"chat-api-provider change event (handled in ChatScreen): {event.value}")
+            
             # Update token counter when provider changes
             try:
                 from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
@@ -4437,6 +4583,49 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if self._splash_screen_widget:
             await self._splash_screen_widget.remove()
             self._splash_screen_widget = None
+        
+        # Always use screen-based navigation
+            # Determine initial screen based on _initial_tab_value
+            initial_tab = getattr(self, '_initial_tab_value', 'chat')
+            
+            # Import the new screens
+            from .UI.Screens.stts_screen import STTSScreen
+            from .UI.Screens.study_screen import StudyScreen
+            from .UI.Screens.chatbooks_screen import ChatbooksScreen
+            from .UI.Screens.subscription_screen import SubscriptionScreen
+            
+            # Map tab IDs to screen classes
+            screen_map = {
+                'chat': ChatScreen,
+                'ingest': MediaIngestScreen,
+                'coding': CodingScreen,
+                'ccp': ConversationScreen,
+                'media': MediaScreen,
+                'notes': NotesScreen,
+                'search': SearchScreen,
+                'evals': EvalsScreen,
+                'tools_settings': ToolsSettingsScreen,
+                'llm': LLMScreen,
+                'customize': CustomizeScreen,
+                'logs': LogsScreen,
+                'stats': StatsScreen,
+                'stts': STTSScreen,
+                'study': StudyScreen,
+                'chatbooks': ChatbooksScreen,
+                'subscriptions': SubscriptionScreen,
+            }
+            
+            # Get the appropriate screen class
+            screen_class = screen_map.get(initial_tab, ChatScreen)
+            
+            # Push the initial screen (must use push for first screen after splash)
+            await self.push_screen(screen_class(self))
+            logger.info(f"Screen navigation: Pushed initial {screen_class.__name__} after splash")
+            
+            # For screen navigation, set up a buffered logging handler
+            # that will store logs until the LogsWindow is ready
+            self._setup_buffered_logging()
+            return
         
         # Check if main UI widgets already exist (avoid duplicate IDs)
         existing_ids = {widget.id for widget in self.screen._nodes if widget.id}
@@ -4572,9 +4761,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         try:
             preset = event.value
             
-            # Get RAG-related widgets
-            rag_enable = self.query_one("#chat-rag-enable-checkbox", Checkbox)
-            top_k = self.query_one("#chat-rag-top-k", Input)
+            # In screen navigation mode, these widgets don't exist at app level
+            self.loguru_logger.debug(f"RAG preset change in screen mode - preset: {preset}")
+            # Store the preset for the screen to handle
+            self.rag_preset = preset
+            return
             
             # Apply preset configurations
             if preset == "none":
@@ -4611,10 +4802,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             pipeline_id = event.value
             
-            # Update the description display
-            description_widget = self.query_one("#chat-rag-pipeline-description", Static)
-            description = get_pipeline_description(pipeline_id)
-            description_widget.update(description)
+            # In screen navigation mode, these widgets don't exist at app level
+            self.loguru_logger.debug(f"RAG pipeline change in screen mode - pipeline: {pipeline_id}")
+            # Store the pipeline for the screen to handle
+            self.rag_pipeline = pipeline_id
+            return
             
             # If "none" is selected, just show manual config message
             if pipeline_id == "none":
@@ -4635,13 +4827,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         try:
             method = event.value
             
-            # Get the relevant widgets
-            provider_label = self.query_one(".rag-expansion-provider-label", Static)
-            provider_select = self.query_one("#chat-rag-expansion-provider", Select)
-            llm_model_label = self.query_one(".rag-expansion-llm-label", Static)
-            llm_model_select = self.query_one("#chat-rag-expansion-llm-model", Select)
-            local_model_label = self.query_one(".rag-expansion-local-label", Static)
-            local_model_input = self.query_one("#chat-rag-expansion-local-model", Input)
+            # In screen navigation mode, these widgets don't exist at app level
+            self.loguru_logger.debug(f"Query expansion method change in screen mode - method: {method}")
+            # Store the method for the screen to handle
+            self.query_expansion_method = method
+            return
             
             # Show/hide based on method
             if method == "llm":
@@ -5138,6 +5328,7 @@ if __name__ == "__main__":
         if should_rebuild and build_script_path.exists():
             logging.info("Building modular CSS...")
             import subprocess
+            # Build CSS synchronously before starting the app
             result = subprocess.run([sys.executable, str(build_script_path)], 
                                   cwd=str(css_dir), 
                                   capture_output=True, 
@@ -5146,13 +5337,6 @@ if __name__ == "__main__":
                 logging.info("Successfully built modular CSS")
             else:
                 logging.error(f"Failed to build modular CSS: {result.stderr}")
-                # Fall back to legacy CSS if available
-                from .Constants import css_content
-                css_file_path = css_dir / "tldw_cli.tcss"
-                if not css_file_path.exists():
-                    with open(css_file_path, "w", encoding='utf-8') as f:
-                        f.write(css_content)
-                    logging.info(f"Created fallback CSS file: {css_file_path}")
         
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
@@ -5388,6 +5572,7 @@ def main_cli_runner():
         if should_rebuild and build_script_path.exists():
             logging.info("Building modular CSS...")
             import subprocess
+            # Build CSS synchronously before starting the app
             result = subprocess.run([sys.executable, str(build_script_path)], 
                                   cwd=str(css_dir), 
                                   capture_output=True, 
@@ -5396,13 +5581,6 @@ def main_cli_runner():
                 logging.info("Successfully built modular CSS")
             else:
                 logging.error(f"Failed to build modular CSS: {result.stderr}")
-                # Fall back to legacy CSS if available
-                from .Constants import css_content
-                css_file_path = css_dir / "tldw_cli.tcss"
-                if not css_file_path.exists():
-                    with open(css_file_path, "w", encoding='utf-8') as f:
-                        f.write(css_content)
-                    logging.info(f"Created fallback CSS file: {css_file_path}")
         
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)

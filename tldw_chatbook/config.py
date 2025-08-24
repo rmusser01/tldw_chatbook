@@ -150,7 +150,7 @@ DEFAULT_RAG_SEARCH_CONFIG = {
 
 DEFAULT_MEDIA_INGESTION_CONFIG = {
     # UI Configuration for all media types
-    "ui_style": "simplified",  # Options: "simplified", "grid", "wizard", "split"
+    "ui_style": "default",  # Options: "default", "redesigned", "new", "grid", "wizard", "split"
     "pdf": {
         "chunk_method": "semantic",
         "chunk_size": 500,
@@ -2845,13 +2845,13 @@ def get_ingest_ui_style() -> str:
     media_ingestion_config = config.get("media_ingestion", {})
     
     # Get UI style from config, fall back to default
-    ui_style = media_ingestion_config.get("ui_style", DEFAULT_MEDIA_INGESTION_CONFIG.get("ui_style", "simplified"))
+    ui_style = media_ingestion_config.get("ui_style", DEFAULT_MEDIA_INGESTION_CONFIG.get("ui_style", "default"))
     
     # Validate the UI style
-    valid_styles = ["simplified", "grid", "wizard", "split"]
+    valid_styles = ["default", "redesigned", "new", "grid", "wizard", "split"]
     if ui_style not in valid_styles:
-        logger.warning(f"Invalid ingest UI style '{ui_style}', falling back to 'simplified'")
-        return "simplified"
+        logger.warning(f"Invalid ingest UI style '{ui_style}', falling back to 'default'")
+        return "default"
     
     return ui_style
 

@@ -72,7 +72,9 @@ class ChatWorkerHandler(BaseWorkerHandler):
         self.logger.info(f"Chat worker is RUNNING, updating button to STOP state")
         
         try:
-            send_button = self.app.query_one(f"#{send_button_id}", Button)
+            # Query from the current screen, not directly from app
+            current_screen = self.app.screen
+            send_button = current_screen.query_one(f"#{send_button_id}", Button)
             send_button.label = get_char(emoji_stop, fallback_stop)
             self.logger.info(f"Button '#{send_button_id}' changed to STOP state")
         except QueryError:
@@ -87,7 +89,9 @@ class ChatWorkerHandler(BaseWorkerHandler):
         
         # Change stop button back to send button
         try:
-            send_button = self.app.query_one(f"#{send_button_id}", Button)
+            # Query from the current screen, not directly from app
+            current_screen = self.app.screen
+            send_button = current_screen.query_one(f"#{send_button_id}", Button)
             send_button.label = get_char(emoji_send, fallback_send)
             self.logger.info(f"Button '#{send_button_id}' changed back to SEND state")
         except QueryError:

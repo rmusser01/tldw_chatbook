@@ -723,6 +723,26 @@ def get_tool_executor() -> ToolExecutor:
             except Exception as e:
                 logger.error(f"Error registering UpdateNoteTool: {e}")
         
+        # Register code audit tool if enabled
+        if tools_config.get("code_audit_enabled", True):  # Default to enabled for monitoring
+            try:
+                from .code_audit_tool import CodeAuditTool
+                _global_executor.register_tool(CodeAuditTool())
+                logger.info("CodeAuditTool registered successfully")
+                
+                # Try to install automatic file operation hooks
+                try:
+                    from .file_operation_hooks import install_claude_code_hooks
+                    hooks_installed = install_claude_code_hooks()
+                    logger.info(f"File operation hooks installed: {hooks_installed}")
+                except Exception as hook_error:
+                    logger.warning(f"Could not install automatic file operation hooks: {hook_error}")
+                    
+            except ImportError as e:
+                logger.warning(f"Could not import CodeAuditTool: {e}")
+            except Exception as e:
+                logger.error(f"Error registering CodeAuditTool: {e}")
+        
         logger.info(f"ToolExecutor initialized with: timeout={timeout}s, workers={max_workers}, cache={'enabled' if enable_cache else 'disabled'}")
     
     return _global_executor

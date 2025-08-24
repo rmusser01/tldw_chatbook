@@ -170,7 +170,15 @@ async def refresh_active_dictionaries(app: 'TldwCli') -> None:
     loguru_logger.debug("Refreshing active dictionaries list")
     
     try:
-        active_list = app.query_one("#chat-dictionary-active-listview", ListView)
+        # Try to find the listview in the current screen/chat window context
+        try:
+            active_list = app.screen.query_one("#chat-dictionary-active-listview", ListView)
+        except QueryError:
+            try:
+                chat_window = app.screen.query_one("#chat-window")
+                active_list = chat_window.query_one("#chat-dictionary-active-listview", ListView)
+            except QueryError:
+                active_list = app.query_one("#chat-dictionary-active-listview", ListView)
         await active_list.clear()
         
         # Get the current conversation ID

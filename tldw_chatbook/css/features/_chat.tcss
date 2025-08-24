@@ -28,6 +28,8 @@
 #chat-log {
     height: 1fr; /* Takes remaining space */
     width: 100%;
+    overflow-y: auto;  /* Ensure proper scrolling */
+    overflow-x: hidden;  /* Hide horizontal overflow */
     /* border: round $surface; Optional: Add border to scroll area */
     padding: 0 1; /* Padding around messages */
 }
@@ -48,6 +50,100 @@
     height: 3;       /* Standard button height */
 }
 /* Input widget styling (shared) */
+
+/* ========================================
+ * ChatWindowEnhanced specific styles
+ * ======================================== */
+
+ChatWindowEnhanced {
+    layout: horizontal;
+    height: 100%;
+}
+
+/* Image attachment indicator */
+#image-attachment-indicator {
+    margin: 0 1;
+    padding: 0 1;
+    background: $surface;
+    color: $text-muted;
+    height: 3;
+    display: none;
+}
+
+#image-attachment-indicator.visible {
+    display: block;
+}
+
+/* Send button states */
+.send-button {
+    width: auto;
+    margin-left: 1;
+}
+
+.send-button.stop-state {
+    background: $error;
+}
+
+/* Attachment button */
+.attach-button {
+    width: auto;
+    margin-left: 1;
+}
+
+/* Microphone button */
+.mic-button {
+    width: auto;
+    margin-left: 1;
+}
+
+/* Voice input widget styles */
+.voice-input-widget {
+    padding: 1;
+    background: $surface;
+    border: solid $primary;
+}
+
+/* Attachment preview styles */
+.attachment-preview {
+    padding: 1;
+    margin: 1;
+    background: $surface-lighten-1;
+    border: solid $primary;
+}
+
+/* Notes area expansion states */
+.notes-textarea-normal {
+    height: 10;
+}
+
+.notes-textarea-expanded {
+    height: 25;
+}
+
+/* Chat message type-specific styles */
+.chat-message.user {
+    background: $primary-lighten-2;
+    text-align: right;
+}
+
+.chat-message.assistant {
+    background: $surface-lighten-1;
+    text-align: left;
+}
+
+/* Loading and error states */
+.loading-indicator {
+    text-align: center;
+    padding: 2;
+    color: $text-muted;
+}
+
+.error-message {
+    color: $error;
+    padding: 1;
+    margin: 1;
+    border: solid $error;
+}
 .chat-input { /* Targets TextArea */
     width: 6fr;        /* Take 6x the space compared to other flex items */
     height: auto;      /* Allow height to adjust */

@@ -4,21 +4,41 @@
  * All button variants and states
  * ======================================== */
 
-/* Generic Button hover state */
-Button:hover {
-    background: $primary-lighten-1;
+/* Base button style with enhanced UX */
+Button {
+    /* No border by default - rely on background color for visual appearance */
+    border: none;
 }
 
-/* Generic Button focus state - use outline instead of background color change */
+/* Enhanced hover state with cursor indication */
+Button:hover {
+    background: $primary-lighten-1;
+    text-style: bold;
+}
+
+/* Enhanced focus state with visible outline */
 Button:focus {
+    background: $primary-darken-1;
     outline: solid $accent;
-    /* Don't change background on focus alone */
 }
 
 /* When both hovering AND focused */
-Button:focus:hover {
-    background: $primary-lighten-1;
+Button:hover:focus {
+    background: $primary-lighten-2;
+    text-style: bold;
     outline: solid $accent;
+}
+
+/* Disabled state */
+Button:disabled {
+    opacity: 50%;
+    background: $surface-darken-1;
+    color: $text-disabled;
+}
+
+Button:disabled:hover {
+    background: $surface-darken-1;
+    text-style: none;
 }
 
 /* microphone button – same box as Send but subdued colour */
