@@ -32,7 +32,15 @@ class LogsWindow(Container): # Inherit from Container
         self.app_instance = app_instance # Not strictly used in compose below
 
     def compose(self) -> ComposeResult:
-        yield RichLog(id="app-log-display", wrap=True, highlight=True, markup=True, auto_scroll=True)
+        # Create RichLog with max_lines for performance (keep last 10000 lines)
+        yield RichLog(
+            id="app-log-display", 
+            wrap=True, 
+            highlight=True, 
+            markup=False,  # Set to False to prevent log messages from being interpreted as markup
+            auto_scroll=True,
+            max_lines=10000  # Limit for performance while still keeping plenty of history
+        )
         yield Button("Copy All Logs to Clipboard", id="copy-logs-button", classes="logs-action-button")
 
 #

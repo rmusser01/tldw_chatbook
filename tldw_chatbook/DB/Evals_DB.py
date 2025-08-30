@@ -891,6 +891,48 @@ class EvalsDB:
                     WHERE id = ?
                 """, (status, error_message, now, run_id))
     
+    def update_run(self, run_id: str, updates: Dict[str, Any]):
+        """
+        Update evaluation run with arbitrary fields.
+        
+        Args:
+            run_id: ID of the run to update
+            updates: Dictionary of fields to update
+        """
+        if 'status' in updates:
+            # Use the existing status update method for status changes
+            self.update_run_status(run_id, updates['status'], updates.get('error_message'))
+        else:
+            # Handle other field updates
+            conn = self._get_connection()
+            now = datetime.now(timezone.utc).isoformat()
+            
+            # Build update query dynamically
+            allowed_fields = ['error_message', 'end_time', 'metrics_summary', 'config_overrides']
+            fields_to_update = []
+            values = []
+            
+            for field, value in updates.items():
+                if field in allowed_fields:
+                    fields_to_update.append(f"{field} = ?")
+                    if field in ['metrics_summary', 'config_overrides'] and isinstance(value, dict):
+                        values.append(json.dumps(value))
+                    else:
+                        values.append(value)
+            
+            if fields_to_update:
+                fields_to_update.append("updated_at = ?")
+                values.extend([now, run_id])
+                
+                query = f"""
+                    UPDATE eval_runs 
+                    SET {', '.join(fields_to_update)}
+                    WHERE id = ?
+                """
+                
+                with conn:
+                    conn.execute(query, values)
+    
     def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Get evaluation run by ID."""
         conn = self._get_connection()

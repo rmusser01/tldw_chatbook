@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tldw_chatbook"
-version = "0.1.7.2"
+version = "0.1.7.3"
 authors = [
   { name="Robert Musser", email="contact@rmusser.net" },
 ]
@@ -265,6 +265,117 @@ subscriptions = [
 web = [
     "textual-serve",  # Web server for running Textual apps in browser
 ]
+
+# Combined installation option for all optional features
+all-tools = [
+    # === Core Tools ===
+    # Coding and mapping
+    "grep_ast",
+    "pygments",
+    "tqdm",
+    
+    # Text processing and chunking
+    "langdetect",
+    "nltk",
+    "scikit-learn",
+    "fugashi",
+    "jieba",
+    
+    # === AI/ML Frameworks ===
+    # Embeddings and RAG
+    "chromadb>=0.4.0",
+    "torch",
+    "numpy",
+    "transformers",
+    "sentence-transformers",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    
+    # Local inference
+    "vllm",  # VLLM inference
+    "mlx-lm",  # MLX inference
+    
+    # === Web and Search ===
+    "lxml",
+    "beautifulsoup4",
+    "pandas",
+    "playwright",
+    "trafilatura",
+    "aiohttp",
+    "defusedxml",
+    
+    # === Transcription and Audio ===
+    "faster-whisper",  # CPU/CUDA optimized Whisper
+    "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
+    "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
+    
+    # Audio processing
+    "soundfile",
+    "scipy",
+    "yt-dlp",
+    "pydub",
+    "pyaudio>=0.2.14",
+    "sounddevice>=0.4.6",
+    "webrtcvad>=2.0.10",
+    "librosa",
+    
+    # === TTS (Text-to-Speech) ===
+    "chatterbox-tts",
+    "torchaudio",
+    "kokoro-onnx",
+    "onnxruntime",
+    "av",
+    # Note: higgs_tts requires manual installation of boson-multimodal from GitHub
+    
+    # === Speech and Diarization ===
+    "speechbrain",
+    "nemo-toolkit[asr]>=1.20.0",
+    
+    # === Document Processing ===
+    # PDF
+    "pymupdf",
+    "pymupdf4llm",
+    "docling",
+    
+    # Ebooks
+    "ebooklib",
+    "html2text",
+    "markdownify",
+    
+    # OCR and Document Extraction
+    "docext",
+    "gradio_client",
+    "openai",
+    "Pillow",
+    
+    # === MCP and Integrations ===
+    "mcp[cli]>=1.0.0",
+    
+    # === Subscriptions and Scheduling ===
+    "markdown",
+    "schedule",
+    "feedparser",
+    "cryptography",
+    
+    # === Development and Debugging ===
+    "pytest",
+    "pytest-timeout",
+    "textual-dev",
+    "hypothesis",
+    "pytest-asyncio",
+    "build",
+    "twine",
+    "wheel",
+    "prometheus_client",
+    "opentelemetry-exporter-prometheus",
+    "opentelemetry-instrumentation-system-metrics",
+    
+    # === Web Server ===
+    "textual-serve",
+]
+# IMPORTANT: For Higgs Audio TTS support, you must manually install boson-multimodal:
+#   git clone https://github.com/boson-ai/higgs-audio.git
+#   cd higgs-audio && pip install -r requirements.txt && pip install -e .
 
 
 [project.urls]

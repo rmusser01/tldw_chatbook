@@ -114,7 +114,9 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                     f"Respond_for_me_worker cleaned_suggested_text after further cleaning: '{cleaned_suggested_text[:500]}...'")
 
                 try:
-                    chat_input_widget = app.query_one("#chat-input", TextArea)
+                    # Query from the current screen, not directly from app
+                    current_screen = app.screen
+                    chat_input_widget = current_screen.query_one("#chat-input", TextArea)
                     chat_input_widget.text = cleaned_suggested_text
                     chat_input_widget.focus()
                     app.notify("Suggestion populated in the input field.", severity="information", timeout=3)
@@ -143,52 +145,55 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
         try:
             # Check if tabs are enabled and get the active session
             from ..config import get_cli_setting
+            # Query from the current screen, not directly from app
+            current_screen = app.screen
+            
             if prefix == "chat" and get_cli_setting("chat_defaults", "enable_tabs", False):
                 # Try to get the tab ID from the stored context
                 tab_id = getattr(app, '_current_chat_tab_id', None)
                 if tab_id:
                     try:
-                        chat_container: VerticalScroll = app.query_one(f"#{prefix}-log-{tab_id}", VerticalScroll)
+                        chat_container: VerticalScroll = current_screen.query_one(f"#{prefix}-log-{tab_id}", VerticalScroll)
                     except Exception as e:
                         logger.error(f"Error getting chat container for tab {tab_id}: {e}")
                         # Try to get the active tab's chat log
                         try:
-                            chat_window = app.query_one("#chat-window")
+                            chat_window = current_screen.query_one("#chat-window")
                             if hasattr(chat_window, 'tab_container') and chat_window.tab_container:
                                 active_session = chat_window.tab_container.get_active_session()
                                 if active_session and active_session.session_data:
                                     tab_id = active_session.session_data.tab_id
-                                    chat_container: VerticalScroll = app.query_one(f"#{prefix}-log-{tab_id}", VerticalScroll)
+                                    chat_container: VerticalScroll = current_screen.query_one(f"#{prefix}-log-{tab_id}", VerticalScroll)
                                 else:
                                     logger.error("No active chat session found")
                                     return
                             else:
                                 # Fallback to non-tabbed mode
-                                chat_container: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
+                                chat_container: VerticalScroll = current_screen.query_one(f"#{prefix}-log", VerticalScroll)
                         except Exception as e2:
                             logger.error(f"Error getting chat container with tabs: {e2}")
                             return
                 else:
                     # No stored tab ID, try to get from active session
                     try:
-                        chat_window = app.query_one("#chat-window")
+                        chat_window = current_screen.query_one("#chat-window")
                         if hasattr(chat_window, 'tab_container') and chat_window.tab_container:
                             active_session = chat_window.tab_container.get_active_session()
                             if active_session and active_session.session_data:
                                 tab_id = active_session.session_data.tab_id
-                                chat_container: VerticalScroll = app.query_one(f"#{prefix}-log-{tab_id}", VerticalScroll)
+                                chat_container: VerticalScroll = current_screen.query_one(f"#{prefix}-log-{tab_id}", VerticalScroll)
                             else:
                                 logger.error("No active chat session found")
                                 return
                         else:
                             # Fallback to non-tabbed mode
-                            chat_container: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
+                            chat_container: VerticalScroll = current_screen.query_one(f"#{prefix}-log", VerticalScroll)
                     except Exception as e:
                         logger.error(f"Error getting chat container with tabs: {e}")
                         return
             else:
                 # Non-chat or tabs disabled
-                chat_container: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
+                chat_container: VerticalScroll = current_screen.query_one(f"#{prefix}-log", VerticalScroll)
             
             # Check if widget exists before using it
             if ai_message_widget is None or not ai_message_widget.is_mounted:

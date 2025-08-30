@@ -13,6 +13,7 @@ from textual.message import Message
 #
 # Local Imports
 from ..config import get_cli_providers_and_models
+from ..Widgets.Media_Creation.swarmui_widget import SwarmUIWidget
 
 # Try to import pipeline integration
 try:
@@ -71,6 +72,20 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
 
     with VerticalScroll(id=sidebar_id, classes="sidebar"):
         # -------------------------------------------------------------------
+        # Quick Actions Bar at the top
+        # -------------------------------------------------------------------
+        with Horizontal(classes="quick-actions-bar"):
+            yield Button("➕", id=f"{id_prefix}-expand-all", classes="quick-action-btn", tooltip="Expand all sections")
+            yield Button("➖", id=f"{id_prefix}-collapse-all", classes="quick-action-btn", tooltip="Collapse all sections")
+            yield Button("🔄", id=f"{id_prefix}-reset-settings", classes="quick-action-btn", tooltip="Reset to defaults")
+        
+        # Search bar for filtering settings
+        yield Input(
+            placeholder="🔍 Search settings...",
+            id=f"{id_prefix}-settings-search",
+            classes="sidebar-search-input"
+        )
+        # -------------------------------------------------------------------
         # Retrieve defaults / provider information
         # -------------------------------------------------------------------
         defaults = config.get(f"{id_prefix}_defaults", config.get("chat_defaults", {}))
@@ -99,12 +114,16 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
         yield Static("Chat Settings", classes="sidebar-title")
 
         # -------------------------------------------------------------------
-        # Quick Settings (Always visible)
+        # ESSENTIAL GROUP - Always visible, priority high
         # -------------------------------------------------------------------
-        with Collapsible(title="Quick Settings", collapsed=False, id=f"{id_prefix}-quick-settings", classes="settings-collapsible basic-mode advanced-mode"):
-            yield Static("Provider & Model", classes="sidebar-label")
-            provider_options = [(provider, provider) for provider in available_providers]
-            yield Select(
+        with Container(classes="settings-group primary-group"):
+            yield Static("ESSENTIAL", classes="group-header")
+            
+            # Quick Settings (Always visible)
+            with Collapsible(title="🎯 Quick Settings", collapsed=False, id=f"{id_prefix}-quick-settings", classes="settings-collapsible priority-high basic-mode advanced-mode"):
+                yield Static("Provider & Model", classes="sidebar-label")
+                provider_options = [(provider, provider) for provider in available_providers]
+                yield Select(
                 options=provider_options,
                 prompt="Select Provider…",
                 allow_blank=False,
@@ -115,7 +134,7 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             initial_models = providers_models.get(default_provider, [])
             model_options = [(model, model) for model in initial_models]
             current_model_value = (
-                default_model if default_model in initial_models else (initial_models[0] if initial_models else None)
+                default_model if default_model in initial_models else (initial_models[0] if initial_models else Select.BLANK)
             )
             yield Select(
                 options=model_options,
@@ -192,17 +211,107 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 tooltip="Enable advanced settings and options"
             )
 
-        # -------------------------------------------------------------------
-        # RAG Settings (Prominent Panel - Always visible)
-        # -------------------------------------------------------------------
-        with Collapsible(title="🔍 RAG Settings", collapsed=True, id=f"{id_prefix}-rag-panel", classes="settings-collapsible rag-settings-panel basic-mode advanced-mode"):
-            # Main RAG toggle
-            yield Checkbox(
-                "Enable RAG",
-                id=f"{id_prefix}-rag-enable-checkbox",
-                value=False,
-                classes="rag-enable-toggle"
+            # Current Chat Details - also in essential group
+            with Collapsible(title="💬 Current Chat", collapsed=False, id=f"{id_prefix}-chat-details-collapsible", classes="settings-collapsible priority-high basic-mode advanced-mode"):
+                # "New Chat" Buttons
+                yield Button(
+                "New Temp Chat",
+                id=f"{id_prefix}-new-temp-chat-button",
+                classes="sidebar-button",
+                variant="primary"
             )
+            yield Button(
+                "New Chat",
+                id=f"{id_prefix}-new-conversation-button",
+                classes="sidebar-button"
+            )
+            yield Label("Conversation ID:", classes="sidebar-label", id=f"{id_prefix}-uuid-label-displayonly")
+            yield Input(
+                id=f"{id_prefix}-conversation-uuid-display",
+                value="Temp Chat",
+                disabled=True,
+                classes="sidebar-input"
+            )
+
+            yield Label("Chat Title:", classes="sidebar-label", id=f"{id_prefix}-title-label-displayonly")
+            yield Input(
+                id=f"{id_prefix}-conversation-title-input",
+                placeholder="Chat title...",
+                disabled=True,
+                classes="sidebar-input"
+            )
+            yield Label("Keywords (comma-sep):", classes="sidebar-label", id=f"{id_prefix}-keywords-label-displayonly")
+            yield TextArea(
+                "",
+                id=f"{id_prefix}-conversation-keywords-input",
+                classes="sidebar-textarea chat-keywords-textarea",
+                disabled=True
+            )
+            # Button to save METADATA
+            yield Button(
+                "Save Details",
+                id=f"{id_prefix}-save-conversation-details-button",
+                classes="sidebar-button save-details-button",
+                variant="primary",
+                disabled=True
+            )
+            # Button to make an EPHEMERAL chat PERSISTENT
+            yield Button(
+                "Save Temp Chat",
+                id=f"{id_prefix}-save-current-chat-button",
+                classes="sidebar-button save-chat-button",
+                variant="success",
+                disabled=False
+            )
+            
+            # Clone chat button
+            yield Button(
+                "🔄 Clone Current Chat",
+                id=f"{id_prefix}-clone-current-chat-button",
+                classes="sidebar-button clone-chat-button",
+                variant="default",
+                tooltip="Create a copy of the current chat to explore different paths"
+            )
+
+            # Convert to note button
+            yield Button(
+                "📋 Convert to Note",
+                id=f"{id_prefix}-convert-to-note-button",
+                classes="sidebar-button convert-to-note-button",
+                variant="default"
+            )
+
+            # Strip thinking tags checkbox
+            initial_strip_value = config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+            yield Checkbox(
+                "Strip Thinking Tags",
+                value=initial_strip_value,
+                id=f"{id_prefix}-strip-thinking-tags-checkbox",
+                classes="sidebar-checkbox"
+            )
+
+        # -------------------------------------------------------------------
+        # FEATURES GROUP - Secondary importance
+        # -------------------------------------------------------------------
+        yield Static(classes="sidebar-section-divider")
+        
+        with Container(classes="settings-group secondary-group"):
+            yield Static("FEATURES", classes="group-header")
+            
+            # Image Generation (only for chat tab)
+            if id_prefix == "chat":
+                with Collapsible(title="🎨 Image Generation", collapsed=True, id=f"{id_prefix}-image-generation-collapsible", classes="settings-collapsible basic-mode advanced-mode"):
+                    yield SwarmUIWidget(id=f"{id_prefix}-swarmui-widget")
+
+            # RAG Settings (Prominent Panel)
+            with Collapsible(title="🔍 RAG Settings", collapsed=True, id=f"{id_prefix}-rag-panel", classes="settings-collapsible rag-settings-panel basic-mode advanced-mode"):
+                # Main RAG toggle
+                yield Checkbox(
+                    "Enable RAG",
+                    id=f"{id_prefix}-rag-enable-checkbox",
+                    value=False,
+                    classes="rag-enable-toggle"
+                )
             
             # RAG preset selection
             yield Static("RAG Preset", classes="sidebar-label")
@@ -465,11 +574,150 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             )
 
         # -------------------------------------------------------------------
-        # Advanced Model Parameters (Hidden in Basic Mode)
+        # Notes (from right sidebar)
         # -------------------------------------------------------------------
-        with Collapsible(title="Model Parameters", collapsed=True, id=f"{id_prefix}-model-params", classes="settings-collapsible advanced-mode advanced-only"):
-            yield Static("Top P", classes="sidebar-label")
-            yield Input(
+        if id_prefix == "chat":
+            with Collapsible(title="Notes", collapsed=True, id=f"{id_prefix}-notes-collapsible", classes="settings-collapsible basic-mode advanced-mode"):
+                yield Label("Search Notes:", classes="sidebar-label")
+                yield Input(
+                    id=f"{id_prefix}-notes-search-input",
+                    placeholder="Search notes...",
+                    classes="sidebar-input"
+                )
+                yield Button(
+                    "Search",
+                    id=f"{id_prefix}-notes-search-button",
+                    classes="sidebar-button"
+                )
+
+                notes_list_view = ListView(
+                    id=f"{id_prefix}-notes-listview",
+                    classes="sidebar-listview"
+                )
+                notes_list_view.styles.height = 7
+                yield notes_list_view
+
+                yield Button(
+                    "Load Note",
+                    id=f"{id_prefix}-notes-load-button",
+                    classes="sidebar-button"
+                )
+                yield Button(
+                    "Create New Note",
+                    id=f"{id_prefix}-notes-create-new-button",
+                    variant="primary",
+                    classes="sidebar-button"
+                )
+
+                yield Label("Note Title:", classes="sidebar-label")
+                yield Input(
+                    id=f"{id_prefix}-notes-title-input",
+                    placeholder="Note title...",
+                    classes="sidebar-input"
+                )
+
+                # Expand button above note content
+                yield Button(
+                    "Expand Notes",
+                    id=f"{id_prefix}-notes-expand-button",
+                    classes="notes-expand-button sidebar-button"
+                )
+                
+                # Note content label
+                yield Label("Note Content:", classes="sidebar-label")
+                
+                note_content_area = TextArea(
+                    id=f"{id_prefix}-notes-content-textarea",
+                    classes="sidebar-textarea notes-textarea-normal"
+                )
+                note_content_area.styles.height = 10
+                yield note_content_area
+
+                yield Button(
+                    "Save Note",
+                    id=f"{id_prefix}-notes-save-button",
+                    variant="success",
+                    classes="sidebar-button"
+                )
+                
+                yield Button(
+                    "Copy Note",
+                    id=f"{id_prefix}-notes-copy-button",
+                    variant="default",
+                    classes="sidebar-button"
+                )
+
+        # -------------------------------------------------------------------
+        # Prompts (from right sidebar)
+        # -------------------------------------------------------------------
+        if id_prefix == "chat":
+            with Collapsible(title="Prompts", collapsed=True, id=f"{id_prefix}-prompts-collapsible", classes="settings-collapsible basic-mode advanced-mode"):
+                yield Label("Search Prompts:", classes="sidebar-label")
+                yield Input(
+                    id=f"{id_prefix}-prompt-search-input",
+                    placeholder="Enter search term...",
+                    classes="sidebar-input"
+                )
+
+                results_list_view = ListView(
+                    id=f"{id_prefix}-prompts-listview",
+                    classes="sidebar-listview"
+                )
+                results_list_view.styles.height = 15
+                yield results_list_view
+
+                yield Button(
+                    "Load Selected Prompt",
+                    id=f"{id_prefix}-prompt-load-selected-button",
+                    variant="default",
+                    classes="sidebar-button"
+                )
+                yield Label("System Prompt:", classes="sidebar-label")
+
+                system_prompt_display = TextArea(
+                    "",
+                    id=f"{id_prefix}-prompt-system-display",
+                    classes="sidebar-textarea prompt-display-textarea",
+                    read_only=True
+                )
+                system_prompt_display.styles.height = 15
+                yield system_prompt_display
+                yield Button(
+                    "Copy System",
+                    id="chat-prompt-copy-system-button",
+                    classes="sidebar-button copy-button",
+                    disabled=True
+                )
+
+                yield Label("User Prompt:", classes="sidebar-label")
+
+                user_prompt_display = TextArea(
+                    "",
+                    id=f"{id_prefix}-prompt-user-display",
+                    classes="sidebar-textarea prompt-display-textarea",
+                    read_only=True
+                )
+                user_prompt_display.styles.height = 15
+                yield user_prompt_display
+                yield Button(
+                    "Copy User",
+                    id="chat-prompt-copy-user-button",
+                    classes="sidebar-button copy-button",
+                    disabled=True
+                )
+
+        # -------------------------------------------------------------------
+        # ADVANCED GROUP - Hidden by default, technical settings
+        # -------------------------------------------------------------------
+        yield Static(classes="sidebar-section-divider")
+        
+        with Container(classes="settings-group advanced-group"):
+            yield Static("ADVANCED", classes="group-header")
+            
+            # Model Parameters
+            with Collapsible(title="⚙️ Model Parameters", collapsed=True, id=f"{id_prefix}-model-params", classes="settings-collapsible advanced-mode advanced-only"):
+                yield Static("Top P", classes="sidebar-label")
+                yield Input(
                 placeholder="e.g., 0.95",
                 id=f"{id_prefix}-top-p",
                 value=default_top_p,
@@ -513,6 +761,63 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                          id=f"{id_prefix}-llm-response-format", value="text", allow_blank=False)
 
         # -------------------------------------------------------------------
+        # Character Info (from right sidebar)
+        # -------------------------------------------------------------------
+        with Collapsible(title="Active Character Info", collapsed=True, id=f"{id_prefix}-active-character-info-collapsible", classes="settings-collapsible basic-mode advanced-mode"):
+            if id_prefix == "chat":
+                yield Input(
+                    id="chat-character-search-input",
+                    placeholder="Search all characters...",
+                    classes="sidebar-input"
+                )
+                character_search_results_list = ListView(
+                    id="chat-character-search-results-list",
+                    classes="sidebar-listview"
+                )
+                character_search_results_list.styles.height = 7
+                yield character_search_results_list
+                yield Button(
+                    "Load Character",
+                    id="chat-load-character-button",
+                    classes="sidebar-button"
+                )
+                yield Button(
+                    "Clear Active Character",
+                    id="chat-clear-active-character-button",
+                    classes="sidebar-button",
+                    variant="warning"
+                )
+                yield Label("Character Name:", classes="sidebar-label")
+                yield Input(
+                    id="chat-character-name-edit",
+                    placeholder="Name",
+                    classes="sidebar-input"
+                )
+                yield Label("Description:", classes="sidebar-label")
+                description_edit_ta = TextArea(id="chat-character-description-edit", classes="sidebar-textarea")
+                description_edit_ta.styles.height = 30
+                yield description_edit_ta
+
+                yield Label("Personality:", classes="sidebar-label")
+                personality_edit_ta = TextArea(id="chat-character-personality-edit", classes="sidebar-textarea")
+                personality_edit_ta.styles.height = 30
+                yield personality_edit_ta
+
+                yield Label("Scenario:", classes="sidebar-label")
+                scenario_edit_ta = TextArea(id="chat-character-scenario-edit", classes="sidebar-textarea")
+                scenario_edit_ta.styles.height = 30
+                yield scenario_edit_ta
+
+                yield Label("System Prompt:", classes="sidebar-label")
+                system_prompt_edit_ta = TextArea(id="chat-character-system-prompt-edit", classes="sidebar-textarea")
+                system_prompt_edit_ta.styles.height = 30
+                yield system_prompt_edit_ta
+
+                yield Label("First Message:", classes="sidebar-label")
+                first_message_edit_ta = TextArea(id="chat-character-first-message-edit", classes="sidebar-textarea")
+                first_message_edit_ta.styles.height = 30
+                yield first_message_edit_ta
+
         # Conversation Management (Always visible)
         # -------------------------------------------------------------------
         with Collapsible(title="Conversations", collapsed=True, id=f"{id_prefix}-conversations", classes="settings-collapsible basic-mode advanced-mode"):
@@ -578,6 +883,205 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             yield Static("Frequency Penalty", classes="sidebar-label")
             yield Input(id=f"{id_prefix}-llm-frequency-penalty", value="0.0", placeholder="e.g., 0.0 to 2.0",
                         classes="sidebar-input")
+
+        # -------------------------------------------------------------------
+        # Search Media (from right sidebar)
+        # -------------------------------------------------------------------
+        if id_prefix == "chat":
+            with Collapsible(title="Search Media", collapsed=True, id=f"{id_prefix}-media-collapsible", classes="settings-collapsible basic-mode advanced-mode"):
+                yield Label("Search Term:", classes="sidebar-label")
+                yield Input(
+                    id="chat-media-search-input",
+                    placeholder="Search title, content...",
+                    classes="sidebar-input"
+                )
+                yield Label("Filter by Keywords (comma-sep):", classes="sidebar-label")
+                yield Input(
+                    id="chat-media-keyword-filter-input",
+                    placeholder="e.g., python, tutorial",
+                    classes="sidebar-input"
+                )
+                yield Button(
+                    "Search",
+                    id="chat-media-search-button",
+                    classes="sidebar-button"
+                )
+                yield ListView(id="chat-media-search-results-listview", classes="sidebar-listview")
+
+                with Horizontal(classes="pagination-controls", id="chat-media-pagination-controls"):
+                    yield Button("Prev", id="chat-media-prev-page-button", disabled=True)
+                    yield Label("Page 1/1", id="chat-media-page-label")
+                    yield Button("Next", id="chat-media-next-page-button", disabled=True)
+
+                yield Static("--- Selected Media Details ---", classes="sidebar-label", id="chat-media-details-header")
+
+                media_details_view = VerticalScroll(id="chat-media-details-view")
+                media_details_view.styles.height = 35
+                with media_details_view:
+                    with Horizontal(classes="detail-field-container"):
+                        yield Label("Title:", classes="detail-label")
+                        yield Button("Copy", id="chat-media-copy-title-button", classes="copy-button", disabled=True)
+                    title_display_ta = TextArea("", id="chat-media-title-display", read_only=True, classes="detail-textarea")
+                    title_display_ta.styles.height = 3
+                    yield title_display_ta
+
+                    with Horizontal(classes="detail-field-container"):
+                        yield Label("Content:", classes="detail-label")
+                        yield Button("Copy", id="chat-media-copy-content-button", classes="copy-button", disabled=True)
+                    content_display_ta = TextArea("", id="chat-media-content-display", read_only=True,
+                                   classes="detail-textarea content-display")
+                    content_display_ta.styles.height = 20
+                    yield content_display_ta
+
+                    with Horizontal(classes="detail-field-container"):
+                        yield Label("Author:", classes="detail-label")
+                        yield Button("Copy", id="chat-media-copy-author-button", classes="copy-button", disabled=True)
+                    author_display_ta = TextArea("", id="chat-media-author-display", read_only=True, classes="detail-textarea")
+                    author_display_ta.styles.height = 2
+                    yield author_display_ta
+
+                    with Horizontal(classes="detail-field-container"):
+                        yield Label("URL:", classes="detail-label")
+                        yield Button("Copy", id="chat-media-copy-url-button", classes="copy-button", disabled=True)
+                    url_display_ta = TextArea("", id="chat-media-url-display", read_only=True, classes="detail-textarea")
+                    url_display_ta.styles.height = 2
+                    yield url_display_ta
+
+        # -------------------------------------------------------------------
+        # Chat Dictionaries (from right sidebar)
+        # -------------------------------------------------------------------
+        if id_prefix == "chat":
+            with Collapsible(title="Chat Dictionaries", collapsed=True, id=f"{id_prefix}-dictionaries-collapsible", classes="settings-collapsible advanced-mode advanced-only"):
+                # Search for available dictionaries
+                yield Label("Search Dictionaries:", classes="sidebar-label")
+                yield Input(
+                    id=f"{id_prefix}-dictionary-search-input",
+                    placeholder="Search dictionaries...",
+                    classes="sidebar-input"
+                )
+                
+                # List of available dictionaries
+                yield Label("Available Dictionaries:", classes="sidebar-label")
+                dictionary_available_list = ListView(
+                    id=f"{id_prefix}-dictionary-available-listview",
+                    classes="sidebar-listview"
+                )
+                dictionary_available_list.styles.height = 5
+                yield dictionary_available_list
+                
+                # Add button for dictionaries
+                yield Button(
+                    "Add to Chat",
+                    id=f"{id_prefix}-dictionary-add-button",
+                    classes="sidebar-button",
+                    variant="primary",
+                    disabled=True
+                )
+                
+                # Currently associated dictionaries
+                yield Label("Active Dictionaries:", classes="sidebar-label")
+                dictionary_active_list = ListView(
+                    id=f"{id_prefix}-dictionary-active-listview",
+                    classes="sidebar-listview"
+                )
+                dictionary_active_list.styles.height = 5
+                yield dictionary_active_list
+                
+                # Remove button for active dictionaries
+                yield Button(
+                    "Remove from Chat",
+                    id=f"{id_prefix}-dictionary-remove-button",
+                    classes="sidebar-button",
+                    variant="warning",
+                    disabled=True
+                )
+                
+                # Quick enable/disable for dictionary processing
+                yield Checkbox(
+                    "Enable Dictionary Processing",
+                    value=True,
+                    id=f"{id_prefix}-dictionary-enable-checkbox",
+                    classes="sidebar-checkbox"
+                )
+                
+                # Selected dictionary details
+                yield Label("Selected Dictionary Details:", classes="sidebar-label")
+                dictionary_details = TextArea(
+                    "",
+                    id=f"{id_prefix}-dictionary-details-display",
+                    classes="sidebar-textarea",
+                    read_only=True
+                )
+                dictionary_details.styles.height = 8
+                yield dictionary_details
+
+        # -------------------------------------------------------------------
+        # World Books (from right sidebar)
+        # -------------------------------------------------------------------
+        if id_prefix == "chat":
+            with Collapsible(title="World Books", collapsed=True, id=f"{id_prefix}-worldbooks-collapsible", classes="settings-collapsible advanced-mode advanced-only"):
+                # Search for available world books
+                yield Label("Search World Books:", classes="sidebar-label")
+                yield Input(
+                    id=f"{id_prefix}-worldbook-search-input",
+                    placeholder="Search world books...",
+                    classes="sidebar-input"
+                )
+                
+                # List of available world books
+                yield Label("Available World Books:", classes="sidebar-label")
+                worldbook_available_list = ListView(
+                    id=f"{id_prefix}-worldbook-available-listview",
+                    classes="sidebar-listview"
+                )
+                worldbook_available_list.styles.height = 5
+                yield worldbook_available_list
+                
+                # Add button for world books
+                yield Button(
+                    "Add to Chat",
+                    id=f"{id_prefix}-worldbook-add-button",
+                    classes="sidebar-button",
+                    variant="primary",
+                    disabled=True
+                )
+                
+                # Currently associated world books
+                yield Label("Active World Books:", classes="sidebar-label")
+                worldbook_active_list = ListView(
+                    id=f"{id_prefix}-worldbook-active-listview",
+                    classes="sidebar-listview"
+                )
+                worldbook_active_list.styles.height = 5
+                yield worldbook_active_list
+                
+                # Remove button for active world books
+                yield Button(
+                    "Remove from Chat",
+                    id=f"{id_prefix}-worldbook-remove-button",
+                    classes="sidebar-button",
+                    variant="warning",
+                    disabled=True
+                )
+                
+                # Quick enable/disable for world book processing
+                yield Checkbox(
+                    "Enable World Book Processing",
+                    value=True,
+                    id=f"{id_prefix}-worldbook-enable-checkbox",
+                    classes="sidebar-checkbox"
+                )
+                
+                # Selected world book details
+                yield Label("Selected World Book Details:", classes="sidebar-label")
+                worldbook_details = TextArea(
+                    "",
+                    id=f"{id_prefix}-worldbook-details-display",
+                    classes="sidebar-textarea",
+                    read_only=True
+                )
+                worldbook_details.styles.height = 8
+                yield worldbook_details
 
         # -------------------------------------------------------------------
         # Tools & Templates (Hidden in Basic Mode)

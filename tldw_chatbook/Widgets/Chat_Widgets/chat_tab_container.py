@@ -427,6 +427,44 @@ class ChatTabContainer(Container):
         
         if self.tab_bar:
             self.tab_bar.update_tab_title(tab_id, new_title, character_name)
+    
+    def get_all_sessions_state(self) -> Dict[str, ChatSessionData]:
+        """
+        Get the state of all sessions for saving.
+        
+        Returns:
+            Dictionary mapping tab IDs to session data
+        """
+        state = {}
+        for tab_id, session in self.sessions.items():
+            state[tab_id] = session.session_data
+        return state
+    
+    async def restore_sessions_from_state(self, state: Dict[str, ChatSessionData]) -> None:
+        """
+        Restore sessions from saved state.
+        
+        Args:
+            state: Dictionary mapping tab IDs to session data
+        """
+        # Clear existing sessions except default
+        for tab_id in list(self.sessions.keys()):
+            if tab_id != "default":
+                await self.close_tab(tab_id)
+        
+        # Restore each session
+        for tab_id, session_data in state.items():
+            if tab_id == "default" and "default" in self.sessions:
+                # Update default session
+                self.sessions["default"].session_data = session_data
+            else:
+                # Create new session
+                new_tab_id = await self.create_new_tab(title=session_data.title)
+                if new_tab_id and new_tab_id in self.sessions:
+                    # Copy the session data
+                    self.sessions[new_tab_id].session_data = session_data
+                    # Update the tab ID in session data to match new ID
+                    self.sessions[new_tab_id].session_data.tab_id = new_tab_id
 
 #
 # End of chat_tab_container.py

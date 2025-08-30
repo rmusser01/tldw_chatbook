@@ -14,15 +14,76 @@
     padding: 0 1;
 }
 
-/* Reduce height of Collapsible headers */
+/* Collapsible widget styling with enhanced UX */
+Collapsible {
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: round $surface-lighten-1;
+    background: $surface;
+}
+
 Collapsible > .collapsible--header {
     height: 2;
+    min-height: 2;
+    padding: 0 1;
+    background: $surface-lighten-1;
+    color: $text;
+}
+
+Collapsible > .collapsible--header:hover {
+    background: $primary-background-lighten-2;
+    color: $text;
+}
+
+Collapsible > .collapsible--header:focus {
+    background: $primary-background-lighten-1;
+    text-style: bold;
+}
+
+Collapsible.-collapsed > .collapsible--header {
+    border-bottom: none;
+}
+
+Collapsible > .collapsible--header {
+    border-bottom: solid $border;
+}
+
+Collapsible > Contents {
+    height: auto;
+    padding: 1;
+    background: $surface;
 }
 
 /* Half height for RAG Settings collapsible header */
 #chat-rag-panel > .collapsible--header,
 #character-rag-panel > .collapsible--header {
     height: 1;
+    min-height: 1;
+}
+
+/* Fix for settings collapsibles in sidebars */
+.settings-collapsible {
+    height: auto !important;
+    min-height: 3 !important;
+}
+
+.settings-collapsible > Contents {
+    height: auto !important;
+    padding: 1;
+}
+
+/* Ensure controls inside collapsibles are visible */
+.settings-collapsible Checkbox {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.settings-collapsible Toggle {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
 }
 
 .chat-system-prompt-styling {
@@ -95,3 +156,118 @@ AppFooterStatus {
     margin-left: 2; /* Add buffer before DB status */
 }
 /* --- End of Window Footer Widget --- */
+
+/* --- Loading States --- */
+.loading-state-container {
+    width: 100%;
+    height: auto;
+    min-height: 10;
+}
+
+.loading-view {
+    align: center middle;
+    padding: 2;
+}
+
+.loading-text {
+    margin-top: 1;
+    color: $text-muted;
+}
+
+.error-view {
+    align: center middle;
+    padding: 2;
+    background: $error 10%;
+    border: round $error;
+}
+
+.error-icon {
+    color: $error;
+    text-style: bold;
+}
+
+.error-message {
+    margin: 1 0;
+    color: $error;
+    text-align: center;
+}
+
+.error-actions {
+    margin-top: 1;
+    align: center middle;
+}
+
+.error-actions Button {
+    margin: 0 1;
+}
+
+/* Skeleton loader styles */
+.skeleton-container {
+    width: 100%;
+    padding: 1;
+}
+
+.skeleton-avatar {
+    width: 8;
+    height: 4;
+    background: $surface-lighten-2;
+    border: round $surface-lighten-2;
+}
+
+.skeleton-title {
+    width: 60%;
+    height: 1;
+    background: $surface-lighten-2;
+    margin-bottom: 1;
+}
+
+.skeleton-subtitle {
+    width: 40%;
+    height: 1;
+    background: $surface-lighten-1;
+}
+
+.skeleton-line {
+    height: 1;
+    background: $surface-lighten-1;
+    margin-bottom: 1;
+}
+
+.skeleton-line-full {
+    width: 100%;
+}
+
+.skeleton-line-90 {
+    width: 90%;
+}
+
+.skeleton-line-80 {
+    width: 80%;
+}
+
+.skeleton-line-70 {
+    width: 70%;
+}
+
+/* Skeleton loader visual indication */
+.skeleton-line,
+.skeleton-avatar,
+.skeleton-title,
+.skeleton-subtitle {
+    opacity: 70%;
+}
+
+/* Inline loader states */
+InlineLoader.loading {
+    color: $primary;
+}
+
+InlineLoader.success {
+    color: $success;
+}
+
+InlineLoader.error {
+    color: $error;
+}
+
+/* --- End of Loading States --- */

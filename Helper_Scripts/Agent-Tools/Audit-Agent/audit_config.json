@@ -1,0 +1,125 @@
+{
+  "version": "1.0.0",
+  "rules": {
+    "security": {
+      "enabled": true,
+      "severity": "error",
+      "patterns": [
+        {
+          "name": "hardcoded_api_key",
+          "pattern": "(api[_-]?key|apikey)\\s*=\\s*['\"][^'\"]+['\"]",
+          "message": "Hardcoded API key detected",
+          "severity": "critical"
+        },
+        {
+          "name": "hardcoded_password",
+          "pattern": "password\\s*=\\s*['\"][^'\"]+['\"]",
+          "message": "Hardcoded password detected",
+          "severity": "critical"
+        },
+        {
+          "name": "sql_injection_risk",
+          "pattern": "f['\"].*SELECT.*FROM.*{",
+          "message": "Potential SQL injection vulnerability",
+          "severity": "high"
+        },
+        {
+          "name": "eval_usage",
+          "pattern": "\\beval\\s*\\(",
+          "message": "Use of eval() is dangerous",
+          "severity": "high"
+        }
+      ]
+    },
+    "codeQuality": {
+      "enabled": true,
+      "severity": "warning",
+      "checks": {
+        "todos": {
+          "enabled": true,
+          "patterns": ["TODO", "FIXME", "HACK", "XXX"],
+          "severity": "info"
+        },
+        "debugStatements": {
+          "enabled": true,
+          "patterns": {
+            "python": ["print\\(", "breakpoint\\(", "import pdb"],
+            "javascript": ["console\\.", "debugger;"],
+            "typescript": ["console\\.", "debugger;"]
+          },
+          "severity": "warning"
+        },
+        "unusedImports": {
+          "enabled": false,
+          "tool": "ruff",
+          "severity": "info"
+        }
+      }
+    },
+    "fileRules": {
+      "maxFileSize": 1048576,
+      "maxLineLength": 120,
+      "encoding": "utf-8",
+      "lineEndings": "unix",
+      "forbiddenFiles": [
+        ".env",
+        "*.key",
+        "*.pem",
+        "*.p12"
+      ]
+    },
+    "projectSpecific": {
+      "tldw_server": {
+        "requireTypeHints": true,
+        "requireDocstrings": true,
+        "testCoverage": {
+          "enabled": true,
+          "minimum": 80
+        },
+        "linting": {
+          "python": {
+            "tool": "ruff",
+            "config": "pyproject.toml"
+          }
+        },
+        "preCommitChecks": [
+          "python -m ruff check .",
+          "python -m pytest tldw_Server_API/tests/ -x --tb=short"
+        ]
+      }
+    }
+  },
+  "actions": {
+    "onViolation": {
+      "critical": {
+        "block": true,
+        "notify": true,
+        "log": true
+      },
+      "high": {
+        "block": false,
+        "notify": true,
+        "log": true
+      },
+      "warning": {
+        "block": false,
+        "notify": false,
+        "log": true
+      },
+      "info": {
+        "block": false,
+        "notify": false,
+        "log": true
+      }
+    }
+  },
+  "reporting": {
+    "format": "json",
+    "destination": "$HOME/.claude/audit_logs/",
+    "aggregation": {
+      "enabled": true,
+      "interval": "daily",
+      "report": "$HOME/.claude/audit_logs/daily_report.json"
+    }
+  }
+}

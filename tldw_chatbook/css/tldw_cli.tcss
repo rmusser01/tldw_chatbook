@@ -21,9 +21,9 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 /* Generic .sidebar (used by #chat-left-sidebar and potentially others) */
 .sidebar {
     dock: left;
-    width: 25%; /* <-- CHANGE to percentage (adjust 20% to 35% as needed) */
-    min-width: 20; /* <-- ADD a minimum width to prevent it becoming unusable */
-    max-width: 80; /* <-- ADD a maximum width (optional) */
+    width: 35%; /* Set to 35% of screen width */
+    min-width: 25; /* Minimum width to prevent it becoming unusable */
+    max-width: 100; /* Maximum width (optional) */
     background: $boost;
     padding: 1 2;
     border-right: thick $background-darken-1;
@@ -41,29 +41,8 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     display: none; /* ensures it doesn’t grab focus */
 }
 
-/* Right sidebar (chat-right-sidebar) */
-#chat-right-sidebar {
-    dock: right;
-    width: 25%;  /* Default width, will be dynamically updated */
-    min-width: 15%; /* Minimum width - absolute units work better */
-    max-width: 50%; /* Maximum width */
-    background: $boost;
-    padding: 1 2;
-    border-left: thick $background-darken-1; /* Border on the left */
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-/* Collapsed state for the new right sidebar */
-#chat-right-sidebar.collapsed {
-    width: 0 !important;
-    min-width: 0 !important; /* Ensure min-width is also 0 */
-    border-left: none !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    display: none; /* Ensures it doesn't take space or grab focus */
-}
+/* Right sidebar removed - all functionality moved to left sidebar */
+/* Previous #chat-right-sidebar styles have been removed */
 
 /* Common sidebar elements */
 .sidebar-title { text-style: bold underline; margin-bottom: 1; width: 100%; text-align: center; }
@@ -205,13 +184,13 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     /*width: 100%;      Optional: make it full width like other sidebar buttons */
 }
 
-/* chat-right-sidebar Specific Styles */
-#chat-right-sidebar #chat-conversation-title-input { /* Title input */
+/* Chat details styles - now in left sidebar */
+#chat-conversation-title-input { /* Title input */
     /* width: 100%; (from .sidebar-input) */
     /* margin-bottom: 1; (from .sidebar-input) */
 }
 
-#chat-right-sidebar .chat-keywords-textarea { /* Keywords TextArea specific class */
+.chat-keywords-textarea { /* Keywords TextArea specific class */
     height: 4;  /* Or 3 to 5, adjust as preferred */
     /* width: 100%; (from .sidebar-textarea) */
     /* border: round $surface; (from .sidebar-textarea) */
@@ -219,13 +198,13 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 }
 
 /* Styling for the new "Save Details" button */
-#chat-right-sidebar .save-details-button {
+.save-details-button {
     margin-top: 1; /* Space above this button */
     /* width: 100%;    Make it full width */
 }
 
 /* Ensure the Save Current Chat button also has clear styling if needed */
-#chat-right-sidebar .save-chat-button {
+.save-chat-button {
     margin-top: 1; /* Ensure it has some space if it's after keywords */
     /* width: 100%; */
 }
@@ -456,6 +435,42 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 
 #conv-char-right-pane Collapsible.-active > .collapsible--header { /* Optional: when expanded */
     background: $primary-background;
+}
+
+/* Fix for Collapsible widgets in sidebars */
+.settings-collapsible {
+    height: auto;
+    min-height: 3;  /* Ensure title is visible */
+}
+
+.settings-collapsible CollapsibleTitle {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+}
+
+.settings-collapsible Contents {
+    height: auto;
+    padding: 1;
+}
+
+/* Ensure checkboxes and other controls are visible */
+.settings-collapsible Checkbox {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.settings-collapsible Input {
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+}
+
+.settings-collapsible Select {
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
 }
 
 /* TextAreas for Character Card Display */

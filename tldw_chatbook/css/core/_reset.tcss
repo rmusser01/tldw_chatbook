@@ -3,3 +3,15 @@
  * ======================================== 
  * Base resets and default styles
  * ======================================== */
+
+/* Remove default focus outlines - we'll use background color changes instead */
+*:focus {
+    outline: none;
+}
+
+/* REMOVED: These rules were causing layout shifts and visual issues */
+/* *:hover { border: none; } */
+/* *:focus-within { border: none; } */
+
+/* Widgets should maintain consistent dimensions across all states */
+/* Focus and hover states should only change colors, not layout */

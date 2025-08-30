@@ -1,457 +1,287 @@
-# loading_states.py
-# Description: Loading state widgets and transitions for evaluation UI
-#
 """
-Loading States and Transitions
------------------------------
+Loading state widgets for improved UX during async operations.
 
-Provides loading state indicators and smooth transitions:
-- Loading overlays
-- Skeleton screens
-- Progress indicators
-- State transitions
+This module provides various loading indicators and states:
+- Inline loading indicators
+- Skeleton screens for content placeholders
+- Progress bars for long operations
+- Error/retry states for failed operations
 """
 
-from typing import Optional, Callable
-from textual import on
+from typing import Optional, Callable, Any
 from textual.app import ComposeResult
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import Static, Button, LoadingIndicator, ProgressBar
 from textual.reactive import reactive
-from textual.widgets import Static, LoadingIndicator, ProgressBar
-from textual.containers import Container, Center
-from textual.timer import Timer
+from textual.message import Message
+from textual import work
+from datetime import datetime
 from loguru import logger
 
-class LoadingOverlay(Container):
-    """Full-screen loading overlay with message."""
-    
-    message = reactive("Loading...")
-    
-    def __init__(self, message: str = "Loading...", **kwargs):
-        super().__init__(**kwargs)
-        self.message = message
-        self.add_class("loading-overlay")
-    
-    def compose(self) -> ComposeResult:
-        with Center(classes="loading-center"):
-            yield LoadingIndicator()
-            yield Static(self.message, id="loading-message", classes="loading-text")
-    
-    def update_message(self, message: str) -> None:
-        """Update the loading message."""
-        self.message = message
-        try:
-            self.query_one("#loading-message", Static).update(message)
-        except:
-            pass
 
-class SkeletonLoader(Container):
-    """Skeleton screen for loading content."""
+class LoadingState(Container):
+    """A container that shows loading state while content is being fetched."""
     
-    def __init__(self, num_items: int = 3, **kwargs):
-        super().__init__(**kwargs)
-        self.num_items = num_items
-        self.add_class("skeleton-loader")
-    
-    def compose(self) -> ComposeResult:
-        for i in range(self.num_items):
-            with Container(classes="skeleton-item"):
-                yield Static("", classes="skeleton-line skeleton-title")
-                yield Static("", classes="skeleton-line skeleton-subtitle")
-                yield Static("", classes="skeleton-line skeleton-content")
-
-class StateTransition(Container):
-    """Smooth state transition container."""
-    
-    # Note: Transitions are now defined in CSS or using the correct constructor
-    TRANSITIONS = {
-        "fade": {"opacity": 0.3},  # Duration in seconds
-        "slide": {"offset": 0.3},
-        "scale": {"scale": 0.2}
-    }
-    
-    current_state = reactive("idle")
-    
-    def __init__(self, transition_type: str = "fade", **kwargs):
-        super().__init__(**kwargs)
-        self.transition_type = transition_type
-        self._content_cache = {}
-        self._timer: Optional[Timer] = None
-    
-    def set_state(self, state: str, content: Optional[ComposeResult] = None) -> None:
-        """Set the current state with optional content."""
-        old_state = self.current_state
-        self.current_state = state
-        
-        # Apply transition
-        self._apply_transition(old_state, state, content)
-    
-    def _apply_transition(self, old_state: str, new_state: str, content: Optional[ComposeResult]) -> None:
-        """Apply transition between states."""
-        # Start transition out
-        self.add_class("transitioning-out")
-        
-        # Schedule content update
-        if self._timer:
-            self._timer.stop()
-        
-        self._timer = self.set_timer(0.15, lambda: self._update_content(new_state, content))
-    
-    def _update_content(self, state: str, content: Optional[ComposeResult]) -> None:
-        """Update content after transition."""
-        # Clear existing content
-        self.remove_children()
-        
-        # Add new content
-        if content:
-            self.mount(*content)
-        elif state in self._content_cache:
-            self.mount(*self._content_cache[state])
-        
-        # Transition in
-        self.remove_class("transitioning-out")
-        self.add_class("transitioning-in")
-        
-        # Clean up transition classes
-        self.set_timer(0.3, lambda: self.remove_class("transitioning-in"))
-    
-    def cache_state_content(self, state: str, content: ComposeResult) -> None:
-        """Cache content for a state."""
-        self._content_cache[state] = content
-
-class LoadingButton(Container):
-    """Button with loading state."""
-    
-    is_loading = reactive(False)
-    label = reactive("Click Me")
+    # Reactive properties
+    is_loading = reactive(True, layout=False)
+    has_error = reactive(False, layout=False)
+    error_message = reactive("", layout=False)
+    progress = reactive(0.0, layout=False)
     
     def __init__(
-        self, 
-        label: str = "Click Me",
-        on_click: Optional[Callable] = None,
-        variant: str = "primary",
+        self,
+        loader: Optional[Callable] = None,
+        placeholder_text: str = "Loading...",
+        show_progress: bool = False,
+        auto_start: bool = True,
         **kwargs
     ):
-        super().__init__(**kwargs)
-        self.label = label
-        self._on_click = on_click
-        self.variant = variant
-        self.add_class(f"loading-button {variant}")
-    
-    def compose(self) -> ComposeResult:
-        if self.is_loading:
-            yield LoadingIndicator(classes="button-spinner")
-            yield Static("Loading...", classes="button-label loading")
-        else:
-            yield Static(self.label, classes="button-label")
-    
-    async def on_click(self) -> None:
-        """Handle button click."""
-        if self.is_loading or not self._on_click:
-            return
+        """Initialize the loading state widget.
         
+        Args:
+            loader: Async function to load content
+            placeholder_text: Text to show while loading
+            show_progress: Whether to show progress bar
+            auto_start: Whether to start loading automatically
+        """
+        super().__init__(**kwargs)
+        self.loader = loader
+        self.placeholder_text = placeholder_text
+        self.show_progress = show_progress
+        self.auto_start = auto_start
+        self.content = None
+        self.start_time = None
+        
+    def compose(self) -> ComposeResult:
+        """Compose the loading state UI."""
+        with Container(classes="loading-state-container"):
+            # Loading view
+            with Container(classes="loading-view", id="loading-view"):
+                yield LoadingIndicator()
+                yield Static(self.placeholder_text, classes="loading-text")
+                if self.show_progress:
+                    yield ProgressBar(total=100, id="loading-progress")
+            
+            # Error view
+            with Container(classes="error-view hidden", id="error-view"):
+                yield Static("⚠️ Error", classes="error-icon")
+                yield Static("", id="error-message", classes="error-message")
+                with Horizontal(classes="error-actions"):
+                    yield Button("Retry", id="retry-button", variant="primary")
+                    yield Button("Cancel", id="cancel-button", variant="default")
+            
+            # Content view (initially hidden)
+            with Container(classes="content-view hidden", id="content-view"):
+                pass
+    
+    async def on_mount(self) -> None:
+        """Handle mount event."""
+        if self.auto_start and self.loader:
+            self.start_loading()
+    
+    @work(exclusive=True)
+    async def start_loading(self) -> None:
+        """Start the loading process."""
         self.is_loading = True
-        self.refresh()
+        self.has_error = False
+        self.progress = 0.0
+        self.start_time = datetime.now()
+        
+        # Show loading view
+        self._show_loading_view()
         
         try:
-            # Call the callback
-            result = self._on_click()
-            if hasattr(result, "__await__"):
-                await result
+            if self.loader:
+                # Support progress callback
+                async def progress_callback(value: float):
+                    self.progress = value
+                    if self.show_progress:
+                        progress_bar = self.query_one("#loading-progress", ProgressBar)
+                        progress_bar.update(progress=int(value))
+                
+                # Call loader with progress callback if it accepts it
+                import inspect
+                sig = inspect.signature(self.loader)
+                if 'progress_callback' in sig.parameters:
+                    self.content = await self.loader(progress_callback=progress_callback)
+                else:
+                    self.content = await self.loader()
+                
+                # Success - show content
+                self._show_content_view()
+                
+                # Post success message
+                self.post_message(LoadingComplete(self.content))
+                
         except Exception as e:
-            logger.error(f"Error in loading button callback: {e}")
+            logger.error(f"Loading failed: {e}")
+            self.has_error = True
+            self.error_message = str(e)
+            self._show_error_view()
+            
+            # Post error message
+            self.post_message(LoadingFailed(str(e)))
+            
         finally:
             self.is_loading = False
-            self.refresh()
+            elapsed = (datetime.now() - self.start_time).total_seconds()
+            logger.debug(f"Loading completed in {elapsed:.2f}s")
     
-    def watch_is_loading(self, is_loading: bool) -> None:
-        """Update button state when loading changes."""
-        if is_loading:
-            self.add_class("is-loading")
-        else:
-            self.remove_class("is-loading")
+    def _show_loading_view(self) -> None:
+        """Show the loading view."""
+        self.query_one("#loading-view").remove_class("hidden")
+        self.query_one("#error-view").add_class("hidden")
+        self.query_one("#content-view").add_class("hidden")
+    
+    def _show_error_view(self) -> None:
+        """Show the error view."""
+        self.query_one("#loading-view").add_class("hidden")
+        self.query_one("#error-view").remove_class("hidden")
+        self.query_one("#content-view").add_class("hidden")
+        
+        # Update error message
+        error_msg = self.query_one("#error-message", Static)
+        error_msg.update(self.error_message)
+    
+    def _show_content_view(self) -> None:
+        """Show the content view."""
+        self.query_one("#loading-view").add_class("hidden")
+        self.query_one("#error-view").add_class("hidden")
+        
+        content_view = self.query_one("#content-view")
+        content_view.remove_class("hidden")
+        
+        # Add content if it's a widget
+        if self.content and hasattr(self.content, 'compose'):
+            content_view.mount(self.content)
+    
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "retry-button":
+            self.start_loading()
+        elif event.button.id == "cancel-button":
+            self.post_message(LoadingCancelled())
+    
+    def watch_progress(self, progress: float) -> None:
+        """Watch progress changes."""
+        if self.show_progress and self.is_loading:
+            try:
+                progress_bar = self.query_one("#loading-progress", ProgressBar)
+                progress_bar.update(progress=int(progress))
+            except:
+                pass
 
-class ProgressStep(Container):
-    """Single step in a progress workflow."""
+
+class SkeletonLoader(Container):
+    """A skeleton screen placeholder for content that's loading."""
     
-    status = reactive("pending")  # pending, active, completed, error
-    
-    def __init__(self, label: str, **kwargs):
+    def __init__(
+        self,
+        lines: int = 3,
+        show_avatar: bool = False,
+        **kwargs
+    ):
+        """Initialize the skeleton loader.
+        
+        Args:
+            lines: Number of text lines to show
+            show_avatar: Whether to show avatar placeholder
+        """
         super().__init__(**kwargs)
-        self.label = label
-        self.add_class("progress-step")
-    
+        self.lines = lines
+        self.show_avatar = show_avatar
+        
     def compose(self) -> ComposeResult:
-        with Container(classes="step-indicator"):
-            if self.status == "completed":
-                yield Static("✓", classes="step-icon completed")
-            elif self.status == "active":
-                yield LoadingIndicator(classes="step-icon active")
-            elif self.status == "error":
-                yield Static("✗", classes="step-icon error")
-            else:
-                yield Static("○", classes="step-icon pending")
+        """Compose the skeleton UI."""
+        with Container(classes="skeleton-container"):
+            if self.show_avatar:
+                with Horizontal(classes="skeleton-header"):
+                    yield Static("", classes="skeleton-avatar")
+                    with Vertical(classes="skeleton-title-group"):
+                        yield Static("", classes="skeleton-title")
+                        yield Static("", classes="skeleton-subtitle")
+            
+            for i in range(self.lines):
+                width_class = "skeleton-line-full" if i == 0 else f"skeleton-line-{90 - (i * 10)}"
+                yield Static("", classes=f"skeleton-line {width_class}")
+
+
+class InlineLoader(Static):
+    """An inline loading indicator for small async operations."""
+    
+    def __init__(
+        self,
+        loading_text: str = "Loading",
+        success_text: str = "Done",
+        error_text: str = "Failed",
+        **kwargs
+    ):
+        """Initialize the inline loader.
         
-        yield Static(self.label, classes="step-label")
-    
-    def set_status(self, status: str) -> None:
-        """Update step status."""
-        self.status = status
-        self.refresh()
+        Args:
+            loading_text: Text to show while loading
+            success_text: Text to show on success
+            error_text: Text to show on error
+        """
+        super().__init__(loading_text, **kwargs)
+        self.loading_text = loading_text
+        self.success_text = success_text
+        self.error_text = error_text
+        self.state = "loading"  # loading, success, error
+        self.dots = 0
         
-        # Update CSS classes
-        self.remove_class("pending", "active", "completed", "error")
-        self.add_class(status)
-
-class WorkflowProgress(Container):
-    """Multi-step workflow progress indicator."""
+    async def on_mount(self) -> None:
+        """Start the loading animation."""
+        self.set_interval(0.5, self._update_dots)
     
-    current_step = reactive(0)
+    def _update_dots(self) -> None:
+        """Update the loading dots animation."""
+        if self.state == "loading":
+            self.dots = (self.dots + 1) % 4
+            dots_str = "." * self.dots
+            self.update(f"{self.loading_text}{dots_str}")
     
-    def __init__(self, steps: list[str], **kwargs):
-        super().__init__(**kwargs)
-        self.steps = steps
-        self._step_widgets = []
-        self.add_class("workflow-progress")
+    def set_success(self) -> None:
+        """Set the loader to success state."""
+        self.state = "success"
+        self.update(f"✓ {self.success_text}")
+        self.add_class("success")
+        self.remove_class("error", "loading")
     
-    def compose(self) -> ComposeResult:
-        yield Static("Progress", classes="progress-title")
-        
-        with Container(classes="steps-container"):
-            for i, step_label in enumerate(self.steps):
-                step = ProgressStep(step_label, id=f"step-{i}")
-                self._step_widgets.append(step)
-                yield step
-                
-                # Add connector between steps
-                if i < len(self.steps) - 1:
-                    yield Static("", classes="step-connector")
+    def set_error(self, message: Optional[str] = None) -> None:
+        """Set the loader to error state."""
+        self.state = "error"
+        error_text = message or self.error_text
+        self.update(f"✗ {error_text}")
+        self.add_class("error")
+        self.remove_class("success", "loading")
     
-    def set_step(self, step_index: int, status: str = "active") -> None:
-        """Set the current step and update statuses."""
-        self.current_step = step_index
-        
-        for i, step_widget in enumerate(self._step_widgets):
-            if i < step_index:
-                step_widget.set_status("completed")
-            elif i == step_index:
-                step_widget.set_status(status)
-            else:
-                step_widget.set_status("pending")
+    def reset(self) -> None:
+        """Reset to loading state."""
+        self.state = "loading"
+        self.dots = 0
+        self.update(self.loading_text)
+        self.add_class("loading")
+        self.remove_class("success", "error")
+
+
+# Messages
+class LoadingComplete(Message):
+    """Message sent when loading completes successfully."""
     
-    def complete_step(self, step_index: int) -> None:
-        """Mark a step as completed."""
-        if step_index < len(self._step_widgets):
-            self._step_widgets[step_index].set_status("completed")
+    def __init__(self, content: Any):
+        super().__init__()
+        self.content = content
+
+
+class LoadingFailed(Message):
+    """Message sent when loading fails."""
     
-    def error_step(self, step_index: int) -> None:
-        """Mark a step as errored."""
-        if step_index < len(self._step_widgets):
-            self._step_widgets[step_index].set_status("error")
+    def __init__(self, error: str):
+        super().__init__()
+        self.error = error
 
-class DataLoadingCard(Container):
-    """Card with loading state for data display."""
-    
-    is_loading = reactive(True)
-    has_error = reactive(False)
-    
-    def __init__(self, title: str = "Data", **kwargs):
-        super().__init__(**kwargs)
-        self.title = title
-        self.add_class("data-loading-card")
-    
-    def compose(self) -> ComposeResult:
-        yield Static(self.title, classes="card-title")
-        
-        with Container(classes="card-content", id="card-content"):
-            if self.is_loading:
-                yield SkeletonLoader(num_items=2)
-            elif self.has_error:
-                yield Static("❌ Failed to load data", classes="error-message")
-                yield Static("Click to retry", classes="retry-hint")
-            else:
-                yield Container(id="actual-content")
-    
-    def set_loading(self, is_loading: bool) -> None:
-        """Set loading state."""
-        self.is_loading = is_loading
-        self.has_error = False
-        self.refresh()
-    
-    def set_error(self, error: bool = True) -> None:
-        """Set error state."""
-        self.has_error = error
-        self.is_loading = False
-        self.refresh()
-    
-    def set_content(self, content: ComposeResult) -> None:
-        """Set the actual content when loaded."""
-        self.is_loading = False
-        self.has_error = False
-        
-        # Update content
-        content_container = self.query_one("#card-content")
-        content_container.remove_children()
-        
-        actual = Container(id="actual-content")
-        actual.mount(*content)
-        content_container.mount(actual)
 
-# CSS Helper for smooth transitions
-LOADING_STATES_CSS = """
-/* Loading Overlay */
-.loading-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.7);
-    z-index: 1000;
-}
-
-.loading-center {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-}
-
-.loading-text {
-    margin-top: 1;
-    color: $text-muted;
-}
-
-/* Skeleton Loader */
-.skeleton-item {
-    padding: 1 2;
-    margin-bottom: 1;
-}
-
-.skeleton-line {
-    height: 1;
-    background: $surface-lighten-1;
-    animation: skeleton-pulse 1.5s infinite;
-}
-
-.skeleton-title {
-    width: 60%;
-    margin-bottom: 0.5;
-}
-
-.skeleton-subtitle {
-    width: 40%;
-    margin-bottom: 0.5;
-}
-
-.skeleton-content {
-    width: 80%;
-}
-
-@keyframes skeleton-pulse {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 0.7; }
-}
-
-/* State Transitions */
-.transitioning-out {
-    opacity: 0.3;
-    transition: opacity 0.15s ease-out;
-}
-
-.transitioning-in {
-    opacity: 1;
-    transition: opacity 0.15s ease-in;
-}
-
-/* Loading Button */
-.loading-button {
-    border: solid $primary;
-    padding: 0 2;
-    height: 3;
-    content-align: center middle;
-}
-
-.loading-button.is-loading {
-    opacity: 0.7;
-}
-
-.button-spinner {
-    display: none;
-}
-
-.loading-button.is-loading .button-spinner {
-    display: block;
-}
-
-/* Progress Steps */
-.workflow-progress {
-    padding: 1 2;
-    background: $surface;
-    border: solid $border;
-}
-
-.steps-container {
-    display: flex;
-    align-items: center;
-    margin-top: 1;
-}
-
-.progress-step {
-    display: flex;
-    align-items: center;
-    margin-right: 1;
-}
-
-.step-icon {
-    width: 3;
-    height: 3;
-    text-align: center;
-    border: solid $border;
-    border-radius: 50%;
-}
-
-.step-icon.completed {
-    background: $success;
-    color: $text;
-}
-
-.step-icon.active {
-    border-color: $primary;
-}
-
-.step-icon.error {
-    background: $error;
-    color: $text;
-}
-
-.step-connector {
-    width: 4;
-    height: 1;
-    border-top: dashed $border;
-    margin: 0 1;
-}
-
-/* Data Loading Card */
-.data-loading-card {
-    border: solid $border;
-    padding: 1 2;
-}
-
-.card-title {
-    text-style: bold;
-    margin-bottom: 1;
-}
-
-.error-message {
-    color: $error;
-    text-align: center;
-    margin: 2 0;
-}
-
-.retry-hint {
-    color: $text-muted;
-    text-align: center;
-    text-style: italic;
-}
-"""
+class LoadingCancelled(Message):
+    """Message sent when loading is cancelled."""
+    pass

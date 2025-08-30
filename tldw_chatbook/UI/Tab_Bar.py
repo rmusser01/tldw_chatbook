@@ -5,6 +5,7 @@
 from typing import TYPE_CHECKING, List
 #
 # Third-Party Imports
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, HorizontalScroll
 from textual.widgets import Button
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     from ..app import TldwCli  # Not strictly needed for compose but good for context
 
 from ..Constants import TAB_CCP, TAB_TOOLS_SETTINGS, TAB_INGEST, TAB_LLM, TAB_EVALS, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_CHATBOOKS # Added import
+from ..UI.Navigation.main_navigation import NavigateToScreen
 #
 #######################################################################################################################
 #
@@ -22,12 +24,14 @@ from ..Constants import TAB_CCP, TAB_TOOLS_SETTINGS, TAB_INGEST, TAB_LLM, TAB_EV
 class TabBar(Horizontal):  # The outer container for the tab bar
     """
     A custom widget for the application's tab bar.
+    Now uses screen-based navigation instead of tab switching.
     """
 
     def __init__(self, tab_ids: List[str], initial_active_tab: str, **kwargs):
         super().__init__(**kwargs)
         self.tab_ids = tab_ids
         self.initial_active_tab = initial_active_tab
+        self.current_active_tab = initial_active_tab
         self.id = "tabs-outer-container"  # Matches CSS
 
     def compose(self) -> ComposeResult:
@@ -60,6 +64,37 @@ class TabBar(Horizontal):  # The outer container for the tab bar
                     id=f"tab-{tab_id_loop}",
                     classes="-active" if tab_id_loop == self.initial_active_tab else ""
                 )
+    
+    @on(Button.Pressed, "Button")
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle tab button presses and navigate to the corresponding screen."""
+        button = event.button
+        
+        # Extract tab ID from button ID (format: "tab-{tab_id}")
+        if button.id and button.id.startswith("tab-"):
+            tab_id = button.id[4:]  # Remove "tab-" prefix
+            
+            # Update visual state
+            self._update_active_tab(tab_id)
+            
+            # Map special tab IDs to screen names
+            screen_name = 'ccp' if tab_id == TAB_CCP else tab_id
+            
+            # Post navigation message to app
+            self.post_message(NavigateToScreen(screen_name=screen_name))
+    
+    def _update_active_tab(self, new_tab_id: str) -> None:
+        """Update the visual state of tab buttons."""
+        # Remove active class from all buttons
+        for button in self.query("Button"):
+            button.remove_class("-active")
+        
+        # Add active class to the new button
+        new_button = self.query_one(f"#tab-{new_tab_id}", Button)
+        new_button.add_class("-active")
+        
+        # Update current active tab
+        self.current_active_tab = new_tab_id
 
 #
 # End of Tab_Bar.py
