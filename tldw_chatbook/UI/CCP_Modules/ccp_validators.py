@@ -1,7 +1,7 @@
 """Pydantic validators for CCP input data validation."""
 
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field, validator, ValidationError
+from pydantic import BaseModel, Field, field_validator, ValidationError
 from pathlib import Path
 import re
 
@@ -13,7 +13,7 @@ class ConversationInput(BaseModel):
     keywords: Optional[str] = Field(None, max_length=1000, description="Keywords/tags")
     character_id: Optional[int] = Field(None, gt=0, description="Associated character ID")
     
-    @validator('title')
+    @field_validator('title')
     def validate_title(cls, v):
         """Ensure title doesn't contain invalid characters."""
         if not v.strip():
@@ -23,7 +23,7 @@ class ConversationInput(BaseModel):
             raise ValueError("Title contains invalid characters")
         return v.strip()
     
-    @validator('keywords')
+    @field_validator('keywords')
     def validate_keywords(cls, v):
         """Validate and clean keywords."""
         if v:
@@ -51,7 +51,7 @@ class CharacterCardInput(BaseModel):
     image_path: Optional[Path] = None
     avatar_url: Optional[str] = None
     
-    @validator('name')
+    @field_validator('name')
     def validate_name(cls, v):
         """Ensure character name is valid."""
         if not v.strip():
@@ -61,7 +61,7 @@ class CharacterCardInput(BaseModel):
             raise ValueError("Character name contains invalid HTML characters")
         return v.strip()
     
-    @validator('avatar_url')
+    @field_validator('avatar_url')
     def validate_avatar_url(cls, v):
         """Validate avatar URL if provided."""
         if v:
@@ -77,7 +77,7 @@ class CharacterCardInput(BaseModel):
                 raise ValueError("Invalid avatar URL format")
         return v
     
-    @validator('version')
+    @field_validator('version')
     def validate_version(cls, v):
         """Validate version format."""
         if v:
@@ -98,7 +98,7 @@ class PromptInput(BaseModel):
     user_prompt: Optional[str] = Field(None, max_length=10000, description="User prompt template")
     keywords: Optional[str] = Field(None, max_length=500, description="Keywords")
     
-    @validator('name')
+    @field_validator('name')
     def validate_name(cls, v):
         """Ensure prompt name is unique and valid."""
         if not v.strip():
@@ -108,7 +108,7 @@ class PromptInput(BaseModel):
             raise ValueError("Prompt name contains invalid file system characters")
         return v.strip()
     
-    @validator('system_prompt', 'user_prompt')
+    @field_validator('system_prompt', 'user_prompt')
     def validate_prompt_content(cls, v):
         """Validate prompt content."""
         if v:
@@ -132,7 +132,7 @@ class DictionaryInput(BaseModel):
     max_tokens: int = Field(1000, gt=0, le=100000, description="Maximum tokens")
     entries: List[Dict[str, Any]] = Field(default_factory=list, description="Dictionary entries")
     
-    @validator('strategy')
+    @field_validator('strategy')
     def validate_strategy(cls, v):
         """Validate replacement strategy."""
         valid_strategies = ["sorted_evenly", "character_lore_first", "global_lore_first"]
@@ -140,7 +140,7 @@ class DictionaryInput(BaseModel):
             raise ValueError(f"Invalid strategy. Must be one of: {', '.join(valid_strategies)}")
         return v
     
-    @validator('entries')
+    @field_validator('entries')
     def validate_entries(cls, v):
         """Validate dictionary entries."""
         for entry in v:
@@ -173,7 +173,7 @@ class SearchInput(BaseModel):
     all_characters: bool = Field(True, description="Search all characters")
     tags: Optional[List[str]] = Field(default_factory=list, description="Filter tags")
     
-    @validator('search_type')
+    @field_validator('search_type')
     def validate_search_type(cls, v):
         """Validate search type."""
         valid_types = ["title", "content", "tags", "keywords"]
@@ -181,7 +181,7 @@ class SearchInput(BaseModel):
             raise ValueError(f"Invalid search type. Must be one of: {', '.join(valid_types)}")
         return v
     
-    @validator('search_term')
+    @field_validator('search_term')
     def sanitize_search_term(cls, v):
         """Sanitize search term to prevent injection."""
         # Remove SQL wildcards and special characters
@@ -199,7 +199,7 @@ class FileImportInput(BaseModel):
     file_type: str = Field(..., description="Type of file being imported")
     overwrite_existing: bool = Field(False, description="Whether to overwrite existing entries")
     
-    @validator('file_path')
+    @field_validator('file_path')
     def validate_file_path(cls, v):
         """Validate file path exists and is readable."""
         if not v.exists():
@@ -210,7 +210,7 @@ class FileImportInput(BaseModel):
             raise ValueError(f"Unsupported file type: {v.suffix}")
         return v
     
-    @validator('file_type')
+    @field_validator('file_type')
     def validate_file_type(cls, v):
         """Validate file type."""
         valid_types = ["character_card", "conversation", "prompt", "dictionary", "world_book", "image"]

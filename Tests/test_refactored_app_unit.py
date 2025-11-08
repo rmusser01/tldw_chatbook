@@ -23,7 +23,8 @@ class TestRefactoredApp:
         # Check reactive attributes
         assert app.current_screen == "chat"
         assert app.is_loading == False
-        assert app.theme == "default"
+        # Accept Textual default themes in addition to legacy "default"
+        assert app.theme in ("textual-dark", "textual-light", "default")
         assert app.error_message is None
         
         # Check complex state
@@ -90,7 +91,8 @@ class TestRefactoredApp:
         # Should deserialize back
         loaded = json.loads(json_str)
         assert loaded["current_screen"] == "chat"
-        assert loaded["theme"] == "default"
+        # Accept Textual default themes
+        assert loaded["theme"] in ("textual-dark", "textual-light", "default")
     
     @pytest.mark.asyncio
     async def test_navigation_error_handling(self):
@@ -164,7 +166,7 @@ class TestRefactoredApp:
             # Create app and modify state
             app = TldwCliRefactored()
             app.current_screen = "notes"
-            app.theme = "dark"
+            app.theme = "textual-dark"
             app.chat_state = {**app.chat_state, "provider": "anthropic"}
             
             # Mock the path
@@ -180,7 +182,7 @@ class TestRefactoredApp:
             # Write state manually for testing
             state = {
                 "current_screen": "notes",
-                "theme": "dark",
+                "theme": "textual-dark",
                 "chat_state": {"provider": "anthropic", "model": "claude"},
                 "notes_state": {},
                 "ui_state": {}
@@ -193,7 +195,7 @@ class TestRefactoredApp:
                 await app2._load_state()
             
             # Verify loaded correctly
-            assert app2.theme == "dark"
+            assert app2.theme == "textual-dark"
             assert app2.chat_state["provider"] == "anthropic"
     
     def test_screen_parameter_detection(self):

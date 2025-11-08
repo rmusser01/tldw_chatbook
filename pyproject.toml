@@ -44,7 +44,7 @@ dependencies = [
     "rich-pixels>=3.0.0",
     "pillow",
     "PyYAML",
-    "pydantic",
+    "pydantic>=2.4,<3",
     "psutil",
     "toml",
     "tomli; python_version < '3.11'",
@@ -77,7 +77,6 @@ chunker = [
     "jieba",
 ]
 embeddings_rag = [
-    "chromadb",
     "torch",
     "numpy",
     "pydantic",
@@ -431,4 +430,3 @@ markers = [
     "property: marks tests as property-based tests",
     "slow: marks tests that take a long time to run",
 ]
-

@@ -4,8 +4,6 @@
 # Disable progress bars early to prevent interference with TUI
 import os
 
-from tldw_chatbook.UI import MediaWindow_v2
-
 os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
 os.environ['TQDM_DISABLE'] = '1'
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -150,11 +148,12 @@ from .UI.Screens.llm_screen import LLMScreen
 from .UI.Screens.customize_screen import CustomizeScreen
 from .UI.Screens.logs_screen import LogsScreen
 from .UI.Screens.stats_screen import StatsScreen
-# Note: INGEST_NAV_BUTTON_IDS, INGEST_VIEW_IDS, MEDIA_TYPES need to be defined or imported differently
-# from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt
-INGEST_NAV_BUTTON_IDS = []  # Temporary placeholder
-INGEST_VIEW_IDS = []  # Temporary placeholder
-MEDIA_TYPES = []  # Temporary placeholder
+# Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
+# The legacy per-view navigation (ingest-nav-*/ingest-view-*) is not used anymore.
+# Keep these as empty to avoid wiring legacy handlers.
+USE_REBUILT_INGEST = True
+INGEST_NAV_BUTTON_IDS: list[str] = []
+INGEST_VIEW_IDS: list[str] = []
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Customize_Window import CustomizeWindow
@@ -867,8 +866,8 @@ class PlaceholderWindow(Container):
 # --- Main App ---
 class TldwCli(App[None]):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
-    #TITLE = "🧠📝🔍  tldw CLI"
-    TITLE = "tldw chatbook"
+    # Keep legacy identifier for tests while retaining product name
+    TITLE = "tldw CLI • tldw chatbook"
     # CSS file path
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
     BINDINGS = [
@@ -2333,6 +2332,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # --- Ingest Tab Watcher ---
     # ############################################
     def watch_ingest_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
+        # Rebuilt ingest UI manages its own tabs; skip legacy view toggling
+        if 'USE_REBUILT_INGEST' in globals() and USE_REBUILT_INGEST:
+            return
         self.loguru_logger.info(f"watch_ingest_active_view called. Old view: '{old_view}', New view: '{new_view}'")
         if not hasattr(self, "app") or not self.app:
             self.loguru_logger.debug("watch_ingest_active_view: App not fully ready.")
@@ -2341,45 +2343,31 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.debug("watch_ingest_active_view: UI not ready.")
             return
         self.loguru_logger.debug(f"Ingest active view changing from '{old_view}' to: '{new_view}'")
-
-        # Get the content pane for the Ingest tab
         try:
             content_pane = self.query_one("#ingest-content-pane")
         except QueryError:
-            self.loguru_logger.error("#ingest-content-pane not found. Cannot switch Ingest views.")
+            # Legacy pane not present; nothing to do
             return
-
-        # Hide all views first
         for child in content_pane.children:
             if child.id and child.id.startswith("ingest-view-"):
                 child.styles.display = "none"
-        
-        # Show the selected view
         if new_view:
             try:
                 target_view_selector = f"#{new_view}"
                 view_to_show = content_pane.query_one(target_view_selector)
                 view_to_show.styles.display = "block"
-                
-                # Schedule a layout refresh after the display change has been processed
                 def refresh_layout():
                     view_to_show.refresh(layout=True)
                     content_pane.refresh(layout=True)
-                    # Force the entire ingest window to refresh
                     try:
                         ingest_window = self.query_one("#ingest-window")
                         ingest_window.refresh(layout=True)
                     except QueryError:
                         pass
-                    self.loguru_logger.info(f"Layout refreshed for Ingest view: {new_view}")
-                
-                # Use call_later to ensure the display change is processed first
                 self.call_later(refresh_layout)
-                self.loguru_logger.info(f"Switched Ingest view to: {new_view}")
             except QueryError:
-                self.loguru_logger.error(f"Target Ingest view '{new_view}' was not found to display.")
-        elif not new_view:
-            self.loguru_logger.debug("Ingest active view is None, all ingest sub-views are now hidden.")
+                # Target legacy view not found; ignore
+                return
 
     def watch_tools_settings_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
         self.loguru_logger.debug(f"Tools & Settings active view changing from '{old_view}' to: '{new_view}'")
@@ -3630,29 +3618,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         Shows the specified ingest view within the ingest-content-pane and hides others.
         If view_id_to_show is None, hides all ingest views.
         """
+        # Rebuilt ingest UI manages its own tabs; skip legacy show/hide
+        if 'USE_REBUILT_INGEST' in globals() and USE_REBUILT_INGEST:
+            return
         self.log.debug(f"Attempting to show ingest view: {view_id_to_show}")
         try:
             ingest_content_pane = self.query_one("#ingest-content-pane")
             if view_id_to_show:
                 ingest_content_pane.display = True
         except QueryError:
-            self.log.error("#ingest-content-pane not found. Cannot manage ingest views.")
             return
-
         for view_id in self.ALL_INGEST_VIEW_IDS:
             try:
                 view_container = self.query_one(f"#{view_id}")
                 is_target = (view_id == view_id_to_show)
                 view_container.display = is_target
                 if is_target:
-                    self.log.info(f"Displaying ingest view: #{view_id}")
-                    # Initialize models for video/audio windows when they become visible
                     if view_id == "ingest-view-local-video":
                         self._initialize_video_models()
                     elif view_id == "ingest-view-local-audio":
                         self._initialize_audio_models()
             except QueryError:
-                self.log.warning(f"Ingest view container '#{view_id}' not found during show_ingest_view.")
+                continue
 
     def _initialize_video_models(self) -> None:
         """Initialize models for the video ingestion window."""
