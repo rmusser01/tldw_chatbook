@@ -31,6 +31,7 @@ from textual.widgets import (
     Collapsible,
     RadioSet,
     RadioButton,
+    ProgressBar,
 )
 from textual.message import Message
 from textual.validation import Number, URL
@@ -118,6 +119,21 @@ class LocalIngestionPanel(ScrollableContainer):
     LocalIngestionPanel Input {
         height: 3;
     }
+    
+    .info-label {
+        color: $accent;
+        text-style: italic;
+        margin-bottom: 1;
+    }
+    
+    #ingest-progress-bar {
+        margin-top: 1;
+        height: 1;
+    }
+    
+    #ingest-progress-bar.hidden {
+        display: none;
+    }
     """
     
     # Reactive properties
@@ -140,6 +156,7 @@ class LocalIngestionPanel(ScrollableContainer):
         
         with Container(classes="options-container"):
             yield Label("Metadata (Optional):")
+            yield Label("", id="batch-info-label", classes="info-label")
             with Horizontal():
                 yield Input(placeholder="Title", id="local-title")
                 yield Input(placeholder="Author", id="local-author")
@@ -162,6 +179,7 @@ class LocalIngestionPanel(ScrollableContainer):
                 id="local-process-btn",
                 disabled=True
             )
+            yield ProgressBar(total=100, show_eta=False, id="ingest-progress-bar", classes="hidden")
     
     @on(DirectoryTree.FileSelected)
     def handle_file_selection(self, event: DirectoryTree.FileSelected) -> None:
@@ -177,6 +195,12 @@ class LocalIngestionPanel(ScrollableContainer):
                 # Enable process button if files are selected
                 process_btn = self.query_one("#local-process-btn", Button)
                 process_btn.disabled = False
+                
+                # Update batch label
+                count = len(self.selected_files)
+                label = self.query_one("#batch-info-label", Label)
+                label.update(f"Applying metadata to {count} selected file{'s' if count > 1 else ''}")
+                label.remove_class("hidden")
         else:
             self.notify(
                 f"Unsupported file type: {path.suffix}",
@@ -202,6 +226,11 @@ class LocalIngestionPanel(ScrollableContainer):
             process_btn = self.query_one("#local-process-btn", Button)
             process_btn.disabled = True
             process_btn.label = "Processing..."
+            
+            # Show progress bar
+            progress_bar = self.query_one("#ingest-progress-bar", ProgressBar)
+            progress_bar.remove_class("hidden")
+            progress_bar.update(total=len(self.selected_files), progress=0)
             
             # Get form values
             title = self.query_one("#local-title", Input).value or None
@@ -257,6 +286,9 @@ class LocalIngestionPanel(ScrollableContainer):
                         "status": "error",
                         "error": str(e)
                     })
+                
+                # Update progress
+                progress_bar.advance(1)
             
             # Post completion message
             self.post_message(ProcessingComplete(results + errors))
@@ -286,6 +318,15 @@ class LocalIngestionPanel(ScrollableContainer):
             self.selected_files = []
             process_btn.disabled = True
             process_btn.label = "Process Selected Files"
+            
+            # Reset and hide progress bar
+            progress_bar = self.query_one("#ingest-progress-bar", ProgressBar)
+            progress_bar.add_class("hidden")
+            progress_bar.update(progress=0)
+            
+            # Reset label
+            label = self.query_one("#batch-info-label", Label)
+            label.update("")
 
 
 class RemoteIngestionPanel(ScrollableContainer):
@@ -643,6 +684,7 @@ class MediaIngestWindowRebuilt(Widget):
         layout: vertical;
         height: 100%;
         width: 100%;
+        background: $background; /* Ensure background is rendered */
     }
     
     MediaIngestWindowRebuilt TabbedContent {

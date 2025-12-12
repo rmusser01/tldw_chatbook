@@ -127,6 +127,13 @@
     margin-bottom: 1;
     background: $surface;
 }
+.LocalIngestionPanel .file-selection-container {
+    height: 1fr;
+    min-height: 15;
+    border: solid $primary;
+    margin-bottom: 1;
+    padding: 1;
+}
 .ingest-preview-area {
     height: 1fr;
     min-height: 10;

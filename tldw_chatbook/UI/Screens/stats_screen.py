@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Dict, Any, Optional
 from datetime import datetime
 
 from textual.app import ComposeResult
+from textual.screen import Screen
 from textual.widgets import Static, Label, LoadingIndicator, ProgressBar, Placeholder, Button
 from textual.containers import VerticalScroll, Horizontal, Container, Grid
 from textual.reactive import reactive
@@ -74,7 +75,7 @@ class TopicBar(Container):
             pass
 
 
-class StatsScreen(Container):
+class StatsScreen(Screen):
     """
     A screen to display dynamic user statistics.
     """

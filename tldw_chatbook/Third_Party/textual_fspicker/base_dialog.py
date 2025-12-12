@@ -8,7 +8,11 @@ from __future__ import annotations
 # Python imports.
 import sys
 from pathlib import Path
-from typing import Callable, TypeAlias, List, Dict, Any
+from typing import Callable, List, Dict, Any, Union
+try:
+    from typing import TypeAlias
+except ImportError:
+    from typing_extensions import TypeAlias
 import json
 from datetime import datetime
 
@@ -18,12 +22,16 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.dom import DOMNode
+from textual.events import Mount
+from textual.message import Message
+from textual.reactive import var, reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Input, ListView, ListItem
-from textual.reactive import reactive
 
 ##############################################################################
 # Local imports.
+from .path_filters import Filters
 from .parts import DirectoryNavigation, DriveNavigation
 
 
@@ -38,12 +46,12 @@ class InputBar(Horizontal):
 
 
 ##############################################################################
-ButtonLabel: TypeAlias = str | Callable[[str], str]
+ButtonLabel: TypeAlias = Union[str, Callable[[str], str]]
 """The type for a button label value."""
 
 
 ##############################################################################
-class FileSystemPickerScreen(ModalScreen[Path | None]):
+class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
     """Base screen for the dialogs in this library."""
 
     DEFAULT_CSS = """

@@ -1963,8 +1963,8 @@ def create_session() -> requests.Session:
 def search_web_duckduckgo(
     keywords: str,
     region: str = "wt-wt",
-    timelimit: str | None = None,
-    max_results: int | None = None,
+    timelimit: Optional[str] = None,
+    max_results: Optional[int] = None,
 ) -> list[dict[str, str]]:
     assert keywords, "keywords is mandatory"
     

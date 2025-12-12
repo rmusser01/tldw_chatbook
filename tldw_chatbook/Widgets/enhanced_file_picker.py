@@ -2,7 +2,7 @@
 # Enhanced file picker with keyboard shortcuts, recent files, breadcrumbs, and search
 
 from pathlib import Path
-from typing import List, Optional, Callable, Set, Dict, Any, Tuple
+from typing import List, Optional, Callable, Set, Dict, Any, Tuple, Union
 from datetime import datetime
 import json
 import os
@@ -790,10 +790,10 @@ class EnhancedFileOpen(EnhancedFileDialog):
     
     def __init__(
         self,
-        location: str | Path = ".",
+        location: Union[str, Path] = ".",
         title: str = "Open File",
         *,
-        filters: Filters | None = None,
+        filters: Optional[Filters] = None,
         must_exist: bool = True,
         context: str = "file_open",
         select_button: str = "Open",
@@ -831,10 +831,10 @@ class EnhancedFileSave(EnhancedFileDialog):
     
     def __init__(
         self,
-        location: str | Path = ".",
+        location: Union[str, Path] = ".",
         title: str = "Save File",
         *,
-        filters: Filters | None = None,
+        filters: Optional[Filters] = None,
         default_filename: str = "",
         context: str = "file_save",
         select_button: str = "Save",

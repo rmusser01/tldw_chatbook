@@ -5424,6 +5424,46 @@ if __name__ == "__main__":
     loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
 
 # Entry point for the tldw-chatbook command
+def get_app():
+    """Entry point for textual serve.
+    
+    Returns the TldwCli app instance without running it.
+    """
+    # Configure logging to suppress verbose debug messages early
+    import logging
+    import os
+    import warnings
+    
+    # Suppress various verbose loggers
+    logging.getLogger("torio._extension.utils").setLevel(logging.WARNING)
+    logging.getLogger("torio").setLevel(logging.WARNING)
+    logging.getLogger("torch").setLevel(logging.WARNING)
+    logging.getLogger("PIL").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+    logging.getLogger("fsevents").setLevel(logging.WARNING)
+    
+    # Ensure CSS is built
+    from pathlib import Path
+    import sys
+    
+    # Check if we need to build CSS
+    # Get the directory where app.py is located
+    app_dir = Path(__file__).parent
+    css_dir = app_dir / "css"
+    modular_css_path = css_dir / "tldw_cli_modular.tcss"
+    build_script_path = css_dir / "build_css.py"
+    
+    if not modular_css_path.exists() and build_script_path.exists():
+        print("Building modular CSS...")
+        import subprocess
+        subprocess.run([sys.executable, str(build_script_path)], check=True)
+        
+    return TldwCli()
+
 def main_cli_runner():
     """Entry point for the tldw-chatbook command.
 

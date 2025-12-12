@@ -22,7 +22,17 @@
 #chat-main-content {
     layout: vertical;
     height: 100%;
-    width: 1fr; /* This is KEY - it takes up the remaining horizontal space */
+    width: 1fr; /* Takes remaining space */
+    min-width: 40; /* Prevent squashing */
+}
+
+/* Explicit sidebar styling for the enhanced sidebar */
+#chat-enhanced-sidebar {
+    width: 30%;
+    min-width: 30;
+    max-width: 40%;
+    height: 100%;
+    dock: left;
 }
 /* VerticalScroll for chat messages */
 #chat-log {

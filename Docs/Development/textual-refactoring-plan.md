@@ -91,34 +91,22 @@ tldw_chatbook/css/tldw_cli_modular.tcss
 
 ---
 
-### Phase 2: Navigation Architecture Decision (Week 1-2)
-**Goal:** Choose and implement consistent navigation pattern
+### Phase 2: Navigation Architecture Decision (Week 1-2) - **REJECTED**
+> [!WARNING]
+> **DECISION: REJECTED**
+> The decision has been made to **maintain Screen-based navigation**. The proposal to move to pure tab-based navigation is rejected.
+> Future refactoring should focus on optimizing the screen-based approach.
 
-#### 2.1 Option Analysis
-
-**Option A: Pure Tab-Based Navigation (Recommended)**
-```python
-# Pros:
-- Already 90% implemented
-- Simpler state management
-- Better for power users (quick switching)
-
-# Cons:
-- Less flexible for complex workflows
-- All tabs loaded in memory
-```
-
-**Option B: Pure Screen-Based Navigation**
-```python
-# Pros:
-- Better memory management
-- More flexible for complex flows
-- Natural back/forward navigation
-
-# Cons:
-- Requires major refactoring
-- Changes user experience significantly
-```
+**Original Proposal (Deprecated):**
+- **Goal**: Decide on and implement a single navigation pattern.
+- **Current State**: Hybrid of `TabbedContent` and `Screen` switching. `app.py` has a flag `_use_screen_navigation`.
+- **Recommendation**: Move to **Pure Tab-based Navigation** for the main interface.
+    - **Why**: Textual's `TabbedContent` is more efficient for keeping state alive (e.g., chat history) without complex state restoration logic needed for Screens.
+    - **Action**:
+        1.  Remove `_use_screen_navigation` flag (or set to False permanently).
+        2.  Refactor `app.py` to use a main `TabbedContent` widget.
+        3.  Convert `ChatWindow`, `CCPWindow`, etc., to be yielded within `TabPane`s.
+- **Success Metric**: Navigation is consistent; no "reloading" flicker when switching main views. user experience significantly
 
 #### 2.2 Implementation Plan (Tab-Based)
 1. Remove `use_screen_navigation` config option

@@ -2956,7 +2956,7 @@ UPDATE db_schema_version
             logger.error(f"Database error listing character cards: {e}")
             raise
 
-    def update_character_card(self, character_id: int, card_data: Dict[str, Any], expected_version: int) -> bool | None:
+    def update_character_card(self, character_id: int, card_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
         """
         Updates an existing character card using optimistic locking.
 
@@ -3166,7 +3166,7 @@ UPDATE db_schema_version
                 exc_info=True)
             raise CharactersRAGDBError(f"Unexpected error updating character card: {e}") from e
 
-    def soft_delete_character_card(self, character_id: int, expected_version: int) -> bool | None:
+    def soft_delete_character_card(self, character_id: int, expected_version: int) -> Optional[bool]:
         """
         Soft-deletes a character card using optimistic locking.
 
@@ -3653,7 +3653,7 @@ UPDATE db_schema_version
             logger.error(f"Database error fetching conversations for character ID {character_id}: {e}")
             raise
 
-    def update_conversation(self, conversation_id: str, update_data: Dict[str, Any], expected_version: int) -> bool | None:
+    def update_conversation(self, conversation_id: str, update_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
         """
         Updates an existing conversation using optimistic locking.
 
@@ -3813,7 +3813,7 @@ UPDATE db_schema_version
             logger.error(f"Unexpected Python error in update_conversation for ID {conversation_id}: {e}", exc_info=True)
             raise CharactersRAGDBError(f"Unexpected error during update_conversation: {e}") from e
 
-    def soft_delete_conversation(self, conversation_id: str, expected_version: int) -> bool | None:
+    def soft_delete_conversation(self, conversation_id: str, expected_version: int) -> Optional[bool]:
         """
         Soft-deletes a conversation using optimistic locking.
 
@@ -4203,7 +4203,7 @@ UPDATE db_schema_version
             logger.error(f"Database error fetching messages for conversations: {e}")
             raise
 
-    def update_message(self, message_id: str, update_data: Dict[str, Any], expected_version: int) -> bool | None:
+    def update_message(self, message_id: str, update_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
         """
         Updates an existing message using optimistic locking.
 
@@ -4320,7 +4320,7 @@ UPDATE db_schema_version
                          exc_info=True)
             raise
 
-    def soft_delete_message(self, message_id: str, expected_version: int) -> bool | None:
+    def soft_delete_message(self, message_id: str, expected_version: int) -> Optional[bool]:
         """
         Soft-deletes a message using optimistic locking.
 
@@ -4844,7 +4844,7 @@ UPDATE db_schema_version
     def _update_generic_item(self, table_name: str, item_id: Union[int, str],
                              update_data: Dict[str, Any], expected_version: int,
                              allowed_fields: List[str], pk_col_name: str = "id",
-                             unique_col_name_in_data: Optional[str] = None) -> bool | None:
+                             unique_col_name_in_data: Optional[str] = None) -> Optional[bool]:
         """
         Internal helper: Updates an item in a table using optimistic locking.
 
@@ -4971,7 +4971,7 @@ UPDATE db_schema_version
         # No implicit return None, function should return True or raise.
 
     def _soft_delete_generic_item(self, table_name: str, item_id: Union[int, str],
-                                  expected_version: int, pk_col_name: str = "id") -> bool | None:
+                                  expected_version: int, pk_col_name: str = "id") -> Optional[bool]:
         """
         Internal helper: Soft-deletes an item in a table using optimistic locking.
 
@@ -5342,7 +5342,7 @@ UPDATE db_schema_version
                                               limit)
 
     # Notes (Now with UUID and specific methods)
-    def add_note(self, title: str, content: str, note_id: Optional[str] = None) -> str | None:
+    def add_note(self, title: str, content: str, note_id: Optional[str] = None) -> Optional[str]:
         if not title or not title.strip():
             raise InputError("Note title cannot be empty.")
         if content is None: # Allow empty string for content
@@ -5399,7 +5399,7 @@ UPDATE db_schema_version
         # Using _list_generic_items but ensuring table name and order_by_col are correct for notes
         return self._list_generic_items("notes", "last_modified DESC", limit, offset)
 
-    def update_note(self, note_id: str, update_data: Dict[str, Any], expected_version: int) -> bool | None:
+    def update_note(self, note_id: str, update_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
         if not update_data:
             raise InputError("No data provided for note update.")
 
@@ -5467,7 +5467,7 @@ UPDATE db_schema_version
                          exc_info=True)
             raise
 
-    def soft_delete_note(self, note_id: str, expected_version: int) -> bool | None:
+    def soft_delete_note(self, note_id: str, expected_version: int) -> Optional[bool]:
         now = self._get_current_utc_timestamp_iso()
         next_version_val = expected_version + 1
 

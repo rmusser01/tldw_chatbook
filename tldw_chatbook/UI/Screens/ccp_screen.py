@@ -395,6 +395,7 @@ class CCPScreen(BaseAppScreen):
     
     .editor-actions Button {
         width: 1fr;
+        min-width: 15; /* Ensure buttons don't get too small */
         margin-right: 1;
     }
     

@@ -21,8 +21,8 @@
 .media-nav-pane {
     dock: left;
     width: auto;
-    min-width: 25;
-    max-width: 60;
+    min-width: 20;
+    max-width: 40;
     background: $boost;
     padding: 1;
     border-right: thick $background-darken-1;
