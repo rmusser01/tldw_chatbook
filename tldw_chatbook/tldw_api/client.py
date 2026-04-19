@@ -107,6 +107,8 @@ class TLDWAPIClient:
                 headers=headers,
             ) # Pass endpoint directly
             response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
+            if response.status_code == 204 or not getattr(response, "content", b""):
+                return {}
             return response.json()
         except httpx.HTTPStatusError as e:
             # Try to get more details from response if available
@@ -204,21 +206,20 @@ class TLDWAPIClient:
         return await self._request(
             "POST",
             "/api/v1/notes/",
-            json_data=request_data.model_dump(mode="json"),
+            json_data=request_data.model_dump(exclude_none=True, exclude_defaults=True, mode="json"),
         )
 
     async def update_server_note(
         self,
         note_id: str,
         request_data: NoteUpdateRequest,
-        expected_version: Optional[int] = None,
+        expected_version: int,
     ) -> Dict[str, Any]:
-        headers = {"expected-version": str(expected_version)} if expected_version is not None else None
         return await self._request(
-            "PATCH",
+            "PUT",
             f"/api/v1/notes/{note_id}",
-            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
-            headers=headers,
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"expected-version": str(expected_version)},
         )
 
     async def delete_server_note(self, note_id: str, expected_version: int) -> Dict[str, Any]:

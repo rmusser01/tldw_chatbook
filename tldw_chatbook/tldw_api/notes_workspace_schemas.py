@@ -6,25 +6,63 @@ from __future__ import annotations
 
 from typing import Any, Dict, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 WorkspaceStudyMaterialsPolicy = Literal["general", "workspace"]
 
 
+def _split_keywords(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",")]
+    if isinstance(value, list):
+        return [part.strip() for part in value if isinstance(part, str)]
+    raise ValueError("Keywords must be a list of strings or a comma-separated string.")
+
+
 class NoteCreateRequest(BaseModel):
     """Request body for creating a server-backed note."""
 
-    title: str
+    title: Optional[str] = None
     content: str
     id: Optional[str] = None
     conversation_id: Optional[str] = None
     message_id: Optional[str] = None
-    keywords: Optional[list[str]] = None
+    keywords: str | list[str] | None = None
     auto_title: bool = False
     title_strategy: Literal["heuristic", "llm", "llm_fallback"] = "heuristic"
     title_max_len: int = 250
     language: Optional[str] = None
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def validate_keywords(cls, value: Any):
+        parts = _split_keywords(value)
+        if parts is None:
+            return value
+        for part in parts:
+            if part and len(part) > 100:
+                raise ValueError("Keyword entries must be 100 characters or fewer.")
+        return value
+
+    @property
+    def normalized_keywords(self) -> list[str] | None:
+        values = _split_keywords(self.keywords)
+        if values is None:
+            return None
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for value in values:
+            if not value:
+                continue
+            lowered = value.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized.append(value)
+        return normalized or None
 
 
 class NoteUpdateRequest(BaseModel):
@@ -34,7 +72,35 @@ class NoteUpdateRequest(BaseModel):
     content: Optional[str] = None
     conversation_id: Optional[str] = None
     message_id: Optional[str] = None
-    keywords: Optional[list[str]] = None
+    keywords: str | list[str] | None = None
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def validate_keywords(cls, value: Any):
+        parts = _split_keywords(value)
+        if parts is None:
+            return value
+        for part in parts:
+            if part and len(part) > 100:
+                raise ValueError("Keyword entries must be 100 characters or fewer.")
+        return value
+
+    @property
+    def normalized_keywords(self) -> list[str] | None:
+        values = _split_keywords(self.keywords)
+        if values is None:
+            return None
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for value in values:
+            if not value:
+                continue
+            lowered = value.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized.append(value)
+        return normalized or None
 
 
 class NoteResponse(BaseModel):
@@ -45,6 +111,11 @@ class NoteResponse(BaseModel):
     content: str
     version: int
     deleted: bool = False
+    created_at: Optional[str] = None
+    last_modified: Optional[str] = None
+    client_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    message_id: Optional[str] = None
     keywords: list[Any] = Field(default_factory=list)
     folders: list[Any] = Field(default_factory=list)
     keyword_sync: Optional[dict[str, Any]] = None
@@ -66,6 +137,7 @@ class WorkspaceCreateRequest(BaseModel):
     """Request body for creating or upserting a workspace."""
 
     name: str
+    archived: bool = False
     study_materials_policy: WorkspaceStudyMaterialsPolicy = "general"
 
 
@@ -256,4 +328,3 @@ class MediaListResponse(BaseModel):
 
     items: list[MediaListItem] = Field(default_factory=list)
     pagination: MediaListPagination
-
