@@ -59,6 +59,7 @@ The following scope and behavior decisions are fixed for this vertical:
 - Cross-scope note moves are out of scope.
 - Notes graph and manual note-link management are out of scope.
 - Sync/import-export are out of scope.
+- Workspace search must respect scope boundaries even when implemented client-side.
 
 ## In Scope
 
@@ -162,6 +163,7 @@ This workspace context is self-contained:
 - workspace source operations apply only to the selected workspace
 - workspace artifact operations apply only to the selected workspace
 - deleting or archiving a workspace does not implicitly convert its notes into user-space notes
+- deleting a workspace must warn that related workspace conversations are also soft-deleted by the server
 
 ### Scope Visibility Requirements
 
@@ -170,6 +172,29 @@ The UI must make scope obvious:
 - header labels should identify whether the user is in `Local Note`, `Server Note`, or `Workspace`
 - action controls should be scope-specific
 - dangerous or unsupported actions should be omitted instead of shown as inert placeholders
+
+### Scope Action Matrix
+
+The existing generic notes controls must be made scope-aware instead of remaining globally active.
+
+- `Save Note` applies to the currently selected editable resource only:
+  - local note in `Local Notes`
+  - user-space server note in `Server Notes`
+  - workspace note when `Workspace Notes` has a selected note
+- autosave remains enabled only for note editors:
+  - allowed for local notes
+  - allowed for user-space server notes
+  - allowed for workspace notes
+  - not used for workspace details, sources, or artifacts
+- `Preview` applies only to note editors and is hidden or disabled for non-note workspace subviews
+- `Delete` must be relabeled by scope where necessary:
+  - `Delete Note` for local notes and server notes
+  - `Delete Workspace Note` for workspace notes
+  - `Delete Workspace` only from workspace-details actions
+  - source/artifact delete actions live only inside their own workspace subviews
+- export/copy actions remain available only for note editors in this vertical
+- the existing notes `Sync` button remains local-notes-only and must be hidden in server-note and workspace scopes because sync is out of scope for this vertical
+- unsupported actions must not be shown as dead controls in the wrong scope
 
 ## Architecture
 
@@ -196,6 +221,12 @@ Add a new service layer between the UI and `tldw_api` that:
 - keeps local and server operations clearly separated
 - provides a scope-aware interface for the screen
 
+Normalization rules must be explicit because the server contracts are not identical:
+
+- user-space server notes may expose auto-title, folder, keyword, and keyword-sync fields
+- workspace notes use workspace-specific request/response shapes and keyword serialization
+- the UI may present a shared note-editor surface, but the service layer must translate each scope to its real server contract rather than pretending all note resources share one payload shape
+
 This service should be the only place where the notes screen decides whether it is handling:
 
 - local note operations
@@ -212,10 +243,20 @@ The state model should track:
 - selected local note or selected server note
 - selected workspace
 - selected workspace subview
+- selected workspace note id and version when a workspace note is open
+- selected workspace source id and version when a source is open for edit
+- selected workspace artifact id and version when an artifact is open for edit
 - current server-side version fields for editable resources
 - loading, refreshing, and error states per server scope
+- dirty-editor state for the currently open editable resource only
 
 The state should not allow workspace notes to exist in the same selection collection as user-space notes.
+
+Navigation behavior with unsaved changes must be explicit:
+
+- if the user switches between notes or scopes with unsaved changes in the active editor, the UI must force one of three outcomes: save, discard, or cancel navigation
+- the implementation must not silently swap selections and clear dirty state
+- dirty state must be resource-specific and reset only after a confirmed save, explicit discard, or successful reload of the new resource
 
 ### 4. Existing Local Notes Preservation
 
@@ -234,6 +275,7 @@ When the user selects `Server Notes`:
 - create/edit/delete server user-space notes only
 - save through the server API with optimistic locking
 - use explicit refresh on success/failure instead of assuming local mirror state
+- use the server notes search endpoint for user-space note search
 
 ### Workspaces
 
@@ -247,6 +289,25 @@ When the user selects `Workspaces`:
   - workspace artifacts
 
 Workspace notes are separate resources from general server notes in the UI model even if the server stores related note structures underneath.
+
+Workspace search behavior for this vertical:
+
+- workspace note search is limited to the currently selected workspace
+- workspace note search is implemented as client-side filtering over the loaded workspace-note list unless a dedicated server endpoint is added in a later vertical
+- user-space note search and workspace note search must never share result collections
+
+### Workspace Source Creation Flow
+
+Workspace source creation needs an explicit source-selection path because the server requires a valid `media_id`.
+
+For this vertical, the TUI should expose a minimal add-source flow:
+
+- the user opens `Add Source` from the selected workspace
+- the UI presents a source-picker/modal backed by existing server-searchable media records or existing known media references already available to the client
+- the picker returns the required `media_id` plus default display metadata needed for the create request
+- the user may edit title, source type, URL, selected flag, and initial position before submission if those fields are exposed in the create form
+
+This vertical does not need a broad new media-management product. It only needs a bounded source-picking flow that can successfully produce a valid workspace-source create request from the TUI.
 
 ### No Cross-Scope Moves
 
@@ -270,6 +331,8 @@ The vertical should prefer explicitness over optimistic UI.
   - workspace subresource operations
 - Avoid pretending a server write succeeded before the API confirms it.
 - Do not silently fall back to local storage for failed server writes.
+- Workspace delete confirmation must explicitly warn that the server also soft-deletes related workspace conversations.
+- Resource-specific save errors must stay attached to the active scope instead of leaking into unrelated local/server/workspace UI sections.
 
 ## Testing Strategy
 
@@ -302,6 +365,10 @@ Add notes screen tests for:
 - workspace notes render only after selecting a workspace
 - sources and artifacts render only inside the selected workspace context
 - scope labels/actions change correctly with selection
+- switching scope with unsaved edits requires save, discard, or cancel
+- local-only sync controls are absent outside local-notes scope
+- workspace note search filters only the selected workspace-note collection
+- workspace delete confirmation shows the conversation-cascade warning
 
 ### Regression Tests
 
