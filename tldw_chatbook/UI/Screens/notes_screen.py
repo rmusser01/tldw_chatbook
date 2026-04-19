@@ -1217,6 +1217,18 @@ class NotesScreen(BaseAppScreen):
             await self._hydrate_editor_for_workspace_note(note_details)
         else:
             self._apply_navigation_target(navigation)
+            selection_items = payload.get("sources", []) if subview == WorkspaceSubview.SOURCES else payload.get("artifacts", [])
+            selected_item = next((item for item in selection_items if item.get("id") == item_id), None)
+            if selected_item is not None:
+                self._set_state(
+                    selected_note_title=str(
+                        selected_item.get("title")
+                        or selected_item.get("name")
+                        or selected_item.get("artifact_type")
+                        or ""
+                    ),
+                    selected_note_content=str(selected_item.get("content") or ""),
+                )
             await self._populate_workspace_context_panel_if_available(
                 workspace=payload["workspace"],
                 notes=self._filter_workspace_notes_in_memory(payload["notes"]),
@@ -1241,8 +1253,19 @@ class NotesScreen(BaseAppScreen):
                 additional_warning=self._build_delete_warning_text(),
             )
             return bool(await self.app_instance.push_screen_wait(dialog))
+        if self.state.scope_type == ScopeType.WORKSPACE and resource_kind in {"source", "artifact"}:
+            item_type = "Workspace Source" if resource_kind == "source" else "Workspace Artifact"
+            item_name = self.state.selected_note_title or f"the selected {resource_kind}"
+            dialog = create_delete_confirmation(
+                item_type=item_type,
+                item_name=item_name,
+            )
+            return bool(await self.app_instance.push_screen_wait(dialog))
         if resource_kind != "note":
-            self._notify("Delete is only enabled for notes and workspace details in this screen.", severity="warning")
+            self._notify(
+                "Delete is only enabled for notes, workspace details, sources, and artifacts in this screen.",
+                severity="warning",
+            )
             return False
         item_type = "Note"
         if self.state.scope_type == ScopeType.SERVER_NOTE:
@@ -1297,6 +1320,61 @@ class NotesScreen(BaseAppScreen):
         except Exception as exc:
             logger.error(f"Error deleting workspace: {exc}", exc_info=True)
             self._notify(f"Error deleting workspace: {type(exc).__name__}", severity="error")
+
+    async def _delete_current_workspace_resource(self) -> None:
+        workspace_id = self.state.selected_workspace_id
+        resource_kind = self._current_resource_kind()
+        resource_id = self._get_current_resource_id()
+        if not workspace_id or not resource_id:
+            self._notify(f"No workspace {resource_kind} selected to delete.", severity="warning")
+            return
+        service = self.server_notes_workspace_service or getattr(self.notes_scope_service, "server_service", None)
+        if service is None:
+            self._notify("Workspace service is not configured.", severity="warning")
+            return
+        delete_method_name = (
+            "delete_workspace_source"
+            if resource_kind == "source"
+            else "delete_workspace_artifact"
+            if resource_kind == "artifact"
+            else None
+        )
+        if delete_method_name is None or not hasattr(service, delete_method_name):
+            self._notify(f"{resource_kind.title()} delete is not configured.", severity="warning")
+            return
+        try:
+            result = await getattr(service, delete_method_name)(workspace_id, resource_id)
+            deleted = bool(result or result == {})
+            if not deleted:
+                self._notify(f"Failed to delete workspace {resource_kind}", severity="error")
+                return
+            self._workspace_context_payload = {
+                "workspace": {},
+                "notes": [],
+                "sources": [],
+                "artifacts": [],
+            }
+            changes: dict[str, Any] = {
+                "has_unsaved_changes": False,
+                "selected_note_id": None,
+                "selected_note_version": None,
+                "selected_note_title": "",
+                "selected_note_content": "",
+            }
+            if resource_kind == "source":
+                changes["selected_workspace_source_id"] = None
+                changes["selected_workspace_source_version"] = None
+            else:
+                changes["selected_workspace_artifact_id"] = None
+                changes["selected_workspace_artifact_version"] = None
+            self._set_state(**changes)
+            self._sync_legacy_local_selection()
+            await self._clear_editor()
+            await self.refresh_current_scope()
+            self._notify(f"Workspace {resource_kind} deleted", severity="information")
+        except Exception as exc:
+            logger.error(f"Error deleting workspace {resource_kind}: {exc}", exc_info=True)
+            self._notify(f"Error deleting workspace {resource_kind}: {type(exc).__name__}", severity="error")
 
     async def _clear_editor(self) -> None:
         if not self.is_mounted:
@@ -1363,14 +1441,18 @@ class NotesScreen(BaseAppScreen):
     async def handle_delete_button(self, event: Button.Pressed) -> None:
         event.stop()
         deleted_id = self._get_current_resource_id()
+        resource_kind = self._current_resource_kind()
         confirmed = await self._confirm_delete_current_selection()
         if not confirmed:
             return
-        if self.state.scope_type == ScopeType.WORKSPACE and self._current_resource_kind() == "workspace":
+        if self.state.scope_type == ScopeType.WORKSPACE and resource_kind == "workspace":
             await self._delete_current_workspace()
             return
+        if self.state.scope_type == ScopeType.WORKSPACE and resource_kind in {"source", "artifact"}:
+            await self._delete_current_workspace_resource()
+            return
         await self._delete_current_note()
-        if deleted_id:
+        if deleted_id and resource_kind == "note":
             self.post_message(NoteDeleted(deleted_id))
 
     @on(Button.Pressed, "#notes-export-markdown-button")

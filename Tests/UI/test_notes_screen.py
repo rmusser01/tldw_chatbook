@@ -570,6 +570,94 @@ class TestNotesScreenMethods:
         screen.post_message.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_confirm_delete_workspace_source_uses_real_source_delete_dialog(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        mock_app_instance.push_screen_wait = AsyncMock(return_value=True)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.SOURCES,
+            selected_workspace_id="ws-1",
+            selected_workspace_source_id="src-2",
+            selected_note_title="Source A",
+        )
+
+        confirmed = await screen._confirm_delete_current_selection()
+
+        assert confirmed is True
+        dialog = mock_app_instance.push_screen_wait.await_args.args[0]
+        assert dialog.item_type == "Workspace Source"
+        assert dialog.item_name == "Source A"
+
+    @pytest.mark.asyncio
+    async def test_confirm_delete_workspace_artifact_uses_real_artifact_delete_dialog(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        mock_app_instance.push_screen_wait = AsyncMock(return_value=True)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.ARTIFACTS,
+            selected_workspace_id="ws-1",
+            selected_workspace_artifact_id="art-2",
+            selected_note_title="Artifact A",
+        )
+
+        confirmed = await screen._confirm_delete_current_selection()
+
+        assert confirmed is True
+        dialog = mock_app_instance.push_screen_wait.await_args.args[0]
+        assert dialog.item_type == "Workspace Artifact"
+        assert dialog.item_name == "Artifact A"
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_source_calls_server_delete_workspace_source(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen._confirm_delete_current_selection = AsyncMock(return_value=True)  # type: ignore[attr-defined]
+        screen._clear_editor = AsyncMock()  # type: ignore[method-assign]
+        screen.refresh_current_scope = AsyncMock()  # type: ignore[method-assign]
+        mock_app_instance.server_notes_workspace_service.delete_workspace_source = AsyncMock(return_value={})
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.SOURCES,
+            selected_workspace_id="ws-1",
+            selected_workspace_source_id="src-2",
+            selected_workspace_source_version=4,
+            selected_note_title="Source A",
+        )
+        event = Mock()
+        event.stop = Mock()
+        screen.post_message = Mock()
+
+        await screen.handle_delete_button(event)
+
+        mock_app_instance.server_notes_workspace_service.delete_workspace_source.assert_awaited_once_with("ws-1", "src-2")
+        assert screen.state.selected_workspace_source_id is None
+        screen.post_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_artifact_calls_server_delete_workspace_artifact(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen._confirm_delete_current_selection = AsyncMock(return_value=True)  # type: ignore[attr-defined]
+        screen._clear_editor = AsyncMock()  # type: ignore[method-assign]
+        screen.refresh_current_scope = AsyncMock()  # type: ignore[method-assign]
+        mock_app_instance.server_notes_workspace_service.delete_workspace_artifact = AsyncMock(return_value={})
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.ARTIFACTS,
+            selected_workspace_id="ws-1",
+            selected_workspace_artifact_id="art-2",
+            selected_workspace_artifact_version=6,
+            selected_note_title="Artifact A",
+        )
+        event = Mock()
+        event.stop = Mock()
+        screen.post_message = Mock()
+
+        await screen.handle_delete_button(event)
+
+        mock_app_instance.server_notes_workspace_service.delete_workspace_artifact.assert_awaited_once_with("ws-1", "art-2")
+        assert screen.state.selected_workspace_artifact_id is None
+        screen.post_message.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_resolve_pending_navigation_discard_hydrates_server_target(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
         screen.state = NotesScreenState(
