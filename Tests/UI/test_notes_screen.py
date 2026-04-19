@@ -859,6 +859,59 @@ class TestNotesScreenMethods:
             assert template_select.display is False
 
     @pytest.mark.asyncio
+    async def test_scope_context_hides_local_only_selected_note_action_controls(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            load_selected = screen.query_one("#notes-load-selected-button", Button)
+            edit_selected = screen.query_one("#notes-edit-selected-button", Button)
+
+            assert load_selected.display is not False
+            assert edit_selected.display is not False
+
+            screen._set_state(scope_type=ScopeType.SERVER_NOTE)
+            await pilot.pause()
+
+            assert load_selected.display is False
+            assert edit_selected.display is False
+
+            screen._set_state(
+                scope_type=ScopeType.WORKSPACE,
+                workspace_subview=WorkspaceSubview.DETAILS,
+            )
+            await pilot.pause()
+
+            assert load_selected.display is False
+            assert edit_selected.display is False
+
+    @pytest.mark.asyncio
+    async def test_search_button_routes_through_scope_aware_filtered_search_flow(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen._perform_filtered_search = AsyncMock()  # type: ignore[method-assign]
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            search_input = screen.query_one("#notes-search-input")
+            keyword_input = screen.query_one("#notes-keyword-filter-input")
+
+            search_input.value = "alpha"
+            keyword_input.value = "urgent"
+            await pilot.pause()
+            screen._perform_filtered_search.reset_mock()
+
+            event = Mock()
+            event.stop = Mock()
+
+            await screen.handle_search_button(event)
+
+        screen._perform_filtered_search.assert_awaited_once_with("alpha", "urgent")
+
+    @pytest.mark.asyncio
     async def test_copy_and_export_are_disabled_outside_note_editor_context(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
         screen._notify = Mock()

@@ -244,6 +244,8 @@ class NotesScreen(BaseAppScreen):
             create_from_template_button = sidebar_left.query_one("#notes-create-from-template-button", Button)
             create_blank_button = sidebar_left.query_one("#notes-create-new-button", Button)
             import_button = sidebar_left.query_one("#notes-import-button", Button)
+            load_selected_button = sidebar_left.query_one("#notes-load-selected-button", Button)
+            edit_selected_button = sidebar_left.query_one("#notes-edit-selected-button", Button)
 
             editor.display = is_note_editor
             workspace_panel.display = show_workspace_panel
@@ -259,6 +261,8 @@ class NotesScreen(BaseAppScreen):
             create_from_template_button.display = show_local_create_actions
             create_blank_button.display = show_local_create_actions
             import_button.display = show_local_create_actions
+            load_selected_button.display = show_local_create_actions
+            edit_selected_button.display = show_local_create_actions
 
             if self.state.scope_type == ScopeType.SERVER_NOTE:
                 save_button.label = "Save Server Note"
@@ -1447,6 +1451,13 @@ class NotesScreen(BaseAppScreen):
     async def handle_create_new_button(self, event: Button.Pressed) -> None:
         event.stop()
         await self._create_new_note()
+
+    @on(Button.Pressed, "#notes-search-button")
+    async def handle_search_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        search_term = self.query_one("#notes-search-input", Input).value.strip()
+        keyword_filter = self.query_one("#notes-keyword-filter-input", Input).value.strip()
+        await self._perform_filtered_search(search_term, keyword_filter)
 
     @on(Button.Pressed, "#notes-delete-button")
     async def handle_delete_button(self, event: Button.Pressed) -> None:
