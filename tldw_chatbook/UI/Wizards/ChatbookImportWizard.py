@@ -447,6 +447,12 @@ class ConflictResolutionStep(WizardStep):
 
 class ImportOptionsStep(WizardStep):
     """Step 4: Import Options."""
+
+    def on_show(self) -> None:
+        """Apply initial execution mode when the step is first shown."""
+        super().on_show()
+        if getattr(self.wizard, "initial_execution_mode", "local") == "server":
+            self.query_one("#execution-mode", RadioSet).pressed_index = 1
     
     
     def compose(self) -> ComposeResult:
@@ -903,7 +909,8 @@ class ChatbookImportWizard(WizardScreen):
 class ChatbookImportWizardContainer(WizardContainer):
     """The actual chatbook import wizard implementation."""
     
-    def __init__(self, app_instance, **kwargs):
+    def __init__(self, app_instance, initial_execution_mode="local", **kwargs):
+        self.initial_execution_mode = initial_execution_mode
         # Create steps with proper config
         steps = self._create_steps()
         

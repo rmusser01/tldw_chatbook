@@ -9,7 +9,7 @@ from textual.reactive import reactive
 from typing import Optional, List, Dict, Any
 from loguru import logger
 
-from ..Chatbooks_Window import ChatbooksWindow
+from ..Chatbooks_Window_Improved import ChatbooksWindowImproved
 
 
 class ChatbooksScreen(Screen):
@@ -24,50 +24,26 @@ class ChatbooksScreen(Screen):
     def compose(self) -> ComposeResult:
         """Compose the Chatbooks screen with the Chatbooks window."""
         logger.info("Composing Chatbooks screen")
-        yield ChatbooksWindow()
+        yield ChatbooksWindowImproved(self.app)
     
     async def on_mount(self) -> None:
         """Initialize Chatbooks when screen is mounted."""
         logger.info("Chatbooks screen mounted")
-        
-        # Get the Chatbooks window
-        chatbooks_window = self.query_one(ChatbooksWindow)
-        
-        # Load chatbooks list
-        if hasattr(chatbooks_window, 'load_chatbooks'):
-            chatbooks = await chatbooks_window.load_chatbooks()
-            self.chatbook_list = chatbooks
-        
-        # Initialize chatbooks features
-        if hasattr(chatbooks_window, 'initialize'):
-            await chatbooks_window.initialize()
+        chatbooks_window = self.query_one(ChatbooksWindowImproved)
+        self.chatbook_list = list(chatbooks_window.chatbooks)
     
     async def on_screen_suspend(self) -> None:
         """Save state when screen is suspended (navigated away)."""
         logger.debug("Chatbooks screen suspended")
-        
-        # Save current chatbook if editing
-        if self.is_editing and self.current_chatbook:
-            chatbooks_window = self.query_one(ChatbooksWindow)
-            if hasattr(chatbooks_window, 'save_chatbook'):
-                await chatbooks_window.save_chatbook(self.current_chatbook)
-        
         self.is_editing = False
     
     async def on_screen_resume(self) -> None:
         """Restore state when screen is resumed."""
         logger.debug("Chatbooks screen resumed")
-        
-        # Refresh chatbooks list
-        chatbooks_window = self.query_one(ChatbooksWindow)
-        if hasattr(chatbooks_window, 'refresh_chatbooks'):
-            chatbooks = await chatbooks_window.refresh_chatbooks()
-            self.chatbook_list = chatbooks
-        
-        # Restore selected chatbook if any
-        if self.selected_chatbook_id:
-            if hasattr(chatbooks_window, 'select_chatbook'):
-                await chatbooks_window.select_chatbook(self.selected_chatbook_id)
+        chatbooks_window = self.query_one(ChatbooksWindowImproved)
+        if hasattr(chatbooks_window, '_refresh_chatbooks'):
+            await chatbooks_window._refresh_chatbooks()
+        self.chatbook_list = list(chatbooks_window.chatbooks)
     
     def create_new_chatbook(self, title: str, description: str = "") -> None:
         """Create a new chatbook."""

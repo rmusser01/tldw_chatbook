@@ -337,6 +337,12 @@ class ContentSelectionStep(WizardStep):
 
 class ExportOptionsStep(WizardStep):
     """Step 3: Export Options."""
+
+    def on_show(self) -> None:
+        """Apply initial execution mode when the step is first shown."""
+        super().on_show()
+        if getattr(self.wizard, "initial_execution_mode", "local") == "server":
+            self.query_one("#execution-mode", RadioSet).pressed_index = 1
     
     
     def compose(self) -> ComposeResult:
@@ -911,7 +917,8 @@ class ChatbookCreationWizard(WizardScreen):
 class ChatbookCreationWizardContainer(WizardContainer):
     """The actual chatbook creation wizard implementation."""
     
-    def __init__(self, app_instance, template_data=None, **kwargs):
+    def __init__(self, app_instance, template_data=None, initial_execution_mode="local", **kwargs):
+        self.initial_execution_mode = initial_execution_mode
         # Create steps with proper config
         steps = self._create_steps()
         
