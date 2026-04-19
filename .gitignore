@@ -5,6 +5,7 @@
 # IDE files
 .idea
 .claude
+.worktrees/
 
 # Testing
 .hypothesis/
