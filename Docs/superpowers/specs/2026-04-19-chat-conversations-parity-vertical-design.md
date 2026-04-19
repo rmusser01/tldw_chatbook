@@ -183,6 +183,21 @@ The minimum supported local conversation identity shapes for this vertical are:
 
 The current main chat UI does not need new visual controls in this pass, but the local DB and local service layer must be capable of representing these shapes. The existing default-character fallback can remain as a legacy behavior only where an older UI path still supplies no explicit assistant identity, but it must no longer be the defining model for conversation creation.
 
+#### Title Derivation Rules
+
+The implementation plan should not guess how conversation titles are derived once creation is no longer universally character-bound.
+
+Default title derivation in this vertical should be:
+
+- character-backed conversation:
+  - `Chat with {character_name}`
+- persona-backed conversation:
+  - `Chat with {persona_name}`
+- generic/non-character conversation:
+  - `New Chat`
+
+The existing timestamp suffix pattern may still be used for uniqueness where the current local UX depends on it, but the base title should follow the identity type above rather than always assuming a character-backed conversation.
+
 ### Conversation Metadata Mapping Rules
 
 The plan should treat the following conversation fields as the minimum explicit mapping contract for local/server alignment:
@@ -282,7 +297,26 @@ This service should:
 
 The current UI should not have to understand whether it is reading raw local rows, server payloads, or a future merged source.
 
-### 3. `tldw_api` Client Parity
+### 3. Chat Session And State Model Alignment
+
+The aligned data model must also be reflected in the in-memory and serialized chat session state, not just the DB layer.
+
+The implementation plan should explicitly cover:
+
+- `tldw_chatbook/Chat/chat_models.py`
+- `tldw_chatbook/Chat/tabs/tab_state_manager.py`
+- `tldw_chatbook/UI/Screens/chat_screen_state.py`
+
+Those state models should be updated so tab/session restore can preserve:
+
+- assistant identity beyond `character_id`
+- conversation scope fields where relevant
+- message topology fields required for tree reconstruction
+- message variant identity and selected-variant state where the session cache carries message snapshots
+
+Without this state-layer alignment, the app could store correct local records but still flatten or misclassify conversations during tab restore and screen-state serialization.
+
+### 4. `tldw_api` Client Parity
 
 Extend `tldw_chatbook/tldw_api` with explicit conversation and message-adjacent schemas and methods for the server endpoints already present in `tldw_server`.
 
@@ -295,7 +329,16 @@ The client should cover at least:
 
 This does not imply the current main chat surface will call those methods yet. It means the client contract should exist before later remote mode work begins.
 
-### 4. UI Preservation
+#### Endpoint Inventory
+
+The implementation plan should treat the following server conversation routes as the explicit parity target for this vertical:
+
+- `GET /conversations`
+- `GET /conversations/{conversation_id}`
+- `PATCH /conversations/{conversation_id}`
+- `GET /conversations/{conversation_id}/tree`
+
+### 5. UI Preservation
 
 The current main chat UI remains visually unchanged:
 
@@ -465,6 +508,7 @@ This vertical is successful when:
 
 - local conversation records can preserve the core server-aligned metadata needed for later interoperability
 - local chat persistence remains the default and continues to work without server access
+- editing an existing conversation must no longer require destructive full-message rewrite behavior that drops tree structure or variant state
 - `tldw_api` exposes the relevant server conversation contracts
 - the TUI chat surface remains visually unchanged
 - a future chat `Local / Server` mode toggle is explicitly deferred and tracked instead of partially implied
