@@ -13,6 +13,7 @@ Implements the chatbook import workflow:
 5. Progress & Completion
 """
 
+import asyncio
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
@@ -31,6 +32,10 @@ from .BaseWizard import WizardContainer, WizardStep, WizardStepConfig, WizardScr
 from ...Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 from ...Chatbooks.chatbook_models import ChatbookManifest, ContentType
 from ...Chatbooks.conflict_resolver import ConflictResolution
+from ...Chatbooks.server_chatbook_service import (
+    ServerChatbookService,
+    build_tldw_api_client_from_config,
+)
 from ...Widgets.enhanced_file_picker import EnhancedFileOpen
 
 if TYPE_CHECKING:
@@ -446,6 +451,19 @@ class ImportOptionsStep(WizardStep):
     
     def compose(self) -> ComposeResult:
         """Compose import options UI."""
+        with Container(classes="options-section"):
+            yield Static("Execution Mode:", classes="section-title")
+            yield RadioSet(
+                RadioButton("Local import (Recommended)", value=True, id="mode-local"),
+                RadioButton("Server import", id="mode-server"),
+                id="execution-mode"
+            )
+            yield Static(
+                "Server import currently supports conversations, notes, and characters. "
+                "Chatbooks containing prompts, media, embeddings, or evaluations must use local import.",
+                classes="option-description"
+            )
+
         # Import options
         with Container(classes="options-section"):
             yield Static("Import Options:", classes="section-title")
@@ -522,7 +540,13 @@ class ImportOptionsStep(WizardStep):
     
     def get_step_data(self) -> Dict[str, Any]:
         """Get import options."""
+        execution_mode = "local"
+        mode_set = self.query_one("#execution-mode", RadioSet)
+        if mode_set.pressed_button and mode_set.pressed_button.id == "mode-server":
+            execution_mode = "server"
+
         return {
+            "execution_mode": execution_mode,
             "import_media": self.query_one("#import-media", Checkbox).value,
             "import_embeddings": self.query_one("#import-embeddings", Checkbox).value,
             "preserve_timestamps": self.query_one("#preserve-timestamps", Checkbox).value,
@@ -609,6 +633,7 @@ class ImportProgressStep(WizardStep):
                 "resolution_strategy", ConflictResolution.SKIP
             )
             options = self.wizard.wizard_data.get("import-options", {})
+            execution_mode = options.get("execution_mode", "local")
             
             # Update progress: Preparing
             self._update_status("status-prepare", "active", "⟳ Preparing import...")
@@ -622,6 +647,78 @@ class ImportProgressStep(WizardStep):
                 # For now, just mark as completed
                 self._update_status("status-backup", "completed", "✓ Created backup")
                 self._update_progress(15)
+
+            if execution_mode == "server":
+                self._update_status("status-prepare", "active", "⟳ Preparing server import...")
+                self._update_progress(20)
+
+                if hasattr(self.wizard.app_instance, 'app_config'):
+                    config = self.wizard.app_instance.app_config
+                elif hasattr(self.wizard.app_instance, 'config_data'):
+                    config = self.wizard.app_instance.config_data
+                else:
+                    from ...config import load_settings
+                    config = load_settings()
+
+                api_client = build_tldw_api_client_from_config(config)
+                service = ServerChatbookService(api_client)
+                try:
+                    server_selections = self._build_server_content_selections(manifest, options)
+                    unsupported = service.validate_server_import_selection(server_selections)
+                    if unsupported:
+                        raise ValueError(
+                            "Server import currently supports only conversations, notes, and characters. "
+                            f"Unsupported content in this chatbook: {', '.join(unsupported)}"
+                        )
+
+                    response = await service.import_chatbook_from_selection(
+                        file_path,
+                        selections=server_selections,
+                        conflict_resolution=resolution_strategy,
+                        prefix_imported=options.get("merge_tags", False),
+                        import_media=options.get("import_media", True),
+                        import_embeddings=options.get("import_embeddings", False),
+                        async_mode=True,
+                    )
+
+                    job_id = response.get("job_id")
+                    if not job_id:
+                        raise ValueError(response.get("message", "Server import did not return a job id."))
+
+                    job_result = response
+                    self._update_status("status-prepare", "completed", "✓ Submitted server import")
+                    self._update_status("status-indexes", "active", "⟳ Waiting for server import job...")
+                    for _ in range(60):
+                        status = str(job_result.get("status", "")).lower()
+                        if status in {"completed", "success", "failed", "error", "cancelled"}:
+                            break
+                        self._update_progress(max(25, min(95, int(job_result.get("progress_percentage", 25) or 25))))
+                        await asyncio.sleep(1)
+                        job_result = await service.get_import_job(job_id)
+
+                    final_status = str(job_result.get("status", "")).lower()
+                    if final_status not in {"completed", "success"}:
+                        raise ValueError(
+                            job_result.get("message")
+                            or f"Server import ended with status '{job_result.get('status', 'unknown')}'."
+                        )
+
+                    self.import_status = ImportStatus()
+                    self.import_status.successful_items = int(job_result.get("successful_items", 0) or 0)
+                    self.import_status.failed_items = int(job_result.get("failed_items", 0) or 0)
+                    self.import_status.total_items = (
+                        self.import_status.successful_items + self.import_status.failed_items
+                    )
+                    self.import_status.processed_items = self.import_status.total_items
+                    self.import_status.skipped_items = 0
+
+                    self._update_status("status-indexes", "completed", "✓ Server import completed")
+                    self._update_status("status-finalize", "completed", "✓ Import finalized")
+                    self._update_progress(100)
+                    await self._show_completion()
+                    return
+                finally:
+                    await api_client.close()
             
             # Create importer
             db_config = self.wizard.app_instance.config_data.get("database", {})
@@ -766,6 +863,25 @@ class ImportProgressStep(WizardStep):
             "completed": self.is_complete,
             "import_status": self.import_status.to_dict() if self.import_status else None
         }
+
+    def _build_server_content_selections(
+        self,
+        manifest: Optional[ChatbookManifest],
+        options: Dict[str, Any],
+    ) -> Dict[str, List[str]]:
+        selections: Dict[str, List[str]] = {}
+        if not manifest:
+            return selections
+
+        for item in manifest.content_items:
+            content_type = item.type.value if isinstance(item.type, ContentType) else str(item.type)
+            if content_type == ContentType.MEDIA.value and not options.get("import_media", True):
+                continue
+            if content_type == ContentType.EMBEDDING.value and not options.get("import_embeddings", False):
+                continue
+            selections.setdefault(content_type, []).append(str(item.id))
+
+        return selections
     
     def can_proceed(self) -> bool:
         """Can only proceed when import is complete."""
