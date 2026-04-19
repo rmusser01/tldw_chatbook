@@ -516,15 +516,165 @@ class TestNotesScreenMethods:
         screen = NotesScreen(mock_app_instance)
         screen.state = NotesScreenState(
             scope_type=ScopeType.WORKSPACE,
-            workspace_subview=WorkspaceSubview.NOTES,
+            workspace_subview=WorkspaceSubview.DETAILS,
             selected_workspace_id="ws-1",
-            selected_workspace_note_id=9,
         )
 
         warning = screen._build_delete_warning_text()
 
         assert "related workspace conversations" in warning
         assert "soft-deleted by the server" in warning
+        assert "workspace note" not in warning.lower()
+
+    @pytest.mark.asyncio
+    async def test_confirm_delete_workspace_uses_workspace_details_warning(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        mock_app_instance.push_screen_wait = AsyncMock(return_value=True)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.DETAILS,
+            selected_workspace_id="ws-1",
+            selected_note_title="Research",
+        )
+
+        confirmed = await screen._confirm_delete_current_selection()
+
+        assert confirmed is True
+        dialog = mock_app_instance.push_screen_wait.await_args.args[0]
+        assert dialog.item_type == "Workspace"
+        assert "related workspace conversations" in dialog.additional_warning
+        assert "soft-deleted by the server" in dialog.additional_warning
+        assert "workspace note" not in dialog.additional_warning.lower()
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_details_calls_server_delete_workspace(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen._confirm_delete_current_selection = AsyncMock(return_value=True)  # type: ignore[attr-defined]
+        screen._clear_editor = AsyncMock()  # type: ignore[method-assign]
+        screen.refresh_current_scope = AsyncMock()  # type: ignore[method-assign]
+        mock_app_instance.server_notes_workspace_service.delete_workspace = AsyncMock(return_value={})
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.DETAILS,
+            selected_workspace_id="ws-1",
+            selected_note_title="Research",
+        )
+        event = Mock()
+        event.stop = Mock()
+        screen.post_message = Mock()
+
+        await screen.handle_delete_button(event)
+
+        mock_app_instance.server_notes_workspace_service.delete_workspace.assert_awaited_once_with("ws-1")
+        assert screen.state.selected_workspace_id is None
+        screen.post_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_resolve_pending_navigation_discard_hydrates_server_target(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.LOCAL_NOTE,
+            selected_note_id=1,
+            has_unsaved_changes=True,
+            pending_navigation=PendingNavigation(
+                target_scope=ScopeType.SERVER_NOTE,
+                target_id="server-2",
+                target_version=5,
+                requires_confirmation=True,
+            ),
+        )
+        screen._load_server_note = AsyncMock(return_value=PendingNavigation(target_scope=ScopeType.SERVER_NOTE, target_id="server-2"))  # type: ignore[attr-defined]
+
+        completed = await screen.resolve_pending_navigation("discard")
+
+        assert completed is True
+        screen._load_server_note.assert_awaited_once_with("server-2")
+        assert screen.state.pending_navigation is None
+
+    @pytest.mark.asyncio
+    async def test_resolve_pending_navigation_discard_opens_workspace_note_target(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.LOCAL_NOTE,
+            selected_note_id=1,
+            has_unsaved_changes=True,
+            pending_navigation=PendingNavigation(
+                target_scope=ScopeType.WORKSPACE,
+                target_id=42,
+                target_version=3,
+                target_workspace_id="ws-9",
+                target_workspace_subview=WorkspaceSubview.NOTES,
+                requires_confirmation=True,
+            ),
+        )
+        screen._select_workspace_subview_item = AsyncMock(  # type: ignore[attr-defined]
+            return_value=PendingNavigation(
+                target_scope=ScopeType.WORKSPACE,
+                target_id=42,
+                target_workspace_id="ws-9",
+                target_workspace_subview=WorkspaceSubview.NOTES,
+            )
+        )
+
+        completed = await screen.resolve_pending_navigation("discard")
+
+        assert completed is True
+        screen._select_workspace_subview_item.assert_awaited_once_with(
+            subview=WorkspaceSubview.NOTES,
+            item_id=42,
+            item_version=3,
+            workspace_id="ws-9",
+        )
+        assert screen.state.pending_navigation is None
+
+    @pytest.mark.asyncio
+    async def test_resolve_pending_navigation_discard_opens_workspace_details_target(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.LOCAL_NOTE,
+            selected_note_id=1,
+            has_unsaved_changes=True,
+            pending_navigation=PendingNavigation(
+                target_scope=ScopeType.WORKSPACE,
+                target_workspace_id="ws-9",
+                target_workspace_subview=WorkspaceSubview.DETAILS,
+                requires_confirmation=True,
+            ),
+        )
+        screen._select_workspace = AsyncMock(return_value=PendingNavigation(target_scope=ScopeType.WORKSPACE, target_workspace_id="ws-9"))  # type: ignore[attr-defined]
+
+        completed = await screen.resolve_pending_navigation("discard")
+
+        assert completed is True
+        screen._select_workspace.assert_awaited_once_with("ws-9", subview=WorkspaceSubview.DETAILS)
+        assert screen.state.pending_navigation is None
+
+    @pytest.mark.asyncio
+    async def test_refresh_workspace_scope_reuses_cached_context_for_search_when_workspace_is_unchanged(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen._workspace_context_payload = {
+            "workspace": {"id": "ws-1", "name": "Research", "version": 2},
+            "notes": [
+                {"id": 1, "workspace_id": "ws-1", "title": "Alpha note", "content": "Body", "version": 1},
+                {"id": 2, "workspace_id": "ws-1", "title": "Beta note", "content": "Other", "version": 1},
+            ],
+            "sources": [],
+            "artifacts": [],
+        }
+        mock_app_instance.server_notes_workspace_service.load_workspace_context = AsyncMock(
+            side_effect=AssertionError("workspace context should not be reloaded")
+        )
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.NOTES,
+            selected_workspace_id="ws-1",
+            search_query="alpha",
+        )
+
+        await screen._refresh_workspace_scope()
+
+        mock_app_instance.server_notes_workspace_service.load_workspace_context.assert_not_called()
+        assert [note["id"] for note in screen.state.notes_list] == [1]
 
     @pytest.mark.asyncio
     async def test_handle_server_list_selection_does_not_post_when_navigation_is_blocked(self, mock_app_instance):

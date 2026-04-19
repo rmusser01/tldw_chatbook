@@ -216,9 +216,9 @@ class NotesScreen(BaseAppScreen):
         return "note"
 
     def _build_delete_warning_text(self) -> str:
-        if self.state.scope_type == ScopeType.WORKSPACE and self._current_resource_kind() == "note":
+        if self.state.scope_type == ScopeType.WORKSPACE and self._current_resource_kind() == "workspace":
             return (
-                "This workspace note will be moved to trash, and related workspace conversations "
+                "This workspace will be deleted, and related workspace conversations "
                 "are also soft-deleted by the server."
             )
         return "This note will be moved to trash and can be recovered later."
@@ -402,7 +402,7 @@ class NotesScreen(BaseAppScreen):
         self._sync_legacy_local_selection()
 
     async def _complete_pending_navigation(self, pending: PendingNavigation) -> bool:
-        self._apply_navigation_target(pending)
+        self._set_state(pending_navigation=None)
         if pending.target_scope == ScopeType.LOCAL_NOTE and pending.target_id is not None:
             note_details = None
             if self.notes_service is not None:
@@ -413,6 +413,26 @@ class NotesScreen(BaseAppScreen):
             if not note_details:
                 return False
             await self._hydrate_editor_for_local_note(pending.target_id, note_details)
+            return True
+        if pending.target_scope == ScopeType.SERVER_NOTE and pending.target_id is not None:
+            navigation = await self._load_server_note(str(pending.target_id))
+            return navigation is not None
+        if pending.target_scope == ScopeType.WORKSPACE and pending.target_workspace_id:
+            subview = pending.target_workspace_subview or WorkspaceSubview.DETAILS
+            if subview == WorkspaceSubview.NOTES and pending.target_id is not None:
+                navigation = await self._select_workspace_subview_item(
+                    subview=subview,
+                    item_id=pending.target_id,
+                    item_version=pending.target_version,
+                    workspace_id=pending.target_workspace_id,
+                )
+                return navigation is not None
+            navigation = await self._select_workspace(
+                pending.target_workspace_id,
+                subview=subview,
+            )
+            return navigation is not None
+        self._apply_navigation_target(pending)
         return True
 
     async def resolve_pending_navigation(self, decision: str) -> bool:
@@ -519,13 +539,10 @@ class NotesScreen(BaseAppScreen):
         self._set_state(workspace_loading=True, workspace_refreshing=True, workspace_error=None)
         try:
             if self.state.selected_workspace_id:
-                context = await service.load_workspace_context(self.state.selected_workspace_id)
-                self._workspace_context_payload = {
-                    "workspace": dict(context.get("workspace", {}) or {}),
-                    "notes": list(context.get("notes", []) or []),
-                    "sources": list(context.get("sources", []) or []),
-                    "artifacts": list(context.get("artifacts", []) or []),
-                }
+                self._workspace_context_payload = await self._load_workspace_context_payload(
+                    self.state.selected_workspace_id,
+                    use_cache=True,
+                )
                 items = self._filter_workspace_notes_in_memory(self._workspace_context_payload["notes"])
                 await self._populate_workspace_context_panel_if_available(
                     workspace=self._workspace_context_payload["workspace"],
@@ -592,15 +609,37 @@ class NotesScreen(BaseAppScreen):
         except QueryError:
             return
 
+    def _has_cached_workspace_context(self, workspace_id: str) -> bool:
+        workspace = self._workspace_context_payload.get("workspace", {}) or {}
+        return workspace.get("id") == workspace_id
+
+    async def _load_workspace_context_payload(
+        self,
+        workspace_id: str,
+        *,
+        use_cache: bool,
+    ) -> dict[str, Any]:
+        if use_cache and self._has_cached_workspace_context(workspace_id):
+            return self._workspace_context_payload
+        service = self.server_notes_workspace_service or getattr(self.notes_scope_service, "server_service", None)
+        if service is None:
+            raise ValueError("Workspace service is not configured.")
+        context = await service.load_workspace_context(workspace_id)
+        self._workspace_context_payload = {
+            "workspace": dict(context.get("workspace", {}) or {}),
+            "notes": list(context.get("notes", []) or []),
+            "sources": list(context.get("sources", []) or []),
+            "artifacts": list(context.get("artifacts", []) or []),
+        }
+        return self._workspace_context_payload
+
     def _filter_workspace_notes_in_memory(self, notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         workspace_id = self.state.selected_workspace_id
         query = self.state.search_query.strip().lower()
+        keyword_filter = self.state.keyword_filter.strip().lower()
         filtered: list[dict[str, Any]] = []
         for note in notes:
             if workspace_id and note.get("workspace_id") not in (None, workspace_id):
-                continue
-            if not query:
-                filtered.append(dict(note))
                 continue
             keywords = note.get("keywords") or []
             if isinstance(keywords, str):
@@ -614,8 +653,11 @@ class NotesScreen(BaseAppScreen):
                     keywords_text,
                 ]
             ).lower()
-            if query in haystack:
-                filtered.append(dict(note))
+            if query and query not in haystack:
+                continue
+            if keyword_filter and keyword_filter not in keywords_text.lower():
+                continue
+            filtered.append(dict(note))
         return filtered
 
     def _sync_legacy_local_selection(self) -> None:
@@ -1103,16 +1145,36 @@ class NotesScreen(BaseAppScreen):
         await self._hydrate_editor_for_server_note(note_id, note_details)
         return navigation
 
-    async def _select_workspace(self, workspace_id: str) -> Optional[PendingNavigation]:
+    async def _select_workspace(
+        self,
+        workspace_id: str,
+        *,
+        subview: WorkspaceSubview = WorkspaceSubview.DETAILS,
+    ) -> Optional[PendingNavigation]:
         navigation = self.request_scope_transition(
             ScopeType.WORKSPACE,
             workspace_id=workspace_id,
-            workspace_subview=WorkspaceSubview.DETAILS,
+            workspace_subview=subview,
         )
         if navigation.requires_confirmation:
             self._notify("Unsaved changes require confirmation before switching notes.", severity="warning")
             return navigation
-        await self.refresh_current_scope()
+        payload = await self._load_workspace_context_payload(workspace_id, use_cache=True)
+        self._set_state(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=subview,
+            selected_workspace_id=workspace_id,
+            selected_note_title=payload.get("workspace", {}).get("name", ""),
+            selected_note_content="",
+            has_unsaved_changes=False,
+        )
+        await self._populate_workspace_context_panel_if_available(
+            workspace=payload["workspace"],
+            notes=self._filter_workspace_notes_in_memory(payload["notes"]),
+            sources=payload["sources"],
+            artifacts=payload["artifacts"],
+        )
+        self._update_scope_context_ui()
         return navigation
 
     async def _select_workspace_subview_item(
@@ -1121,39 +1183,66 @@ class NotesScreen(BaseAppScreen):
         subview: WorkspaceSubview,
         item_id: Any,
         item_version: Optional[int] = None,
+        workspace_id: Optional[str] = None,
     ) -> Optional[PendingNavigation]:
-        workspace_id = self.state.selected_workspace_id
+        resolved_workspace_id = workspace_id or self.state.selected_workspace_id
         navigation = self.request_scope_transition(
             ScopeType.WORKSPACE,
             target_id=item_id,
             target_version=item_version,
-            workspace_id=workspace_id,
+            workspace_id=resolved_workspace_id,
             workspace_subview=subview,
         )
         if navigation.requires_confirmation:
             self._notify("Unsaved changes require confirmation before switching notes.", severity="warning")
             return navigation
 
+        if not resolved_workspace_id:
+            return None
+        payload = await self._load_workspace_context_payload(resolved_workspace_id, use_cache=True)
+
         if subview == WorkspaceSubview.NOTES:
             note_details = next(
                 (
                     note
-                    for note in self._workspace_context_payload.get("notes", [])
+                    for note in payload.get("notes", [])
                     if note.get("id") == item_id
                 ),
                 None,
             )
             if note_details is None:
                 return None
+            if self.state.selected_workspace_id != resolved_workspace_id:
+                self._set_state(selected_workspace_id=resolved_workspace_id)
             await self._hydrate_editor_for_workspace_note(note_details)
         else:
             self._apply_navigation_target(navigation)
+            await self._populate_workspace_context_panel_if_available(
+                workspace=payload["workspace"],
+                notes=self._filter_workspace_notes_in_memory(payload["notes"]),
+                sources=payload["sources"],
+                artifacts=payload["artifacts"],
+            )
             self._update_scope_context_ui()
         return navigation
 
     async def _confirm_delete_current_selection(self) -> bool:
-        if self._current_resource_kind() != "note":
-            self._notify("Delete is only enabled for notes in this screen.", severity="warning")
+        resource_kind = self._current_resource_kind()
+        if self.state.scope_type == ScopeType.WORKSPACE and resource_kind == "workspace":
+            item_type = "Workspace"
+            workspace_name = (
+                self._workspace_context_payload.get("workspace", {}).get("name")
+                or self.state.selected_note_title
+                or "the selected workspace"
+            )
+            dialog = create_delete_confirmation(
+                item_type=item_type,
+                item_name=workspace_name,
+                additional_warning=self._build_delete_warning_text(),
+            )
+            return bool(await self.app_instance.push_screen_wait(dialog))
+        if resource_kind != "note":
+            self._notify("Delete is only enabled for notes and workspace details in this screen.", severity="warning")
             return False
         item_type = "Note"
         if self.state.scope_type == ScopeType.SERVER_NOTE:
@@ -1166,7 +1255,48 @@ class NotesScreen(BaseAppScreen):
             item_name=item_name,
             additional_warning=self._build_delete_warning_text(),
         )
-        return bool(await self.app.push_screen_wait(dialog))
+        return bool(await self.app_instance.push_screen_wait(dialog))
+
+    async def _delete_current_workspace(self) -> None:
+        workspace_id = self.state.selected_workspace_id
+        if not workspace_id:
+            self._notify("No workspace selected to delete.", severity="warning")
+            return
+        service = self.server_notes_workspace_service or getattr(self.notes_scope_service, "server_service", None)
+        if service is None or not hasattr(service, "delete_workspace"):
+            self._notify("Workspace service is not configured.", severity="warning")
+            return
+        try:
+            result = await service.delete_workspace(workspace_id)
+            deleted = bool(result or result == {})
+            if not deleted:
+                self._notify("Failed to delete workspace", severity="error")
+                return
+            self._workspace_context_payload = {
+                "workspace": {},
+                "notes": [],
+                "sources": [],
+                "artifacts": [],
+            }
+            self._set_state(
+                has_unsaved_changes=False,
+                selected_note_title="",
+                selected_note_content="",
+                selected_workspace_id=None,
+                selected_workspace_note_id=None,
+                selected_workspace_note_version=None,
+                selected_workspace_source_id=None,
+                selected_workspace_source_version=None,
+                selected_workspace_artifact_id=None,
+                selected_workspace_artifact_version=None,
+            )
+            self._sync_legacy_local_selection()
+            await self._clear_editor()
+            await self.refresh_current_scope()
+            self._notify("Workspace deleted", severity="information")
+        except Exception as exc:
+            logger.error(f"Error deleting workspace: {exc}", exc_info=True)
+            self._notify(f"Error deleting workspace: {type(exc).__name__}", severity="error")
 
     async def _clear_editor(self) -> None:
         if not self.is_mounted:
@@ -1235,6 +1365,9 @@ class NotesScreen(BaseAppScreen):
         deleted_id = self._get_current_resource_id()
         confirmed = await self._confirm_delete_current_selection()
         if not confirmed:
+            return
+        if self.state.scope_type == ScopeType.WORKSPACE and self._current_resource_kind() == "workspace":
+            await self._delete_current_workspace()
             return
         await self._delete_current_note()
         if deleted_id:
@@ -1317,7 +1450,7 @@ class NotesScreen(BaseAppScreen):
     @on(ListView.Selected, "#workspaces-list-view")
     async def handle_workspace_list_selection(self, event: ListView.Selected) -> None:
         if event.item and hasattr(event.item, "workspace_id"):
-            await self._select_workspace(event.item.workspace_id)
+            await self._select_workspace(event.item.workspace_id, subview=WorkspaceSubview.DETAILS)
 
     @on(ListView.Selected, "#workspace-notes-list")
     async def handle_workspace_note_selection(self, event: ListView.Selected) -> None:
