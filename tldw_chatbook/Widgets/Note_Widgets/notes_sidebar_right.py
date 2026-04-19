@@ -98,12 +98,35 @@ class NotesSidebarRight(VerticalScroll):
         }
         return mapping.get(resource_kind, "Item")
 
+    def _canonical_scope_type(self, scope_type: str) -> str:
+        normalized = (scope_type or "").strip().lower()
+        alias_map = {
+            "local_note": "local",
+            "server_note": "server",
+            "workspace_note": "workspace",
+        }
+        if normalized in alias_map:
+            return alias_map[normalized]
+        if normalized.endswith("_note"):
+            return normalized[: -len("_note")]
+        return normalized
+
+    def _scope_display_name(self, scope_type: str) -> str:
+        canonical_scope = self._canonical_scope_type(scope_type)
+        display_map = {
+            "local": "Local",
+            "server": "Server",
+            "workspace": "Workspace",
+        }
+        return display_map.get(canonical_scope, canonical_scope.replace("_", " ").title())
+
     def apply_scope_context(self, scope_type: str, resource_kind: str = "note") -> None:
         """Public hook for the screen to relabel/hide actions for the active scope."""
-        scope_name = scope_type.replace("_", " ").title()
+        canonical_scope = self._canonical_scope_type(scope_type)
+        scope_name = self._scope_display_name(scope_type)
         resource_name = self._resource_name(resource_kind)
         is_note_resource = resource_kind == "note"
-        is_workspace_details = scope_type == "workspace" and resource_kind == "workspace"
+        is_workspace_details = canonical_scope == "workspace" and resource_kind == "workspace"
 
         title = self.query_one("#notes-details-sidebar-title", Static)
         if is_workspace_details:
@@ -119,7 +142,7 @@ class NotesSidebarRight(VerticalScroll):
         save_button.display = is_note_resource
 
         delete_button = self.query_one("#notes-delete-button", Button)
-        if scope_type == "workspace" and resource_kind == "note":
+        if canonical_scope == "workspace" and resource_kind == "note":
             delete_button.label = "Delete Workspace Note"
         elif is_workspace_details:
             delete_button.label = "Delete Workspace"

@@ -145,6 +145,20 @@ async def test_notes_sidebar_right_workspace_note_context_uses_workspace_delete_
 
 
 @pytest.mark.asyncio
+async def test_notes_sidebar_right_normalizes_canonical_note_scope_titles():
+    sidebar = NotesSidebarRight()
+    app = PanelTestApp(sidebar)
+
+    async with app.run_test() as pilot:
+        sidebar.apply_scope_context(scope_type="server_note", resource_kind="note")
+        title = sidebar.query_one("#notes-details-sidebar-title", Static)
+        assert str(title.renderable) == "Server Note Details"
+
+        sidebar.apply_scope_context(scope_type="local_note", resource_kind="note")
+        assert str(title.renderable) == "Local Note Details"
+
+
+@pytest.mark.asyncio
 async def test_notes_sidebar_right_workspace_details_context_hides_note_editor_controls():
     sidebar = NotesSidebarRight()
     app = PanelTestApp(sidebar)
