@@ -831,6 +831,62 @@ class NotesScreen(BaseAppScreen):
             or self._normalize_keywords(self._read_keywords()) != self._selected_note_keywords
         )
 
+    def _sync_local_note_keywords(self, note_id: Any, keywords: list[str]) -> list[str]:
+        if self.notes_service is None:
+            return list(self._selected_note_keywords)
+
+        input_keyword_texts = {keyword.strip().lower() for keyword in keywords if keyword.strip()}
+        existing_keywords_data = self.notes_service.get_keywords_for_note(
+            user_id=self.notes_user_id,
+            note_id=note_id,
+        ) or []
+        existing_keyword_map = {
+            str(keyword.get("keyword", "")).strip().lower(): keyword.get("id")
+            for keyword in existing_keywords_data
+            if keyword.get("id") is not None and str(keyword.get("keyword", "")).strip()
+        }
+        keywords_changed = False
+
+        for keyword_text in input_keyword_texts:
+            if keyword_text in existing_keyword_map:
+                continue
+            keyword_detail = self.notes_service.get_keyword_by_text(self.notes_user_id, keyword_text)
+            keyword_id: Optional[int] = None
+            if isinstance(keyword_detail, dict):
+                keyword_id = keyword_detail.get("id")
+            else:
+                keyword_id = self.notes_service.add_keyword(self.notes_user_id, keyword_text)
+            if keyword_id is not None:
+                self.notes_service.link_note_to_keyword(
+                    user_id=self.notes_user_id,
+                    note_id=note_id,
+                    keyword_id=keyword_id,
+                )
+                keywords_changed = True
+
+        for existing_keyword_text, existing_keyword_id in existing_keyword_map.items():
+            if existing_keyword_text in input_keyword_texts:
+                continue
+            self.notes_service.unlink_note_from_keyword(
+                user_id=self.notes_user_id,
+                note_id=note_id,
+                keyword_id=existing_keyword_id,
+            )
+            keywords_changed = True
+
+        if not keywords_changed:
+            return list(keywords)
+
+        refreshed_keywords_data = self.notes_service.get_keywords_for_note(
+            user_id=self.notes_user_id,
+            note_id=note_id,
+        ) or []
+        return [
+            str(keyword.get("keyword", "")).strip()
+            for keyword in refreshed_keywords_data
+            if str(keyword.get("keyword", "")).strip()
+        ]
+
     def _build_export_content(self, export_format: str) -> str:
         current_title = self._read_title_text().strip() or "Untitled Note"
         current_content = self._read_editor_text()
@@ -1100,6 +1156,7 @@ class NotesScreen(BaseAppScreen):
                 if not success:
                     self._notify("Failed to save note", severity="error")
                     return False
+                persisted_keywords = self._sync_local_note_keywords(resource_id, current_keywords)
                 self._set_state(
                     selected_local_note_version=(current_version + 1) if current_version is not None else current_version,
                     has_unsaved_changes=False,
@@ -1110,7 +1167,7 @@ class NotesScreen(BaseAppScreen):
                         content=current_content,
                     ),
                 )
-                self._set_keywords_baseline(current_keywords)
+                self._set_keywords_baseline(persisted_keywords)
             else:
                 self._notify("Scope-aware save service is not configured.", severity="warning")
                 return False
