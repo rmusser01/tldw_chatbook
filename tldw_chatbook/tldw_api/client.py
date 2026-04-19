@@ -4,7 +4,7 @@
 # Imports
 import json # For MediaWiki streaming
 from pathlib import Path # For utils.prepare_files_for_httpx
-from typing import Optional, Dict, Any, List, AsyncGenerator, Union
+from typing import Optional, Dict, Any, List, AsyncGenerator, Union, Literal
 #
 # 3rd-party Libraries
 import httpx
@@ -45,6 +45,11 @@ from .prompt_chatbook_schemas import (
     PromptCreateRequest,
     PromptPreviewRequest,
 )
+from .chat_conversation_schemas import (
+    ConversationScopeParams,
+    ConversationUpdateRequest,
+    normalize_conversation_state,
+)
 from .exceptions import APIConnectionError, APIRequestError, APIResponseError, AuthenticationError
 from .utils import model_to_form_data, prepare_files_for_httpx, cleanup_file_objects
 #
@@ -81,6 +86,16 @@ class TLDWAPIClient:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
         self._client = None
+
+    def _normalize_conversation_scope_params(
+        self,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Optional[ConversationScopeParams]:
+        if scope_type is None and workspace_id is None:
+            return None
+        effective_scope_type = scope_type or ("workspace" if workspace_id else "global")
+        return ConversationScopeParams(scope_type=effective_scope_type, workspace_id=workspace_id)
 
     async def _request(
         self,
@@ -515,6 +530,107 @@ class TLDWAPIClient:
             "/api/v1/prompts",
             json_data=request_data.model_dump(exclude_none=True),
         )
+
+    async def list_chat_conversations(
+        self,
+        query: Optional[str] = None,
+        state: Optional[str] = None,
+        order_by: Literal["recency", "bm25", "hybrid", "topic"] = "recency",
+        include_deleted: bool = False,
+        deleted_only: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+        topic_label: Optional[str] = None,
+        keywords: Optional[List[str]] = None,
+        cluster_id: Optional[str] = None,
+        character_id: Optional[int] = None,
+        character_scope: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        date_field: Literal["last_modified", "created_at"] = "last_modified",
+    ) -> Dict[str, Any]:
+        normalized_state = normalize_conversation_state(state)
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {
+            "include_deleted": str(include_deleted).lower(),
+            "deleted_only": str(deleted_only).lower(),
+            "order_by": order_by,
+            "limit": limit,
+            "offset": offset,
+            "date_field": date_field,
+        }
+        if query is not None:
+            params["query"] = query
+        if normalized_state is not None:
+            params["state"] = normalized_state
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        if topic_label is not None:
+            params["topic_label"] = topic_label
+        if keywords is not None:
+            params["keywords"] = keywords
+        if cluster_id is not None:
+            params["cluster_id"] = cluster_id
+        if character_id is not None:
+            params["character_id"] = character_id
+        if character_scope is not None:
+            params["character_scope"] = character_scope
+        if start_date is not None:
+            params["start_date"] = start_date
+        if end_date is not None:
+            params["end_date"] = end_date
+        return await self._request("GET", "/api/v1/chat/conversations", params=params)
+
+    async def get_chat_conversation(
+        self,
+        conversation_id: str,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}", params=params or None)
+
+    async def update_chat_conversation(
+        self,
+        conversation_id: str,
+        request_data: ConversationUpdateRequest,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request(
+            "PATCH",
+            f"/api/v1/chat/conversations/{conversation_id}",
+            json_data=request_data.model_dump(exclude_none=True, exclude_unset=True, mode="json"),
+            params=params or None,
+        )
+
+    async def get_chat_conversation_tree(
+        self,
+        conversation_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        max_depth: int = 4,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "max_depth": max_depth,
+        }
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/tree", params=params)
 
     async def list_prompt_versions(self, prompt_identifier: Union[str, int]) -> Dict[str, Any]:
         return await self._request(

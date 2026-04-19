@@ -46,6 +46,20 @@ from .prompt_chatbook_schemas import (
     ChatbookExportJobResponse,
     ChatbookImportJobResponse,
 )
+from .chat_conversation_schemas import (
+    ALLOWED_CONVERSATION_STATES,
+    ConversationListItem,
+    ConversationListPagination,
+    ConversationListResponse,
+    ConversationMetadata,
+    ConversationScopeParams,
+    ConversationState,
+    ConversationTreeNode,
+    ConversationTreePagination,
+    ConversationTreeResponse,
+    ConversationUpdateRequest,
+    normalize_conversation_state,
+)
 
 __all__ = [
     "TLDWAPIClient",
@@ -67,4 +81,9 @@ __all__ = [
     "PromptCreateRequest", "PromptPreviewRequest", "PromptResponse", "PromptVersionResponse",
     "ChatbookExportRequest", "ChatbookImportRequest", "ChatbookPreviewResponse",
     "ChatbookExportJobResponse", "ChatbookImportJobResponse",
+    "ALLOWED_CONVERSATION_STATES",
+    "ConversationState", "normalize_conversation_state",
+    "ConversationScopeParams", "ConversationListItem", "ConversationListPagination",
+    "ConversationListResponse", "ConversationUpdateRequest", "ConversationMetadata",
+    "ConversationTreeNode", "ConversationTreePagination", "ConversationTreeResponse",
 ]
