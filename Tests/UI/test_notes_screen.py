@@ -7,6 +7,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual.app import App
+from textual.widgets import Button, Collapsible, Static, TextArea
 
 from tldw_chatbook.UI.Screens.notes_scope_models import (
     NotesScreenState,
@@ -16,6 +18,27 @@ from tldw_chatbook.UI.Screens.notes_scope_models import (
 )
 from tldw_chatbook.Event_Handlers.tab_initializers.notes_tab_initializer import NotesTabInitializer
 from tldw_chatbook.UI.Screens.notes_screen import NotesScreen
+from tldw_chatbook.Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPanel
+
+
+class NotesScreenTestApp(App[None]):
+    def __init__(self, screen: NotesScreen, notes_service: Mock):
+        super().__init__()
+        self.screen_under_test = screen
+        self.notes_service = notes_service
+        self.notes_user_id = "default_user"
+        self.notes_scope_service = screen.notes_scope_service
+        self.server_notes_workspace_service = screen.server_notes_workspace_service
+        self.notify = Mock()
+        self.call_from_thread = Mock()
+        self.loguru_logger = Mock()
+        self.current_selected_note_id = None
+        self.current_selected_note_version = None
+        self.current_selected_note_title = ""
+        self.current_selected_note_content = ""
+
+    def on_mount(self) -> None:
+        self.push_screen(self.screen_under_test)
 
 
 @pytest.fixture
@@ -63,6 +86,7 @@ def mock_app_instance(mock_local_notes_service):
     app.server_notes_workspace_service = Mock()
     app.notify = Mock()
     app.push_screen = Mock()
+    app.push_screen_wait = AsyncMock(return_value=True)
     app.call_from_thread = Mock()
     app.loguru_logger = Mock()
     app.current_selected_note_id = None
@@ -407,3 +431,173 @@ class TestNotesScreenMethods:
         )
         assert [note["id"] for note in screen.state.notes_list] == [2, 1]
         assert screen.state.scope_type == ScopeType.LOCAL_NOTE
+
+    @pytest.mark.asyncio
+    async def test_refresh_server_scope_uses_server_search_when_query_present(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        mock_app_instance.server_notes_workspace_service.search_server_notes = AsyncMock(
+            return_value={"items": [{"id": "server-2", "title": "Alpha", "content": "Body", "version": 3}]}
+        )
+        mock_app_instance.server_notes_workspace_service.list_server_notes = AsyncMock(
+            return_value={"items": [{"id": "server-1", "title": "Other", "content": "Body", "version": 1}]}
+        )
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.SERVER_NOTE,
+            search_query="alpha",
+        )
+
+        await screen._refresh_server_scope()
+
+        mock_app_instance.server_notes_workspace_service.search_server_notes.assert_awaited_once_with(
+            query="alpha",
+            limit=200,
+            offset=0,
+        )
+        mock_app_instance.server_notes_workspace_service.list_server_notes.assert_not_called()
+        assert [note["id"] for note in screen.state.notes_list] == ["server-2"]
+
+    @pytest.mark.asyncio
+    async def test_refresh_workspace_scope_filters_loaded_selected_workspace_notes_in_memory(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        mock_app_instance.server_notes_workspace_service.load_workspace_context = AsyncMock(
+            return_value={
+                "workspace": {"id": "ws-1", "name": "Research", "version": 2},
+                "notes": [
+                    {"id": 1, "workspace_id": "ws-1", "title": "Alpha note", "content": "Body", "version": 1},
+                    {"id": 2, "workspace_id": "ws-1", "title": "Beta note", "content": "Other", "version": 1},
+                    {"id": 3, "workspace_id": "ws-2", "title": "Alpha foreign", "content": "Body", "version": 1},
+                ],
+                "sources": [],
+                "artifacts": [],
+            }
+        )
+        mock_app_instance.server_notes_workspace_service.search_workspace_notes = AsyncMock()
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.NOTES,
+            selected_workspace_id="ws-1",
+            search_query="alpha",
+        )
+
+        await screen._refresh_workspace_scope()
+
+        mock_app_instance.server_notes_workspace_service.load_workspace_context.assert_awaited_once_with("ws-1")
+        mock_app_instance.server_notes_workspace_service.search_workspace_notes.assert_not_called()
+        assert [note["id"] for note in screen.state.notes_list] == [1]
+
+    @pytest.mark.asyncio
+    async def test_populate_left_sidebar_routes_items_to_scope_specific_lists(self, mock_app_instance, monkeypatch):
+        screen = NotesScreen(mock_app_instance)
+        sidebar = Mock()
+        sidebar.populate_local_notes_list = AsyncMock()
+        sidebar.populate_server_notes_list = AsyncMock()
+        sidebar.populate_workspaces_list = AsyncMock()
+        sidebar.populate_notes_list = AsyncMock()
+        monkeypatch.setattr(NotesScreen, "is_mounted", property(lambda self: True))
+        screen.query_one = Mock(return_value=sidebar)
+
+        local_items = [{"id": 1, "title": "Local"}]
+        server_items = [{"id": "server-1", "title": "Server"}]
+        workspace_items = [{"id": "ws-1", "name": "Workspace"}]
+
+        screen.state = NotesScreenState(scope_type=ScopeType.LOCAL_NOTE)
+        await screen._populate_scope_list_if_available(local_items)
+        screen.state = NotesScreenState(scope_type=ScopeType.SERVER_NOTE)
+        await screen._populate_scope_list_if_available(server_items)
+        screen.state = NotesScreenState(scope_type=ScopeType.WORKSPACE)
+        await screen._populate_scope_list_if_available(workspace_items)
+
+        sidebar.populate_local_notes_list.assert_awaited_once_with(local_items)
+        sidebar.populate_server_notes_list.assert_awaited_once_with(server_items)
+        sidebar.populate_workspaces_list.assert_awaited_once_with(workspace_items)
+        sidebar.populate_notes_list.assert_not_called()
+
+    def test_workspace_delete_warning_mentions_conversation_soft_delete_cascade(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.NOTES,
+            selected_workspace_id="ws-1",
+            selected_workspace_note_id=9,
+        )
+
+        warning = screen._build_delete_warning_text()
+
+        assert "related workspace conversations" in warning
+        assert "soft-deleted by the server" in warning
+
+    @pytest.mark.asyncio
+    async def test_handle_server_list_selection_does_not_post_when_navigation_is_blocked(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen._load_server_note = AsyncMock(  # type: ignore[attr-defined]
+            return_value=PendingNavigation(
+                target_scope=ScopeType.SERVER_NOTE,
+                target_id="server-2",
+                requires_confirmation=True,
+            )
+        )
+        screen.post_message = Mock()
+        event = Mock()
+        event.item = Mock()
+        event.item.note_id = "server-2"
+
+        await screen.handle_server_list_selection(event)
+
+        screen.post_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_scope_context_updates_sync_and_editor_visibility(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            sync_button = screen.query_one("#notes-sync-button", Button)
+            editor = screen.query_one("#notes-editor-area", TextArea)
+            panel = screen.query_one("#workspace-context-panel", WorkspaceContextPanel)
+            top_save_button = screen.query_one("#notes-save-button", Button)
+            export_actions = screen.query_one("#notes-export-actions", Collapsible)
+            title = screen.query_one("#notes-details-sidebar-title", Static)
+
+            assert sync_button.display is True
+            assert editor.display is not False
+            assert panel.display is False
+
+            screen._set_state(scope_type=ScopeType.SERVER_NOTE)
+            await pilot.pause()
+
+            assert sync_button.display is False
+            assert top_save_button.display is True
+            assert str(title.renderable) == "Server Note Details"
+
+            screen._set_state(
+                scope_type=ScopeType.WORKSPACE,
+                workspace_subview=WorkspaceSubview.DETAILS,
+            )
+            await pilot.pause()
+
+            assert editor.display is False
+            assert panel.display is not False
+            assert top_save_button.display is False
+            assert export_actions.display is False
+            assert str(title.renderable) == "Workspace Details"
+
+    @pytest.mark.asyncio
+    async def test_copy_and_export_are_disabled_outside_note_editor_context(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen._notify = Mock()
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.DETAILS,
+            selected_workspace_id="ws-1",
+        )
+
+        await screen._copy_current_note_to_clipboard("markdown")
+        await screen._export_current_note("text")
+
+        assert screen._notify.call_count == 2
+        first_call = screen._notify.call_args_list[0]
+        second_call = screen._notify.call_args_list[1]
+        assert "only available for note editors" in first_call.args[0]
+        assert "only available for note editors" in second_call.args[0]

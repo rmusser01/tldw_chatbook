@@ -20,9 +20,11 @@ from textual.widgets import Button, Input, Label, ListView, Select, TextArea
 
 from ...Event_Handlers.Audio_Events.dictation_integration_events import InsertDictationTextEvent
 from ...Third_Party.textual_fspicker import FileSave
+from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
 from ...Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
 from ...Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarRight
 from ...Widgets.Note_Widgets.notes_sync_widget_improved import NotesSyncWidgetImproved
+from ...Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPanel
 from ...Widgets.emoji_picker import EmojiPickerScreen, EmojiSelected
 from ..Navigation.base_app_screen import BaseAppScreen
 from .notes_scope_models import NotesScreenState, PendingNavigation, ScopeType, WorkspaceSubview
@@ -133,6 +135,12 @@ class NotesScreen(BaseAppScreen):
         self.notes_scope_service = getattr(app_instance, "notes_scope_service", None)
         self.server_notes_workspace_service = getattr(app_instance, "server_notes_workspace_service", None)
         self.notes_user_id = getattr(app_instance, "notes_user_id", "default_user")
+        self._workspace_context_payload: dict[str, Any] = {
+            "workspace": {},
+            "notes": [],
+            "sources": [],
+            "artifacts": [],
+        }
         logger.debug("NotesScreen initialized with scope-aware state")
 
     def compose_content(self) -> ComposeResult:
@@ -140,6 +148,9 @@ class NotesScreen(BaseAppScreen):
 
         with Container(id="notes-main-content"):
             yield TextArea(id="notes-editor-area", classes="notes-editor", disabled=False)
+            workspace_panel = WorkspaceContextPanel(id="workspace-context-panel")
+            workspace_panel.display = False
+            yield workspace_panel
 
             with Horizontal(id="notes-controls-area"):
                 yield Button("☰ L", id="toggle-notes-sidebar-left", classes="sidebar-toggle", tooltip="Toggle left sidebar")
@@ -163,6 +174,11 @@ class NotesScreen(BaseAppScreen):
             self._toggle_left_sidebar_visibility()
         if old_state.right_sidebar_collapsed != new_state.right_sidebar_collapsed:
             self._toggle_right_sidebar_visibility()
+        if (
+            old_state.scope_type != new_state.scope_type
+            or old_state.workspace_subview != new_state.workspace_subview
+        ):
+            self._update_scope_context_ui()
 
     def validate_state(self, state: NotesScreenState) -> NotesScreenState:
         state.word_count = max(0, state.word_count)
@@ -175,6 +191,74 @@ class NotesScreen(BaseAppScreen):
 
     def _notify(self, message: str, *, severity: str = "information", timeout: Optional[float] = None) -> None:
         self.app_instance.notify(message, severity=severity, timeout=timeout)
+
+    def _is_note_editor_context(
+        self,
+        *,
+        scope_type: Optional[ScopeType] = None,
+        workspace_subview: Optional[WorkspaceSubview] = None,
+    ) -> bool:
+        active_scope = scope_type or self.state.scope_type
+        active_subview = workspace_subview or self.state.workspace_subview
+        if active_scope in (ScopeType.LOCAL_NOTE, ScopeType.SERVER_NOTE):
+            return True
+        return active_subview == WorkspaceSubview.NOTES
+
+    def _current_resource_kind(self) -> str:
+        if self.state.scope_type != ScopeType.WORKSPACE:
+            return "note"
+        if self.state.workspace_subview == WorkspaceSubview.SOURCES:
+            return "source"
+        if self.state.workspace_subview == WorkspaceSubview.ARTIFACTS:
+            return "artifact"
+        if self.state.workspace_subview == WorkspaceSubview.DETAILS:
+            return "workspace"
+        return "note"
+
+    def _build_delete_warning_text(self) -> str:
+        if self.state.scope_type == ScopeType.WORKSPACE and self._current_resource_kind() == "note":
+            return (
+                "This workspace note will be moved to trash, and related workspace conversations "
+                "are also soft-deleted by the server."
+            )
+        return "This note will be moved to trash and can be recovered later."
+
+    def _update_scope_context_ui(self) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            is_note_editor = self._is_note_editor_context()
+            show_workspace_panel = self.state.scope_type == ScopeType.WORKSPACE and not is_note_editor
+            resource_kind = self._current_resource_kind()
+
+            editor = self.query_one("#notes-editor-area", TextArea)
+            workspace_panel = self.query_one("#workspace-context-panel", WorkspaceContextPanel)
+            save_button = self.query_one("#notes-save-button", Button)
+            preview_button = self.query_one("#notes-preview-toggle", Button)
+            sync_button = self.query_one("#notes-sync-button", Button)
+            unsaved_indicator = self.query_one("#notes-unsaved-indicator", Label)
+            word_count = self.query_one("#notes-word-count", Label)
+            sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
+
+            editor.display = is_note_editor
+            workspace_panel.display = show_workspace_panel
+
+            save_button.display = is_note_editor
+            preview_button.display = is_note_editor
+            sync_button.display = self.state.scope_type == ScopeType.LOCAL_NOTE and is_note_editor
+            unsaved_indicator.display = is_note_editor
+            word_count.display = is_note_editor
+
+            if self.state.scope_type == ScopeType.SERVER_NOTE:
+                save_button.label = "Save Server Note"
+            elif self.state.scope_type == ScopeType.WORKSPACE and resource_kind == "note":
+                save_button.label = "Save Workspace Note"
+            else:
+                save_button.label = "Save Note"
+
+            sidebar_right.apply_scope_context(self.state.scope_type.value, resource_kind)
+        except QueryError:
+            return
 
     def _baseline_changes(
         self,
@@ -394,7 +478,7 @@ class NotesScreen(BaseAppScreen):
             server_notes_error=None,
             workspace_error=None,
         )
-        await self._populate_notes_list_if_available(notes_list_data)
+        await self._populate_scope_list_if_available(notes_list_data)
 
     async def _refresh_server_scope(self) -> None:
         service = self.server_notes_workspace_service or getattr(self.notes_scope_service, "server_service", None)
@@ -403,7 +487,14 @@ class NotesScreen(BaseAppScreen):
             return
         self._set_state(server_notes_loading=True, server_notes_refreshing=True, server_notes_error=None)
         try:
-            payload = await service.list_server_notes(limit=200, offset=0)
+            if self.state.search_query:
+                payload = await service.search_server_notes(
+                    query=self.state.search_query,
+                    limit=200,
+                    offset=0,
+                )
+            else:
+                payload = await service.list_server_notes(limit=200, offset=0)
             items = payload.get("items", []) if isinstance(payload, dict) else []
             self._set_state(
                 notes_list=items,
@@ -411,7 +502,7 @@ class NotesScreen(BaseAppScreen):
                 server_notes_refreshing=False,
                 server_notes_error=None,
             )
-            await self._populate_notes_list_if_available(items)
+            await self._populate_scope_list_if_available(items)
         except Exception as exc:  # pragma: no cover - defensive path
             logger.error(f"Error refreshing server notes scope: {exc}", exc_info=True)
             self._set_state(
@@ -429,16 +520,34 @@ class NotesScreen(BaseAppScreen):
         try:
             if self.state.selected_workspace_id:
                 context = await service.load_workspace_context(self.state.selected_workspace_id)
-                items = context.get("notes", [])
+                self._workspace_context_payload = {
+                    "workspace": dict(context.get("workspace", {}) or {}),
+                    "notes": list(context.get("notes", []) or []),
+                    "sources": list(context.get("sources", []) or []),
+                    "artifacts": list(context.get("artifacts", []) or []),
+                }
+                items = self._filter_workspace_notes_in_memory(self._workspace_context_payload["notes"])
+                await self._populate_workspace_context_panel_if_available(
+                    workspace=self._workspace_context_payload["workspace"],
+                    notes=items,
+                    sources=self._workspace_context_payload["sources"],
+                    artifacts=self._workspace_context_payload["artifacts"],
+                )
             else:
                 items = await service.list_workspaces()
+                self._workspace_context_payload = {
+                    "workspace": {},
+                    "notes": [],
+                    "sources": [],
+                    "artifacts": [],
+                }
+                await self._populate_scope_list_if_available(items)
             self._set_state(
                 notes_list=items,
                 workspace_loading=False,
                 workspace_refreshing=False,
                 workspace_error=None,
             )
-            await self._populate_notes_list_if_available(items)
         except Exception as exc:  # pragma: no cover - defensive path
             logger.error(f"Error refreshing workspace scope: {exc}", exc_info=True)
             self._set_state(
@@ -447,14 +556,67 @@ class NotesScreen(BaseAppScreen):
                 workspace_error=str(exc),
             )
 
-    async def _populate_notes_list_if_available(self, notes_list_data: list[dict[str, Any]]) -> None:
+    async def _populate_scope_list_if_available(self, items: list[dict[str, Any]]) -> None:
         if not self.is_mounted:
             return
         try:
             sidebar_left = self.query_one("#notes-sidebar-left", NotesSidebarLeft)
-            await sidebar_left.populate_notes_list(notes_list_data)
+            if self.state.scope_type == ScopeType.LOCAL_NOTE:
+                await sidebar_left.populate_local_notes_list(items)
+            elif self.state.scope_type == ScopeType.SERVER_NOTE:
+                await sidebar_left.populate_server_notes_list(items)
+            else:
+                await sidebar_left.populate_workspaces_list(items)
         except QueryError:
             return
+
+    async def _populate_notes_list_if_available(self, notes_list_data: list[dict[str, Any]]) -> None:
+        await self._populate_scope_list_if_available(notes_list_data)
+
+    async def _populate_workspace_context_panel_if_available(
+        self,
+        *,
+        workspace: dict[str, Any],
+        notes: list[dict[str, Any]],
+        sources: list[dict[str, Any]],
+        artifacts: list[dict[str, Any]],
+    ) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            panel = self.query_one("#workspace-context-panel", WorkspaceContextPanel)
+            panel.set_workspace_details(workspace)
+            await panel.populate_workspace_notes(notes)
+            await panel.populate_workspace_sources(sources)
+            await panel.populate_workspace_artifacts(artifacts)
+        except QueryError:
+            return
+
+    def _filter_workspace_notes_in_memory(self, notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        workspace_id = self.state.selected_workspace_id
+        query = self.state.search_query.strip().lower()
+        filtered: list[dict[str, Any]] = []
+        for note in notes:
+            if workspace_id and note.get("workspace_id") not in (None, workspace_id):
+                continue
+            if not query:
+                filtered.append(dict(note))
+                continue
+            keywords = note.get("keywords") or []
+            if isinstance(keywords, str):
+                keywords_text = keywords
+            else:
+                keywords_text = " ".join(str(keyword) for keyword in keywords)
+            haystack = " ".join(
+                [
+                    str(note.get("title", "") or ""),
+                    str(note.get("content", "") or ""),
+                    keywords_text,
+                ]
+            ).lower()
+            if query in haystack:
+                filtered.append(dict(note))
+        return filtered
 
     def _sync_legacy_local_selection(self) -> None:
         if not hasattr(self.app_instance, "current_selected_note_id"):
@@ -486,13 +648,75 @@ class NotesScreen(BaseAppScreen):
             ),
         )
         self._sync_legacy_local_selection()
+        self._workspace_context_payload = {
+            "workspace": {},
+            "notes": [],
+            "sources": [],
+            "artifacts": [],
+        }
+        self._write_editor_surface(title=title, content=content, keywords=note_details.get("keywords"))
+        self._update_scope_context_ui()
+
+    def _write_editor_surface(
+        self,
+        *,
+        title: str,
+        content: str,
+        keywords: Any = None,
+    ) -> None:
         if self.is_mounted:
             try:
                 self.query_one("#notes-editor-area", TextArea).load_text(content)
                 sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
                 sidebar_right.query_one("#notes-title-input", Input).value = title
+                keyword_values = keywords or []
+                if isinstance(keyword_values, str):
+                    keyword_text = keyword_values
+                else:
+                    keyword_text = ", ".join(str(item) for item in keyword_values if str(item).strip())
+                sidebar_right.query_one("#notes-keywords-area", TextArea).load_text(keyword_text)
             except QueryError:
                 return
+
+    async def _hydrate_editor_for_server_note(self, note_id: str, note_details: dict[str, Any]) -> None:
+        content = note_details.get("content", "") or ""
+        title = note_details.get("title", "") or ""
+        self._set_state(
+            scope_type=ScopeType.SERVER_NOTE,
+            selected_server_note_id=note_id,
+            selected_server_note_version=note_details.get("version"),
+            has_unsaved_changes=False,
+            **self._baseline_changes(
+                resource_id=note_id,
+                version=note_details.get("version"),
+                title=title,
+                content=content,
+            ),
+        )
+        self._sync_legacy_local_selection()
+        self._write_editor_surface(title=title, content=content, keywords=note_details.get("keywords"))
+        self._update_scope_context_ui()
+
+    async def _hydrate_editor_for_workspace_note(self, note_details: dict[str, Any]) -> None:
+        note_id = note_details.get("id")
+        content = note_details.get("content", "") or ""
+        title = note_details.get("title", "") or ""
+        self._set_state(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.NOTES,
+            selected_workspace_note_id=note_id,
+            selected_workspace_note_version=note_details.get("version"),
+            has_unsaved_changes=False,
+            **self._baseline_changes(
+                resource_id=note_id,
+                version=note_details.get("version"),
+                title=title,
+                content=content,
+            ),
+        )
+        self._sync_legacy_local_selection()
+        self._write_editor_surface(title=title, content=content, keywords=note_details.get("keywords"))
+        self._update_scope_context_ui()
 
     def _read_editor_text(self) -> str:
         if not self.is_mounted:
@@ -548,6 +772,9 @@ class NotesScreen(BaseAppScreen):
         )
 
     async def _copy_current_note_to_clipboard(self, export_format: str) -> None:
+        if not self._is_note_editor_context():
+            self._notify("Copy is only available for note editors in this screen.", severity="warning")
+            return
         resource_id = self._get_current_resource_id()
         if not resource_id:
             self._notify("No note selected to copy.", severity="warning")
@@ -562,6 +789,9 @@ class NotesScreen(BaseAppScreen):
             self._notify(f"Error copying note: {type(exc).__name__}", severity="error")
 
     async def _export_current_note(self, export_format: str) -> None:
+        if not self._is_note_editor_context():
+            self._notify("Export is only available for note editors in this screen.", severity="warning")
+            return
         resource_id = self._get_current_resource_id()
         if not resource_id:
             self._notify("No note selected to export.", severity="warning")
@@ -812,6 +1042,9 @@ class NotesScreen(BaseAppScreen):
             self._notify("New note created", severity="information")
 
     async def _delete_current_note(self) -> None:
+        if self._current_resource_kind() != "note":
+            self._notify("Delete is only enabled for notes in this screen.", severity="warning")
+            return
         resource_id = self._get_current_resource_id()
         version = self._get_current_resource_version()
         if not resource_id:
@@ -855,6 +1088,86 @@ class NotesScreen(BaseAppScreen):
         await self._complete_pending_navigation(navigation)
         return navigation
 
+    async def _load_server_note(self, note_id: str) -> Optional[PendingNavigation]:
+        navigation = self.request_scope_transition(ScopeType.SERVER_NOTE, target_id=note_id)
+        if navigation.requires_confirmation:
+            self._notify("Unsaved changes require confirmation before switching notes.", severity="warning")
+            return navigation
+        service = self.server_notes_workspace_service or getattr(self.notes_scope_service, "server_service", None)
+        if service is None or not hasattr(service, "get_server_note"):
+            self._notify("Server note service is not configured.", severity="warning")
+            return None
+        note_details = await service.get_server_note(note_id)
+        if not note_details:
+            return None
+        await self._hydrate_editor_for_server_note(note_id, note_details)
+        return navigation
+
+    async def _select_workspace(self, workspace_id: str) -> Optional[PendingNavigation]:
+        navigation = self.request_scope_transition(
+            ScopeType.WORKSPACE,
+            workspace_id=workspace_id,
+            workspace_subview=WorkspaceSubview.DETAILS,
+        )
+        if navigation.requires_confirmation:
+            self._notify("Unsaved changes require confirmation before switching notes.", severity="warning")
+            return navigation
+        await self.refresh_current_scope()
+        return navigation
+
+    async def _select_workspace_subview_item(
+        self,
+        *,
+        subview: WorkspaceSubview,
+        item_id: Any,
+        item_version: Optional[int] = None,
+    ) -> Optional[PendingNavigation]:
+        workspace_id = self.state.selected_workspace_id
+        navigation = self.request_scope_transition(
+            ScopeType.WORKSPACE,
+            target_id=item_id,
+            target_version=item_version,
+            workspace_id=workspace_id,
+            workspace_subview=subview,
+        )
+        if navigation.requires_confirmation:
+            self._notify("Unsaved changes require confirmation before switching notes.", severity="warning")
+            return navigation
+
+        if subview == WorkspaceSubview.NOTES:
+            note_details = next(
+                (
+                    note
+                    for note in self._workspace_context_payload.get("notes", [])
+                    if note.get("id") == item_id
+                ),
+                None,
+            )
+            if note_details is None:
+                return None
+            await self._hydrate_editor_for_workspace_note(note_details)
+        else:
+            self._apply_navigation_target(navigation)
+            self._update_scope_context_ui()
+        return navigation
+
+    async def _confirm_delete_current_selection(self) -> bool:
+        if self._current_resource_kind() != "note":
+            self._notify("Delete is only enabled for notes in this screen.", severity="warning")
+            return False
+        item_type = "Note"
+        if self.state.scope_type == ScopeType.SERVER_NOTE:
+            item_type = "Server Note"
+        elif self.state.scope_type == ScopeType.WORKSPACE:
+            item_type = "Workspace Note"
+        item_name = self._read_title_text().strip() or self.state.selected_note_title or "the selected note"
+        dialog = create_delete_confirmation(
+            item_type=item_type,
+            item_name=item_name,
+            additional_warning=self._build_delete_warning_text(),
+        )
+        return bool(await self.app.push_screen_wait(dialog))
+
     async def _clear_editor(self) -> None:
         if not self.is_mounted:
             return
@@ -889,6 +1202,9 @@ class NotesScreen(BaseAppScreen):
     @on(Button.Pressed, "#notes-sync-button")
     def handle_sync_button(self, event: Button.Pressed) -> None:
         event.stop()
+        if self.state.scope_type != ScopeType.LOCAL_NOTE or not self._is_note_editor_context():
+            self._notify("Sync is only available for local notes.", severity="warning")
+            return
         self.post_message(SyncRequested())
         self.app.push_screen(NotesSyncWidgetImproved(self.app_instance))
 
@@ -917,6 +1233,9 @@ class NotesScreen(BaseAppScreen):
     async def handle_delete_button(self, event: Button.Pressed) -> None:
         event.stop()
         deleted_id = self._get_current_resource_id()
+        confirmed = await self._confirm_delete_current_selection()
+        if not confirmed:
+            return
         await self._delete_current_note()
         if deleted_id:
             self.post_message(NoteDeleted(deleted_id))
@@ -986,6 +1305,49 @@ class NotesScreen(BaseAppScreen):
                 return
             self.post_message(NoteSelected(event.item.note_id, {"title": self.state.selected_note_title}))
 
+    @on(ListView.Selected, "#server-notes-list-view")
+    async def handle_server_list_selection(self, event: ListView.Selected) -> None:
+        if event.item and hasattr(event.item, "note_id"):
+            navigation = await self._load_server_note(event.item.note_id)
+            if navigation is not None and navigation.requires_confirmation:
+                return
+            if navigation is not None:
+                self.post_message(NoteSelected(event.item.note_id, {"title": self.state.selected_note_title}))
+
+    @on(ListView.Selected, "#workspaces-list-view")
+    async def handle_workspace_list_selection(self, event: ListView.Selected) -> None:
+        if event.item and hasattr(event.item, "workspace_id"):
+            await self._select_workspace(event.item.workspace_id)
+
+    @on(ListView.Selected, "#workspace-notes-list")
+    async def handle_workspace_note_selection(self, event: ListView.Selected) -> None:
+        if event.item and hasattr(event.item, "note_id"):
+            navigation = await self._select_workspace_subview_item(
+                subview=WorkspaceSubview.NOTES,
+                item_id=event.item.note_id,
+                item_version=getattr(event.item, "item_version", None),
+            )
+            if navigation is not None and navigation.requires_confirmation:
+                return
+
+    @on(ListView.Selected, "#workspace-sources-list")
+    async def handle_workspace_source_selection(self, event: ListView.Selected) -> None:
+        if event.item and hasattr(event.item, "source_id"):
+            await self._select_workspace_subview_item(
+                subview=WorkspaceSubview.SOURCES,
+                item_id=event.item.source_id,
+                item_version=getattr(event.item, "item_version", None),
+            )
+
+    @on(ListView.Selected, "#workspace-artifacts-list")
+    async def handle_workspace_artifact_selection(self, event: ListView.Selected) -> None:
+        if event.item and hasattr(event.item, "artifact_id"):
+            await self._select_workspace_subview_item(
+                subview=WorkspaceSubview.ARTIFACTS,
+                item_id=event.item.artifact_id,
+                item_version=getattr(event.item, "item_version", None),
+            )
+
     @on(Select.Changed, "#notes-sort-select")
     async def handle_sort_changed(self, event: Select.Changed) -> None:
         self._set_state(sort_by=event.select.value)
@@ -1025,6 +1387,7 @@ class NotesScreen(BaseAppScreen):
         super().on_mount()
         logger.info("NotesScreen mounted")
         await self.refresh_current_scope()
+        self._update_scope_context_ui()
 
     def on_unmount(self) -> None:
         if self._auto_save_timer:
