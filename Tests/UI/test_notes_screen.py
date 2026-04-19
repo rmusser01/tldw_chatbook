@@ -409,6 +409,38 @@ class TestNotesScreenMethods:
         assert screen.state.has_unsaved_changes is False
 
     @pytest.mark.asyncio
+    async def test_local_fallback_save_preserves_duplicate_keyword_surface(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.notes_scope_service = None
+        mock_app_instance.notes_service.update_note.return_value = True
+        mock_app_instance.notes_service.get_keywords_for_note.return_value = [
+            {"id": 7, "keyword": "alpha"},
+        ]
+        mock_app_instance.notes_service.get_keyword_by_text.return_value = {"id": 7, "keyword": "alpha"}
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.LOCAL_NOTE,
+            selected_note_id=1,
+            selected_note_version=2,
+            selected_note_title="Local Note 1",
+            selected_note_content="Content 1",
+            selected_local_note_id=1,
+            selected_local_note_version=2,
+            has_unsaved_changes=True,
+        )
+        screen._read_title_text = Mock(return_value="Local Note 1")
+        screen._read_editor_text = Mock(return_value="Content 1")
+        screen._read_keywords = Mock(return_value=["Alpha", "alpha"])
+
+        saved = await screen._save_current_note()
+
+        assert saved is True
+        mock_app_instance.notes_service.link_note_to_keyword.assert_not_called()
+        mock_app_instance.notes_service.unlink_note_from_keyword.assert_not_called()
+        assert screen._selected_note_keywords == ("Alpha", "alpha")
+        assert screen._editor_surface_is_dirty() is False
+        assert screen.state.has_unsaved_changes is False
+
+    @pytest.mark.asyncio
     async def test_non_local_delete_clears_scope_specific_selection_and_versions(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
         mock_app_instance.notes_scope_service.delete_note = AsyncMock(return_value={})

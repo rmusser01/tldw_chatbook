@@ -835,14 +835,10 @@ class NotesScreen(BaseAppScreen):
         if self.notes_service is None:
             return list(self._selected_note_keywords)
 
-        ordered_keywords: list[str] = []
+        normalized_keywords = list(self._normalize_keywords(keywords))
         input_keyword_texts: set[str] = set()
-        for keyword in self._normalize_keywords(keywords):
-            lowered_keyword = keyword.lower()
-            if lowered_keyword in input_keyword_texts:
-                continue
-            input_keyword_texts.add(lowered_keyword)
-            ordered_keywords.append(keyword)
+        for keyword in normalized_keywords:
+            input_keyword_texts.add(keyword.lower())
         existing_keywords_data = self.notes_service.get_keywords_for_note(
             user_id=self.notes_user_id,
             note_id=note_id,
@@ -882,18 +878,9 @@ class NotesScreen(BaseAppScreen):
             keywords_changed = True
 
         if not keywords_changed:
-            return ordered_keywords
+            return normalized_keywords
 
-        refreshed_keywords_data = self.notes_service.get_keywords_for_note(
-            user_id=self.notes_user_id,
-            note_id=note_id,
-        ) or []
-        refreshed_keyword_map = {
-            str(keyword.get("keyword", "")).strip().lower(): str(keyword.get("keyword", "")).strip()
-            for keyword in refreshed_keywords_data
-            if str(keyword.get("keyword", "")).strip()
-        }
-        return [refreshed_keyword_map.get(keyword.lower(), keyword) for keyword in ordered_keywords]
+        return normalized_keywords
 
     def _build_export_content(self, export_format: str) -> str:
         current_title = self._read_title_text().strip() or "Untitled Note"
