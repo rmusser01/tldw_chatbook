@@ -4,7 +4,7 @@
 # Imports
 import json # For MediaWiki streaming
 from pathlib import Path # For utils.prepare_files_for_httpx
-from typing import Optional, Dict, Any, List, AsyncGenerator
+from typing import Optional, Dict, Any, List, AsyncGenerator, Union
 #
 # 3rd-party Libraries
 import httpx
@@ -17,6 +17,12 @@ from .schemas import (
     BatchMediaProcessResponse, MediaItemProcessResult,
     BatchProcessXMLResponse, ProcessedMediaWikiPage,
     ProcessXMLResponseItem,  # Add specific XML/MediaWiki later if needed
+)
+from .prompt_chatbook_schemas import (
+    ChatbookExportRequest,
+    ChatbookImportRequest,
+    PromptCreateRequest,
+    PromptPreviewRequest,
 )
 from .exceptions import APIConnectionError, APIRequestError, APIResponseError, AuthenticationError
 from .utils import model_to_form_data, prepare_files_for_httpx, cleanup_file_objects
@@ -60,14 +66,23 @@ class TLDWAPIClient:
         method: str,
         endpoint: str,
         data: Optional[Dict[str, Any]] = None, # Changed from BaseModel to Dict
-        files: Optional[List[tuple]] = None # For httpx files format
+        files: Optional[List[tuple]] = None, # For httpx files format
+        json_data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         client = await self._get_client()
         url = f"{self.base_url}{endpoint}" # Ensure base_url doesn't make double slash
 
         try:
             # httpx expects 'data' for form-encoded and 'files' for multipart
-            response = await client.request(method, endpoint, data=data, files=files) # Pass endpoint directly
+            response = await client.request(
+                method,
+                endpoint,
+                data=data,
+                files=files,
+                json=json_data,
+                params=params,
+            ) # Pass endpoint directly
             response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
             return response.json()
         except httpx.HTTPStatusError as e:
@@ -263,6 +278,84 @@ class TLDWAPIClient:
                 # For now, only yield processed pages or page-level errors
         finally:
             cleanup_file_objects(httpx_files)
+
+    async def list_prompts(self, include_deleted: bool = False) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/api/v1/prompts",
+            params={"include_deleted": str(include_deleted).lower()},
+        )
+
+    async def preview_prompt(self, request_data: PromptPreviewRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/prompts/preview",
+            json_data=request_data.model_dump(exclude_none=True),
+        )
+
+    async def create_prompt(self, request_data: PromptCreateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/prompts",
+            json_data=request_data.model_dump(exclude_none=True),
+        )
+
+    async def list_prompt_versions(self, prompt_identifier: Union[str, int]) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/prompts/{prompt_identifier}/versions",
+        )
+
+    async def restore_prompt_version(self, prompt_identifier: Union[str, int], version: int) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/prompts/{prompt_identifier}/versions/{version}/restore",
+        )
+
+    async def export_chatbook(self, request_data: ChatbookExportRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/chatbooks/export",
+            json_data=request_data.model_dump(exclude_none=True),
+        )
+
+    async def preview_chatbook(self, chatbook_file_path: str) -> Dict[str, Any]:
+        httpx_files = prepare_files_for_httpx([chatbook_file_path], upload_field_name="file")
+        try:
+            return await self._request(
+                "POST",
+                "/api/v1/chatbooks/preview",
+                files=httpx_files,
+            )
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def import_chatbook(self, chatbook_file_path: str, request_data: ChatbookImportRequest) -> Dict[str, Any]:
+        httpx_files = prepare_files_for_httpx([chatbook_file_path], upload_field_name="file")
+        form_data = model_to_form_data(request_data)
+        if request_data.content_selections is not None:
+            form_data["content_selections"] = json.dumps(request_data.content_selections)
+        try:
+            return await self._request(
+                "POST",
+                "/api/v1/chatbooks/import",
+                data=form_data,
+                files=httpx_files,
+            )
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def get_chatbook_export_job(self, job_id: str) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/chatbooks/export/jobs/{job_id}",
+        )
+
+    async def get_chatbook_import_job(self, job_id: str) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/chatbooks/import/jobs/{job_id}",
+        )
 
 #
 # End of client.py

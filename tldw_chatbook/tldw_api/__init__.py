@@ -12,6 +12,17 @@ from .schemas import (
     BatchProcessXMLResponse, ProcessedMediaWikiPage,
     MediaType, ChunkMethod, PdfEngine, ScrapeMethod # Export Enums/Literals
 )
+from .prompt_chatbook_schemas import (
+    PromptCreateRequest,
+    PromptPreviewRequest,
+    PromptResponse,
+    PromptVersionResponse,
+    ChatbookExportRequest,
+    ChatbookImportRequest,
+    ChatbookPreviewResponse,
+    ChatbookExportJobResponse,
+    ChatbookImportJobResponse,
+)
 
 __all__ = [
     "TLDWAPIClient",
@@ -22,5 +33,8 @@ __all__ = [
     "ProcessPlaintextRequest",
     "MediaItemProcessResult", "BatchMediaProcessResponse",
     "BatchProcessXMLResponse", "ProcessedMediaWikiPage",
-    "MediaType", "ChunkMethod", "PdfEngine", "ScrapeMethod"
+    "MediaType", "ChunkMethod", "PdfEngine", "ScrapeMethod",
+    "PromptCreateRequest", "PromptPreviewRequest", "PromptResponse", "PromptVersionResponse",
+    "ChatbookExportRequest", "ChatbookImportRequest", "ChatbookPreviewResponse",
+    "ChatbookExportJobResponse", "ChatbookImportJobResponse",
 ]
