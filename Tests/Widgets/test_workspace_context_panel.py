@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Container
-from textual.widgets import Button, Collapsible, Input, ListView, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Label, ListView, Static, TextArea
 
 from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
 from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarRight
@@ -40,6 +40,26 @@ async def test_workspace_context_panel_keeps_all_sections_visible_after_mount():
             section = panel.query_one(f"#{view_id}", Container)
             assert section.display is not False
             assert str(section.styles.display) != "none"
+
+
+@pytest.mark.asyncio
+async def test_workspace_context_panel_renders_workspace_details_fields():
+    panel = WorkspaceContextPanel()
+    app = PanelTestApp(panel)
+
+    async with app.run_test() as pilot:
+        panel.set_workspace_details(
+            {
+                "name": "Research Workspace",
+                "study_materials_policy": "curated",
+                "archived": True,
+            }
+        )
+        workspace_name = panel.query_one("#workspace-name", Label)
+        workspace_summary = panel.query_one("#workspace-summary", Label)
+
+        assert str(workspace_name.renderable) == "Research Workspace"
+        assert str(workspace_summary.renderable) == "Policy: curated | Archived: True"
 
 
 @pytest.mark.asyncio
@@ -100,10 +120,12 @@ async def test_notes_sidebar_right_apply_scope_context_updates_workspace_artifac
         save_button = sidebar.query_one("#notes-save-current-button", Button)
         export_actions = sidebar.query_one("#notes-export-actions", Collapsible)
         delete_button = sidebar.query_one("#notes-delete-button", Button)
+        title_input = sidebar.query_one("#notes-title-input", Input)
 
         assert str(title.renderable) == "Workspace Artifact Details"
-        assert str(save_button.label) == "Save Artifact Changes"
+        assert save_button.display is False
         assert export_actions.display is False
+        assert title_input.display is False
         assert str(delete_button.label) == "Delete Selected Artifact"
 
 
@@ -135,9 +157,11 @@ async def test_notes_sidebar_right_workspace_details_context_hides_note_editor_c
         export_actions = sidebar.query_one("#notes-export-actions", Collapsible)
         title_input = sidebar.query_one("#notes-title-input", Input)
         keywords_area = sidebar.query_one("#notes-keywords-area", TextArea)
+        save_button = sidebar.query_one("#notes-save-current-button", Button)
 
         assert str(title.renderable) == "Workspace Details"
         assert str(delete_button.label) == "Delete Workspace"
         assert export_actions.display is False
         assert title_input.display is False
         assert keywords_area.display is False
+        assert save_button.display is False

@@ -116,6 +116,7 @@ class NotesSidebarRight(VerticalScroll):
             save_button.label = "Save Workspace Changes"
         else:
             save_button.label = f"Save {resource_name} Changes"
+        save_button.display = is_note_resource
 
         delete_button = self.query_one("#notes-delete-button", Button)
         if scope_type == "workspace" and resource_kind == "note":
@@ -135,8 +136,8 @@ class NotesSidebarRight(VerticalScroll):
         title_input = self.query_one("#notes-title-input", Input)
         keywords_label = self.query_one("#notes-keywords-label", Static)
         keywords_area = self.query_one("#notes-keywords-area", TextArea)
-        title_label.display = not is_workspace_details
-        title_input.display = not is_workspace_details
+        title_label.display = is_note_resource
+        title_input.display = is_note_resource
         keywords_label.display = is_note_resource
         keywords_area.display = is_note_resource
 

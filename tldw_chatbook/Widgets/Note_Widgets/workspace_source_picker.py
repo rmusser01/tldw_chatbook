@@ -4,7 +4,7 @@ from typing import Any, Iterable, Optional
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, ListItem, ListView, Static
 
@@ -46,6 +46,7 @@ class WorkspaceSourcePicker(ModalScreen[Optional[int]]):
         self.service = service
         self.results = self._normalize_results(results or [])
         self.selected_media_id: Optional[int] = None
+        self.error_message: Optional[str] = None
 
     def _get_client(self) -> Any:
         if self.service is None:
@@ -58,6 +59,7 @@ class WorkspaceSourcePicker(ModalScreen[Optional[int]]):
             yield Static("Pick Workspace Source")
             yield Input(placeholder="Search media...", id="workspace-source-search-input")
             yield Label("No source selected", id="workspace-source-selection")
+            yield Label("", id="workspace-source-error")
             yield ListView(id="workspace-source-results")
             with Horizontal(classes="workspace-source-actions"):
                 yield Button("Search", id="workspace-source-search-button", variant="primary")
@@ -113,6 +115,20 @@ class WorkspaceSourcePicker(ModalScreen[Optional[int]]):
         self.selected_media_id = None
         self._update_selected_label()
 
+    def _clear_selection(self) -> None:
+        self.selected_media_id = None
+        self._update_selected_label()
+
+    def _set_error(self, message: str) -> None:
+        self.error_message = message
+        if self.is_mounted:
+            self.query_one("#workspace-source-error", Label).update(message)
+
+    def _clear_error(self) -> None:
+        self.error_message = None
+        if self.is_mounted:
+            self.query_one("#workspace-source-error", Label).update("")
+
     async def _refresh_results_view(self) -> None:
         if not self.is_mounted:
             return
@@ -148,45 +164,52 @@ class WorkspaceSourcePicker(ModalScreen[Optional[int]]):
         if client is None:
             return self.results
 
-        payload: Any
-        if query:
-            search_media_items = getattr(client, "search_media_items", None)
-            if search_media_items is not None:
-                payload = await search_media_items(
-                    request_data=MediaSearchRequest(query=query),
-                    page=1,
-                    results_per_page=10,
-                )
+        try:
+            payload: Any
+            if query:
+                search_media_items = getattr(client, "search_media_items", None)
+                if search_media_items is not None:
+                    payload = await search_media_items(
+                        request_data=MediaSearchRequest(query=query),
+                        page=1,
+                        results_per_page=10,
+                    )
+                else:
+                    legacy_search = None
+                    for name in ("search_media", "search_media_list", "search_media_library"):
+                        legacy_search = getattr(client, name, None)
+                        if legacy_search is not None:
+                            break
+                    if legacy_search is None:
+                        return self.results
+                    payload = await legacy_search(query)
             else:
-                legacy_search = None
-                for name in ("search_media", "search_media_list", "search_media_library"):
-                    legacy_search = getattr(client, name, None)
-                    if legacy_search is not None:
-                        break
-                if legacy_search is None:
-                    return self.results
-                payload = await legacy_search(query)
-        else:
-            list_media_items = getattr(client, "list_media_items", None)
-            if list_media_items is not None:
-                payload = await list_media_items(
-                    page=1,
-                    results_per_page=10,
-                    include_keywords=False,
-                )
-            else:
-                legacy_list = None
-                for name in ("list_media", "get_media_list"):
-                    legacy_list = getattr(client, name, None)
-                    if legacy_list is not None:
-                        break
-                if legacy_list is None:
-                    return self.results
-                payload = await legacy_list()
+                list_media_items = getattr(client, "list_media_items", None)
+                if list_media_items is not None:
+                    payload = await list_media_items(
+                        page=1,
+                        results_per_page=10,
+                        include_keywords=False,
+                    )
+                else:
+                    legacy_list = None
+                    for name in ("list_media", "get_media_list"):
+                        legacy_list = getattr(client, name, None)
+                        if legacy_list is not None:
+                            break
+                    if legacy_list is None:
+                        return self.results
+                    payload = await legacy_list()
 
-        items = self._coerce_payload_items(payload)
-        self.results = self._normalize_results(items)
-        self._revalidate_selection()
+            items = self._coerce_payload_items(payload)
+            self.results = self._normalize_results(items)
+            self._clear_error()
+            self._revalidate_selection()
+        except Exception as exc:
+            self.results = []
+            self._clear_selection()
+            self._set_error(f"Failed to load sources: {exc}")
+
         await self._refresh_results_view()
         return self.results
 
@@ -211,3 +234,4 @@ class WorkspaceSourcePicker(ModalScreen[Optional[int]]):
     async def on_mount(self) -> None:
         await self._refresh_results_view()
         self._update_selected_label()
+        self._clear_error()

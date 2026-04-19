@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Label
 
 from tldw_chatbook.tldw_api.notes_workspace_schemas import (
     MediaListPagination,
@@ -120,3 +121,43 @@ async def test_workspace_source_picker_handles_typed_media_response_items():
     results = await picker.load_results()
 
     assert results == [{"id": 55, "title": "Typed Item", "type": "webpage"}]
+
+
+@pytest.mark.asyncio
+async def test_workspace_source_picker_list_error_sets_widget_error_and_clears_selection():
+    client = AsyncMock()
+    client.list_media_items = AsyncMock(side_effect=RuntimeError("backend unavailable"))
+    picker = WorkspaceSourcePicker(service=client, results=[{"id": 42, "title": "Old Item", "type": "pdf"}])
+    app = PickerTestApp(picker)
+
+    async with app.run_test() as pilot:
+        picker.select_result(42)
+
+        results = await picker.load_results()
+        error_label = picker.query_one("#workspace-source-error", Label)
+
+        assert results == []
+        assert picker.results == []
+        assert picker.selected_media_id is None
+        assert picker.error_message == "Failed to load sources: backend unavailable"
+        assert str(error_label.renderable) == "Failed to load sources: backend unavailable"
+
+
+@pytest.mark.asyncio
+async def test_workspace_source_picker_search_error_sets_widget_error_and_clears_selection():
+    client = AsyncMock()
+    client.search_media_items = AsyncMock(side_effect=RuntimeError("search exploded"))
+    picker = WorkspaceSourcePicker(service=client, results=[{"id": 8, "title": "Current Item", "type": "video"}])
+    app = PickerTestApp(picker)
+
+    async with app.run_test() as pilot:
+        picker.select_result(8)
+
+        results = await picker.load_results("needle")
+        error_label = picker.query_one("#workspace-source-error", Label)
+
+        assert results == []
+        assert picker.results == []
+        assert picker.selected_media_id is None
+        assert picker.error_message == "Failed to load sources: search exploded"
+        assert str(error_label.renderable) == "Failed to load sources: search exploded"
