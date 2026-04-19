@@ -58,7 +58,9 @@ The following behavior and scoping decisions are fixed for this vertical:
 - Any future server-backed conversation mode must be explicit, not inferred from provider/model settings.
 - The current chat screen should continue to work without server availability.
 - This vertical is compatibility-first, not live remote-chat-first.
+- Local conversation creation must be capable of representing character-backed, persona-backed, and non-character conversations; `character_id` can no longer be treated as universally required in the aligned model.
 - Workspace-scoped conversations may exist in the aligned local model, but this pass must not accidentally leak workspace-scoped records into general chat history views.
+- The existing destructive rewrite-on-resave workflow is not an acceptable end state for this vertical because it drops message topology and variant fidelity.
 - The deferred local/server mode toggle must be tracked as explicit follow-on work in GitHub.
 
 ## In Scope
@@ -68,7 +70,9 @@ The following behavior and scoping decisions are fixed for this vertical:
 - Add local DB/service helpers for conversation list/search, metadata retrieval/update, keyword replacement, message-tree traversal, and message counting where those server seams already exist conceptually.
 - Add `tldw_api` client schemas and methods for the current server conversation endpoints.
 - Add a chat conversation compatibility service/adaptor layer that can normalize local records and server payloads into one TUI-facing model.
-- Preserve current local chat save/load/history workflows while routing them through clearer local service seams where necessary.
+- Refactor local conversation creation so assistant identity is not hard-wired to `character_id` or the default-character fallback.
+- Replace the current full-resave message rewrite behavior with a persistence approach that preserves message topology and message-level metadata.
+- Preserve current local chat save/load/history workflows where they do not conflict with the aligned data model.
 - Add regression tests for local-first behavior and compatibility helpers.
 - Document the deferred chat mode toggle as follow-on work.
 
@@ -158,12 +162,34 @@ The local conversation model should be extended toward the server conversation c
 
 This pass does not need every future field to be fully surfaced in the UI, but the local storage and service layers should be capable of preserving and normalizing them.
 
+### Conversation Identity And Creation
+
+The aligned local creation model must stop assuming every conversation is character-bound.
+
+The minimum supported local conversation identity shapes for this vertical are:
+
+- character-backed conversation:
+  - `character_id` is set
+  - `assistant_kind='character'`
+  - `assistant_id` maps to the selected character identity
+- persona-backed conversation:
+  - `character_id` is null
+  - `assistant_kind='persona'`
+  - `assistant_id` maps to the selected persona identity
+- non-character or generic conversation:
+  - `character_id` is null
+  - `assistant_kind` is null
+  - `assistant_id` is null
+
+The current main chat UI does not need new visual controls in this pass, but the local DB and local service layer must be capable of representing these shapes. The existing default-character fallback can remain as a legacy behavior only where an older UI path still supplies no explicit assistant identity, but it must no longer be the defining model for conversation creation.
+
 ### Conversation Metadata Mapping Rules
 
 The plan should treat the following conversation fields as the minimum explicit mapping contract for local/server alignment:
 
 | Field | Local Requirement In This Vertical | Legacy/Backfill Rule |
 |---|---|---|
+| `character_id` | Keep as an optional local FK for character-backed conversations only | Existing rows keep their current value; new persona or generic conversations may store null |
 | `assistant_kind` | Store locally when present; normalize existing character-backed records to `character` when possible | Existing rows without value may backfill to `character` when `character_id` exists, otherwise remain null |
 | `assistant_id` | Store locally when present | Existing rows may backfill from `character_id` when `assistant_kind='character'` |
 | `persona_memory_mode` | Store locally when present | Existing rows default to null |
@@ -203,6 +229,7 @@ The implementation plan should mirror the current server search and tree semanti
 
 - paged responses should preserve `limit`, `offset`, `total`, and `has_more`
 - default local ordering should remain recency-first unless an explicit ranking mode is requested
+- the local compatibility seam should accept the server ranking values `recency`, `bm25`, `hybrid`, and `topic`, even if the current UI only relies on recency-first behavior in this pass
 - deleted conversations should stay excluded from default list/search results
 - any include-deleted behavior added locally must remain explicit and opt-in
 - conversation-tree helpers should preserve parent/child ordering by ascending message timestamp
@@ -214,6 +241,17 @@ The server exposes a conversation message tree API that reconstructs message thr
 ### Message Updates And Variants
 
 Local message update, soft delete, feedback, and variant support already exist. This vertical should preserve those capabilities and ensure the compatibility service can present them in a normalized form for future server-aware paths.
+
+### Message Persistence Fidelity
+
+The current local rewrite-on-resave path is incompatible with the aligned conversation model because it soft-deletes all messages and recreates them from flattened history. That behavior is incompatible with stable:
+
+- parent/child message relationships
+- message variants and selected-variant state
+- message feedback
+- future message-level metadata that depends on stable message identities
+
+This vertical therefore requires a persistence refactor. The implementation plan must replace the destructive full-resave path with a model that preserves message structure. Incremental append/update semantics are preferred, but any acceptable approach must preserve stable message topology and message-level metadata for aligned conversations.
 
 ## Architecture
 
@@ -280,6 +318,8 @@ In this vertical:
 
 This preserves the standalone nature of `tldw_chatbook`.
 
+Local-first does not mean preserving every legacy write path unchanged. Where an existing local persistence path destroys aligned metadata or message structure, this vertical should change that path rather than freeze it for compatibility.
+
 ### Scope Safety
 
 The server model supports global and workspace-scoped conversations. This vertical should add or align the local schema for those fields, but must preserve current user expectations:
@@ -306,6 +346,11 @@ These defaults are intentionally conservative. This vertical should prefer hidin
 
 `state` and soft-delete remain separate concepts in the aligned model:
 
+- allowed `state` values should mirror the current server contract:
+  - `in-progress`
+  - `resolved`
+  - `backlog`
+  - `non-viable`
 - `state` is a lifecycle classification such as `in-progress` or `resolved`
 - soft-delete controls whether a record is active or hidden
 - deleted conversations remain excluded from default list/search flows even if their `state` is still populated
@@ -351,6 +396,10 @@ Recommended issue body points:
 - local-first remains the default chat persistence mode
 - future server mode must define write behavior, local replication behavior, and offline fallback before UI exposure
 - the issue should include acceptance criteria for labeling, persistence semantics, and interaction with future sync work
+
+Tracked issue:
+
+- [Issue #141: Add explicit Local / Server conversation mode control to the main chat surface](https://github.com/rmusser01/tldw_chatbook/issues/141)
 
 ## Testing Strategy
 
