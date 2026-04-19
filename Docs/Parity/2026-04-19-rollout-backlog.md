@@ -33,6 +33,20 @@ Translate the scored capability matrix into concrete implementation waves for `t
 - Notes and workspace-adjacent workflow alignment
 - Prompt library and chatbook interoperability improvements
 
+## Completed Vertical: Prompts And Chatbooks
+
+This first implementation vertical is now in place in the isolated `codex-prompts-chatbooks-parity` worktree.
+
+- `tldw_api` now exposes prompt preview/create/version-restore methods and chatbook export/preview/import job methods.
+- Local prompt storage now preserves server-shaped structured prompt metadata through `prompt_format`, `prompt_schema_version`, and `prompt_definition`.
+- Prompt adapter helpers can round-trip between local prompt records and server request/response payloads without breaking legacy prompts.
+- `ChatbooksWindowImproved` is now the primary chatbooks screen surface.
+- Server-backed chatbook export/import flows are wired into the creation and import wizards.
+- The chatbook management window now shows recent server jobs, which partially closes the Hermes-style job visibility gap for this vertical.
+- Server-backed chatbook import is still intentionally limited to conversations, notes, and characters. Prompt, media, and embedding content still fall back to the local import path.
+
+This closes the first recommended parity vertical and keeps the follow-on work focused on broader entity alignment instead of reopening the same prompt/chatbook seam.
+
 ## Phase 3: Retrieval And Advanced Workflows
 
 - Media/files/ingestion alignment
@@ -62,6 +76,13 @@ Translate the scored capability matrix into concrete implementation waves for `t
 - `Notes / workspace alignment` should go second. It is high-value and strongly aligned with the offline-first goal, but it needs more entity-shape mapping than prompts/chatbooks.
 - `Chat / conversations` remains a top-tier parity domain, but it should not be the next implementation branch until the active chat UI, navigation, and model-control edits are reconciled or isolated in a worktree.
 - `Characters` should likely follow chat/session model decisions rather than lead them.
+
+## Recommended Next Vertical
+
+- `Notes / workspace alignment` should now be the active follow-on branch.
+- Start with entity mapping and API-surface comparison before UI work.
+- Reuse the same pattern from the prompt/chatbook vertical: thin client additions first, local schema compatibility second, adapter/service layer third, then one primary UI surface.
+- Keep Hermes-inspired improvements scoped to concrete workflow pain. The chatbook job list covered the most relevant Hermes-style visibility gap for the first vertical; broader job centers and approval flows remain deferred.
 
 ## Dirty-Tree Overlap Risk
 
