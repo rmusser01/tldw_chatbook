@@ -8,15 +8,19 @@ import httpx
 import pytest
 
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
+from tldw_chatbook.tldw_api.exceptions import APIResponseError
 from tldw_chatbook.tldw_api.notes_workspace_schemas import (
     MediaSearchRequest,
+    MediaListResponse,
     NoteCreateRequest,
+    NoteListResponse,
     NoteUpdateRequest,
     WorkspaceArtifactCreateRequest,
     WorkspaceArtifactUpdateRequest,
     WorkspaceCreateRequest,
     WorkspaceNoteCreateRequest,
     WorkspaceNoteUpdateRequest,
+    WorkspaceResponse,
     WorkspaceSourceCreateRequest,
     WorkspaceSourceUpdateRequest,
     WorkspaceUpdateRequest,
@@ -411,3 +415,80 @@ class TestNotesWorkspaceClient:
         result = await client._request("DELETE", "/api/v1/notes/note-1")
 
         assert result == {}
+
+    async def test_request_raises_on_empty_200_response(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        request = httpx.Request("GET", "http://localhost:8000/api/v1/notes")
+        response = httpx.Response(200, request=request, content=b"")
+        monkeypatch.setattr(client, "_get_client", AsyncMock(return_value=_FakeHTTPClient(response)))
+
+        with pytest.raises(APIResponseError) as exc_info:
+            await client._request("GET", "/api/v1/notes")
+
+        assert "Failed to decode JSON response" in str(exc_info.value)
+
+    async def test_note_list_response_validates_wrapper_payload(self):
+        payload = {
+            "notes": [{"id": "note-1", "title": "Alpha", "content": "Body", "version": 1}],
+            "items": [{"id": "note-1", "title": "Alpha", "content": "Body", "version": 1}],
+            "results": [{"id": "note-1", "title": "Alpha", "content": "Body", "version": 1}],
+            "count": 1,
+            "limit": 25,
+            "offset": 0,
+            "total": 1,
+        }
+
+        model = NoteListResponse.model_validate(payload)
+
+        assert model.count == 1
+        assert model.notes[0].id == "note-1"
+        assert model.items[0].title == "Alpha"
+
+    async def test_media_list_response_validates_search_payload(self):
+        payload = {
+            "items": [
+                {"id": 9, "title": "Paper", "url": "/api/v1/media/9", "type": "pdf"},
+                {"id": 10, "title": "Video", "url": "/api/v1/media/10", "type": "video"},
+            ],
+            "pagination": {
+                "page": 1,
+                "results_per_page": 20,
+                "total_pages": 1,
+                "total_items": 2,
+            },
+        }
+
+        model = MediaListResponse.model_validate(payload)
+
+        assert model.items[0].url == "/api/v1/media/9"
+        assert model.pagination.total_items == 2
+
+    async def test_workspace_response_validates_workspace_payload(self):
+        payload = {
+            "id": "ws-1",
+            "name": "Workspace",
+            "archived": True,
+            "study_materials_policy": "workspace",
+            "deleted": False,
+            "created_at": "2026-04-19T00:00:00Z",
+            "last_modified": "2026-04-19T00:01:00Z",
+            "version": 4,
+        }
+
+        model = WorkspaceResponse.model_validate(payload)
+
+        assert model.id == "ws-1"
+        assert model.archived is True
+        assert model.version == 4
+
+    async def test_note_create_request_accepts_optional_title_and_keyword_string(self):
+        model = NoteCreateRequest.model_validate(
+            {
+                "title": None,
+                "content": "Body",
+                "keywords": "alpha, beta",
+            }
+        )
+
+        assert model.title is None
+        assert model.normalized_keywords == ["alpha", "beta"]

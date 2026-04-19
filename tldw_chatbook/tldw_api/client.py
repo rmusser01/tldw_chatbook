@@ -107,7 +107,7 @@ class TLDWAPIClient:
                 headers=headers,
             ) # Pass endpoint directly
             response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
-            if response.status_code == 204 or not getattr(response, "content", b""):
+            if response.status_code in {204, 205}:
                 return {}
             return response.json()
         except httpx.HTTPStatusError as e:
