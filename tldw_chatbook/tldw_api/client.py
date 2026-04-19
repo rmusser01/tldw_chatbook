@@ -18,6 +18,27 @@ from .schemas import (
     BatchProcessXMLResponse, ProcessedMediaWikiPage,
     ProcessXMLResponseItem,  # Add specific XML/MediaWiki later if needed
 )
+from .notes_workspace_schemas import (
+    MediaListResponse,
+    MediaSearchRequest,
+    NoteCreateRequest,
+    NoteListResponse,
+    NoteResponse,
+    NoteUpdateRequest,
+    WorkspaceArtifactCreateRequest,
+    WorkspaceArtifactResponse,
+    WorkspaceArtifactUpdateRequest,
+    WorkspaceCreateRequest,
+    WorkspaceListResponse,
+    WorkspaceNoteCreateRequest,
+    WorkspaceNoteResponse,
+    WorkspaceNoteUpdateRequest,
+    WorkspaceResponse,
+    WorkspaceSourceCreateRequest,
+    WorkspaceSourceResponse,
+    WorkspaceSourceUpdateRequest,
+    WorkspaceUpdateRequest,
+)
 from .prompt_chatbook_schemas import (
     ChatbookExportRequest,
     ChatbookImportRequest,
@@ -69,6 +90,7 @@ class TLDWAPIClient:
         files: Optional[List[tuple]] = None, # For httpx files format
         json_data: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         client = await self._get_client()
         url = f"{self.base_url}{endpoint}" # Ensure base_url doesn't make double slash
@@ -82,6 +104,7 @@ class TLDWAPIClient:
                 files=files,
                 json=json_data,
                 params=params,
+                headers=headers,
             ) # Pass endpoint directly
             response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
             return response.json()
@@ -147,6 +170,198 @@ class TLDWAPIClient:
             raise APIResponseError(e.response.status_code, error_detail, response_data={"raw_text": response_text})
         except httpx.RequestError as e:
             raise APIConnectionError(f"Connection error to {url}: {e}")
+
+    async def list_server_notes(self, limit: int = 100, offset: int = 0, include_keywords: bool = True) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/api/v1/notes/",
+            params={
+                "limit": limit,
+                "offset": offset,
+                "include_keywords": str(include_keywords).lower(),
+            },
+        )
+
+    async def search_server_notes(
+        self,
+        query: Optional[str] = None,
+        tokens: Optional[List[str]] = None,
+        limit: int = 10,
+        offset: int = 0,
+        include_keywords: bool = False,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"limit": limit, "offset": offset, "include_keywords": str(include_keywords).lower()}
+        if query is not None:
+            params["query"] = query
+        if tokens is not None:
+            params["tokens"] = tokens
+        return await self._request("GET", "/api/v1/notes/search", params=params)
+
+    async def get_server_note(self, note_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/notes/{note_id}")
+
+    async def create_server_note(self, request_data: NoteCreateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/notes/",
+            json_data=request_data.model_dump(mode="json"),
+        )
+
+    async def update_server_note(
+        self,
+        note_id: str,
+        request_data: NoteUpdateRequest,
+        expected_version: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        headers = {"expected-version": str(expected_version)} if expected_version is not None else None
+        return await self._request(
+            "PATCH",
+            f"/api/v1/notes/{note_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+            headers=headers,
+        )
+
+    async def delete_server_note(self, note_id: str, expected_version: int) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/notes/{note_id}",
+            headers={"expected-version": str(expected_version)},
+        )
+
+    async def list_workspaces(self) -> Dict[str, Any]:
+        return await self._request("GET", "/api/v1/workspaces/")
+
+    async def get_workspace(self, workspace_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/workspaces/{workspace_id}")
+
+    async def create_workspace(self, workspace_id: str, request_data: WorkspaceCreateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/workspaces/{workspace_id}",
+            json_data=request_data.model_dump(mode="json"),
+        )
+
+    async def update_workspace(self, workspace_id: str, request_data: WorkspaceUpdateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/workspaces/{workspace_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+
+    async def delete_workspace(self, workspace_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/workspaces/{workspace_id}")
+
+    async def list_workspace_notes(self, workspace_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/workspaces/{workspace_id}/notes")
+
+    async def create_workspace_note(self, workspace_id: str, request_data: WorkspaceNoteCreateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/workspaces/{workspace_id}/notes",
+            json_data=request_data.model_dump(mode="json"),
+        )
+
+    async def update_workspace_note(
+        self,
+        workspace_id: str,
+        note_id: int,
+        request_data: WorkspaceNoteUpdateRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/workspaces/{workspace_id}/notes/{note_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+
+    async def delete_workspace_note(self, workspace_id: str, note_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/workspaces/{workspace_id}/notes/{note_id}")
+
+    async def list_workspace_sources(self, workspace_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/workspaces/{workspace_id}/sources")
+
+    async def create_workspace_source(
+        self,
+        workspace_id: str,
+        request_data: WorkspaceSourceCreateRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/workspaces/{workspace_id}/sources",
+            json_data=request_data.model_dump(mode="json"),
+        )
+
+    async def update_workspace_source(
+        self,
+        workspace_id: str,
+        source_id: str,
+        request_data: WorkspaceSourceUpdateRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/workspaces/{workspace_id}/sources/{source_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+
+    async def delete_workspace_source(self, workspace_id: str, source_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/workspaces/{workspace_id}/sources/{source_id}")
+
+    async def list_workspace_artifacts(self, workspace_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/workspaces/{workspace_id}/artifacts")
+
+    async def create_workspace_artifact(
+        self,
+        workspace_id: str,
+        request_data: WorkspaceArtifactCreateRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/workspaces/{workspace_id}/artifacts",
+            json_data=request_data.model_dump(mode="json"),
+        )
+
+    async def update_workspace_artifact(
+        self,
+        workspace_id: str,
+        artifact_id: str,
+        request_data: WorkspaceArtifactUpdateRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/workspaces/{workspace_id}/artifacts/{artifact_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+
+    async def delete_workspace_artifact(self, workspace_id: str, artifact_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/workspaces/{workspace_id}/artifacts/{artifact_id}")
+
+    async def list_media_items(
+        self,
+        page: int = 1,
+        results_per_page: int = 10,
+        include_keywords: bool = False,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/api/v1/media/",
+            params={
+                "page": page,
+                "results_per_page": results_per_page,
+                "include_keywords": str(include_keywords).lower(),
+            },
+        )
+
+    async def search_media_items(
+        self,
+        request_data: MediaSearchRequest,
+        page: int = 1,
+        results_per_page: int = 10,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/media/search",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            params={"page": page, "results_per_page": results_per_page},
+        )
 
     async def process_video(self, request_data: ProcessVideoRequest, file_paths: Optional[List[str]] = None) -> BatchMediaProcessResponse:
         form_data = model_to_form_data(request_data)
