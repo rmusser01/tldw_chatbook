@@ -38,24 +38,13 @@ class NotesTabInitializer(BaseTabInitializer):
     async def on_tab_hidden(self) -> None:
         """Clean up when the notes tab is hidden."""
         self.log_initialization("Notes tab hidden, performing cleanup...")
-        
-        # Cancel any pending auto-save timer
-        if hasattr(self.app, 'notes_auto_save_timer') and self.app.notes_auto_save_timer is not None:
-            self.app.notes_auto_save_timer.stop()
-            self.app.notes_auto_save_timer = None
-            self.log_initialization("Cancelled auto-save timer")
-        
-        # Perform final auto-save if needed
-        if (hasattr(self.app, 'notes_auto_save_enabled') and self.app.notes_auto_save_enabled and
-            hasattr(self.app, 'notes_unsaved_changes') and self.app.notes_unsaved_changes and 
-            self.app.current_selected_note_id):
-            
-            self.log_initialization("Performing final auto-save before leaving Notes tab")
-            
-            # Import here to avoid circular imports
-            from tldw_chatbook.Event_Handlers.notes_events import _perform_auto_save
-            
-            # Schedule the auto-save as a background task
-            self.app.run_worker(_perform_auto_save(self.app), name="notes_final_autosave")
-        
+
+        from tldw_chatbook.UI.Screens.notes_screen import NotesScreen
+
+        active_screen = getattr(self.app, "screen", None)
+        if isinstance(active_screen, NotesScreen):
+            await active_screen.finalize_for_hide()
+        else:
+            self.log_initialization("Active screen is not NotesScreen; skipping screen finalization.")
+
         self.log_initialization("Notes tab cleanup complete")

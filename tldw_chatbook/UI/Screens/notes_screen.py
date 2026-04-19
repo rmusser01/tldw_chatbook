@@ -173,6 +173,44 @@ class NotesScreen(BaseAppScreen):
     def _set_state(self, **changes: Any) -> None:
         self.state = self.validate_state(replace(self.state, **changes))
 
+    def _notify(self, message: str, *, severity: str = "information", timeout: Optional[float] = None) -> None:
+        self.app_instance.notify(message, severity=severity, timeout=timeout)
+
+    def _baseline_changes(
+        self,
+        *,
+        resource_id: Any,
+        version: Optional[int],
+        title: str,
+        content: str,
+    ) -> dict[str, Any]:
+        return {
+            "selected_note_id": resource_id,
+            "selected_note_version": version,
+            "selected_note_title": title,
+            "selected_note_content": content,
+            "word_count": len(content.split()) if content else 0,
+        }
+
+    def _cleared_selection_changes(self) -> dict[str, Any]:
+        return {
+            "selected_note_id": None,
+            "selected_note_version": None,
+            "selected_note_title": "",
+            "selected_note_content": "",
+            "selected_local_note_id": None,
+            "selected_local_note_version": None,
+            "selected_server_note_id": None,
+            "selected_server_note_version": None,
+            "selected_workspace_id": None,
+            "selected_workspace_note_id": None,
+            "selected_workspace_note_version": None,
+            "selected_workspace_source_id": None,
+            "selected_workspace_source_version": None,
+            "selected_workspace_artifact_id": None,
+            "selected_workspace_artifact_version": None,
+        }
+
     def _get_current_resource_id(self) -> Any:
         if self.state.scope_type == ScopeType.LOCAL_NOTE:
             return self.state.selected_note_id
@@ -250,13 +288,16 @@ class NotesScreen(BaseAppScreen):
 
     def _apply_navigation_target(self, pending: PendingNavigation) -> None:
         changes: dict[str, Any] = {
+            **self._cleared_selection_changes(),
             "scope_type": pending.target_scope,
             "pending_navigation": None,
+            "selected_note_id": pending.target_id,
+            "selected_note_version": pending.target_version,
+            "selected_note_title": "",
+            "selected_note_content": "",
         }
         if pending.target_scope == ScopeType.LOCAL_NOTE:
-            changes["selected_note_id"] = pending.target_id
             changes["selected_local_note_id"] = pending.target_id
-            changes["selected_note_version"] = pending.target_version
             changes["selected_local_note_version"] = pending.target_version
         elif pending.target_scope == ScopeType.SERVER_NOTE:
             changes["selected_server_note_id"] = pending.target_id
@@ -276,6 +317,20 @@ class NotesScreen(BaseAppScreen):
         self._set_state(**changes)
         self._sync_legacy_local_selection()
 
+    async def _complete_pending_navigation(self, pending: PendingNavigation) -> bool:
+        self._apply_navigation_target(pending)
+        if pending.target_scope == ScopeType.LOCAL_NOTE and pending.target_id is not None:
+            note_details = None
+            if self.notes_service is not None:
+                note_details = self.notes_service.get_note_by_id(
+                    user_id=self.notes_user_id,
+                    note_id=pending.target_id,
+                )
+            if not note_details:
+                return False
+            await self._hydrate_editor_for_local_note(pending.target_id, note_details)
+        return True
+
     async def resolve_pending_navigation(self, decision: str) -> bool:
         pending = self.state.pending_navigation
         if pending is None:
@@ -289,8 +344,7 @@ class NotesScreen(BaseAppScreen):
                 return False
         if decision in {"save", "discard"}:
             self._set_state(has_unsaved_changes=False)
-            self._apply_navigation_target(pending)
-            return True
+            return await self._complete_pending_navigation(pending)
         raise ValueError(f"Unsupported navigation decision: {decision}")
 
     async def refresh_current_scope(self) -> None:
@@ -416,6 +470,30 @@ class NotesScreen(BaseAppScreen):
             self.app_instance.current_selected_note_title = ""
             self.app_instance.current_selected_note_content = ""
 
+    async def _hydrate_editor_for_local_note(self, note_id: Any, note_details: dict[str, Any]) -> None:
+        content = note_details.get("content", "") or ""
+        title = note_details.get("title", "") or ""
+        self._set_state(
+            scope_type=ScopeType.LOCAL_NOTE,
+            selected_local_note_id=note_id,
+            selected_local_note_version=note_details.get("version"),
+            has_unsaved_changes=False,
+            **self._baseline_changes(
+                resource_id=note_id,
+                version=note_details.get("version"),
+                title=title,
+                content=content,
+            ),
+        )
+        self._sync_legacy_local_selection()
+        if self.is_mounted:
+            try:
+                self.query_one("#notes-editor-area", TextArea).load_text(content)
+                sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
+                sidebar_right.query_one("#notes-title-input", Input).value = title
+            except QueryError:
+                return
+
     def _read_editor_text(self) -> str:
         if not self.is_mounted:
             return self.state.selected_note_content
@@ -472,21 +550,21 @@ class NotesScreen(BaseAppScreen):
     async def _copy_current_note_to_clipboard(self, export_format: str) -> None:
         resource_id = self._get_current_resource_id()
         if not resource_id:
-            self.app.notify("No note selected to copy.", severity="warning")
+            self._notify("No note selected to copy.", severity="warning")
             return
         try:
             import pyperclip
 
             pyperclip.copy(self._build_export_content(export_format))
-            self.app.notify(f"Note copied to clipboard as {export_format}!", severity="information")
+            self._notify(f"Note copied to clipboard as {export_format}!", severity="information")
         except Exception as exc:  # pragma: no cover - clipboard environment dependent
             logger.error(f"Failed to copy note to clipboard: {exc}", exc_info=True)
-            self.app.notify(f"Error copying note: {type(exc).__name__}", severity="error")
+            self._notify(f"Error copying note: {type(exc).__name__}", severity="error")
 
     async def _export_current_note(self, export_format: str) -> None:
         resource_id = self._get_current_resource_id()
         if not resource_id:
-            self.app.notify("No note selected to export.", severity="warning")
+            self._notify("No note selected to export.", severity="warning")
             return
         safe_title = "".join(
             char for char in (self._read_title_text().strip() or "note") if char.isalnum() or char in (" ", "-", "_")
@@ -505,14 +583,14 @@ class NotesScreen(BaseAppScreen):
 
     async def _write_export_file(self, selected_path: Optional[Path], export_format: str) -> None:
         if not selected_path:
-            self.app.notify("Note export cancelled.", severity="information", timeout=2)
+            self._notify("Note export cancelled.", severity="information", timeout=2)
             return
         try:
             selected_path.write_text(self._build_export_content(export_format), encoding="utf-8")
-            self.app.notify(f"Note exported successfully to {selected_path.name}", severity="information")
+            self._notify(f"Note exported successfully to {selected_path.name}", severity="information")
         except Exception as exc:  # pragma: no cover - filesystem errors are environment dependent
             logger.error(f"Error exporting note to '{selected_path}': {exc}", exc_info=True)
-            self.app.notify(f"Error exporting note: {type(exc).__name__}", severity="error")
+            self._notify(f"Error exporting note: {type(exc).__name__}", severity="error")
 
     def _update_unsaved_indicator(self) -> None:
         try:
@@ -581,6 +659,22 @@ class NotesScreen(BaseAppScreen):
         else:
             self._set_state(auto_save_status="")
 
+    async def finalize_for_hide(self) -> bool:
+        if self._auto_save_timer:
+            self._auto_save_timer.stop()
+            self._auto_save_timer = None
+        if self._search_timer:
+            self._search_timer.stop()
+            self._search_timer = None
+        if self.state.auto_save_enabled and self.state.has_unsaved_changes and self._get_current_resource_id():
+            self._set_state(auto_save_status="saving")
+            saved = await self._save_current_note()
+            self._set_state(auto_save_status="saved" if saved else "")
+            if saved:
+                self._set_state(last_save_time=time.time())
+            return saved
+        return True
+
     async def _save_current_note(self) -> bool:
         resource_id = self._get_current_resource_id()
         if not resource_id:
@@ -607,19 +701,27 @@ class NotesScreen(BaseAppScreen):
                 if isinstance(result, dict):
                     if self.state.scope_type == ScopeType.LOCAL_NOTE:
                         self._set_state(
-                            selected_note_id=result.get("id", resource_id),
                             selected_local_note_id=result.get("id", resource_id),
-                            selected_note_version=result.get("version", current_version),
                             selected_local_note_version=result.get("version", current_version),
-                            selected_note_title=result.get("title", current_title),
-                            selected_note_content=result.get("content", current_content),
                             has_unsaved_changes=False,
+                            **self._baseline_changes(
+                                resource_id=result.get("id", resource_id),
+                                version=result.get("version", current_version),
+                                title=result.get("title", current_title),
+                                content=result.get("content", current_content),
+                            ),
                         )
                     elif self.state.scope_type == ScopeType.SERVER_NOTE:
                         self._set_state(
                             selected_server_note_id=result.get("id", resource_id),
                             selected_server_note_version=result.get("version", current_version),
                             has_unsaved_changes=False,
+                            **self._baseline_changes(
+                                resource_id=result.get("id", resource_id),
+                                version=result.get("version", current_version),
+                                title=result.get("title", current_title),
+                                content=result.get("content", current_content),
+                            ),
                         )
                     else:
                         if self.state.workspace_subview == WorkspaceSubview.SOURCES:
@@ -627,26 +729,47 @@ class NotesScreen(BaseAppScreen):
                                 selected_workspace_source_id=result.get("id", resource_id),
                                 selected_workspace_source_version=result.get("version", current_version),
                                 has_unsaved_changes=False,
+                                **self._baseline_changes(
+                                    resource_id=result.get("id", resource_id),
+                                    version=result.get("version", current_version),
+                                    title=result.get("title", current_title),
+                                    content=result.get("content", current_content),
+                                ),
                             )
                         elif self.state.workspace_subview == WorkspaceSubview.ARTIFACTS:
                             self._set_state(
                                 selected_workspace_artifact_id=result.get("id", resource_id),
                                 selected_workspace_artifact_version=result.get("version", current_version),
                                 has_unsaved_changes=False,
+                                **self._baseline_changes(
+                                    resource_id=result.get("id", resource_id),
+                                    version=result.get("version", current_version),
+                                    title=result.get("title", current_title),
+                                    content=result.get("content", current_content),
+                                ),
                             )
                         else:
                             self._set_state(
                                 selected_workspace_note_id=result.get("id", resource_id),
                                 selected_workspace_note_version=result.get("version", current_version),
                                 has_unsaved_changes=False,
+                                **self._baseline_changes(
+                                    resource_id=result.get("id", resource_id),
+                                    version=result.get("version", current_version),
+                                    title=result.get("title", current_title),
+                                    content=result.get("content", current_content),
+                                ),
                             )
                 else:
                     self._set_state(
-                        selected_note_version=(current_version + 1) if current_version is not None else current_version,
                         selected_local_note_version=(current_version + 1) if current_version is not None else current_version,
-                        selected_note_title=current_title,
-                        selected_note_content=current_content,
                         has_unsaved_changes=False,
+                        **self._baseline_changes(
+                            resource_id=resource_id,
+                            version=(current_version + 1) if current_version is not None else current_version,
+                            title=current_title,
+                            content=current_content,
+                        ),
                     )
             elif self.state.scope_type == ScopeType.LOCAL_NOTE and self.notes_service is not None:
                 success = self.notes_service.update_note(
@@ -656,34 +779,37 @@ class NotesScreen(BaseAppScreen):
                     expected_version=current_version,
                 )
                 if not success:
-                    self.app.notify("Failed to save note", severity="error")
+                    self._notify("Failed to save note", severity="error")
                     return False
                 self._set_state(
-                    selected_note_version=(current_version + 1) if current_version is not None else current_version,
                     selected_local_note_version=(current_version + 1) if current_version is not None else current_version,
-                    selected_note_title=current_title,
-                    selected_note_content=current_content,
                     has_unsaved_changes=False,
+                    **self._baseline_changes(
+                        resource_id=resource_id,
+                        version=(current_version + 1) if current_version is not None else current_version,
+                        title=current_title,
+                        content=current_content,
+                    ),
                 )
             else:
-                self.app.notify("Scope-aware save service is not configured.", severity="warning")
+                self._notify("Scope-aware save service is not configured.", severity="warning")
                 return False
             self._sync_legacy_local_selection()
             return True
         except Exception as exc:
             logger.error(f"Error saving note: {exc}", exc_info=True)
-            self.app.notify(f"Error saving note: {type(exc).__name__}", severity="error")
+            self._notify(f"Error saving note: {type(exc).__name__}", severity="error")
             return False
 
     async def _create_new_note(self) -> None:
         if self.state.scope_type != ScopeType.LOCAL_NOTE or self.notes_service is None:
-            self.app.notify("Creating new notes is only enabled for local scope right now.", severity="warning")
+            self._notify("Creating new notes is only enabled for local scope right now.", severity="warning")
             return
         new_note_id = self.notes_service.add_note(user_id=self.notes_user_id, title="New Note", content="")
         if new_note_id:
             await self._load_note(new_note_id)
             await self.refresh_current_scope()
-            self.app.notify("New note created", severity="information")
+            self._notify("New note created", severity="information")
 
     async def _delete_current_note(self) -> None:
         resource_id = self._get_current_resource_id()
@@ -707,58 +833,26 @@ class NotesScreen(BaseAppScreen):
                 else:
                     deleted = bool(self.notes_service.delete_note(user_id=self.notes_user_id, note_id=resource_id))
             if not deleted:
-                self.app.notify("Failed to delete note", severity="error")
+                self._notify("Failed to delete note", severity="error")
                 return
             self._set_state(
-                selected_note_id=None,
-                selected_note_version=None,
-                selected_note_title="",
-                selected_note_content="",
-                selected_local_note_id=None,
-                selected_local_note_version=None,
-                selected_server_note_id=None if self.state.scope_type == ScopeType.SERVER_NOTE else self.state.selected_server_note_id,
-                selected_workspace_note_id=None if self.state.scope_type == ScopeType.WORKSPACE else self.state.selected_workspace_note_id,
                 has_unsaved_changes=False,
+                **self._cleared_selection_changes(),
             )
             self._sync_legacy_local_selection()
             await self._clear_editor()
             await self.refresh_current_scope()
-            self.app.notify("Note deleted", severity="information")
+            self._notify("Note deleted", severity="information")
         except Exception as exc:
             logger.error(f"Error deleting note: {exc}", exc_info=True)
-            self.app.notify(f"Error deleting note: {type(exc).__name__}", severity="error")
+            self._notify(f"Error deleting note: {type(exc).__name__}", severity="error")
 
     async def _load_note(self, note_id: Any) -> Optional[PendingNavigation]:
         navigation = self.request_scope_transition(ScopeType.LOCAL_NOTE, target_id=note_id)
         if navigation.requires_confirmation:
-            self.app.notify("Unsaved changes require confirmation before switching notes.", severity="warning")
+            self._notify("Unsaved changes require confirmation before switching notes.", severity="warning")
             return navigation
-        if self.notes_service is None:
-            return navigation
-        note_details = self.notes_service.get_note_by_id(user_id=self.notes_user_id, note_id=note_id)
-        if not note_details:
-            return navigation
-        content = note_details.get("content", "") or ""
-        title = note_details.get("title", "") or ""
-        self._set_state(
-            scope_type=ScopeType.LOCAL_NOTE,
-            selected_note_id=note_id,
-            selected_note_version=note_details.get("version"),
-            selected_note_title=title,
-            selected_note_content=content,
-            selected_local_note_id=note_id,
-            selected_local_note_version=note_details.get("version"),
-            has_unsaved_changes=False,
-            word_count=len(content.split()) if content else 0,
-        )
-        self._sync_legacy_local_selection()
-        if self.is_mounted:
-            try:
-                self.query_one("#notes-editor-area", TextArea).load_text(content)
-                sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
-                sidebar_right.query_one("#notes-title-input", Input).value = title
-            except QueryError:
-                return navigation
+        await self._complete_pending_navigation(navigation)
         return navigation
 
     async def _clear_editor(self) -> None:
@@ -773,7 +867,7 @@ class NotesScreen(BaseAppScreen):
 
     async def _toggle_preview_mode(self) -> None:
         mode = "Preview" if self.state.is_preview_mode else "Edit"
-        self.app.notify(f"{mode} mode activated", severity="information")
+        self._notify(f"{mode} mode activated", severity="information")
 
     async def _perform_search(self, search_term: str) -> None:
         self._set_state(search_query=search_term)
@@ -887,7 +981,9 @@ class NotesScreen(BaseAppScreen):
     @on(ListView.Selected, "#notes-list-view")
     async def handle_list_selection(self, event: ListView.Selected) -> None:
         if event.item and hasattr(event.item, "note_id"):
-            await self._load_note(event.item.note_id)
+            navigation = await self._load_note(event.item.note_id)
+            if navigation is not None and navigation.requires_confirmation:
+                return
             self.post_message(NoteSelected(event.item.note_id, {"title": self.state.selected_note_title}))
 
     @on(Select.Changed, "#notes-sort-select")
@@ -910,7 +1006,7 @@ class NotesScreen(BaseAppScreen):
             editor.load_text("\n".join(lines))
             editor.cursor_location = (row, col + len(event.text))
         except Exception as exc:  # pragma: no cover - UI edge cases
-            self.app.notify(f"Failed to insert voice input: {exc}", severity="error")
+            self._notify(f"Failed to insert voice input: {exc}", severity="error")
 
     def on_emoji_picker_emoji_selected(self, message: EmojiSelected) -> None:
         try:

@@ -100,6 +100,7 @@ from .Event_Handlers import (
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
     search_events, subscription_events,
 )
+from .Event_Handlers.tab_initializers.notes_tab_initializer import NotesTabInitializer
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks, \
     chat_events_dictionaries
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -1255,6 +1256,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             local_notes_service=self.notes_service,
             server_service=self.server_notes_workspace_service,
         )
+        self._notes_tab_initializer = NotesTabInitializer(self)
 
         # --- Create the master handler map ---
         # This one-time setup makes the dispatcher clean and fast.
@@ -1667,6 +1669,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Handle navigation to a different screen using switch_screen for better performance."""
         screen_name = message.screen_name
         logger.info(f"Navigating to screen: {screen_name}")
+        previous_tab = self.current_tab
         
         # Save state of current screen before switching
         current_screen = self.screen
@@ -1713,6 +1716,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         screen_class = screen_map.get(screen_name)
         if screen_class:
+            if previous_tab == TAB_NOTES and previous_tab != screen_name:
+                await self._notes_tab_initializer.on_tab_hidden()
+
             # Create a fresh screen instance (per Textual best practices)
             new_screen = screen_class(self)
             
@@ -1731,6 +1737,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Update current_tab to track the active screen
             # The watcher will skip processing due to _use_screen_navigation flag
             self.current_tab = screen_name
+
+            if screen_name == TAB_NOTES and previous_tab != screen_name:
+                await self._notes_tab_initializer.on_tab_shown()
             
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
@@ -3222,6 +3231,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Hide Old Tab ---
         if old_tab and old_tab != new_tab:
+            if old_tab == TAB_NOTES:
+                self.call_after_refresh(self._notes_tab_initializer.on_tab_hidden)
+
             # Update navigation UI to remove active state from old tab
             use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
             use_links = get_cli_setting("general", "use_link_navigation", True)
@@ -3375,8 +3387,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Call immediately after refresh
             self.call_after_refresh(populate_ccp_widgets)
         elif new_tab == TAB_NOTES:
-            # NotesScreen handles its own data loading in on_mount()
-            pass
+            self.call_after_refresh(self._notes_tab_initializer.on_tab_shown)
         elif new_tab == TAB_MEDIA:
             def activate_media_initial_view():
                 try:

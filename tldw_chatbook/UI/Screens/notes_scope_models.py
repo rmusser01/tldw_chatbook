@@ -15,6 +15,7 @@ class ScopeType(str, Enum):
 
 class WorkspaceSubview(str, Enum):
     NOTES = "notes"
+    DETAILS = "details"
     SOURCES = "sources"
     ARTIFACTS = "artifacts"
 
