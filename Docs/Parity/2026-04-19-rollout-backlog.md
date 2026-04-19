@@ -17,6 +17,7 @@ Translate the scored capability matrix into concrete implementation waves for `t
 - Finish the data compatibility map
 - Capture dirty-tree overlap risks in `tldw_chatbook`
 - Identify duplicate or legacy UI surfaces
+- Use current dirty-tree overlap as an explicit scoring input, not an afterthought
 
 ## Phase 1: Core Interoperability Primitives
 
@@ -46,13 +47,21 @@ Translate the scored capability matrix into concrete implementation waves for `t
 - Model/provider control improvements
 - Background-task and long-running operation visibility
 - Approval/safety affordances where they fit Textual
+- Only start this wave after at least one core parity vertical lands cleanly
 
 ## First Vertical Candidates
 
-- Chat / conversations
 - Prompts / chatbooks
 - Notes / workspace alignment
-- MCP / tools integration cleanup
+- Chat / conversations
+- Characters / session alignment
+
+## Recommended First Vertical
+
+- `Prompts / chatbooks` should go first. It has the best combination of user-visible value, `tldw_server` alignment, existing local import/export seams, and low overlap with the current dirty chat UI work.
+- `Notes / workspace alignment` should go second. It is high-value and strongly aligned with the offline-first goal, but it needs more entity-shape mapping than prompts/chatbooks.
+- `Chat / conversations` remains a top-tier parity domain, but it should not be the next implementation branch until the active chat UI, navigation, and model-control edits are reconciled or isolated in a worktree.
+- `Characters` should likely follow chat/session model decisions rather than lead them.
 
 ## Dirty-Tree Overlap Risk
 
