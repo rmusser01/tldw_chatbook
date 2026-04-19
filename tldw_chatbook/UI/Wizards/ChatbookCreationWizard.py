@@ -36,7 +36,9 @@ from ...Chatbooks.chatbook_creator import ChatbookCreator
 from ...Chatbooks.chatbook_models import ContentType
 from ...Chatbooks.server_chatbook_service import (
     ServerChatbookService,
+    build_server_job_record,
     build_tldw_api_client_from_config,
+    record_server_job,
 )
 
 if TYPE_CHECKING:
@@ -686,6 +688,12 @@ class ProgressStep(WizardStep):
                         self._update_progress(max(30, min(95, int(job_result.get("progress_percentage", 30) or 30))))
                         await asyncio.sleep(1)
                         job_result = await service.get_export_job(job_id)
+
+                    if hasattr(self.wizard, "app_instance"):
+                        record_server_job(
+                            self.wizard.app_instance,
+                            build_server_job_record("export", job_result),
+                        )
 
                     final_status = str(job_result.get("status", "")).lower()
                     if final_status not in {"completed", "success"}:

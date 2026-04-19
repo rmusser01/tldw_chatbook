@@ -31,6 +31,7 @@ from loguru import logger
 
 from ..Chatbooks.chatbook_importer import ChatbookImporter
 from ..Chatbooks.chatbook_models import ChatbookManifest
+from ..Chatbooks.server_chatbook_service import get_server_job_records
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -124,6 +125,26 @@ class ChatbookExportManagementWindow(ModalScreen):
     #chatbook-list {
         height: 1fr;
         background: $boost;
+        border: round $background-darken-1;
+    }
+
+    .server-jobs-container {
+        height: 14;
+        margin-top: 1;
+        padding: 1;
+        background: $boost;
+        border: round $background-darken-1;
+    }
+
+    .server-jobs-title {
+        text-style: bold;
+        color: $primary;
+        margin-bottom: 1;
+    }
+
+    .server-jobs-table {
+        height: 1fr;
+        background: $background;
         border: round $background-darken-1;
     }
     
@@ -258,11 +279,20 @@ class ChatbookExportManagementWindow(ModalScreen):
                         yield Static("", id="list-count", classes="list-subtitle")
                     
                     yield OptionList(id="chatbook-list")
+
+                    with Container(classes="server-jobs-container"):
+                        yield Static("Recent Server Jobs", classes="server-jobs-title")
+                        yield DataTable(
+                            id="server-job-table",
+                            classes="server-jobs-table",
+                            cursor_type="row",
+                            zebra_stripes=True,
+                        )
                 
                 # Right: Details
                 with Container(classes="details-container"):
                     yield Container(id="no-selection-container", classes="no-selection")
-                    yield Container(id="details-content", display=False)
+                    yield Container(id="details-content")
             
             # Status bar
             with Container(classes="status-bar"):
@@ -275,60 +305,59 @@ class ChatbookExportManagementWindow(ModalScreen):
         """Initialize when mounted."""
         # Add no-selection message
         no_selection = self.query_one("#no-selection-container", Container)
-        no_selection.mount(Static("Select a chatbook to view details"))
+        await no_selection.mount(Static("Select a chatbook to view details"))
+        self.query_one("#details-content", Container).display = False
+
+        server_job_table = self.query_one("#server-job-table", DataTable)
+        server_job_table.add_columns("Type", "Status", "Progress", "Chatbook")
         
         # Create details content structure
         details = self.query_one("#details-content", Container)
-        
-        # Header section
-        with details:
-            header_container = Container(classes="details-header")
-            header_container.mount(Static("", id="chatbook-name", classes="details-title"))
-            
-            meta_grid = Grid(classes="details-meta")
-            meta_grid.mount(Static("Size:", classes="meta-label"))
-            meta_grid.mount(Static("", id="meta-size", classes="meta-value"))
-            meta_grid.mount(Static("Created:", classes="meta-label"))
-            meta_grid.mount(Static("", id="meta-created", classes="meta-value"))
-            meta_grid.mount(Static("Author:", classes="meta-label"))
-            meta_grid.mount(Static("", id="meta-author", classes="meta-value"))
-            meta_grid.mount(Static("Version:", classes="meta-label"))
-            meta_grid.mount(Static("", id="meta-version", classes="meta-value"))
-            
-            header_container.mount(meta_grid)
-            details.mount(header_container)
-            
-            # Content preview
-            preview_container = Container(classes="content-preview")
-            preview_container.mount(Static("Content Summary:", classes="preview-title"))
-            
-            content_table = DataTable(
-                id="content-table",
-                classes="content-table",
-                cursor_type="row",
-                zebra_stripes=True
-            )
-            content_table.add_columns("Type", "Count", "Size")
-            preview_container.mount(content_table)
-            details.mount(preview_container)
-            
-            # Action buttons
-            actions_container = Container(classes="action-buttons")
-            
-            row1 = Horizontal(classes="action-row")
-            row1.mount(Button("📤 Re-export with Options", id="re-export-options", variant="primary"))
-            row1.mount(Button("📋 Copy Path", id="copy-path", variant="default"))
-            actions_container.mount(row1)
-            
-            row2 = Horizontal(classes="action-row")
-            row2.mount(Button("📧 Email", id="share-email", variant="default"))
-            row2.mount(Button("☁️ Upload to Cloud", id="share-cloud", variant="default"))
-            actions_container.mount(row2)
-            
-            details.mount(actions_container)
+
+        header_container = Container(classes="details-header")
+        await details.mount(header_container)
+        await header_container.mount(Static("", id="chatbook-name", classes="details-title"))
+
+        meta_grid = Grid(classes="details-meta")
+        await header_container.mount(meta_grid)
+        await meta_grid.mount(Static("Size:", classes="meta-label"))
+        await meta_grid.mount(Static("", id="meta-size", classes="meta-value"))
+        await meta_grid.mount(Static("Created:", classes="meta-label"))
+        await meta_grid.mount(Static("", id="meta-created", classes="meta-value"))
+        await meta_grid.mount(Static("Author:", classes="meta-label"))
+        await meta_grid.mount(Static("", id="meta-author", classes="meta-value"))
+        await meta_grid.mount(Static("Version:", classes="meta-label"))
+        await meta_grid.mount(Static("", id="meta-version", classes="meta-value"))
+
+        preview_container = Container(classes="content-preview")
+        await details.mount(preview_container)
+        await preview_container.mount(Static("Content Summary:", classes="preview-title"))
+
+        content_table = DataTable(
+            id="content-table",
+            classes="content-table",
+            cursor_type="row",
+            zebra_stripes=True
+        )
+        content_table.add_columns("Type", "Count", "Size")
+        await preview_container.mount(content_table)
+
+        actions_container = Container(classes="action-buttons")
+        await details.mount(actions_container)
+
+        row1 = Horizontal(classes="action-row")
+        await actions_container.mount(row1)
+        await row1.mount(Button("📤 Re-export with Options", id="re-export-options", variant="primary"))
+        await row1.mount(Button("📋 Copy Path", id="copy-path", variant="default"))
+
+        row2 = Horizontal(classes="action-row")
+        await actions_container.mount(row2)
+        await row2.mount(Button("📧 Email", id="share-email", variant="default"))
+        await row2.mount(Button("☁️ Upload to Cloud", id="share-cloud", variant="default"))
         
         # Load chatbooks
         await self.refresh_chatbook_list()
+        self.refresh_server_job_list()
     
     async def refresh_chatbook_list(self) -> None:
         """Refresh the list of chatbooks."""
@@ -372,10 +401,30 @@ class ChatbookExportManagementWindow(ModalScreen):
             # Update UI
             self._update_list_count()
             self._update_status()
+            self.refresh_server_job_list()
             
         except Exception as e:
             logger.error(f"Error refreshing chatbook list: {e}")
             self.app_instance.notify(f"Error loading chatbooks: {str(e)}", severity="error")
+
+    def refresh_server_job_list(self) -> None:
+        """Refresh the recent server job table from app state."""
+        table = self.query_one("#server-job-table", DataTable)
+        table.clear()
+
+        records = sorted(
+            get_server_job_records(self.app_instance),
+            key=lambda record: record.get("recorded_at", ""),
+            reverse=True,
+        )
+
+        for record in records[:10]:
+            table.add_row(
+                str(record.get("job_type", "unknown")),
+                str(record.get("status", "unknown")),
+                f"{int(record.get('progress_percentage', 0) or 0)}%",
+                str(record.get("chatbook_name") or record.get("job_id") or "-"),
+            )
     
     def _format_relative_time(self, dt: datetime) -> str:
         """Format datetime as relative time."""
@@ -495,6 +544,7 @@ class ChatbookExportManagementWindow(ModalScreen):
         
         if button_id == "refresh-list":
             await self.refresh_chatbook_list()
+            self.refresh_server_job_list()
             self.app_instance.notify("Chatbook list refreshed", severity="success")
             
         elif button_id == "delete-selected" and self.selected_chatbook is not None:

@@ -2,14 +2,19 @@
 Service helpers for server-backed chatbook import/export flows.
 """
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
 from ..tldw_api import ChatbookExportRequest, ChatbookImportRequest, TLDWAPIClient
-from .chatbook_models import ContentType
+from .chatbook_models import ChatbookManifest, ContentType
 
 
 SelectionKey = Union[str, ContentType]
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def build_tldw_api_client_from_config(config: Mapping[str, Any]) -> TLDWAPIClient:
@@ -28,6 +33,69 @@ def build_tldw_api_client_from_config(config: Mapping[str, Any]) -> TLDWAPIClien
         return client
 
     return TLDWAPIClient(base_url=base_url, token=auth_token)
+
+
+def build_server_import_selections_from_manifest(
+    manifest: Optional[ChatbookManifest],
+    import_media: bool = False,
+    import_embeddings: bool = False,
+) -> Dict[str, List[str]]:
+    selections: Dict[str, List[str]] = {}
+    if manifest is None:
+        return selections
+
+    for item in manifest.content_items:
+        content_type = item.type.value if isinstance(item.type, ContentType) else str(item.type)
+        if content_type == ContentType.MEDIA.value and not import_media:
+            continue
+        if content_type == ContentType.EMBEDDING.value and not import_embeddings:
+            continue
+        selections.setdefault(content_type, []).append(str(item.id))
+
+    return selections
+
+
+def get_server_import_blockers_from_manifest(
+    manifest: Optional[ChatbookManifest],
+    import_media: bool = False,
+    import_embeddings: bool = False,
+) -> List[str]:
+    service = ServerChatbookService(client=None)
+    selections = build_server_import_selections_from_manifest(
+        manifest,
+        import_media=import_media,
+        import_embeddings=import_embeddings,
+    )
+    return service.validate_server_import_selection(selections)
+
+
+def build_server_job_record(
+    job_type: str,
+    job_result: Mapping[str, Any],
+    recorded_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "job_type": job_type,
+        "job_id": job_result.get("job_id"),
+        "status": job_result.get("status", "unknown"),
+        "progress_percentage": int(job_result.get("progress_percentage", 0) or 0),
+        "chatbook_name": job_result.get("chatbook_name"),
+        "download_url": job_result.get("download_url"),
+        "successful_items": int(job_result.get("successful_items", 0) or 0),
+        "failed_items": int(job_result.get("failed_items", 0) or 0),
+        "recorded_at": recorded_at or _utc_now_iso(),
+    }
+
+
+def get_server_job_records(app_instance: Any) -> List[Dict[str, Any]]:
+    return list(getattr(app_instance, "_chatbook_server_jobs", []))
+
+
+def record_server_job(app_instance: Any, job_record: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    records = get_server_job_records(app_instance)
+    records.insert(0, dict(job_record))
+    setattr(app_instance, "_chatbook_server_jobs", records)
+    return records
 
 
 class ServerChatbookService:

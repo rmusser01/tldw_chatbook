@@ -34,7 +34,11 @@ from ...Chatbooks.chatbook_models import ChatbookManifest, ContentType
 from ...Chatbooks.conflict_resolver import ConflictResolution
 from ...Chatbooks.server_chatbook_service import (
     ServerChatbookService,
+    build_server_import_selections_from_manifest,
+    build_server_job_record,
     build_tldw_api_client_from_config,
+    get_server_import_blockers_from_manifest,
+    record_server_job,
 )
 from ...Widgets.enhanced_file_picker import EnhancedFileOpen
 
@@ -453,6 +457,7 @@ class ImportOptionsStep(WizardStep):
         super().on_show()
         if getattr(self.wizard, "initial_execution_mode", "local") == "server":
             self.query_one("#execution-mode", RadioSet).pressed_index = 1
+        self._update_server_mode_availability()
     
     
     def compose(self) -> ComposeResult:
@@ -469,6 +474,7 @@ class ImportOptionsStep(WizardStep):
                 "Chatbooks containing prompts, media, embeddings, or evaluations must use local import.",
                 classes="option-description"
             )
+            yield Static("", id="server-mode-warning", classes="option-description")
 
         # Import options
         with Container(classes="options-section"):
@@ -543,6 +549,38 @@ class ImportOptionsStep(WizardStep):
                 "Combine imported tags with any existing tags",
                 classes="option-description"
             )
+
+    async def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """Re-evaluate server mode availability when content-affecting options change."""
+        if event.checkbox.id in {"import-media", "import-embeddings"}:
+            self._update_server_mode_availability()
+
+    def _update_server_mode_availability(self) -> None:
+        """Disable server mode when the selected chatbook contains unsupported content."""
+        manifest = self.wizard.wizard_data.get("preview-validation", {}).get("manifest")
+        import_media = self.query_one("#import-media", Checkbox).value
+        import_embeddings = self.query_one("#import-embeddings", Checkbox).value
+        blockers = get_server_import_blockers_from_manifest(
+            manifest,
+            import_media=import_media,
+            import_embeddings=import_embeddings,
+        )
+
+        warning = self.query_one("#server-mode-warning", Static)
+        server_radio = self.query_one("#mode-server", RadioButton)
+        mode_set = self.query_one("#execution-mode", RadioSet)
+
+        if blockers:
+            server_radio.disabled = True
+            if mode_set.pressed_button and mode_set.pressed_button.id == "mode-server":
+                mode_set.pressed_index = 0
+            warning.update(
+                "Server import unavailable for this selection. Unsupported content: "
+                + ", ".join(blockers)
+            )
+        else:
+            server_radio.disabled = False
+            warning.update("Server import is available for the current selection.")
     
     def get_step_data(self) -> Dict[str, Any]:
         """Get import options."""
@@ -669,7 +707,11 @@ class ImportProgressStep(WizardStep):
                 api_client = build_tldw_api_client_from_config(config)
                 service = ServerChatbookService(api_client)
                 try:
-                    server_selections = self._build_server_content_selections(manifest, options)
+                    server_selections = build_server_import_selections_from_manifest(
+                        manifest,
+                        import_media=options.get("import_media", True),
+                        import_embeddings=options.get("import_embeddings", False),
+                    )
                     unsupported = service.validate_server_import_selection(server_selections)
                     if unsupported:
                         raise ValueError(
@@ -701,6 +743,12 @@ class ImportProgressStep(WizardStep):
                         self._update_progress(max(25, min(95, int(job_result.get("progress_percentage", 25) or 25))))
                         await asyncio.sleep(1)
                         job_result = await service.get_import_job(job_id)
+
+                    if hasattr(self.wizard, "app_instance"):
+                        record_server_job(
+                            self.wizard.app_instance,
+                            build_server_job_record("import", job_result),
+                        )
 
                     final_status = str(job_result.get("status", "")).lower()
                     if final_status not in {"completed", "success"}:
@@ -869,25 +917,6 @@ class ImportProgressStep(WizardStep):
             "completed": self.is_complete,
             "import_status": self.import_status.to_dict() if self.import_status else None
         }
-
-    def _build_server_content_selections(
-        self,
-        manifest: Optional[ChatbookManifest],
-        options: Dict[str, Any],
-    ) -> Dict[str, List[str]]:
-        selections: Dict[str, List[str]] = {}
-        if not manifest:
-            return selections
-
-        for item in manifest.content_items:
-            content_type = item.type.value if isinstance(item.type, ContentType) else str(item.type)
-            if content_type == ContentType.MEDIA.value and not options.get("import_media", True):
-                continue
-            if content_type == ContentType.EMBEDDING.value and not options.get("import_embeddings", False):
-                continue
-            selections.setdefault(content_type, []).append(str(item.id))
-
-        return selections
     
     def can_proceed(self) -> bool:
         """Can only proceed when import is complete."""

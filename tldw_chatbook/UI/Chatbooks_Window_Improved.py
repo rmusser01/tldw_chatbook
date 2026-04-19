@@ -610,7 +610,7 @@ class ChatbooksWindowImproved(Screen):
             
     async def action_browse_templates(self) -> None:
         """Open the templates browser."""
-        from .Wizards.ChatbookTemplatesWindow import ChatbookTemplatesWindow
+        from .ChatbookTemplatesWindow import ChatbookTemplatesWindow
         
         templates_window = ChatbookTemplatesWindow(self.app_instance)
         result = await self.app_instance.push_screen(templates_window, wait_for_dismiss=True)
@@ -628,7 +628,7 @@ class ChatbooksWindowImproved(Screen):
                 
     async def action_manage_exports(self) -> None:
         """Open the export management window."""
-        from .Wizards.ChatbookExportManagementWindow import ChatbookExportManagementWindow
+        from .ChatbookExportManagementWindow import ChatbookExportManagementWindow
         
         management_window = ChatbookExportManagementWindow(self.app_instance)
         await self.app_instance.push_screen(management_window, wait_for_dismiss=True)

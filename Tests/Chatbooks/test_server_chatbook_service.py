@@ -1,7 +1,19 @@
 import pytest
 
-from tldw_chatbook.Chatbooks.chatbook_models import ContentType
-from tldw_chatbook.Chatbooks.server_chatbook_service import ServerChatbookService
+from tldw_chatbook.Chatbooks.chatbook_models import (
+    ChatbookManifest,
+    ChatbookVersion,
+    ContentItem,
+    ContentType,
+)
+from tldw_chatbook.Chatbooks.server_chatbook_service import (
+    ServerChatbookService,
+    build_server_import_selections_from_manifest,
+    build_server_job_record,
+    get_server_import_blockers_from_manifest,
+    get_server_job_records,
+    record_server_job,
+)
 
 
 def test_service_rejects_server_unsupported_import_content_types():
@@ -102,3 +114,75 @@ async def test_service_delegates_chatbook_api_calls():
     assert import_result["job_id"] == "import-job-1"
     assert export_job["status"] == "completed"
     assert import_job["status"] == "completed"
+
+
+def test_service_builds_server_import_selections_from_manifest():
+    manifest = ChatbookManifest(
+        version=ChatbookVersion.V1,
+        name="Pack",
+        description="Desc",
+        content_items=[
+            ContentItem(id="conv-1", type=ContentType.CONVERSATION, title="Conversation"),
+            ContentItem(id="note-1", type=ContentType.NOTE, title="Note"),
+            ContentItem(id="media-1", type=ContentType.MEDIA, title="Media"),
+            ContentItem(id="embed-1", type=ContentType.EMBEDDING, title="Embedding"),
+        ],
+    )
+
+    selections = build_server_import_selections_from_manifest(
+        manifest,
+        import_media=False,
+        import_embeddings=False,
+    )
+
+    assert selections == {
+        "conversation": ["conv-1"],
+        "note": ["note-1"],
+    }
+
+
+def test_service_reports_server_import_blockers_from_manifest():
+    manifest = ChatbookManifest(
+        version=ChatbookVersion.V1,
+        name="Pack",
+        description="Desc",
+        content_items=[
+            ContentItem(id="prompt-1", type=ContentType.PROMPT, title="Prompt"),
+            ContentItem(id="eval-1", type=ContentType.EVALUATION, title="Eval"),
+            ContentItem(id="media-1", type=ContentType.MEDIA, title="Media"),
+        ],
+    )
+
+    blockers = get_server_import_blockers_from_manifest(
+        manifest,
+        import_media=True,
+        import_embeddings=False,
+    )
+
+    assert blockers == ["evaluation", "media", "prompt"]
+
+
+def test_service_records_server_jobs_on_app_state():
+    class FakeApp:
+        pass
+
+    app = FakeApp()
+
+    record = build_server_job_record(
+        "export",
+        {
+            "job_id": "job-123",
+            "status": "completed",
+            "progress_percentage": 100,
+            "chatbook_name": "Pack",
+            "download_url": "https://example.com/download.zip",
+        },
+    )
+    record_server_job(app, record)
+
+    jobs = get_server_job_records(app)
+
+    assert len(jobs) == 1
+    assert jobs[0]["job_type"] == "export"
+    assert jobs[0]["job_id"] == "job-123"
+    assert jobs[0]["chatbook_name"] == "Pack"
