@@ -103,21 +103,40 @@ class NotesSidebarRight(VerticalScroll):
         scope_name = scope_type.replace("_", " ").title()
         resource_name = self._resource_name(resource_kind)
         is_note_resource = resource_kind == "note"
+        is_workspace_details = scope_type == "workspace" and resource_kind == "workspace"
 
         title = self.query_one("#notes-details-sidebar-title", Static)
-        title.update(f"{scope_name} {resource_name} Details")
+        if is_workspace_details:
+            title.update("Workspace Details")
+        else:
+            title.update(f"{scope_name} {resource_name} Details")
 
         save_button = self.query_one("#notes-save-current-button", Button)
-        save_button.label = f"Save {resource_name} Changes"
+        if is_workspace_details:
+            save_button.label = "Save Workspace Changes"
+        else:
+            save_button.label = f"Save {resource_name} Changes"
 
         delete_button = self.query_one("#notes-delete-button", Button)
-        delete_button.label = f"Delete Selected {resource_name}"
+        if scope_type == "workspace" and resource_kind == "note":
+            delete_button.label = "Delete Workspace Note"
+        elif is_workspace_details:
+            delete_button.label = "Delete Workspace"
+        else:
+            delete_button.label = f"Delete Selected {resource_name}"
 
         export_actions = self.query_one("#notes-export-actions", Collapsible)
         export_actions.display = is_note_resource
 
+        emoji_actions = self.query_one("#notes-emoji-actions", Collapsible)
+        emoji_actions.display = is_note_resource
+
+        title_label = self.query_one("#notes-title-label", Static)
+        title_input = self.query_one("#notes-title-input", Input)
         keywords_label = self.query_one("#notes-keywords-label", Static)
         keywords_area = self.query_one("#notes-keywords-area", TextArea)
+        title_label.display = not is_workspace_details
+        title_input.display = not is_workspace_details
         keywords_label.display = is_note_resource
         keywords_area.display = is_note_resource
 

@@ -8,6 +8,8 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, ListItem, ListView, Static
 
+from tldw_chatbook.tldw_api.notes_workspace_schemas import MediaSearchRequest
+
 
 class WorkspaceSourcePicker(ModalScreen[Optional[int]]):
     """Bounded picker for selecting a media item to attach as a workspace source."""
@@ -44,6 +46,12 @@ class WorkspaceSourcePicker(ModalScreen[Optional[int]]):
         self.service = service
         self.results = self._normalize_results(results or [])
         self.selected_media_id: Optional[int] = None
+
+    def _get_client(self) -> Any:
+        if self.service is None:
+            return None
+        explicit_client = getattr(self.service, "__dict__", {}).get("client")
+        return explicit_client if explicit_client is not None else self.service
 
     def compose(self) -> ComposeResult:
         with Container(id="workspace-source-picker-dialog"):
@@ -104,25 +112,46 @@ class WorkspaceSourcePicker(ModalScreen[Optional[int]]):
         return False
 
     async def load_results(self, query: str = "") -> list[dict[str, Any]]:
-        if self.service is None:
+        client = self._get_client()
+        if client is None:
             return self.results
 
-        method = None
+        payload: Any
         if query:
-            for name in ("search_media", "search_media_list", "search_media_library"):
-                method = getattr(self.service, name, None)
-                if method is not None:
-                    break
+            search_media_items = getattr(client, "search_media_items", None)
+            if search_media_items is not None:
+                payload = await search_media_items(
+                    request_data=MediaSearchRequest(query=query),
+                    page=1,
+                    results_per_page=10,
+                )
+            else:
+                legacy_search = None
+                for name in ("search_media", "search_media_list", "search_media_library"):
+                    legacy_search = getattr(client, name, None)
+                    if legacy_search is not None:
+                        break
+                if legacy_search is None:
+                    return self.results
+                payload = await legacy_search(query)
         else:
-            for name in ("list_media", "list_media_items", "get_media_list"):
-                method = getattr(self.service, name, None)
-                if method is not None:
-                    break
+            list_media_items = getattr(client, "list_media_items", None)
+            if list_media_items is not None:
+                payload = await list_media_items(
+                    page=1,
+                    results_per_page=10,
+                    include_keywords=False,
+                )
+            else:
+                legacy_list = None
+                for name in ("list_media", "get_media_list"):
+                    legacy_list = getattr(client, name, None)
+                    if legacy_list is not None:
+                        break
+                if legacy_list is None:
+                    return self.results
+                payload = await legacy_list()
 
-        if method is None:
-            return self.results
-
-        payload = await method(query) if query else await method()
         items = payload
         if isinstance(payload, dict):
             items = payload.get("items") or payload.get("results") or payload.get("media") or []

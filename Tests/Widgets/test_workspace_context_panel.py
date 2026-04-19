@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Collapsible, ListView, Static
+from textual.containers import Container
+from textual.widgets import Button, Collapsible, Input, ListView, Static, TextArea
 
 from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
 from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarRight
@@ -27,6 +28,18 @@ async def test_workspace_context_panel_shows_four_subviews():
         "workspace-sources",
         "workspace-artifacts",
     ]
+
+
+@pytest.mark.asyncio
+async def test_workspace_context_panel_keeps_all_sections_visible_after_mount():
+    panel = WorkspaceContextPanel(workspace={"name": "Research"})
+    app = PanelTestApp(panel)
+
+    async with app.run_test() as pilot:
+        for view_id in WorkspaceContextPanel.SUBVIEWS:
+            section = panel.query_one(f"#{view_id}", Container)
+            assert section.display is not False
+            assert str(section.styles.display) != "none"
 
 
 @pytest.mark.asyncio
@@ -76,7 +89,7 @@ async def test_notes_sidebar_left_scope_population_keeps_lists_separate():
 
 
 @pytest.mark.asyncio
-async def test_notes_sidebar_right_apply_scope_context_updates_actions():
+async def test_notes_sidebar_right_apply_scope_context_updates_workspace_artifact_actions():
     sidebar = NotesSidebarRight()
     app = PanelTestApp(sidebar)
 
@@ -92,3 +105,39 @@ async def test_notes_sidebar_right_apply_scope_context_updates_actions():
         assert str(save_button.label) == "Save Artifact Changes"
         assert export_actions.display is False
         assert str(delete_button.label) == "Delete Selected Artifact"
+
+
+@pytest.mark.asyncio
+async def test_notes_sidebar_right_workspace_note_context_uses_workspace_delete_label():
+    sidebar = NotesSidebarRight()
+    app = PanelTestApp(sidebar)
+
+    async with app.run_test() as pilot:
+        sidebar.apply_scope_context(scope_type="workspace", resource_kind="note")
+
+        delete_button = sidebar.query_one("#notes-delete-button", Button)
+        title = sidebar.query_one("#notes-details-sidebar-title", Static)
+
+        assert str(title.renderable) == "Workspace Note Details"
+        assert str(delete_button.label) == "Delete Workspace Note"
+
+
+@pytest.mark.asyncio
+async def test_notes_sidebar_right_workspace_details_context_hides_note_editor_controls():
+    sidebar = NotesSidebarRight()
+    app = PanelTestApp(sidebar)
+
+    async with app.run_test() as pilot:
+        sidebar.apply_scope_context(scope_type="workspace", resource_kind="workspace")
+
+        title = sidebar.query_one("#notes-details-sidebar-title", Static)
+        delete_button = sidebar.query_one("#notes-delete-button", Button)
+        export_actions = sidebar.query_one("#notes-export-actions", Collapsible)
+        title_input = sidebar.query_one("#notes-title-input", Input)
+        keywords_area = sidebar.query_one("#notes-keywords-area", TextArea)
+
+        assert str(title.renderable) == "Workspace Details"
+        assert str(delete_button.label) == "Delete Workspace"
+        assert export_actions.display is False
+        assert title_input.display is False
+        assert keywords_area.display is False

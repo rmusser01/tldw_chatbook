@@ -8,7 +8,7 @@ from textual.widgets import Label, ListItem, ListView, Static
 
 
 class WorkspaceContextPanel(VerticalScroll):
-    """Workspace details panel with separate notes, sources, and artifacts subviews."""
+    """Workspace details panel with workspace details plus notes, sources, and artifacts."""
 
     SUBVIEWS = (
         "workspace-details",
@@ -84,10 +84,6 @@ class WorkspaceContextPanel(VerticalScroll):
         if subview not in self.SUBVIEWS:
             raise ValueError(f"Unknown subview: {subview}")
         self.active_subview = subview
-        if not self.is_mounted:
-            return
-        for view_id in self.SUBVIEWS:
-            self.query_one(f"#{view_id}", Container).display = view_id == subview
 
     async def _populate_list(
         self,
@@ -126,4 +122,3 @@ class WorkspaceContextPanel(VerticalScroll):
 
     async def on_mount(self) -> None:
         self.set_workspace_details(self.workspace)
-        self.show_subview(self.active_subview)
