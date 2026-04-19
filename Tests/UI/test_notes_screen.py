@@ -393,7 +393,7 @@ class TestNotesScreenMethods:
         )
         screen._read_title_text = Mock(return_value="Local Note 1")
         screen._read_editor_text = Mock(return_value="Content 1")
-        screen._read_keywords = Mock(return_value=["alpha", "beta"])
+        screen._read_keywords = Mock(return_value=["beta", "alpha"])
 
         saved = await screen._save_current_note()
 
@@ -404,7 +404,8 @@ class TestNotesScreenMethods:
             keyword_id=9,
         )
         mock_app_instance.notes_service.unlink_note_from_keyword.assert_not_called()
-        assert screen._selected_note_keywords == ("alpha", "beta")
+        assert screen._selected_note_keywords == ("beta", "alpha")
+        assert screen._editor_surface_is_dirty() is False
         assert screen.state.has_unsaved_changes is False
 
     @pytest.mark.asyncio
