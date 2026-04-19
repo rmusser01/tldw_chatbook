@@ -912,6 +912,76 @@ class TestNotesScreenMethods:
         screen._perform_filtered_search.assert_awaited_once_with("alpha", "urgent")
 
     @pytest.mark.asyncio
+    async def test_keyword_only_edit_triggers_unsaved_navigation_guard(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await screen._hydrate_editor_for_local_note(
+                1,
+                {
+                    "id": 1,
+                    "title": "Local Note 1",
+                    "content": "Content 1",
+                    "version": 1,
+                    "keywords": [],
+                },
+            )
+            screen._set_state(auto_save_enabled=False)
+
+            sidebar_right = screen.query_one("#notes-sidebar-right")
+            keywords_area = sidebar_right.query_one("#notes-keywords-area", TextArea)
+            keywords_area.load_text("urgent, follow-up")
+            await screen.handle_keywords_changed(Mock())
+
+            blocked = screen.request_scope_transition(
+                ScopeType.SERVER_NOTE,
+                target_id="server-2",
+            )
+
+            assert screen.state.has_unsaved_changes is True
+            assert blocked.requires_confirmation is True
+            assert screen.state.pending_navigation is not None
+            assert screen.state.pending_navigation.target_scope == ScopeType.SERVER_NOTE
+            assert screen.state.pending_navigation.target_id == "server-2"
+
+    @pytest.mark.asyncio
+    async def test_dirty_state_recomputes_full_surface_when_other_fields_change(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await screen._hydrate_editor_for_local_note(
+                1,
+                {
+                    "id": 1,
+                    "title": "Local Note 1",
+                    "content": "Content 1",
+                    "version": 1,
+                    "keywords": [],
+                },
+            )
+            screen._set_state(auto_save_enabled=False)
+
+            sidebar_right = screen.query_one("#notes-sidebar-right")
+            keywords_area = sidebar_right.query_one("#notes-keywords-area", TextArea)
+            title_input = sidebar_right.query_one("#notes-title-input")
+
+            keywords_area.load_text("urgent")
+            await screen.handle_keywords_changed(Mock())
+            assert screen.state.has_unsaved_changes is True
+
+            title_input.value = "Temporary Title"
+            await screen.handle_title_changed(Mock())
+            assert screen.state.has_unsaved_changes is True
+
+            title_input.value = "Local Note 1"
+            await screen.handle_title_changed(Mock())
+            assert screen.state.has_unsaved_changes is True
+
+    @pytest.mark.asyncio
     async def test_copy_and_export_are_disabled_outside_note_editor_context(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
         screen._notify = Mock()

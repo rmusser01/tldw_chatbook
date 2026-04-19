@@ -135,6 +135,8 @@ class NotesScreen(BaseAppScreen):
         self.notes_scope_service = getattr(app_instance, "notes_scope_service", None)
         self.server_notes_workspace_service = getattr(app_instance, "server_notes_workspace_service", None)
         self.notes_user_id = getattr(app_instance, "notes_user_id", "default_user")
+        self._selected_note_keywords: tuple[str, ...] = ()
+        self._suspend_dirty_tracking = False
         self._workspace_context_payload: dict[str, Any] = {
             "workspace": {},
             "notes": [],
@@ -291,6 +293,23 @@ class NotesScreen(BaseAppScreen):
             "word_count": len(content.split()) if content else 0,
         }
 
+    def _normalize_keywords(self, keywords: Any) -> tuple[str, ...]:
+        if keywords is None:
+            return ()
+        if isinstance(keywords, str):
+            raw_items = keywords.split(",")
+        else:
+            raw_items = keywords
+        normalized: list[str] = []
+        for item in raw_items:
+            keyword = str(item).strip()
+            if keyword:
+                normalized.append(keyword)
+        return tuple(normalized)
+
+    def _set_keywords_baseline(self, keywords: Any) -> None:
+        self._selected_note_keywords = self._normalize_keywords(keywords)
+
     def _cleared_selection_changes(self) -> dict[str, Any]:
         return {
             "selected_note_id": None,
@@ -413,6 +432,7 @@ class NotesScreen(BaseAppScreen):
             else:
                 changes["selected_workspace_note_id"] = pending.target_id
                 changes["selected_workspace_note_version"] = pending.target_version
+        self._set_keywords_baseline([])
         self._set_state(**changes)
         self._sync_legacy_local_selection()
 
@@ -704,6 +724,7 @@ class NotesScreen(BaseAppScreen):
                 content=content,
             ),
         )
+        self._set_keywords_baseline(note_details.get("keywords"))
         self._sync_legacy_local_selection()
         self._workspace_context_payload = {
             "workspace": {},
@@ -723,17 +744,16 @@ class NotesScreen(BaseAppScreen):
     ) -> None:
         if self.is_mounted:
             try:
+                self._suspend_dirty_tracking = True
                 self.query_one("#notes-editor-area", TextArea).load_text(content)
                 sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
                 sidebar_right.query_one("#notes-title-input", Input).value = title
-                keyword_values = keywords or []
-                if isinstance(keyword_values, str):
-                    keyword_text = keyword_values
-                else:
-                    keyword_text = ", ".join(str(item) for item in keyword_values if str(item).strip())
+                keyword_text = ", ".join(self._normalize_keywords(keywords))
                 sidebar_right.query_one("#notes-keywords-area", TextArea).load_text(keyword_text)
             except QueryError:
                 return
+            finally:
+                self._suspend_dirty_tracking = False
 
     async def _hydrate_editor_for_server_note(self, note_id: str, note_details: dict[str, Any]) -> None:
         content = note_details.get("content", "") or ""
@@ -750,6 +770,7 @@ class NotesScreen(BaseAppScreen):
                 content=content,
             ),
         )
+        self._set_keywords_baseline(note_details.get("keywords"))
         self._sync_legacy_local_selection()
         self._write_editor_surface(title=title, content=content, keywords=note_details.get("keywords"))
         self._update_scope_context_ui()
@@ -771,6 +792,7 @@ class NotesScreen(BaseAppScreen):
                 content=content,
             ),
         )
+        self._set_keywords_baseline(note_details.get("keywords"))
         self._sync_legacy_local_selection()
         self._write_editor_surface(title=title, content=content, keywords=note_details.get("keywords"))
         self._update_scope_context_ui()
@@ -794,13 +816,20 @@ class NotesScreen(BaseAppScreen):
 
     def _read_keywords(self) -> list[str]:
         if not self.is_mounted:
-            return []
+            return list(self._selected_note_keywords)
         try:
             sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
             keywords_text = sidebar_right.query_one("#notes-keywords-area", TextArea).text
         except QueryError:
-            return []
+            return list(self._selected_note_keywords)
         return [item.strip() for item in keywords_text.split(",") if item.strip()]
+
+    def _editor_surface_is_dirty(self) -> bool:
+        return (
+            self._read_title_text() != self.state.selected_note_title
+            or self._read_editor_text() != self.state.selected_note_content
+            or self._normalize_keywords(self._read_keywords()) != self._selected_note_keywords
+        )
 
     def _build_export_content(self, export_format: str) -> str:
         current_title = self._read_title_text().strip() or "Untitled Note"
@@ -986,6 +1015,7 @@ class NotesScreen(BaseAppScreen):
                     keywords=current_keywords,
                 )
                 if isinstance(result, dict):
+                    baseline_keywords = result.get("keywords", current_keywords)
                     if self.state.scope_type == ScopeType.LOCAL_NOTE:
                         self._set_state(
                             selected_local_note_id=result.get("id", resource_id),
@@ -1047,6 +1077,7 @@ class NotesScreen(BaseAppScreen):
                                     content=result.get("content", current_content),
                                 ),
                             )
+                    self._set_keywords_baseline(baseline_keywords)
                 else:
                     self._set_state(
                         selected_local_note_version=(current_version + 1) if current_version is not None else current_version,
@@ -1058,6 +1089,7 @@ class NotesScreen(BaseAppScreen):
                             content=current_content,
                         ),
                     )
+                    self._set_keywords_baseline(current_keywords)
             elif self.state.scope_type == ScopeType.LOCAL_NOTE and self.notes_service is not None:
                 success = self.notes_service.update_note(
                     user_id=self.notes_user_id,
@@ -1078,6 +1110,7 @@ class NotesScreen(BaseAppScreen):
                         content=current_content,
                     ),
                 )
+                self._set_keywords_baseline(current_keywords)
             else:
                 self._notify("Scope-aware save service is not configured.", severity="warning")
                 return False
@@ -1129,6 +1162,7 @@ class NotesScreen(BaseAppScreen):
                 has_unsaved_changes=False,
                 **self._cleared_selection_changes(),
             )
+            self._set_keywords_baseline([])
             self._sync_legacy_local_selection()
             await self._clear_editor()
             await self.refresh_current_scope()
@@ -1183,6 +1217,7 @@ class NotesScreen(BaseAppScreen):
             selected_note_content="",
             has_unsaved_changes=False,
         )
+        self._set_keywords_baseline([])
         await self._populate_workspace_context_panel_if_available(
             workspace=payload["workspace"],
             notes=self._filter_workspace_notes_in_memory(payload["notes"]),
@@ -1244,6 +1279,7 @@ class NotesScreen(BaseAppScreen):
                     ),
                     selected_note_content=str(selected_item.get("content") or ""),
                 )
+            self._set_keywords_baseline([])
             await self._populate_workspace_context_panel_if_available(
                 workspace=payload["workspace"],
                 notes=self._filter_workspace_notes_in_memory(payload["notes"]),
@@ -1328,6 +1364,7 @@ class NotesScreen(BaseAppScreen):
                 selected_workspace_artifact_id=None,
                 selected_workspace_artifact_version=None,
             )
+            self._set_keywords_baseline([])
             self._sync_legacy_local_selection()
             await self._clear_editor()
             await self.refresh_current_scope()
@@ -1383,6 +1420,7 @@ class NotesScreen(BaseAppScreen):
                 changes["selected_workspace_artifact_id"] = None
                 changes["selected_workspace_artifact_version"] = None
             self._set_state(**changes)
+            self._set_keywords_baseline([])
             self._sync_legacy_local_selection()
             await self._clear_editor()
             await self.refresh_current_scope()
@@ -1392,14 +1430,19 @@ class NotesScreen(BaseAppScreen):
             self._notify(f"Error deleting workspace {resource_kind}: {type(exc).__name__}", severity="error")
 
     async def _clear_editor(self) -> None:
+        self._set_keywords_baseline([])
         if not self.is_mounted:
             return
         try:
+            self._suspend_dirty_tracking = True
             self.query_one("#notes-editor-area", TextArea).clear()
             sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
             sidebar_right.query_one("#notes-title-input", Input).value = ""
+            sidebar_right.query_one("#notes-keywords-area", TextArea).clear()
         except QueryError:
             return
+        finally:
+            self._suspend_dirty_tracking = False
 
     async def _toggle_preview_mode(self) -> None:
         mode = "Preview" if self.state.is_preview_mode else "Edit"
@@ -1504,23 +1547,33 @@ class NotesScreen(BaseAppScreen):
 
     @on(TextArea.Changed, "#notes-editor-area")
     async def handle_editor_changed(self, event: TextArea.Changed) -> None:
-        if not self._get_current_resource_id():
+        if self._suspend_dirty_tracking or not self._get_current_resource_id():
             return
         current_content = event.text_area.text
+        has_unsaved_changes = self._editor_surface_is_dirty()
         self._set_state(
-            has_unsaved_changes=(current_content != self.state.selected_note_content),
+            has_unsaved_changes=has_unsaved_changes,
             word_count=len(current_content.split()) if current_content else 0,
         )
-        if self.state.auto_save_enabled and self.state.has_unsaved_changes:
+        if self.state.auto_save_enabled and has_unsaved_changes:
             self._start_auto_save_timer()
 
     @on(Input.Changed, "#notes-title-input")
     async def handle_title_changed(self, event: Input.Changed) -> None:
-        if not self._get_current_resource_id():
+        if self._suspend_dirty_tracking or not self._get_current_resource_id():
             return
-        current_title = event.input.value
-        self._set_state(has_unsaved_changes=(current_title != self.state.selected_note_title))
-        if self.state.auto_save_enabled and self.state.has_unsaved_changes:
+        has_unsaved_changes = self._editor_surface_is_dirty()
+        self._set_state(has_unsaved_changes=has_unsaved_changes)
+        if self.state.auto_save_enabled and has_unsaved_changes:
+            self._start_auto_save_timer()
+
+    @on(TextArea.Changed, "#notes-keywords-area")
+    async def handle_keywords_changed(self, event: TextArea.Changed) -> None:
+        if self._suspend_dirty_tracking or not self._get_current_resource_id():
+            return
+        has_unsaved_changes = self._editor_surface_is_dirty()
+        self._set_state(has_unsaved_changes=has_unsaved_changes)
+        if self.state.auto_save_enabled and has_unsaved_changes:
             self._start_auto_save_timer()
 
     @on(Input.Changed, "#notes-search-input")
