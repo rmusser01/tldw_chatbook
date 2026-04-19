@@ -22,6 +22,8 @@ from ..tldw_api import (
     WorkspaceUpdateRequest,
 )
 
+_UNSET = object()
+
 
 class ServerNotesWorkspaceService:
     """Thin service around server-backed notes and workspace resources."""
@@ -99,6 +101,19 @@ class ServerNotesWorkspaceService:
             return self._normalize_keywords(decoded)
         return []
 
+    def _with_optional_update_fields(self, **fields: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        for key, value in fields.items():
+            if value is _UNSET or value is None:
+                continue
+            payload[key] = value
+        return payload
+
+    def _require_value(self, value: Any, field_name: str) -> Any:
+        if value is _UNSET or value is None:
+            raise ValueError(f"{field_name} is required for create operations.")
+        return value
+
     def normalize_server_note(self, note: Mapping[str, Any]) -> dict[str, Any]:
         return {
             "id": note.get("id"),
@@ -124,6 +139,10 @@ class ServerNotesWorkspaceService:
             "name": workspace.get("name") or "",
             "archived": bool(workspace.get("archived", False)),
             "study_materials_policy": workspace.get("study_materials_policy") or "general",
+            "audio_provider": workspace.get("audio_provider"),
+            "audio_model": workspace.get("audio_model"),
+            "audio_voice": workspace.get("audio_voice"),
+            "audio_speed": workspace.get("audio_speed"),
             "version": int(workspace.get("version") or 1),
         }
 
@@ -169,15 +188,14 @@ class ServerNotesWorkspaceService:
     def build_server_note_update_payload(
         self,
         *,
-        title: Optional[str],
-        content: Optional[str],
-        keywords: Optional[Sequence[str]] = None,
+        title: Any = _UNSET,
+        content: Any = _UNSET,
+        keywords: Any = _UNSET,
     ) -> NoteUpdateRequest:
-        return NoteUpdateRequest(
-            title=title,
-            content=content,
-            keywords=self._normalize_keywords(list(keywords or [])),
-        )
+        payload = self._with_optional_update_fields(title=title, content=content)
+        if keywords is not _UNSET and keywords is not None:
+            payload["keywords"] = self._normalize_keywords(keywords)
+        return NoteUpdateRequest(**payload)
 
     def build_workspace_create_payload(
         self,
@@ -196,21 +214,31 @@ class ServerNotesWorkspaceService:
         self,
         *,
         version: int,
-        name: Optional[str] = None,
-        archived: Optional[bool] = None,
-        study_materials_policy: Optional[str] = None,
-        banner_title: Optional[str] = None,
-        banner_subtitle: Optional[str] = None,
-        banner_color: Optional[str] = None,
+        name: Any = _UNSET,
+        archived: Any = _UNSET,
+        study_materials_policy: Any = _UNSET,
+        banner_title: Any = _UNSET,
+        banner_subtitle: Any = _UNSET,
+        banner_color: Any = _UNSET,
+        audio_provider: Any = _UNSET,
+        audio_model: Any = _UNSET,
+        audio_voice: Any = _UNSET,
+        audio_speed: Any = _UNSET,
     ) -> WorkspaceUpdateRequest:
         return WorkspaceUpdateRequest(
-            name=name,
-            archived=archived,
-            study_materials_policy=study_materials_policy,
-            banner_title=banner_title,
-            banner_subtitle=banner_subtitle,
-            banner_color=banner_color,
             version=version,
+            **self._with_optional_update_fields(
+                name=name,
+                archived=archived,
+                study_materials_policy=study_materials_policy,
+                banner_title=banner_title,
+                banner_subtitle=banner_subtitle,
+                banner_color=banner_color,
+                audio_provider=audio_provider,
+                audio_model=audio_model,
+                audio_voice=audio_voice,
+                audio_speed=audio_speed,
+            ),
         )
 
     def build_workspace_note_create_payload(
@@ -229,17 +257,15 @@ class ServerNotesWorkspaceService:
     def build_workspace_note_update_payload(
         self,
         *,
-        title: Optional[str],
-        content: Optional[str],
-        keywords: Optional[Sequence[str]],
+        title: Any = _UNSET,
+        content: Any = _UNSET,
+        keywords: Any = _UNSET,
         version: int,
     ) -> WorkspaceNoteUpdateRequest:
-        return WorkspaceNoteUpdateRequest(
-            title=title,
-            content=content,
-            keywords_json=json.dumps(self._normalize_keywords(list(keywords or []))),
-            version=version,
-        )
+        payload = self._with_optional_update_fields(title=title, content=content)
+        if keywords is not _UNSET and keywords is not None:
+            payload["keywords_json"] = json.dumps(self._normalize_keywords(keywords))
+        return WorkspaceNoteUpdateRequest(version=version, **payload)
 
     def build_workspace_source_create_payload(
         self,
@@ -266,19 +292,21 @@ class ServerNotesWorkspaceService:
         self,
         *,
         version: int,
-        title: Optional[str] = None,
-        source_type: Optional[str] = None,
-        url: Optional[str] = None,
-        position: Optional[int] = None,
-        selected: Optional[bool] = None,
+        title: Any = _UNSET,
+        source_type: Any = _UNSET,
+        url: Any = _UNSET,
+        position: Any = _UNSET,
+        selected: Any = _UNSET,
     ) -> WorkspaceSourceUpdateRequest:
         return WorkspaceSourceUpdateRequest(
-            title=title,
-            source_type=source_type,
-            url=url,
-            position=position,
-            selected=selected,
             version=version,
+            **self._with_optional_update_fields(
+                title=title,
+                source_type=source_type,
+                url=url,
+                position=position,
+                selected=selected,
+            ),
         )
 
     def build_workspace_artifact_create_payload(
@@ -302,21 +330,23 @@ class ServerNotesWorkspaceService:
         self,
         *,
         version: int,
-        title: Optional[str] = None,
-        status: Optional[str] = None,
-        content: Optional[str] = None,
-        total_tokens: Optional[int] = None,
-        total_cost_usd: Optional[float] = None,
-        completed_at: Optional[str] = None,
+        title: Any = _UNSET,
+        status: Any = _UNSET,
+        content: Any = _UNSET,
+        total_tokens: Any = _UNSET,
+        total_cost_usd: Any = _UNSET,
+        completed_at: Any = _UNSET,
     ) -> WorkspaceArtifactUpdateRequest:
         return WorkspaceArtifactUpdateRequest(
-            title=title,
-            status=status,
-            content=content,
-            total_tokens=total_tokens,
-            total_cost_usd=total_cost_usd,
-            completed_at=completed_at,
             version=version,
+            **self._with_optional_update_fields(
+                title=title,
+                status=status,
+                content=content,
+                total_tokens=total_tokens,
+                total_cost_usd=total_cost_usd,
+                completed_at=completed_at,
+            ),
         )
 
     async def list_server_notes(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
@@ -355,10 +385,10 @@ class ServerNotesWorkspaceService:
     async def save_server_note(
         self,
         *,
-        title: str,
-        content: str,
+        title: Any = _UNSET,
+        content: Any = _UNSET,
         note_id: Optional[str] = None,
-        keywords: Optional[Sequence[str]] = None,
+        keywords: Any = _UNSET,
         version: Optional[int] = None,
     ) -> dict[str, Any]:
         client = self._require_client()
@@ -377,10 +407,10 @@ class ServerNotesWorkspaceService:
             )
         else:
             request = self.build_server_note_create_payload(
-                title=title,
-                content=content,
+                title=self._require_value(title, "title"),
+                content=self._require_value(content, "content"),
                 note_id=note_id,
-                keywords=keywords,
+                keywords=None if keywords is _UNSET else keywords,
             )
             response = await client.create_server_note(request)
         return self.normalize_server_note(self._coerce_resource(response, "note", "item"))
@@ -398,17 +428,24 @@ class ServerNotesWorkspaceService:
         self,
         *,
         workspace_id: str,
-        name: str,
+        name: Any = _UNSET,
         version: Optional[int] = None,
-        archived: Optional[bool] = None,
-        study_materials_policy: Optional[str] = None,
+        archived: Any = _UNSET,
+        study_materials_policy: Any = _UNSET,
+        banner_title: Any = _UNSET,
+        banner_subtitle: Any = _UNSET,
+        banner_color: Any = _UNSET,
+        audio_provider: Any = _UNSET,
+        audio_model: Any = _UNSET,
+        audio_voice: Any = _UNSET,
+        audio_speed: Any = _UNSET,
     ) -> dict[str, Any]:
         client = self._require_client()
         if version is None:
             request = self.build_workspace_create_payload(
-                name=name,
-                archived=bool(archived) if archived is not None else False,
-                study_materials_policy=study_materials_policy or "general",
+                name=self._require_value(name, "name"),
+                archived=False if archived is _UNSET else bool(archived),
+                study_materials_policy="general" if study_materials_policy in {_UNSET, None} else study_materials_policy,
             )
             response = await client.create_workspace(workspace_id, request)
         else:
@@ -416,6 +453,13 @@ class ServerNotesWorkspaceService:
                 name=name,
                 archived=archived,
                 study_materials_policy=study_materials_policy,
+                banner_title=banner_title,
+                banner_subtitle=banner_subtitle,
+                banner_color=banner_color,
+                audio_provider=audio_provider,
+                audio_model=audio_model,
+                audio_voice=audio_voice,
+                audio_speed=audio_speed,
                 version=version,
             )
             response = await client.update_workspace(workspace_id, request)
@@ -470,18 +514,18 @@ class ServerNotesWorkspaceService:
         self,
         *,
         workspace_id: str,
-        title: str,
-        content: str,
+        title: Any = _UNSET,
+        content: Any = _UNSET,
         note_id: Optional[int] = None,
-        keywords: Optional[Sequence[str]] = None,
+        keywords: Any = _UNSET,
         version: Optional[int] = None,
     ) -> dict[str, Any]:
         client = self._require_client()
         if note_id is None:
             request = self.build_workspace_note_create_payload(
-                title=title,
-                content=content,
-                keywords=keywords,
+                title=self._require_value(title, "title"),
+                content=self._require_value(content, "content"),
+                keywords=None if keywords is _UNSET else keywords,
             )
             response = await client.create_workspace_note(workspace_id, request)
         else:
@@ -515,24 +559,24 @@ class ServerNotesWorkspaceService:
         *,
         workspace_id: str,
         source_id: str,
-        media_id: int,
-        title: str,
-        source_type: str,
+        media_id: Any = _UNSET,
+        title: Any = _UNSET,
+        source_type: Any = _UNSET,
         version: Optional[int] = None,
-        url: Optional[str] = None,
-        position: int = 0,
-        selected: bool = True,
+        url: Any = _UNSET,
+        position: Any = _UNSET,
+        selected: Any = _UNSET,
     ) -> dict[str, Any]:
         client = self._require_client()
         if version is None:
             request = self.build_workspace_source_create_payload(
                 source_id=source_id,
-                media_id=media_id,
-                title=title,
-                source_type=source_type,
-                url=url,
-                position=position,
-                selected=selected,
+                media_id=self._require_value(media_id, "media_id"),
+                title=self._require_value(title, "title"),
+                source_type=self._require_value(source_type, "source_type"),
+                url=None if url is _UNSET else url,
+                position=0 if position is _UNSET else position,
+                selected=True if selected is _UNSET else selected,
             )
             response = await client.create_workspace_source(workspace_id, request)
         else:
@@ -561,20 +605,20 @@ class ServerNotesWorkspaceService:
         *,
         workspace_id: str,
         artifact_id: str,
-        artifact_type: str,
-        title: str,
+        artifact_type: Any = _UNSET,
+        title: Any = _UNSET,
         version: Optional[int] = None,
-        status: str = "pending",
-        content: Optional[str] = None,
+        status: Any = _UNSET,
+        content: Any = _UNSET,
     ) -> dict[str, Any]:
         client = self._require_client()
         if version is None:
             request = self.build_workspace_artifact_create_payload(
                 artifact_id=artifact_id,
-                artifact_type=artifact_type,
-                title=title,
-                status=status,
-                content=content,
+                artifact_type=self._require_value(artifact_type, "artifact_type"),
+                title=self._require_value(title, "title"),
+                status="pending" if status in {_UNSET, None} else status,
+                content=None if content is _UNSET else content,
             )
             response = await client.create_workspace_artifact(workspace_id, request)
         else:

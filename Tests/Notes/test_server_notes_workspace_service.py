@@ -39,6 +39,10 @@ class FakeClient:
             "name": "Research",
             "version": 7,
             "archived": False,
+            "audio_provider": "openai",
+            "audio_model": "gpt-4o-mini-tts",
+            "audio_voice": "alloy",
+            "audio_speed": 1.25,
         }
 
     async def list_workspace_notes(self, workspace_id):
@@ -99,6 +103,74 @@ async def test_service_serializes_workspace_note_keywords_for_update():
     )
 
     assert payload.keywords_json == '["alpha", "beta"]'
+
+
+def test_service_server_note_update_payload_omits_keywords_when_not_supplied():
+    service = ServerNotesWorkspaceService(client=None)
+
+    payload = service.build_server_note_update_payload(title="Remote", content="Body")
+
+    assert payload.model_dump(exclude_unset=True) == {
+        "title": "Remote",
+        "content": "Body",
+    }
+
+
+def test_service_workspace_note_update_payload_omits_unset_fields():
+    service = ServerNotesWorkspaceService(client=None)
+
+    payload = service.build_workspace_note_update_payload(version=3)
+
+    assert payload.model_dump(exclude_unset=True) == {"version": 3}
+
+
+def test_service_workspace_rename_only_update_payload_omits_unrelated_fields():
+    service = ServerNotesWorkspaceService(client=None)
+
+    payload = service.build_workspace_update_payload(name="Renamed", version=8)
+
+    assert payload.model_dump(exclude_unset=True) == {
+        "name": "Renamed",
+        "version": 8,
+    }
+
+
+def test_service_workspace_update_payload_includes_audio_fields():
+    service = ServerNotesWorkspaceService(client=None)
+
+    payload = service.build_workspace_update_payload(
+        name="Renamed",
+        audio_provider="openai",
+        audio_model="gpt-4o-mini-tts",
+        audio_voice="alloy",
+        audio_speed=1.25,
+        version=8,
+    )
+
+    assert payload.model_dump(exclude_unset=True) == {
+        "name": "Renamed",
+        "audio_provider": "openai",
+        "audio_model": "gpt-4o-mini-tts",
+        "audio_voice": "alloy",
+        "audio_speed": 1.25,
+        "version": 8,
+    }
+
+
+def test_service_workspace_source_update_payload_omits_unset_fields():
+    service = ServerNotesWorkspaceService(client=None)
+
+    payload = service.build_workspace_source_update_payload(version=5)
+
+    assert payload.model_dump(exclude_unset=True) == {"version": 5}
+
+
+def test_service_workspace_artifact_update_payload_omits_unset_fields():
+    service = ServerNotesWorkspaceService(client=None)
+
+    payload = service.build_workspace_artifact_update_payload(version=9)
+
+    assert payload.model_dump(exclude_unset=True) == {"version": 9}
 
 
 def test_service_filters_workspace_notes_within_active_workspace_only():
@@ -176,6 +248,35 @@ def test_service_normalizes_server_note_editor_payload_with_version():
     }
 
 
+def test_service_normalizes_workspace_with_audio_fields():
+    service = ServerNotesWorkspaceService(client=None)
+
+    normalized = service.normalize_workspace(
+        {
+            "id": "ws-1",
+            "name": "Research",
+            "version": 7,
+            "archived": False,
+            "audio_provider": "openai",
+            "audio_model": "gpt-4o-mini-tts",
+            "audio_voice": "alloy",
+            "audio_speed": 1.25,
+        }
+    )
+
+    assert normalized == {
+        "id": "ws-1",
+        "name": "Research",
+        "archived": False,
+        "study_materials_policy": "general",
+        "audio_provider": "openai",
+        "audio_model": "gpt-4o-mini-tts",
+        "audio_voice": "alloy",
+        "audio_speed": 1.25,
+        "version": 7,
+    }
+
+
 @pytest.mark.asyncio
 async def test_service_uses_api_backed_search_for_user_space_notes():
     client = FakeClient()
@@ -209,6 +310,10 @@ async def test_service_loads_workspace_context_with_versions():
         ("artifacts", "ws-1"),
     ]
     assert context["workspace"]["version"] == 7
+    assert context["workspace"]["audio_provider"] == "openai"
+    assert context["workspace"]["audio_model"] == "gpt-4o-mini-tts"
+    assert context["workspace"]["audio_voice"] == "alloy"
+    assert context["workspace"]["audio_speed"] == 1.25
     assert context["notes"][0]["version"] == 3
     assert context["sources"][0]["version"] == 5
     assert context["artifacts"][0]["version"] == 9
