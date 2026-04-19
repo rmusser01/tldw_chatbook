@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual.app import App, ComposeResult
 
-from tldw_chatbook.tldw_api.notes_workspace_schemas import MediaSearchRequest
+from tldw_chatbook.tldw_api.notes_workspace_schemas import (
+    MediaListPagination,
+    MediaListResponse,
+    MediaListItem,
+    MediaSearchRequest,
+)
 from tldw_chatbook.Widgets.Note_Widgets.workspace_source_picker import WorkspaceSourcePicker
 
 
@@ -78,3 +83,40 @@ async def test_workspace_source_picker_loads_results_from_service_client_list():
         include_keywords=False,
     )
     assert results[0]["id"] == 7
+
+
+@pytest.mark.asyncio
+async def test_workspace_source_picker_invalidates_stale_selection_after_refresh():
+    client = AsyncMock()
+    client.list_media_items = AsyncMock(
+        return_value={
+            "items": [
+                {"id": 100, "title": "Fresh Item", "type": "pdf"},
+            ]
+        }
+    )
+    picker = WorkspaceSourcePicker(service=client, results=[{"id": 42, "title": "Old Item", "type": "pdf"}])
+    picker.select_result(42)
+
+    results = await picker.load_results()
+
+    assert results[0]["id"] == 100
+    assert picker.selected_media_id is None
+
+
+@pytest.mark.asyncio
+async def test_workspace_source_picker_handles_typed_media_response_items():
+    client = AsyncMock()
+    client.list_media_items = AsyncMock(
+        return_value=MediaListResponse(
+            items=[
+                MediaListItem(id=55, title="Typed Item", url="https://example.com/media/55", type="webpage"),
+            ],
+            pagination=MediaListPagination(page=1, results_per_page=10, total_pages=1, total_items=1),
+        )
+    )
+    picker = WorkspaceSourcePicker(service=client)
+
+    results = await picker.load_results()
+
+    assert results == [{"id": 55, "title": "Typed Item", "type": "webpage"}]

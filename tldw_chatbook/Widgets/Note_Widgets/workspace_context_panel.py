@@ -47,7 +47,6 @@ class WorkspaceContextPanel(VerticalScroll):
     def __init__(self, workspace: dict[str, Any] | None = None, **kwargs: Any):
         super().__init__(**kwargs)
         self.workspace = workspace or {}
-        self.active_subview = self.SUBVIEWS[0]
 
     def compose(self) -> ComposeResult:
         yield Static("Workspace Context", id="workspace-context-title")
@@ -79,11 +78,6 @@ class WorkspaceContextPanel(VerticalScroll):
             f"Archived: {bool(self.workspace.get('archived', False))}",
         ]
         self.query_one("#workspace-summary", Label).update(" | ".join(summary_parts))
-
-    def show_subview(self, subview: str) -> None:
-        if subview not in self.SUBVIEWS:
-            raise ValueError(f"Unknown subview: {subview}")
-        self.active_subview = subview
 
     async def _populate_list(
         self,

@@ -64,22 +64,54 @@ class WorkspaceSourcePicker(ModalScreen[Optional[int]]):
                 yield Button("Select", id="workspace-source-select-button", variant="success")
                 yield Button("Cancel", id="workspace-source-cancel-button", variant="default")
 
-    def _normalize_results(self, results: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _coerce_payload_items(self, payload: Any) -> list[Any]:
+        if payload is None:
+            return []
+        if isinstance(payload, dict):
+            return list(payload.get("items") or payload.get("results") or payload.get("media") or [])
+        if hasattr(payload, "items"):
+            items = getattr(payload, "items")
+            if isinstance(items, list):
+                return items
+        if isinstance(payload, (list, tuple)):
+            return list(payload)
+        return []
+
+    def _normalize_result_item(self, item: Any) -> Optional[dict[str, Any]]:
+        if hasattr(item, "model_dump"):
+            item = item.model_dump(mode="json")
+        elif not isinstance(item, dict) and hasattr(item, "__dict__"):
+            item = dict(item.__dict__)
+
+        if not isinstance(item, dict):
+            return None
+
+        media_id = item.get("id") or item.get("media_id")
+        if media_id is None:
+            return None
+        return {
+            "id": media_id,
+            "title": item.get("title") or item.get("name") or f"Media {media_id}",
+            "type": item.get("type") or item.get("media_type") or item.get("source_type") or "media",
+        }
+
+    def _normalize_results(self, results: Iterable[Any]) -> list[dict[str, Any]]:
         normalized: list[dict[str, Any]] = []
         for item in results:
-            if not isinstance(item, dict):
-                continue
-            media_id = item.get("id") or item.get("media_id")
-            if media_id is None:
-                continue
-            normalized.append(
-                {
-                    "id": media_id,
-                    "title": item.get("title") or item.get("name") or f"Media {media_id}",
-                    "type": item.get("type") or item.get("media_type") or item.get("source_type") or "media",
-                }
-            )
+            normalized_item = self._normalize_result_item(item)
+            if normalized_item is not None:
+                normalized.append(normalized_item)
         return normalized
+
+    def _revalidate_selection(self) -> None:
+        if self.selected_media_id is None:
+            self._update_selected_label()
+            return
+        if any(item["id"] == self.selected_media_id for item in self.results):
+            self._update_selected_label()
+            return
+        self.selected_media_id = None
+        self._update_selected_label()
 
     async def _refresh_results_view(self) -> None:
         if not self.is_mounted:
@@ -152,11 +184,9 @@ class WorkspaceSourcePicker(ModalScreen[Optional[int]]):
                     return self.results
                 payload = await legacy_list()
 
-        items = payload
-        if isinstance(payload, dict):
-            items = payload.get("items") or payload.get("results") or payload.get("media") or []
-
-        self.results = self._normalize_results(items or [])
+        items = self._coerce_payload_items(payload)
+        self.results = self._normalize_results(items)
+        self._revalidate_selection()
         await self._refresh_results_view()
         return self.results
 
