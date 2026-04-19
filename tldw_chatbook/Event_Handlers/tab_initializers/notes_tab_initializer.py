@@ -23,17 +23,16 @@ class NotesTabInitializer(BaseTabInitializer):
     
     async def on_tab_shown(self) -> None:
         """Initialize the notes tab when shown."""
-        self.log_initialization("Notes tab shown, loading notes...")
-        
-        # Import here to avoid circular imports
-        from tldw_chatbook.Event_Handlers import notes_events
-        
-        # Load and display notes
-        self.call_async_handler(
-            notes_events.load_and_display_notes_handler,
-            self.app
-        )
-        
+        self.log_initialization("Notes tab shown, refreshing active notes scope...")
+
+        from tldw_chatbook.UI.Screens.notes_screen import NotesScreen
+
+        active_screen = getattr(self.app, "screen", None)
+        if isinstance(active_screen, NotesScreen):
+            await active_screen.refresh_current_scope()
+        else:
+            self.log_initialization("Active screen is not NotesScreen; skipping scope refresh.")
+
         self.log_initialization("Notes tab initialization complete")
     
     async def on_tab_hidden(self) -> None:

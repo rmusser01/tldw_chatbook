@@ -110,6 +110,8 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler, STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
 )
 from .Notes.Notes_Library import NotesInteropService
+from .Notes.notes_scope_service import NotesScopeService
+from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
@@ -1247,6 +1249,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             else:
                 logging.error("ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.")
                 self.chachanotes_db = None # Explicitly set to None
+
+        self.server_notes_workspace_service = ServerNotesWorkspaceService.from_config(self.app_config)
+        self.notes_scope_service = NotesScopeService(
+            local_notes_service=self.notes_service,
+            server_service=self.server_notes_workspace_service,
+        )
 
         # --- Create the master handler map ---
         # This one-time setup makes the dispatcher clean and fast.
@@ -3661,6 +3669,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def save_current_note(self) -> bool:
         """Saves the currently selected note's title and content to the database."""
+        if isinstance(self.screen, NotesScreen):
+            return await self.screen._save_current_note()
         if not self.notes_service or not self.current_selected_note_id or self.current_selected_note_version is None:
             logging.warning("No note selected or service unavailable. Cannot save.")
             # Optionally: self.notify("No note selected to save.", severity="warning")
