@@ -135,6 +135,22 @@ def test_service_workspace_rename_only_update_payload_omits_unrelated_fields():
     }
 
 
+def test_service_workspace_update_payload_preserves_explicit_null_clear():
+    service = ServerNotesWorkspaceService(client=None)
+
+    payload = service.build_workspace_update_payload(
+        name="Renamed",
+        banner_title=None,
+        version=8,
+    )
+
+    assert payload.model_dump(exclude_unset=True) == {
+        "name": "Renamed",
+        "banner_title": None,
+        "version": 8,
+    }
+
+
 def test_service_workspace_update_payload_includes_audio_fields():
     service = ServerNotesWorkspaceService(client=None)
 

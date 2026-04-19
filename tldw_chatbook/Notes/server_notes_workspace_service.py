@@ -104,7 +104,7 @@ class ServerNotesWorkspaceService:
     def _with_optional_update_fields(self, **fields: Any) -> dict[str, Any]:
         payload: dict[str, Any] = {}
         for key, value in fields.items():
-            if value is _UNSET or value is None:
+            if value is _UNSET:
                 continue
             payload[key] = value
         return payload
