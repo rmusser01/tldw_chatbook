@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Collapsible, Static, TextArea
+from textual.widgets import Button, Collapsible, Select, Static, TextArea
 
 from tldw_chatbook.UI.Screens.notes_scope_models import (
     NotesScreenState,
@@ -820,6 +820,43 @@ class TestNotesScreenMethods:
             assert top_save_button.display is False
             assert export_actions.display is False
             assert str(title.renderable) == "Workspace Details"
+
+    @pytest.mark.asyncio
+    async def test_scope_context_hides_local_only_left_sidebar_create_controls(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            create_from_template = screen.query_one("#notes-create-from-template-button", Button)
+            create_blank = screen.query_one("#notes-create-new-button", Button)
+            import_note = screen.query_one("#notes-import-button", Button)
+            template_select = screen.query_one("#notes-template-select", Select)
+
+            assert create_from_template.display is not False
+            assert create_blank.display is not False
+            assert import_note.display is not False
+            assert template_select.display is not False
+
+            screen._set_state(scope_type=ScopeType.SERVER_NOTE)
+            await pilot.pause()
+
+            assert create_from_template.display is False
+            assert create_blank.display is False
+            assert import_note.display is False
+            assert template_select.display is False
+
+            screen._set_state(
+                scope_type=ScopeType.WORKSPACE,
+                workspace_subview=WorkspaceSubview.DETAILS,
+            )
+            await pilot.pause()
+
+            assert create_from_template.display is False
+            assert create_blank.display is False
+            assert import_note.display is False
+            assert template_select.display is False
 
     @pytest.mark.asyncio
     async def test_copy_and_export_are_disabled_outside_note_editor_context(self, mock_app_instance):

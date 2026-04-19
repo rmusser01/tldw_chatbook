@@ -238,7 +238,12 @@ class NotesScreen(BaseAppScreen):
             sync_button = self.query_one("#notes-sync-button", Button)
             unsaved_indicator = self.query_one("#notes-unsaved-indicator", Label)
             word_count = self.query_one("#notes-word-count", Label)
+            sidebar_left = self.query_one("#notes-sidebar-left", NotesSidebarLeft)
             sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
+            template_select = sidebar_left.query_one("#notes-template-select", Select)
+            create_from_template_button = sidebar_left.query_one("#notes-create-from-template-button", Button)
+            create_blank_button = sidebar_left.query_one("#notes-create-new-button", Button)
+            import_button = sidebar_left.query_one("#notes-import-button", Button)
 
             editor.display = is_note_editor
             workspace_panel.display = show_workspace_panel
@@ -248,6 +253,12 @@ class NotesScreen(BaseAppScreen):
             sync_button.display = self.state.scope_type == ScopeType.LOCAL_NOTE and is_note_editor
             unsaved_indicator.display = is_note_editor
             word_count.display = is_note_editor
+
+            show_local_create_actions = self.state.scope_type == ScopeType.LOCAL_NOTE
+            template_select.display = show_local_create_actions
+            create_from_template_button.display = show_local_create_actions
+            create_blank_button.display = show_local_create_actions
+            import_button.display = show_local_create_actions
 
             if self.state.scope_type == ScopeType.SERVER_NOTE:
                 save_button.label = "Save Server Note"
