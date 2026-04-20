@@ -116,7 +116,7 @@ async def test_server_character_persona_service_delegates_to_client():
     client = FakeCharacterPersonaClient()
     service = ServerCharacterPersonaService(client=client)
 
-    characters = await service.list_characters()
+    characters = await service.list_characters(limit=13, offset=4)
     persona_profiles = await service.list_persona_profiles(
         active_only=True,
         include_deleted=True,
@@ -126,7 +126,7 @@ async def test_server_character_persona_service_delegates_to_client():
 
     assert characters == [{"id": 1, "name": "Ada"}]
     assert persona_profiles == [{"id": "persona-1", "name": "Guide"}]
-    assert client.list_characters_calls == [{"limit": 100, "offset": 0}]
+    assert client.list_characters_calls == [{"limit": 13, "offset": 4}]
     assert client.list_persona_profiles_calls == [
         {
             "active_only": True,

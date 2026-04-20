@@ -25,9 +25,13 @@ class ServerCharacterPersonaService:
             raise ValueError("TLDW API client is required for server character and persona operations.")
         return self.client
 
-    async def list_characters(self) -> Any:
+    async def list_characters(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Any:
         client = self._require_client()
-        return await client.list_characters()
+        return await client.list_characters(limit=limit, offset=offset)
 
     async def list_persona_profiles(
         self,
