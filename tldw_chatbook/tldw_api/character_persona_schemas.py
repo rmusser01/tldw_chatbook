@@ -20,8 +20,6 @@ PersonaConfirmationMode = Literal["always", "destructive_only", "never"]
 PersonaSetupStatus = Literal["not_started", "in_progress", "completed"]
 PersonaSetupStep = Literal["archetype", "persona", "voice", "commands", "safety", "test"]
 PersonaSetupTestType = Literal["dry_run", "live_session"]
-GreetingSelectionResponse = Literal["ok"]
-PresetBuiltinId = Literal["default", "st_default"]
 
 
 def _strip_optional_text(value: Any) -> Any:

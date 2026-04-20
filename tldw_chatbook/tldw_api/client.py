@@ -57,15 +57,20 @@ from .character_persona_schemas import (
     CharacterExemplarSelectionDebugRequest,
     CharacterExemplarUpdate,
     CharacterQueryRequest,
+    CharacterResponse,
     CharacterUpdateRequest,
+    GreetingListResponse,
     GreetingSelectRequest,
+    PersonaExemplarResponse,
     PersonaExemplarCreate,
     PersonaExemplarImportRequest,
     PersonaExemplarReviewRequest,
     PersonaExemplarUpdate,
     PersonaInfo,
     PersonaProfileCreate,
+    PersonaProfileResponse,
     PersonaProfileUpdate,
+    PresetListResponse,
     PresetCreate,
     PresetUpdate,
 )
@@ -122,10 +127,10 @@ class TLDWAPIClient:
         endpoint: str,
         data: Optional[Dict[str, Any]] = None, # Changed from BaseModel to Dict
         files: Optional[List[tuple]] = None, # For httpx files format
-        json_data: Optional[Dict[str, Any]] = None,
+        json_data: Optional[Union[Dict[str, Any], List[Any]]] = None,
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Any]:
+    ) -> Any:
         client = await self._get_client()
         url = f"{self.base_url}{endpoint}" # Ensure base_url doesn't make double slash
 
@@ -550,13 +555,6 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True),
         )
 
-    async def list_characters(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
-        return await self._request(
-            "GET",
-            "/api/v1/characters/",
-            params={"limit": limit, "offset": offset},
-        )
-
     async def query_characters(self, request_data: CharacterQueryRequest) -> Dict[str, Any]:
         return await self._request(
             "GET",
@@ -564,7 +562,14 @@ class TLDWAPIClient:
             params=request_data.model_dump(exclude_none=True, mode="json"),
         )
 
-    async def search_characters(self, query: str, limit: int = 10) -> Dict[str, Any]:
+    async def list_characters(self, limit: int = 100, offset: int = 0) -> list[CharacterResponse]:
+        return await self._request(
+            "GET",
+            "/api/v1/characters/",
+            params={"limit": limit, "offset": offset},
+        )
+
+    async def search_characters(self, query: str, limit: int = 10) -> list[CharacterResponse]:
         return await self._request("GET", "/api/v1/characters/search/", params={"query": query, "limit": limit})
 
     async def get_character(self, character_id: int) -> Dict[str, Any]:
@@ -657,7 +662,7 @@ class TLDWAPIClient:
         include_deleted: bool = False,
         limit: int = 100,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> list[PersonaProfileResponse]:
         params: Dict[str, Any] = {
             "active_only": str(active_only).lower(),
             "include_deleted": str(include_deleted).lower(),
@@ -713,7 +718,7 @@ class TLDWAPIClient:
         include_deleted_personas: bool = False,
         limit: int = 100,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> list[PersonaExemplarResponse]:
         params: Dict[str, Any] = {
             "include_disabled": str(include_disabled).lower(),
             "include_deleted": str(include_deleted).lower(),
@@ -767,7 +772,7 @@ class TLDWAPIClient:
     async def delete_persona_exemplar(self, persona_id: str, exemplar_id: str) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/persona/profiles/{persona_id}/exemplars/{exemplar_id}")
 
-    async def list_greetings(self, chat_id: str) -> Dict[str, Any]:
+    async def list_greetings(self, chat_id: str) -> GreetingListResponse:
         return await self._request("GET", f"/api/v1/chats/{chat_id}/greetings")
 
     async def select_greeting(self, chat_id: str, index: int) -> Dict[str, Any]:
@@ -777,7 +782,7 @@ class TLDWAPIClient:
             json_data=GreetingSelectRequest(index=index).model_dump(mode="json"),
         )
 
-    async def list_presets(self) -> Dict[str, Any]:
+    async def list_presets(self) -> PresetListResponse:
         return await self._request("GET", "/api/v1/chats/presets")
 
     async def create_preset(self, request_data: PresetCreate) -> Dict[str, Any]:
