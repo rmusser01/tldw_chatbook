@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Media.media_reading_normalizers import (
+    build_media_entity_id,
     build_canonical_media_id,
     normalize_ingestion_source,
     normalize_ingestion_source_item,
@@ -12,6 +13,10 @@ from tldw_chatbook.Media.media_reading_normalizers import (
 
 def test_build_canonical_media_id_stringifies_all_parts():
     assert build_canonical_media_id("server", "reading_item", 41) == "server:reading_item:41"
+
+
+def test_build_media_entity_id_matches_spec_helper_name():
+    assert build_media_entity_id("server", "reading_item", 41) == "server:reading_item:41"
 
 
 def test_normalize_local_media_row_exposes_shared_contract():
@@ -48,7 +53,7 @@ def test_normalize_local_media_row_exposes_shared_contract():
         "backend": "local",
         "entity_kind": "media",
         "source_id": "12",
-        "backing_media_id": "12",
+        "backing_media_id": 12,
         "uuid": "media-uuid-12",
         "title": "Local PDF",
         "media_type": "pdf",
@@ -63,7 +68,7 @@ def test_normalize_local_media_row_exposes_shared_contract():
         "has_chunks": True,
         "reading_progress": {
             "backend": "local",
-            "backing_media_id": "12",
+            "backing_media_id": 12,
             "current_page": 4,
             "total_pages": 10,
             "percent_complete": 40.0,
@@ -103,12 +108,12 @@ def test_normalize_server_reading_item_uses_media_id_for_backing_media_id():
 
     assert normalized["id"] == "server:reading_item:41"
     assert normalized["source_id"] == "41"
-    assert normalized["backing_media_id"] == "99"
+    assert normalized["backing_media_id"] == 99
     assert normalized["uuid"] == "server-media-uuid"
     assert normalized["author"] == "Grace Hopper"
     assert normalized["media_type"] == "article"
     assert normalized["has_chunks"] is True
-    assert normalized["reading_progress"]["backing_media_id"] == "99"
+    assert normalized["reading_progress"]["backing_media_id"] == 99
     assert normalized["reading_progress"]["percent_complete"] == 25.0
 
 
@@ -129,7 +134,7 @@ def test_normalize_reading_progress_computes_percent_when_missing():
 
     assert normalized == {
         "backend": "local",
-        "backing_media_id": "21",
+        "backing_media_id": 21,
         "current_page": 3,
         "total_pages": 12,
         "percent_complete": 25.0,
@@ -165,8 +170,8 @@ def test_normalize_ingestion_source_and_items_use_canonical_ids():
     assert source["entity_kind"] == "ingestion_source"
     assert source["source_id"] == "7"
     assert source["enabled"] is True
-    assert item["id"] == "server:ingestion_source_item:55"
-    assert item["entity_kind"] == "ingestion_source_item"
+    assert item["id"] == "server:file_artifact:55"
+    assert item["entity_kind"] == "file_artifact"
     assert item["source_id"] == "55"
     assert item["ingestion_source_id"] == "7"
     assert item["binding"] == {"media_id": 99}

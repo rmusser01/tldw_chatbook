@@ -2,6 +2,7 @@
 
 from .local_media_reading_service import LocalMediaReadingService
 from .media_reading_normalizers import (
+    build_media_entity_id,
     build_canonical_media_id,
     normalize_ingestion_source,
     normalize_ingestion_source_item,
@@ -17,6 +18,7 @@ __all__ = [
     "MediaReadingBackend",
     "MediaReadingScopeService",
     "ServerMediaReadingService",
+    "build_media_entity_id",
     "build_canonical_media_id",
     "normalize_ingestion_source",
     "normalize_ingestion_source_item",

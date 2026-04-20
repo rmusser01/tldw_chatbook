@@ -62,6 +62,21 @@ class MediaReadingScopeService:
             return normalize_local_media_row(record, reading_progress=reading_progress)
         return normalize_server_reading_item(record, reading_progress=reading_progress)
 
+    def _resolve_backing_media_id(
+        self,
+        *,
+        record: Optional[Mapping[str, Any]] = None,
+        media_id: Any = None,
+    ) -> Any:
+        if isinstance(record, Mapping):
+            backing_media_id = record.get("backing_media_id")
+            if backing_media_id not in (None, ""):
+                return backing_media_id
+            raise ValueError("record['backing_media_id'] is required for reading progress operations.")
+        if media_id not in (None, ""):
+            return media_id
+        raise ValueError("A media record or media_id is required for reading progress operations.")
+
     async def search_media(
         self,
         *,
@@ -98,7 +113,7 @@ class MediaReadingScopeService:
 
         backing_media_id = normalized.get("backing_media_id")
         if backing_media_id not in (None, ""):
-            progress = await self._maybe_await(service.get_reading_progress(int(backing_media_id)))
+            progress = await self._maybe_await(service.get_reading_progress(backing_media_id))
             normalized["reading_progress"] = normalize_reading_progress(
                 progress,
                 backend=normalized_mode.value,
@@ -128,41 +143,47 @@ class MediaReadingScopeService:
         self,
         *,
         mode: MediaReadingBackend | str | None = None,
-        media_id: Any,
+        record: Optional[Mapping[str, Any]] = None,
+        media_id: Any = None,
     ) -> Optional[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        progress = await self._maybe_await(service.get_reading_progress(media_id))
+        backing_media_id = self._resolve_backing_media_id(record=record, media_id=media_id)
+        progress = await self._maybe_await(service.get_reading_progress(backing_media_id))
         return normalize_reading_progress(
             progress,
             backend=normalized_mode.value,
-            backing_media_id=media_id,
+            backing_media_id=backing_media_id,
         )
 
     async def update_reading_progress(
         self,
         *,
         mode: MediaReadingBackend | str | None = None,
-        media_id: Any,
+        record: Optional[Mapping[str, Any]] = None,
+        media_id: Any = None,
         progress_data: Mapping[str, Any],
     ) -> Optional[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        progress = await self._maybe_await(service.update_reading_progress(media_id, progress_data))
+        backing_media_id = self._resolve_backing_media_id(record=record, media_id=media_id)
+        progress = await self._maybe_await(service.update_reading_progress(backing_media_id, progress_data))
         return normalize_reading_progress(
             progress,
             backend=normalized_mode.value,
-            backing_media_id=media_id,
+            backing_media_id=backing_media_id,
         )
 
     async def delete_reading_progress(
         self,
         *,
         mode: MediaReadingBackend | str | None = None,
-        media_id: Any,
+        record: Optional[Mapping[str, Any]] = None,
+        media_id: Any = None,
     ) -> Any:
         service = self._service_for_mode(self._normalize_mode(mode))
-        return await self._maybe_await(service.delete_reading_progress(media_id))
+        backing_media_id = self._resolve_backing_media_id(record=record, media_id=media_id)
+        return await self._maybe_await(service.delete_reading_progress(backing_media_id))
 
     async def list_ingestion_sources(self, *, mode: MediaReadingBackend | str | None = None) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)

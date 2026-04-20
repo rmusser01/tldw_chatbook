@@ -270,7 +270,7 @@ async def test_scope_service_normalizes_local_media_search_results():
 
     assert result["total"] == 1
     assert result["items"][0]["id"] == "local:media:12"
-    assert result["items"][0]["backing_media_id"] == "12"
+    assert result["items"][0]["backing_media_id"] == 12
     assert result["items"][0]["reading_progress"] is None
 
 
@@ -286,9 +286,31 @@ async def test_scope_service_normalizes_server_detail_and_fetches_progress_by_ba
 
     assert server.calls[:2] == [("get_media_detail", 41), ("get_reading_progress", 99)]
     assert result["id"] == "server:reading_item:41"
-    assert result["backing_media_id"] == "99"
-    assert result["reading_progress"]["backing_media_id"] == "99"
+    assert result["backing_media_id"] == 99
+    assert result["reading_progress"]["backing_media_id"] == 99
     assert result["reading_progress"]["percent_complete"] == 25.0
+
+
+@pytest.mark.asyncio
+async def test_scope_service_reads_progress_from_record_backing_media_id():
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+    )
+
+    record = {
+        "id": "server:reading_item:41",
+        "backend": "server",
+        "entity_kind": "reading_item",
+        "source_id": "41",
+        "backing_media_id": 99,
+    }
+    progress = await scope_service.get_reading_progress(mode="server", record=record)
+
+    assert server.calls == [("get_reading_progress", 99)]
+    assert progress["backing_media_id"] == 99
+    assert progress["percent_complete"] == 25.0
 
 
 @pytest.mark.asyncio
@@ -351,7 +373,7 @@ async def test_scope_service_routes_server_ingestion_source_operations_and_norma
     assert listed[0]["id"] == "server:ingestion_source:7"
     assert detail["id"] == "server:ingestion_source:7"
     assert patched["enabled"] is False
-    assert items[0]["id"] == "server:ingestion_source_item:55"
+    assert items[0]["id"] == "server:file_artifact:55"
     assert triggered["job_id"] == 123
     assert uploaded["job_id"] == 124
 

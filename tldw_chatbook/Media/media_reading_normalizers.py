@@ -9,6 +9,10 @@ def build_canonical_media_id(backend: str, entity_kind: str, source_id: Any) -> 
     return f"{str(backend)}:{str(entity_kind)}:{str(source_id)}"
 
 
+def build_media_entity_id(backend: str, entity_kind: str, source_id: Any) -> str:
+    return build_canonical_media_id(backend, entity_kind, source_id)
+
+
 def _as_mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
@@ -71,7 +75,7 @@ def normalize_reading_progress(
 
     return {
         "backend": str(backend),
-        "backing_media_id": str(backing_media_id),
+        "backing_media_id": backing_media_id,
         "current_page": progress.get("current_page"),
         "total_pages": progress.get("total_pages"),
         "percent_complete": _percent_complete(progress),
@@ -87,8 +91,9 @@ def normalize_local_media_row(
     *,
     reading_progress: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
-    source_id = str(row.get("id"))
-    backing_media_id = source_id
+    raw_source_id = row.get("id")
+    source_id = str(raw_source_id)
+    backing_media_id = raw_source_id
 
     return {
         "id": build_canonical_media_id("local", "media", source_id),
@@ -124,9 +129,10 @@ def normalize_server_reading_item(
     *,
     reading_progress: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
-    source_id = str(item.get("id"))
+    raw_source_id = item.get("id")
+    source_id = str(raw_source_id)
     raw_media_id = item.get("media_id")
-    backing_media_id = str(raw_media_id) if raw_media_id is not None else None
+    backing_media_id = raw_media_id
 
     return {
         "id": build_canonical_media_id("server", "reading_item", source_id),
@@ -188,9 +194,9 @@ def normalize_ingestion_source_item(
     source_id = str(item.get("id"))
     ingestion_source_id = str(item.get("source_id"))
     return {
-        "id": build_canonical_media_id(backend, "ingestion_source_item", source_id),
+        "id": build_canonical_media_id(backend, "file_artifact", source_id),
         "backend": backend,
-        "entity_kind": "ingestion_source_item",
+        "entity_kind": "file_artifact",
         "source_id": source_id,
         "backing_media_id": None,
         "ingestion_source_id": ingestion_source_id,
