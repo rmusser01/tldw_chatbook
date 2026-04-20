@@ -153,6 +153,7 @@ from .UI.Screens.llm_screen import LLMScreen
 from .UI.Screens.customize_screen import CustomizeScreen
 from .UI.Screens.logs_screen import LogsScreen
 from .UI.Screens.stats_screen import StatsScreen
+from .UI.Screens.media_runtime_state import MediaRuntimeState
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
 # The legacy per-view navigation (ingest-nav-*/ingest-view-*) is not used anymore.
 # Keep these as empty to avoid wiring legacy handlers.
@@ -173,6 +174,11 @@ from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
 from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
 from .UI.SearchWindow import SearchWindow
+from tldw_chatbook.Media import (
+    LocalMediaReadingService,
+    MediaReadingScopeService,
+    ServerMediaReadingService,
+)
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
@@ -1217,6 +1223,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if not hasattr(self, '_media_types_for_ui'):
             self._media_types_for_ui = ["Error: Media DB not loaded"]
 
+        initial_media_runtime_backend = self._resolve_initial_media_runtime_backend()
+        self.media_runtime_state = MediaRuntimeState(runtime_backend=initial_media_runtime_backend)
+        self.local_media_reading_service = LocalMediaReadingService(self.media_db)
+        try:
+            self.server_media_reading_service = ServerMediaReadingService.from_config(self.app_config)
+        except ValueError:
+            self.server_media_reading_service = ServerMediaReadingService(client=None)
+        self.media_reading_scope_service = MediaReadingScopeService(
+            local_service=self.local_media_reading_service,
+            server_service=self.server_media_reading_service,
+        )
+
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}")
 
@@ -1253,7 +1271,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 logging.error("ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.")
                 self.chachanotes_db = None # Explicitly set to None
 
-        self.server_notes_workspace_service = ServerNotesWorkspaceService.from_config(self.app_config)
+        try:
+            self.server_notes_workspace_service = ServerNotesWorkspaceService.from_config(self.app_config)
+        except ValueError:
+            self.server_notes_workspace_service = ServerNotesWorkspaceService(client=None)
         self.notes_scope_service = NotesScopeService(
             local_notes_service=self.notes_service,
             server_service=self.server_notes_workspace_service,
@@ -1288,11 +1309,25 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
 
     def _wire_character_persona_services(self) -> None:
-        self.server_character_persona_service = ServerCharacterPersonaService.from_config(self.app_config)
+        try:
+            self.server_character_persona_service = ServerCharacterPersonaService.from_config(self.app_config)
+        except ValueError:
+            self.server_character_persona_service = ServerCharacterPersonaService(client=None)
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.chachanotes_db,
             server_service=self.server_character_persona_service,
         )
+
+    def _resolve_initial_media_runtime_backend(self) -> str:
+        """Default media backend to local when no valid runtime value is available."""
+        for candidate in (
+            getattr(self, "current_runtime_backend", None),
+            getattr(self, "runtime_backend", None),
+        ):
+            normalized = str(candidate or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
+        return "local"
 
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:
