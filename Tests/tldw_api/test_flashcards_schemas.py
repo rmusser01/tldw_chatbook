@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from tldw_chatbook.tldw_api import (
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
@@ -182,10 +185,20 @@ def test_flashcard_create_request_preserves_optional_fields():
     }
 
 
-def test_flashcard_update_request_accepts_expected_version_and_sm2_plus():
+def test_flashcard_update_request_accepts_expected_version():
     payload = FlashcardUpdateRequest(deck_id=7, expected_version=3)
 
     assert payload.model_dump(exclude_none=True)["expected_version"] == 3
+
+
+def test_flashcard_update_request_forbids_unknown_fields():
+    with pytest.raises(ValidationError):
+        FlashcardUpdateRequest(deck_id=7, unexpected_field="nope")
+
+
+def test_flashcard_update_request_rejects_non_positive_expected_version():
+    with pytest.raises(ValidationError):
+        FlashcardUpdateRequest(deck_id=7, expected_version=0)
 
 
 def test_flashcard_list_response_accepts_sm2_plus_scheduler_type():

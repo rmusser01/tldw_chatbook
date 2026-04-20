@@ -66,6 +66,8 @@ class FlashcardUpdateRequest(BaseModel):
     model_type: Optional[Literal["basic", "basic_reverse", "cloze"]] = None
     reverse: Optional[bool] = None
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class FlashcardResponse(BaseModel):
     uuid: UUID
