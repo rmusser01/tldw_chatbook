@@ -1258,11 +1258,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             local_notes_service=self.notes_service,
             server_service=self.server_notes_workspace_service,
         )
-        self.server_character_persona_service = ServerCharacterPersonaService.from_config(self.app_config)
-        self.character_persona_scope_service = CharacterPersonaScopeService(
-            local_service=self.chachanotes_db,
-            server_service=self.server_character_persona_service,
-        )
+        self._wire_character_persona_services()
         self._notes_tab_initializer = NotesTabInitializer(self)
 
         # --- Create the master handler map ---
@@ -1289,6 +1285,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Final memory check
         log_resource_usage()
+
+
+    def _wire_character_persona_services(self) -> None:
+        self.server_character_persona_service = ServerCharacterPersonaService.from_config(self.app_config)
+        self.character_persona_scope_service = CharacterPersonaScopeService(
+            local_service=self.chachanotes_db,
+            server_service=self.server_character_persona_service,
+        )
 
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:

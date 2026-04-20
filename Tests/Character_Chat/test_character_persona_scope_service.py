@@ -31,10 +31,19 @@ class FakeCharacterPersonaClient:
         return [{"id": "persona-1", "name": "Guide"}]
 
 
+class FakeLocalCharacterBackend:
+    def __init__(self):
+        self.list_character_cards_calls = []
+
+    def list_character_cards(self, limit=100, offset=0):
+        self.list_character_cards_calls.append({"limit": limit, "offset": offset})
+        return [{"id": 2, "name": "Local Ada"}]
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_to_server_backend_when_mode_is_server():
     local_service = Mock()
-    server_service = Mock()
+    server_service = FakeCharacterPersonaClient()
     scope_service = CharacterPersonaScopeService(
         local_service=local_service,
         server_service=server_service,
@@ -42,19 +51,21 @@ async def test_scope_service_routes_to_server_backend_when_mode_is_server():
 
     await scope_service.list_persona_profiles(mode="server")
 
-    server_service.list_persona_profiles.assert_called_once_with(
-        active_only=False,
-        include_deleted=False,
-        limit=100,
-        offset=0,
-    )
+    assert server_service.list_persona_profiles_calls == [
+        {
+            "active_only": False,
+            "include_deleted": False,
+            "limit": 100,
+            "offset": 0,
+        }
+    ]
     local_service.list_persona_profiles.assert_not_called()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", [None, "local"])
 async def test_scope_service_routes_to_local_backend_when_mode_is_local_or_omitted(mode):
-    local_service = Mock()
+    local_service = FakeLocalCharacterBackend()
     server_service = Mock()
     scope_service = CharacterPersonaScopeService(
         local_service=local_service,
@@ -63,14 +74,28 @@ async def test_scope_service_routes_to_local_backend_when_mode_is_local_or_omitt
 
     await scope_service.list_characters(mode=mode)
 
-    local_service.list_characters.assert_called_once_with(limit=100, offset=0)
+    assert local_service.list_character_cards_calls == [{"limit": 100, "offset": 0}]
     server_service.list_characters.assert_not_called()
 
 
 @pytest.mark.asyncio
+async def test_scope_service_uses_local_character_cards_fallback():
+    local_service = FakeLocalCharacterBackend()
+    scope_service = CharacterPersonaScopeService(
+        local_service=local_service,
+        server_service=Mock(),
+    )
+
+    result = await scope_service.list_characters(mode="local", limit=7, offset=3)
+
+    assert result == [{"id": 2, "name": "Local Ada"}]
+    assert local_service.list_character_cards_calls == [{"limit": 7, "offset": 3}]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_character_and_persona_parameters():
-    local_service = Mock()
-    server_service = Mock()
+    local_service = FakeLocalCharacterBackend()
+    server_service = FakeCharacterPersonaClient()
     scope_service = CharacterPersonaScopeService(
         local_service=local_service,
         server_service=server_service,
@@ -85,15 +110,16 @@ async def test_scope_service_routes_character_and_persona_parameters():
         offset=5,
     )
 
-    server_service.list_characters.assert_called_once_with(limit=7, offset=3)
-    server_service.list_persona_profiles.assert_called_once_with(
-        active_only=True,
-        include_deleted=True,
-        limit=11,
-        offset=5,
-    )
-    local_service.list_characters.assert_not_called()
-    local_service.list_persona_profiles.assert_not_called()
+    assert server_service.list_characters_calls == [{"limit": 7, "offset": 3}]
+    assert server_service.list_persona_profiles_calls == [
+        {
+            "active_only": True,
+            "include_deleted": True,
+            "limit": 11,
+            "offset": 5,
+        }
+    ]
+    assert local_service.list_character_cards_calls == []
 
 
 @pytest.mark.asyncio
@@ -107,8 +133,30 @@ async def test_scope_service_raises_when_local_backend_lacks_persona_method():
         server_service=Mock(),
     )
 
-    with pytest.raises(AttributeError, match="list_persona_profiles"):
+    with pytest.raises(ValueError, match="Local persona profiles are not available yet"):
         await scope_service.list_persona_profiles(mode="local")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_invalid_mode():
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterBackend(),
+        server_service=Mock(),
+    )
+
+    with pytest.raises(ValueError, match="Invalid character/persona mode"):
+        await scope_service.list_characters(mode="bogus")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_requires_local_backend_for_local_calls():
+    scope_service = CharacterPersonaScopeService(
+        local_service=None,
+        server_service=Mock(),
+    )
+
+    with pytest.raises(ValueError, match="Local character/persona backend is unavailable"):
+        await scope_service.list_characters(mode="local")
 
 
 @pytest.mark.asyncio
@@ -156,18 +204,12 @@ def test_app_wires_character_persona_services(monkeypatch):
     from tldw_chatbook import app as app_module
 
     server_service = Mock()
-    notes_server_service = Mock()
     captured = {}
 
     monkeypatch.setattr(
         app_module.ServerCharacterPersonaService,
         "from_config",
         Mock(return_value=server_service),
-    )
-    monkeypatch.setattr(
-        app_module.ServerNotesWorkspaceService,
-        "from_config",
-        Mock(return_value=notes_server_service),
     )
     original_scope_service = app_module.CharacterPersonaScopeService
 
@@ -178,8 +220,12 @@ def test_app_wires_character_persona_services(monkeypatch):
 
     monkeypatch.setattr(app_module, "CharacterPersonaScopeService", scope_service_factory)
 
-    app = app_module.TldwCli()
+    fake_app = Mock()
+    fake_app.app_config = {"tldw_api": {"base_url": "https://example.com"}}
+    fake_app.chachanotes_db = object()
 
-    assert app.server_character_persona_service is server_service
-    assert captured["local_service"] is app.chachanotes_db
+    app_module.TldwCli._wire_character_persona_services(fake_app)
+
+    assert fake_app.server_character_persona_service is server_service
+    assert captured["local_service"] is fake_app.chachanotes_db
     assert captured["server_service"] is server_service

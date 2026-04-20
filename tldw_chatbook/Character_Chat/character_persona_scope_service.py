@@ -15,9 +15,18 @@ class CharacterPersonaScopeService:
         self.local_service = local_service
         self.server_service = server_service
 
-    def _backend(self, mode: str):
-        if mode == "server":
+    def _backend(self, mode: str | None):
+        normalized_mode = "local" if mode is None else mode
+        if normalized_mode not in {"local", "server"}:
+            raise ValueError(f"Invalid character/persona mode: {mode!r}. Expected 'local' or 'server'.")
+
+        if normalized_mode == "server":
+            if self.server_service is None:
+                raise ValueError("Server character/persona backend is unavailable.")
             return self.server_service
+
+        if self.local_service is None:
+            raise ValueError("Local character/persona backend is unavailable.")
         return self.local_service
 
     async def _maybe_await(self, value: Any) -> Any:
@@ -27,8 +36,12 @@ class CharacterPersonaScopeService:
 
     async def list_characters(self, mode: str = "local", limit: int = 100, offset: int = 0) -> Any:
         backend = self._backend(mode)
-        if backend is self.local_service and not hasattr(backend, "list_characters"):
+        if mode in {None, "local"} and not hasattr(backend, "list_characters"):
+            if not hasattr(backend, "list_character_cards"):
+                raise ValueError("Local character backend does not provide list_characters() or list_character_cards().")
             return await self._maybe_await(backend.list_character_cards(limit=limit, offset=offset))
+        if not hasattr(backend, "list_characters"):
+            raise ValueError("Character backend does not provide list_characters().")
         return await self._maybe_await(backend.list_characters(limit=limit, offset=offset))
 
     async def list_persona_profiles(
@@ -40,8 +53,10 @@ class CharacterPersonaScopeService:
         offset: int = 0,
     ) -> Any:
         backend = self._backend(mode)
-        if backend is self.local_service and not hasattr(backend, "list_persona_profiles"):
-            raise AttributeError("Local backend does not implement list_persona_profiles().")
+        if mode in {None, "local"} and not hasattr(backend, "list_persona_profiles"):
+            raise ValueError("Local persona profiles are not available yet.")
+        if not hasattr(backend, "list_persona_profiles"):
+            raise ValueError("Character/persona backend does not provide list_persona_profiles().")
         return await self._maybe_await(
             backend.list_persona_profiles(
                 active_only=active_only,
