@@ -488,6 +488,47 @@ async def test_move_selected_card_preserves_unrelated_active_review_state():
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_actions_reconcile_live_deck_after_deck_change_before_refresh_finishes():
+    scope = FakeStudyScopeService()
+    app_instance = SimpleNamespace(
+        study_scope_service=scope,
+        current_runtime_backend="server",
+        runtime_backend=None,
+        app_config={},
+        notify=lambda *args, **kwargs: None,
+    )
+    app = StudyTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#view-flashcards-btn")
+        await pilot.pause(0.3)
+
+        window = app.screen.query_one(StudyWindow)
+        controller = window.flashcards_controller
+
+        deck_select = app.screen.query_one("#deck-select", Select)
+        deck_select.value = "deck-local-1"
+        await controller.handle_deck_changed()
+
+        card_list = app.screen.query_one("#card-list", ListView)
+        await controller.handle_card_selected(SimpleNamespace(item=_list_item_for_card(card_list, "card-local-1")))
+        assert controller.selected_card_record["backing_id"] == "card-local-1"
+
+        deck_select.value = "deck-local-2"
+        window.handle_deck_select_changed(SimpleNamespace())
+
+        await controller.delete_selected_card()
+        await controller.move_selected_card()
+        await pilot.pause(0.3)
+
+        assert not any(call[0] == "delete_flashcard" for call in scope.calls)
+        assert not any(call[0] == "move_flashcard" for call in scope.calls)
+        assert any(card["backing_id"] == "card-local-1" and card["deck_record_id"].endswith("deck-local-1") for card in scope.cards)
+        assert controller.selected_card_record is None
+
+
+@pytest.mark.asyncio
 async def test_local_delete_deck_uses_selected_deck_version_and_resets_review_state():
     scope = FakeStudyScopeService()
     app_instance = SimpleNamespace(

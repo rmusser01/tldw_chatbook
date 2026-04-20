@@ -110,6 +110,23 @@ class StudyFlashcardsController:
                 return deck
         return None
 
+    def _reconcile_live_selection_state(self) -> None:
+        live_deck = self._selected_deck_record()
+        self.selected_deck_record = live_deck
+
+        if live_deck is None:
+            self.selected_card_record = None
+            return
+
+        selected_card = self.selected_card_record
+        if selected_card is None:
+            return
+
+        live_deck_record_id = str(live_deck.get("record_id") or "")
+        selected_card_deck_record_id = str(selected_card.get("deck_record_id") or "")
+        if selected_card_deck_record_id != live_deck_record_id:
+            self.selected_card_record = None
+
     @staticmethod
     def _card_row_index_from_widget(widget: ListItem) -> Optional[int]:
         widget_id = str(widget.id or "")
@@ -143,6 +160,7 @@ class StudyFlashcardsController:
             target_select.value = Select.BLANK
 
     def _update_lifecycle_controls(self) -> None:
+        self._reconcile_live_selection_state()
         try:
             move_selected_button = self.window.query_one("#move-selected-card-button", Button)
             delete_selected_button = self.window.query_one("#delete-selected-card-button", Button)
@@ -451,6 +469,7 @@ class StudyFlashcardsController:
 
     async def delete_selected_card(self) -> None:
         service = self._scope_service()
+        self._reconcile_live_selection_state()
         selected_card = self.selected_card_record
         if service is None or selected_card is None:
             return
@@ -482,6 +501,7 @@ class StudyFlashcardsController:
 
     async def move_selected_card(self) -> None:
         service = self._scope_service()
+        self._reconcile_live_selection_state()
         selected_card = self.selected_card_record
         target_deck = self._selected_target_deck_record()
         if service is None or selected_card is None or target_deck is None:
@@ -514,6 +534,7 @@ class StudyFlashcardsController:
 
     async def delete_selected_deck(self) -> None:
         service = self._scope_service()
+        self._reconcile_live_selection_state()
         selected_deck = self.selected_deck_record
         if service is None or selected_deck is None:
             return
