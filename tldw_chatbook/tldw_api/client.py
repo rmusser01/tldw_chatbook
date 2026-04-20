@@ -50,6 +50,23 @@ from .chat_conversation_schemas import (
     ConversationUpdateRequest,
     normalize_conversation_state,
 )
+from .character_persona_schemas import (
+    CharacterCreateRequest,
+    CharacterExemplarCreate,
+    CharacterExemplarSearchRequest,
+    CharacterExemplarSelectionDebugRequest,
+    CharacterExemplarUpdate,
+    CharacterUpdateRequest,
+    GreetingSelectRequest,
+    PersonaExemplarCreate,
+    PersonaExemplarImportRequest,
+    PersonaExemplarReviewRequest,
+    PersonaExemplarUpdate,
+    PersonaProfileCreate,
+    PersonaProfileUpdate,
+    PresetCreate,
+    PresetUpdate,
+)
 from .exceptions import APIConnectionError, APIRequestError, APIResponseError, AuthenticationError
 from .utils import model_to_form_data, prepare_files_for_httpx, cleanup_file_objects
 #
@@ -530,6 +547,260 @@ class TLDWAPIClient:
             "/api/v1/prompts",
             json_data=request_data.model_dump(exclude_none=True),
         )
+
+    async def list_characters(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/api/v1/characters/",
+            params={"limit": limit, "offset": offset},
+        )
+
+    async def query_characters(self, request_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        params = request_data or {}
+        return await self._request("GET", "/api/v1/characters/query", params=params)
+
+    async def search_characters(self, query: str, limit: int = 10) -> Dict[str, Any]:
+        return await self._request("GET", "/api/v1/characters/search/", params={"query": query, "limit": limit})
+
+    async def get_character(self, character_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/characters/{character_id}")
+
+    async def create_character(self, request_data: CharacterCreateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/characters/",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def update_character(self, character_id: int, request_data: CharacterUpdateRequest, expected_version: int) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/characters/{character_id}",
+            json_data=request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json"),
+            params={"expected_version": expected_version},
+        )
+
+    async def delete_character(self, character_id: int, expected_version: int) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/characters/{character_id}",
+            params={"expected_version": expected_version},
+        )
+
+    async def restore_character(self, character_id: int, expected_version: int) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/characters/{character_id}/restore",
+            params={"expected_version": expected_version},
+        )
+
+    async def list_character_exemplars(self, character_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/characters/{character_id}/exemplars")
+
+    async def get_character_exemplar(self, character_id: int, exemplar_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/characters/{character_id}/exemplars/{exemplar_id}")
+
+    async def create_character_exemplar(
+        self,
+        character_id: int,
+        request_data: Union[CharacterExemplarCreate, List[CharacterExemplarCreate]],
+    ) -> Dict[str, Any]:
+        payload = (
+            [item.model_dump(exclude_none=True, mode="json") for item in request_data]
+            if isinstance(request_data, list)
+            else request_data.model_dump(exclude_none=True, mode="json")
+        )
+        return await self._request(
+            "POST",
+            f"/api/v1/characters/{character_id}/exemplars",
+            json_data=payload,
+        )
+
+    async def update_character_exemplar(
+        self,
+        character_id: int,
+        exemplar_id: str,
+        request_data: CharacterExemplarUpdate,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/characters/{character_id}/exemplars/{exemplar_id}",
+            json_data=request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json"),
+        )
+
+    async def delete_character_exemplar(self, character_id: int, exemplar_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/characters/{character_id}/exemplars/{exemplar_id}")
+
+    async def search_character_exemplars(self, character_id: int, request_data: CharacterExemplarSearchRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/characters/{character_id}/exemplars/search",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def select_character_exemplars_debug(
+        self,
+        character_id: int,
+        request_data: CharacterExemplarSelectionDebugRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/characters/{character_id}/exemplars/select/debug",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def list_persona_profiles(
+        self,
+        active_only: bool = False,
+        include_deleted: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if active_only:
+            params["active_only"] = str(active_only).lower()
+        if include_deleted:
+            params["include_deleted"] = str(include_deleted).lower()
+        if limit != 100:
+            params["limit"] = limit
+        if offset != 0:
+            params["offset"] = offset
+        return await self._request("GET", "/api/v1/persona/profiles", params=params)
+
+    async def get_persona_profile(self, persona_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/persona/profiles/{persona_id}")
+
+    async def create_persona_profile(self, request_data: PersonaProfileCreate) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/persona/profiles",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def update_persona_profile(
+        self,
+        persona_id: str,
+        request_data: PersonaProfileUpdate,
+        expected_version: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if expected_version is not None:
+            params["expected_version"] = expected_version
+        return await self._request(
+            "PATCH",
+            f"/api/v1/persona/profiles/{persona_id}",
+            json_data=request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json"),
+            params=params,
+        )
+
+    async def delete_persona_profile(self, persona_id: str, expected_version: Optional[int] = None) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if expected_version is not None:
+            params["expected_version"] = expected_version
+        return await self._request("DELETE", f"/api/v1/persona/profiles/{persona_id}", params=params)
+
+    async def restore_persona_profile(self, persona_id: str, expected_version: int) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/persona/profiles/{persona_id}/restore",
+            params={"expected_version": expected_version},
+        )
+
+    async def list_persona_exemplars(
+        self,
+        persona_id: str,
+        include_disabled: bool = False,
+        include_deleted: bool = False,
+        include_deleted_personas: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if include_disabled:
+            params["include_disabled"] = str(include_disabled).lower()
+        if include_deleted:
+            params["include_deleted"] = str(include_deleted).lower()
+        if include_deleted_personas:
+            params["include_deleted_personas"] = str(include_deleted_personas).lower()
+        if limit != 100:
+            params["limit"] = limit
+        if offset != 0:
+            params["offset"] = offset
+        return await self._request("GET", f"/api/v1/persona/profiles/{persona_id}/exemplars", params=params)
+
+    async def get_persona_exemplar(self, persona_id: str, exemplar_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/persona/profiles/{persona_id}/exemplars/{exemplar_id}")
+
+    async def create_persona_exemplar(self, persona_id: str, request_data: PersonaExemplarCreate) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/persona/profiles/{persona_id}/exemplars",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def import_persona_exemplars(self, persona_id: str, request_data: PersonaExemplarImportRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/persona/profiles/{persona_id}/exemplars/import",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def update_persona_exemplar(
+        self,
+        persona_id: str,
+        exemplar_id: str,
+        request_data: PersonaExemplarUpdate,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/persona/profiles/{persona_id}/exemplars/{exemplar_id}",
+            json_data=request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json"),
+        )
+
+    async def review_persona_exemplar(
+        self,
+        persona_id: str,
+        exemplar_id: str,
+        request_data: PersonaExemplarReviewRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/persona/profiles/{persona_id}/exemplars/{exemplar_id}/review",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def delete_persona_exemplar(self, persona_id: str, exemplar_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/persona/profiles/{persona_id}/exemplars/{exemplar_id}")
+
+    async def list_greetings(self, chat_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/chats/{chat_id}/greetings")
+
+    async def select_greeting(self, chat_id: str, index: int) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/chats/{chat_id}/greetings/select",
+            json_data=GreetingSelectRequest(index=index).model_dump(mode="json"),
+        )
+
+    async def list_presets(self) -> Dict[str, Any]:
+        return await self._request("GET", "/api/v1/chats/presets")
+
+    async def create_preset(self, request_data: PresetCreate) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/chats/presets",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def update_preset(self, preset_id: str, request_data: PresetUpdate) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/chats/presets/{preset_id}",
+            json_data=request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json"),
+        )
+
+    async def delete_preset(self, preset_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/chats/presets/{preset_id}")
 
     async def list_chat_conversations(
         self,
