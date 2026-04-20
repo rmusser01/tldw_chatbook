@@ -45,6 +45,7 @@ from .media_reading_schemas import (
     FileCreateRequest,
     IngestionSourceCreateRequest,
     IngestionSourceItemListResponse,
+    IngestionSourceItemResponse,
     IngestionSourceListResponse,
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
@@ -424,43 +425,50 @@ class TLDWAPIClient:
         )
 
     async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
-        return await self._request(
+        response = await self._request(
             "POST",
             "/api/v1/ingestion-sources/",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
+        return IngestionSourceResponse.model_validate(response)
 
     async def list_ingestion_sources(self) -> IngestionSourceListResponse:
-        return await self._request("GET", "/api/v1/ingestion-sources/")
+        response = await self._request("GET", "/api/v1/ingestion-sources/")
+        return [IngestionSourceResponse.model_validate(item) for item in response]
 
     async def get_ingestion_source(self, source_id: int) -> IngestionSourceResponse:
-        return await self._request("GET", f"/api/v1/ingestion-sources/{source_id}")
+        response = await self._request("GET", f"/api/v1/ingestion-sources/{source_id}")
+        return IngestionSourceResponse.model_validate(response)
 
     async def patch_ingestion_source(
         self,
         source_id: int,
         request_data: IngestionSourcePatchRequest,
     ) -> IngestionSourceResponse:
-        return await self._request(
+        response = await self._request(
             "PATCH",
             f"/api/v1/ingestion-sources/{source_id}",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
+        return IngestionSourceResponse.model_validate(response)
 
     async def list_ingestion_source_items(self, source_id: int) -> IngestionSourceItemListResponse:
-        return await self._request("GET", f"/api/v1/ingestion-sources/{source_id}/items")
+        response = await self._request("GET", f"/api/v1/ingestion-sources/{source_id}/items")
+        return [IngestionSourceItemResponse.model_validate(item) for item in response]
 
     async def trigger_ingestion_source_sync(self, source_id: int) -> IngestionSourceSyncTriggerResponse:
-        return await self._request("POST", f"/api/v1/ingestion-sources/{source_id}/sync")
+        response = await self._request("POST", f"/api/v1/ingestion-sources/{source_id}/sync")
+        return IngestionSourceSyncTriggerResponse.model_validate(response)
 
     async def upload_ingestion_source_archive(self, source_id: int, archive_path: str) -> IngestionSourceSyncTriggerResponse:
         httpx_files = prepare_files_for_httpx([archive_path], upload_field_name="archive")
         try:
-            return await self._request(
+            response = await self._request(
                 "POST",
                 f"/api/v1/ingestion-sources/{source_id}/archive",
                 files=httpx_files,
             )
+            return IngestionSourceSyncTriggerResponse.model_validate(response)
         finally:
             cleanup_file_objects(httpx_files)
 
@@ -488,12 +496,14 @@ class TLDWAPIClient:
             "favorite": favorite,
             "date_from": date_from,
             "date_to": date_to,
-            "page": page,
-            "size": size,
-            "offset": offset,
-            "limit": limit,
             "sort": sort,
         }
+        if offset is not None or limit is not None:
+            params["offset"] = offset
+            params["limit"] = limit
+        else:
+            params["page"] = page
+            params["size"] = size
         return await self._request(
             "GET",
             "/api/v1/reading/items",
