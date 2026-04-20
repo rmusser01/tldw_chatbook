@@ -179,6 +179,36 @@ class StudyFlashcardsController:
         summary = "  ".join(f"{key}: {value}" for key, value in intervals.items())
         widget.update(summary)
 
+    def _capture_review_panel_state(self) -> dict[str, Any]:
+        front_widget = self.window.query_one("#review-front", Static)
+        back_widget = self.window.query_one("#review-back", Static)
+        intervals_widget = self.window.query_one("#review-next-intervals", Static)
+        show_answer_button = self.window.query_one("#show-answer-button", Button)
+        rating_buttons = [self.window.query_one(f"#review-rating-{rating}", Button) for rating in range(6)]
+        return {
+            "status": str(self.window.query_one("#review-status", Static).renderable),
+            "front": str(front_widget.renderable),
+            "back": str(back_widget.renderable),
+            "show_back": bool(back_widget.display),
+            "intervals": str(intervals_widget.renderable),
+            "show_answer_enabled": not show_answer_button.disabled,
+            "ratings_enabled": all(not button.disabled for button in rating_buttons),
+        }
+
+    def _restore_review_panel_state(self, state: dict[str, Any]) -> None:
+        self._set_review_status(str(state.get("status") or ""))
+        self._set_review_card(
+            front=str(state.get("front") or ""),
+            back=str(state.get("back") or ""),
+            show_back=bool(state.get("show_back")),
+        )
+        intervals = str(state.get("intervals") or "")
+        self.window.query_one("#review-next-intervals", Static).update(intervals)
+        self._set_review_controls(
+            show_answer_enabled=bool(state.get("show_answer_enabled")),
+            ratings_enabled=bool(state.get("ratings_enabled")),
+        )
+
     def _set_review_controls(self, *, show_answer_enabled: bool, ratings_enabled: bool) -> None:
         show_answer = self.window.query_one("#show-answer-button", Button)
         show_answer.disabled = not show_answer_enabled
@@ -266,7 +296,7 @@ class StudyFlashcardsController:
 
         self._update_lifecycle_controls()
 
-    async def refresh_cards(self) -> None:
+    async def refresh_cards(self, *, preserve_review_panel: bool = False) -> None:
         service = self._scope_service()
         if service is None:
             self.reset_review_panel("Study flashcards backend is unavailable.")
@@ -302,7 +332,8 @@ class StudyFlashcardsController:
             empty_item = ListItem(Label("No cards in this deck."))
             empty_item.study_card_record = None
             await list_view.append(empty_item)
-            self.reset_review_panel("No cards due for review.")
+            if not preserve_review_panel:
+                self.reset_review_panel("No cards due for review.")
             self._update_lifecycle_controls()
             return
 
@@ -314,7 +345,8 @@ class StudyFlashcardsController:
             list_item.study_card_index = index
             await list_view.append(list_item)
 
-        self._set_review_status("Ready to review selected deck.")
+        if not preserve_review_panel:
+            self._set_review_status("Ready to review selected deck.")
         self._update_lifecycle_controls()
 
     async def create_deck(self) -> None:
@@ -435,12 +467,18 @@ class StudyFlashcardsController:
             self._notify("Failed to delete flashcard.", severity="error")
             return
 
+        review_snapshot = None
         if self.current_review_card and str(self.current_review_card.get("backing_id") or "") == str(selected_card.get("backing_id") or ""):
             await self.end_review_session_if_needed()
             self.reset_review_panel("Selected flashcard deleted.")
-
+            preserve_review_panel = False
+        else:
+            preserve_review_panel = True
+            review_snapshot = self._capture_review_panel_state()
         self.selected_card_record = None
-        await self.refresh_cards()
+        await self.refresh_cards(preserve_review_panel=preserve_review_panel)
+        if review_snapshot is not None:
+            self._restore_review_panel_state(review_snapshot)
 
     async def move_selected_card(self) -> None:
         service = self._scope_service()
@@ -461,12 +499,18 @@ class StudyFlashcardsController:
             self._notify("Failed to move flashcard.", severity="error")
             return
 
+        review_snapshot = None
         if self.current_review_card and str(self.current_review_card.get("backing_id") or "") == str(selected_card.get("backing_id") or ""):
             await self.end_review_session_if_needed()
             self.reset_review_panel("Selected flashcard moved.")
-
+            preserve_review_panel = False
+        else:
+            preserve_review_panel = True
+            review_snapshot = self._capture_review_panel_state()
         self.selected_card_record = None
-        await self.refresh_cards()
+        await self.refresh_cards(preserve_review_panel=preserve_review_panel)
+        if review_snapshot is not None:
+            self._restore_review_panel_state(review_snapshot)
 
     async def delete_selected_deck(self) -> None:
         service = self._scope_service()
@@ -494,7 +538,8 @@ class StudyFlashcardsController:
         self.selected_card_record = None
         await self.refresh_decks(preserve_selection=False)
         await self.refresh_cards()
-        self.reset_review_panel("Create a deck to begin studying.")
+        message = "Select a deck to review cards." if self.has_decks else "Create a deck to begin studying."
+        self.reset_review_panel(message)
 
     async def start_review(self) -> None:
         deck_id = self._selected_deck_id()
