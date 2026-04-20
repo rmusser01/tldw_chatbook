@@ -4,7 +4,7 @@
 # Imports
 import re
 import uuid
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 #
 # 3rd-Party Imports
 from loguru import logger
@@ -48,6 +48,10 @@ def _derive_session_title(
         fallback_title=effective_fallback_title,
         character_id=session_data.character_id,
     )
+
+
+def _session_reuse_key(session_data: ChatSessionData) -> Tuple[str, Optional[str]]:
+    return (session_data.runtime_backend, session_data.conversation_id)
 
 class ChatTabContainer(Container):
     """
@@ -128,6 +132,18 @@ class ChatTabContainer(Container):
                 except Exception as e:
                     logger.warning(f"Invalid tab title, using default: {e}")
                     title = None
+
+            if session_data is not None and session_data.conversation_id:
+                reuse_key = _session_reuse_key(session_data)
+                for existing_tab_id, existing_session in self.sessions.items():
+                    existing_session_data = existing_session.session_data
+                    if not existing_session_data.conversation_id:
+                        continue
+                    if _session_reuse_key(existing_session_data) == reuse_key:
+                        logger.info(
+                            f"Reusing existing chat tab {existing_tab_id} for conversation {reuse_key}"
+                        )
+                        return existing_tab_id
             
             # Generate unique tab ID
             tab_id = str(uuid.uuid4())[:8]

@@ -30,7 +30,12 @@ class ChatSessionData:
     
     # Whether this is an ephemeral (unsaved) chat
     is_ephemeral: bool = True
-    
+
+    # Runtime/discovery contract
+    runtime_backend: str = "local"
+    discovery_owner: str = "general_chat"
+    discovery_entity_id: Optional[str] = None
+
     # Character assignment for this chat
     character_id: Optional[int] = None
     character_name: Optional[str] = None
@@ -71,6 +76,9 @@ class ChatSessionData:
             'title': self.title,
             'conversation_id': self.conversation_id,
             'is_ephemeral': self.is_ephemeral,
+            'runtime_backend': self.runtime_backend,
+            'discovery_owner': self.discovery_owner,
+            'discovery_entity_id': self.discovery_entity_id,
             'character_id': self.character_id,
             'character_name': self.character_name,
             'assistant_kind': self.assistant_kind,
@@ -98,6 +106,9 @@ class ChatSessionData:
             title=data.get('title', 'New Chat'),
             conversation_id=data.get('conversation_id'),
             is_ephemeral=data.get('is_ephemeral', True),
+            runtime_backend=data.get('runtime_backend', 'local'),
+            discovery_owner=data.get('discovery_owner', 'general_chat'),
+            discovery_entity_id=data.get('discovery_entity_id'),
             character_id=data.get('character_id'),
             character_name=data.get('character_name'),
             assistant_kind=data.get('assistant_kind'),

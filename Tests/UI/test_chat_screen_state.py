@@ -2,8 +2,31 @@ from datetime import datetime
 
 import pytest
 
+from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
 from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, MessageData, TabState
+
+
+class TestChatSessionDataSerialization:
+    def test_chat_session_data_round_trip_preserves_runtime_discovery_fields(self):
+        session_data = ChatSessionData(
+            tab_id="tab-runtime",
+            title="Runtime Session",
+            conversation_id="conv-runtime",
+            is_ephemeral=False,
+            runtime_backend="server",
+            discovery_owner="ccp_persona",
+            discovery_entity_id="persona.remote.helper",
+            assistant_kind="persona",
+            assistant_id="persona.remote.helper",
+        )
+
+        restored = ChatSessionData.from_dict(session_data.to_dict())
+
+        assert restored.runtime_backend == "server"
+        assert restored.discovery_owner == "ccp_persona"
+        assert restored.discovery_entity_id == "persona.remote.helper"
+        assert restored.assistant_id == "persona.remote.helper"
 
 
 class TestMessageDataSerialization:
@@ -46,6 +69,9 @@ class TestTabStateSerialization:
             tab_id="tab-1",
             title="Prompt Session",
             conversation_id="conv-1",
+            runtime_backend="server",
+            discovery_owner="ccp_persona",
+            discovery_entity_id="persona.remote.helper",
             assistant_kind="persona",
             assistant_id="assistant-1",
             persona_memory_mode="workspace",
@@ -68,6 +94,9 @@ class TestTabStateSerialization:
 
         restored = TabState.from_dict(tab_state.to_dict())
 
+        assert restored.runtime_backend == "server"
+        assert restored.discovery_owner == "ccp_persona"
+        assert restored.discovery_entity_id == "persona.remote.helper"
         assert restored.assistant_kind == "persona"
         assert restored.assistant_id == "assistant-1"
         assert restored.persona_memory_mode == "workspace"
@@ -87,6 +116,9 @@ class TestChatScreenStateSerialization:
                 TabState(
                     tab_id="tab-1",
                     title="Scoped Prompt",
+                    runtime_backend="server",
+                    discovery_owner="ccp_persona",
+                    discovery_entity_id="persona.remote.helper",
                     assistant_kind="persona",
                     assistant_id="assistant-1",
                     persona_memory_mode="session",
@@ -115,6 +147,9 @@ class TestChatScreenStateSerialization:
         restored_tab = restored.tabs[0]
         restored_message = restored_tab.messages[0]
 
+        assert restored_tab.runtime_backend == "server"
+        assert restored_tab.discovery_owner == "ccp_persona"
+        assert restored_tab.discovery_entity_id == "persona.remote.helper"
         assert restored_tab.assistant_kind == "persona"
         assert restored_tab.assistant_id == "assistant-1"
         assert restored_tab.persona_memory_mode == "session"
@@ -148,6 +183,9 @@ class TestTabStateManager:
 
         state = await manager.create_tab_state(
             "tab-1",
+            runtime_backend="server",
+            discovery_owner="ccp_persona",
+            discovery_entity_id="persona.remote.helper",
             assistant_kind="persona",
             assistant_id="assistant-1",
             persona_memory_mode="workspace",
@@ -156,6 +194,9 @@ class TestTabStateManager:
             unknown_flag="kept-in-metadata",
         )
 
+        assert state.runtime_backend == "server"
+        assert state.discovery_owner == "ccp_persona"
+        assert state.discovery_entity_id == "persona.remote.helper"
         assert state.assistant_kind == "persona"
         assert state.assistant_id == "assistant-1"
         assert state.persona_memory_mode == "workspace"

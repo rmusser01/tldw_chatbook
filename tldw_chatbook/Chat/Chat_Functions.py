@@ -1451,6 +1451,9 @@ def save_chat_history_to_db_wrapper(
         final_character_name_for_title: Optional[str] = None
         conversation_assistant_kind: Optional[str] = None
         conversation_assistant_id: Optional[str] = None
+        conversation_runtime_backend: Optional[str] = "local"
+        conversation_discovery_owner: Optional[str] = "general_chat"
+        conversation_discovery_entity_id: Optional[str] = None
         persistence_service = ChatPersistenceService(db)
 
         # --- Character Association Logic (largely same as your provided version) ---
@@ -1474,7 +1477,9 @@ def save_chat_history_to_db_wrapper(
                     associated_character_id = character['id']
                     final_character_name_for_title = character['name']
                     conversation_assistant_kind = "character"
-                    conversation_assistant_id = character['name']
+                    conversation_assistant_id = str(character['id'])
+                    conversation_discovery_owner = "ccp_character"
+                    conversation_discovery_entity_id = str(character['id'])
                     logging.info(f"Chat will be associated with specific character '{final_character_name_for_title}' (ID: {associated_character_id}).")
                 else:
                     logging.error(f"Intended specific character '{char_lookup_name}' not found in DB. Chat save aborted.")
@@ -1498,6 +1503,9 @@ def save_chat_history_to_db_wrapper(
                     character_name=final_character_name_for_title,
                     assistant_kind=conversation_assistant_kind,
                     assistant_id=conversation_assistant_id,
+                    runtime_backend=conversation_runtime_backend,
+                    discovery_owner=conversation_discovery_owner,
+                    discovery_entity_id=conversation_discovery_entity_id,
                 )
                 if not current_conversation_id:  # Should not happen if add_conversation raises on failure
                     return None, "Failed to create new conversation in DB."

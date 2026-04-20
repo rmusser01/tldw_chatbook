@@ -19,6 +19,9 @@ class TabState:
     tab_id: str
     conversation_id: Optional[str] = None
     is_ephemeral: bool = True
+    runtime_backend: str = "local"
+    discovery_owner: str = "general_chat"
+    discovery_entity_id: Optional[str] = None
     is_streaming: bool = False
     worker_id: Optional[str] = None
     ai_message_widget_id: Optional[str] = None

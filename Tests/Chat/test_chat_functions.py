@@ -250,6 +250,28 @@ class TestChatHistorySaving:
         assert messages[0]['image_mime_type'] == "image/png"
         assert messages[1]['image_data'] is None
 
+    def test_save_character_chat_history_uses_canonical_character_id_as_assistant_id(self, db_instance: CharactersRAGDB):
+        character_id = db_instance.add_character_card({"name": "Canonical Saver"})
+
+        conv_id, status = save_chat_history_to_db_wrapper(
+            db=db_instance,
+            chatbot_history=[
+                {"role": "user", "content": "Hello there"},
+                {"role": "assistant", "content": "General Kenobi"},
+            ],
+            conversation_id=None,
+            media_content_for_char_assoc=None,
+            character_name_for_chat="Canonical Saver",
+        )
+
+        assert "success" in status.lower()
+        assert conv_id is not None
+
+        conv_details = db_instance.get_conversation_by_id(conv_id)
+        assert conv_details["assistant_kind"] == "character"
+        assert conv_details["assistant_id"] == str(character_id)
+        assert conv_details["title"] == "Chat with Canonical Saver"
+
     def test_resave_chat_history(self, db_instance: CharactersRAGDB):
         char_id = db_instance.add_character_card({"name": "Resaver"})
         initial_history = [

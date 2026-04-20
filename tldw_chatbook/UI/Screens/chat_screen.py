@@ -300,6 +300,9 @@ class ChatScreen(BaseAppScreen):
                 tab_id=session_id,
                 title=session.session_data.title,
                 conversation_id=session.session_data.conversation_id,
+                runtime_backend=session.session_data.runtime_backend,
+                discovery_owner=session.session_data.discovery_owner,
+                discovery_entity_id=session.session_data.discovery_entity_id,
                 character_id=session.session_data.character_id,
                 character_name=session.session_data.character_name,
                 assistant_kind=session.session_data.assistant_kind,
@@ -355,6 +358,9 @@ class ChatScreen(BaseAppScreen):
                 session = tab_container.sessions["default"]
                 session.session_data.title = restored_title
                 session.session_data.conversation_id = tab_state.conversation_id
+                session.session_data.runtime_backend = tab_state.runtime_backend
+                session.session_data.discovery_owner = tab_state.discovery_owner
+                session.session_data.discovery_entity_id = tab_state.discovery_entity_id
                 session.session_data.character_id = tab_state.character_id
                 session.session_data.character_name = tab_state.character_name
                 session.session_data.assistant_kind = tab_state.assistant_kind
@@ -371,6 +377,9 @@ class ChatScreen(BaseAppScreen):
                     title=restored_title,
                     conversation_id=tab_state.conversation_id,
                     is_ephemeral=tab_state.is_ephemeral,
+                    runtime_backend=tab_state.runtime_backend,
+                    discovery_owner=tab_state.discovery_owner,
+                    discovery_entity_id=tab_state.discovery_entity_id,
                     character_id=tab_state.character_id,
                     character_name=tab_state.character_name,
                     assistant_kind=tab_state.assistant_kind,
@@ -387,6 +396,9 @@ class ChatScreen(BaseAppScreen):
                 if tab_id and tab_id in tab_container.sessions:
                     session = tab_container.sessions[tab_id]
                     session.session_data.conversation_id = tab_state.conversation_id
+                    session.session_data.runtime_backend = tab_state.runtime_backend
+                    session.session_data.discovery_owner = tab_state.discovery_owner
+                    session.session_data.discovery_entity_id = tab_state.discovery_entity_id
                     session.session_data.character_id = tab_state.character_id
                     session.session_data.character_name = tab_state.character_name
                     session.session_data.assistant_kind = tab_state.assistant_kind

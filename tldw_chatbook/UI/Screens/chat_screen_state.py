@@ -78,6 +78,9 @@ class TabState:
     tab_id: str
     title: str
     conversation_id: Optional[str] = None
+    runtime_backend: str = "local"
+    discovery_owner: str = "general_chat"
+    discovery_entity_id: Optional[str] = None
     character_id: Optional[int] = None
     character_name: Optional[str] = None
     assistant_kind: Optional[str] = None
@@ -117,6 +120,9 @@ class TabState:
             'tab_id': self.tab_id,
             'title': self.title,
             'conversation_id': self.conversation_id,
+            'runtime_backend': self.runtime_backend,
+            'discovery_owner': self.discovery_owner,
+            'discovery_entity_id': self.discovery_entity_id,
             'character_id': self.character_id,
             'character_name': self.character_name,
             'assistant_kind': self.assistant_kind,
@@ -158,6 +164,9 @@ class TabState:
             tab_id=data.get('tab_id', ''),
             title=data.get('title', 'New Chat'),
             conversation_id=data.get('conversation_id'),
+            runtime_backend=data.get('runtime_backend', 'local'),
+            discovery_owner=data.get('discovery_owner', 'general_chat'),
+            discovery_entity_id=data.get('discovery_entity_id'),
             character_id=data.get('character_id'),
             character_name=data.get('character_name'),
             assistant_kind=data.get('assistant_kind'),

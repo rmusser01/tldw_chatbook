@@ -154,7 +154,46 @@ class TestChatTabContainer:
             assert restored_session.persona_memory_mode == "workspace"
             assert restored_session.scope_type == "workspace"
             assert restored_session.workspace_id == "workspace-123"
-    
+
+    @pytest.mark.asyncio
+    async def test_create_new_tab_reuses_existing_persisted_session_for_same_runtime_and_conversation(
+        self,
+        tab_container,
+    ):
+        existing_session = Mock(spec=ChatSession)
+        existing_session.session_data = ChatSessionData(
+            tab_id="abcd1234",
+            title="Persisted Session",
+            conversation_id="conv-42",
+            is_ephemeral=False,
+            runtime_backend="server",
+            discovery_owner="general_chat",
+            discovery_entity_id="assistant.remote.42",
+        )
+        tab_container.sessions = {"abcd1234": existing_session}
+
+        mock_container = Mock()
+        mock_container.mount = AsyncMock()
+        mock_placeholder = Mock()
+        mock_placeholder.styles = Mock(display="none")
+        tab_container.query_one = Mock(side_effect=[mock_container, mock_placeholder])
+
+        tab_id = await tab_container.create_new_tab(
+            session_data=ChatSessionData(
+                tab_id="ignored",
+                title="Duplicate Persisted Session",
+                conversation_id="conv-42",
+                is_ephemeral=False,
+                runtime_backend="server",
+                discovery_owner="general_chat",
+                discovery_entity_id="assistant.remote.42",
+            )
+        )
+
+        assert tab_id == "abcd1234"
+        assert list(tab_container.sessions) == ["abcd1234"]
+        tab_container.tab_bar.add_tab.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_create_new_tab_max_limit(self, tab_container):
         """Test creating a tab when max limit is reached."""
@@ -519,6 +558,56 @@ class TestChatTabContainerIntegration:
             "Chat with Navigator",
             "Navigator",
         )
+
+    @pytest.mark.asyncio
+    async def test_restore_sessions_from_state_reuses_duplicate_persisted_conversations(self, tab_container):
+        """Restoring duplicate persisted conversations reuses the first mounted session."""
+        tab_container._force_close_tab = AsyncMock()
+
+        mock_container = Mock()
+        mock_container.mount = AsyncMock()
+        mock_placeholder = Mock()
+        mock_placeholder.styles = Mock(display="block")
+        tab_container.query_one = Mock(side_effect=[
+            mock_container,
+            mock_placeholder,
+            mock_container,
+            mock_placeholder,
+        ])
+
+        saved_state = {
+            "saved-tab-1": ChatSessionData(
+                tab_id="saved-tab-1",
+                title="First Runtime Session",
+                conversation_id="conv-restore",
+                is_ephemeral=False,
+                runtime_backend="server",
+                discovery_owner="general_chat",
+                discovery_entity_id="assistant.remote.restore",
+            ),
+            "saved-tab-2": ChatSessionData(
+                tab_id="saved-tab-2",
+                title="Second Runtime Session",
+                conversation_id="conv-restore",
+                is_ephemeral=False,
+                runtime_backend="server",
+                discovery_owner="general_chat",
+                discovery_entity_id="assistant.remote.restore",
+            ),
+        }
+
+        with patch("uuid.uuid4") as mock_uuid:
+            first_uuid = Mock()
+            first_uuid.__str__ = Mock(return_value="11111111-1234-5678-1234-567812345678")
+            second_uuid = Mock()
+            second_uuid.__str__ = Mock(return_value="22222222-1234-5678-1234-567812345678")
+            mock_uuid.side_effect = [first_uuid, second_uuid]
+
+            await tab_container.restore_sessions_from_state(saved_state)
+
+        assert len(tab_container.sessions) == 1
+        assert list(tab_container.sessions) == ["11111111"]
+        assert tab_container.sessions["11111111"].session_data.conversation_id == "conv-restore"
     
     @pytest.mark.asyncio
     async def test_full_tab_lifecycle(self, tab_container):
