@@ -305,6 +305,52 @@ class TestFlashcardOperations:
         assert db_instance.list_flashcards(deck_id=deck_id, limit=10, offset=0) == []
         assert db_instance.get_due_flashcards(deck_id=deck_id, limit=10) == []
 
+    def test_delete_deck_renames_deleted_row_to_deterministic_tombstone(self, db_instance):
+        deck_id = db_instance.create_deck("Biology")
+        db_instance.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
+
+        deleted = db_instance.delete_deck(deck_id, expected_version=1)
+
+        with db_instance.transaction() as cursor:
+            cursor.execute(
+                "SELECT id, name, is_deleted, card_count FROM decks WHERE id = ?",
+                (deck_id,),
+            )
+            deleted_row = cursor.fetchone()
+
+        assert deleted is True
+        assert deleted_row is not None
+        assert deleted_row["id"] == deck_id
+        assert deleted_row["name"] == f"__deleted_deck__:{deck_id}"
+        assert deleted_row["is_deleted"] == 1
+        assert deleted_row["card_count"] == 0
+
+    def test_deleted_deck_visibility_filters_active_child_cards(self, db_instance):
+        deck_id = db_instance.create_deck("Biology")
+        card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
+
+        with db_instance.transaction() as cursor:
+            cursor.execute(
+                "UPDATE decks SET is_deleted = 1 WHERE id = ?",
+                (deck_id,),
+            )
+            cursor.execute(
+                "SELECT is_deleted FROM flashcards WHERE id = ?",
+                (card_id,),
+            )
+            card_row = cursor.fetchone()
+
+        list_results = db_instance.list_flashcards(deck_id=deck_id, limit=10, offset=0)
+        due_results = db_instance.get_due_flashcards(deck_id=deck_id, limit=10)
+        visible_card = db_instance.get_flashcard(card_id)
+
+        assert card_row is not None
+        assert card_row["is_deleted"] == 0
+        assert visible_card is not None
+        assert visible_card["id"] == card_id
+        assert list_results == []
+        assert due_results == []
+
 
 class TestQuizOperations:
     """Tests for quiz CRUD and attempt flows."""
