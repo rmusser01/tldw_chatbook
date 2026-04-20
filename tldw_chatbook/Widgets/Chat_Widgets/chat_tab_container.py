@@ -499,14 +499,23 @@ class ChatTabContainer(Container):
         # Clear all existing live tabs so restore replaces the mounted UI state.
         for tab_id in list(self.sessions.keys()):
             await self._force_close_tab(tab_id)
-        
+
+        restored_reuse_keys = set()
+
         # Restore each session
         for _, session_data in state.items():
             restored_session_data = ChatSessionData.from_dict(session_data.to_dict())
             restored_session_data.title = _derive_session_title(restored_session_data)
+            reuse_key = None
+            if restored_session_data.conversation_id:
+                reuse_key = _session_reuse_key(restored_session_data)
+
             # Create new session
             new_tab_id = await self.create_new_tab(session_data=restored_session_data)
             if new_tab_id and new_tab_id in self.sessions:
+                if reuse_key is not None and reuse_key in restored_reuse_keys:
+                    continue
+
                 # Preserve the saved session state while rebinding it to the new widget tab ID.
                 restored_session_data.tab_id = new_tab_id
                 self.sessions[new_tab_id].session_data = restored_session_data
@@ -516,6 +525,8 @@ class ChatTabContainer(Container):
                         restored_session_data.title,
                         restored_session_data.character_name,
                     )
+                if reuse_key is not None:
+                    restored_reuse_keys.add(reuse_key)
 
 #
 # End of chat_tab_container.py

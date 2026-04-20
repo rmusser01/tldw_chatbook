@@ -607,7 +607,9 @@ class TestChatTabContainerIntegration:
 
         assert len(tab_container.sessions) == 1
         assert list(tab_container.sessions) == ["11111111"]
-        assert tab_container.sessions["11111111"].session_data.conversation_id == "conv-restore"
+        restored_session = tab_container.sessions["11111111"].session_data
+        assert restored_session.conversation_id == "conv-restore"
+        assert restored_session.title == "First Runtime Session"
     
     @pytest.mark.asyncio
     async def test_full_tab_lifecycle(self, tab_container):
