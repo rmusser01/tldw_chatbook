@@ -4,6 +4,7 @@
 # Imports
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from pathlib import Path
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
 from textual.widgets import Label, Button, TextArea, Select, Input, Static, ListView, ListItem, Tree, Switch
@@ -16,10 +17,8 @@ from loguru import logger
 
 # Local imports
 from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.Event_Handlers.Study_Events.study_events import (
-    StudyCardCreatedEvent, StudyCardReviewedEvent, StudyTopicSelectedEvent
-)
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.UI.Study_Modules import StudyFlashcardsController, StudyQuizzesController
 # StudyDB import removed - using ChaChaNotes_DB instead
 
 # Type checking imports
@@ -111,6 +110,26 @@ class AnkiFlashcardsWidget(Widget):
         padding: 1;
         margin-bottom: 1;
     }
+
+    .deck-controls {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    .deck-lifecycle-controls {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    .deck-warning {
+        margin-bottom: 1;
+        color: $text-muted;
+    }
+
+    .search-row {
+        height: auto;
+        margin-bottom: 1;
+    }
     
     .card-list {
         height: 10;
@@ -121,12 +140,17 @@ class AnkiFlashcardsWidget(Widget):
     .review-area {
         border: round $surface;
         padding: 1;
-        height: 15;
+        height: auto;
     }
     
     .form-row {
-        height: 3;
+        height: auto;
         margin-bottom: 1;
+    }
+
+    .review-actions {
+        height: auto;
+        margin-top: 1;
     }
     """
     
@@ -137,14 +161,51 @@ class AnkiFlashcardsWidget(Widget):
             
             # Card creation section
             with Vertical(classes="card-editor"):
-                yield Label("Create New Card:", classes="subsection-title")
+                yield Label("Decks:", classes="subsection-title")
                 
-                with Horizontal(classes="form-row"):
+                with Horizontal(classes="deck-controls"):
                     yield Label("Deck:", classes="form-label")
                     yield Select(
-                        options=[("default", "Default Deck")],
+                        options=[("No decks available", Select.BLANK)],
+                        allow_blank=True,
+                        prompt="Select deck...",
                         id="deck-select"
                     )
+                with Horizontal(classes="deck-controls"):
+                    yield Input(placeholder="New deck name...", id="new-deck-name-input")
+                    yield Button("Create Deck", id="create-deck-button", variant="primary")
+
+                with Vertical(classes="deck-lifecycle-controls"):
+                    yield Label("Deck Actions:", classes="subsection-title")
+                    delete_note = Static(
+                        "In server mode, deck delete is disabled in the flashcards pane.",
+                        id="delete-deck-note",
+                        classes="deck-warning",
+                    )
+                    delete_note.display = False
+                    yield delete_note
+                    with Horizontal(classes="deck-controls"):
+                        yield Select(
+                            options=[("No target decks available", Select.BLANK)],
+                            allow_blank=True,
+                            prompt="Select target deck...",
+                            id="move-card-target-select",
+                        )
+                        yield Button("Move Selected Card", id="move-selected-card-button")
+                        yield Button("Delete Selected Card", id="delete-selected-card-button", variant="error")
+                    yield Button(
+                        "Delete Deck",
+                        id="delete-deck-button",
+                        variant="error",
+                        disabled=False,
+                    )
+
+                yield Label("Search Cards:", classes="subsection-title")
+                with Horizontal(classes="search-row"):
+                    yield Input(placeholder="Search selected deck...", id="flashcard-search-input")
+                    yield Button("Refresh", id="flashcard-refresh-button")
+
+                yield Label("Create New Card:", classes="subsection-title")
                 
                 yield Label("Front (Question):")
                 yield TextArea(
@@ -173,8 +234,114 @@ class AnkiFlashcardsWidget(Widget):
             # Review section
             with Vertical(classes="review-area"):
                 yield Label("Review Cards:", classes="subsection-title")
-                yield Static("No cards due for review", id="review-status")
+                yield Static("Create a deck to begin studying.", id="review-status")
+                yield Static("", id="review-front")
+                review_back = Static("", id="review-back")
+                review_back.display = False
+                yield review_back
+                yield Static("", id="review-next-intervals")
+                yield Button("Show Answer", id="show-answer-button")
                 yield Button("Start Review", id="start-review-btn", variant="success")
+                with Horizontal(classes="review-actions"):
+                    for rating in range(6):
+                        yield Button(str(rating), id=f"review-rating-{rating}")
+
+
+class QuizzesWidget(Widget):
+    """Widget for local/server-compatible quiz authoring and attempts."""
+
+    DEFAULT_CSS = """
+    QuizzesWidget {
+        height: 100%;
+        width: 100%;
+    }
+
+    .quizzes-container {
+        padding: 1;
+        height: 100%;
+    }
+
+    .quiz-editor {
+        border: round $surface;
+        padding: 1;
+        margin-bottom: 1;
+    }
+
+    .quiz-list {
+        height: 10;
+        border: round $surface;
+        margin-bottom: 1;
+    }
+
+    .quiz-attempt-area {
+        border: round $surface;
+        padding: 1;
+        height: auto;
+    }
+
+    .quiz-actions {
+        height: auto;
+        margin-top: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        """Compose the quizzes UI."""
+        with ScrollableContainer(classes="quizzes-container"):
+            yield Label("📝 Quizzes", classes="section-title")
+
+            with Vertical(classes="quiz-editor"):
+                yield Label("Quiz Selection:", classes="subsection-title")
+                with Horizontal(classes="form-row"):
+                    yield Label("Quiz:", classes="form-label")
+                    yield Select(
+                        options=[("No quizzes available", Select.BLANK)],
+                        allow_blank=True,
+                        prompt="Select quiz...",
+                        id="quiz-select",
+                    )
+
+                yield Label("Create New Quiz:", classes="subsection-title")
+                with Horizontal(classes="form-row"):
+                    yield Input(placeholder="Quiz name...", id="new-quiz-name-input")
+                    yield Input(placeholder="Description...", id="new-quiz-description-input")
+                with Horizontal(classes="quiz-actions"):
+                    yield Button("Create Quiz", id="create-quiz-button", variant="primary")
+                    yield Button("Delete Quiz", id="delete-quiz-button", variant="error")
+
+                yield Label("Add Fill Blank Question:", classes="subsection-title")
+                yield Label("Question Text:")
+                yield TextArea("", id="quiz-question-text", classes="card-input")
+                with Horizontal(classes="form-row"):
+                    yield Label("Correct Answer:", classes="form-label")
+                    yield Input(placeholder="Correct answer...", id="quiz-correct-answer-input")
+                with Horizontal(classes="quiz-actions"):
+                    yield Button("Add Question", id="create-quiz-question-button", variant="primary")
+                    yield Button("Delete Selected Question", id="delete-quiz-question-button", variant="error")
+
+            yield Label("Quiz Questions:", classes="subsection-title")
+            yield ListView(id="quiz-question-list", classes="quiz-list")
+
+            with Vertical(classes="quiz-attempt-area"):
+                yield Label("Attempt Quiz:", classes="subsection-title")
+                yield Static("Create a quiz to begin practicing.", id="quiz-attempt-status")
+                yield Static("", id="quiz-attempt-question")
+                yield Label("Attempt History:", classes="subsection-title")
+                with Horizontal(classes="form-row"):
+                    yield Select(
+                        options=[("No attempt history", Select.BLANK)],
+                        allow_blank=True,
+                        prompt="Select attempt...",
+                        id="quiz-attempt-history-select",
+                    )
+                    yield Button("Load Attempt", id="load-quiz-attempt-history-button")
+                yield Static("", id="quiz-attempt-history-summary")
+                with Horizontal(classes="form-row"):
+                    yield Label("Your Answer:", classes="form-label")
+                    yield Input(placeholder="Enter your answer...", id="quiz-answer-input")
+                with Horizontal(classes="quiz-actions"):
+                    yield Button("Start Attempt", id="start-quiz-attempt-button", variant="primary")
+                    yield Button("Submit Answer", id="submit-quiz-answer-button", variant="success")
 
 
 class MindmapsWidget(Widget):
@@ -463,6 +630,8 @@ class StudyWindow(Container):
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.flashcards_controller = StudyFlashcardsController(self)
+        self.quizzes_controller = StudyQuizzesController(self)
     
     DEFAULT_CSS = """
     StudyWindow {
@@ -520,6 +689,7 @@ class StudyWindow(Container):
             yield Label("Study Menu", classes="section-title")
             yield Button("📚 Structured Learning", id="view-structured-btn", classes="sidebar-button", variant="primary")
             yield Button("🗂️ Anki/Flashcards", id="view-flashcards-btn", classes="sidebar-button")
+            yield Button("📝 Quizzes", id="view-quizzes-btn", classes="sidebar-button")
             yield Button("🧠 Mindmaps", id="view-mindmaps-btn", classes="sidebar-button")
             yield Button("📖 Course Creation", id="view-course-btn", classes="sidebar-button")
             yield Button("📋 Study Guide", id="view-study-guide-btn", classes="sidebar-button")
@@ -532,6 +702,9 @@ class StudyWindow(Container):
     
     def watch_current_view(self, old_view: str, new_view: str) -> None:
         """Handle view changes"""
+        if old_view == "flashcards":
+            self.run_worker(self.flashcards_controller.end_review_session_if_needed(), exclusive=True)
+
         # Remove old content
         content_container = self.query_one(".study-content", Container)
         
@@ -543,6 +716,8 @@ class StudyWindow(Container):
             content_container.mount(StructuredLearningWidget())
         elif new_view == "flashcards":
             content_container.mount(AnkiFlashcardsWidget())
+        elif new_view == "quizzes":
+            content_container.mount(QuizzesWidget())
         elif new_view == "mindmaps":
             content_container.mount(MindmapsWidget())
         elif new_view == "course_creation":
@@ -554,12 +729,18 @@ class StudyWindow(Container):
         
         # Update button states
         self.update_button_states(new_view)
+
+        if new_view == "flashcards":
+            self.call_after_refresh(self._schedule_flashcards_refresh)
+        elif new_view == "quizzes":
+            self.call_after_refresh(self._schedule_quizzes_refresh)
     
     def update_button_states(self, active_view: str) -> None:
         """Update sidebar button variants based on active view"""
         buttons = {
             "structured_learning": "#view-structured-btn",
             "flashcards": "#view-flashcards-btn",
+            "quizzes": "#view-quizzes-btn",
             "mindmaps": "#view-mindmaps-btn",
             "course_creation": "#view-course-btn",
             "study_guide": "#view-study-guide-btn",
@@ -573,11 +754,15 @@ class StudyWindow(Container):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle sidebar button presses"""
         button_id = event.button.id
+        if button_id is None or not button_id.startswith("view-"):
+            return
         
         if button_id == "view-structured-btn":
             self.current_view = "structured_learning"
         elif button_id == "view-flashcards-btn":
             self.current_view = "flashcards"
+        elif button_id == "view-quizzes-btn":
+            self.current_view = "quizzes"
         elif button_id == "view-mindmaps-btn":
             self.current_view = "mindmaps"
         elif button_id == "view-course-btn":
@@ -593,3 +778,106 @@ class StudyWindow(Container):
         self.update_button_states("structured_learning")
         
         # Note: Study functionality now uses ChaChaNotes_DB from the app instance
+    
+    def _is_server_mode(self) -> bool:
+        return getattr(self.app_instance, "current_runtime_backend", None) == "server"
+
+    def _configure_flashcards_lifecycle_controls(self) -> None:
+        try:
+            delete_deck_button = self.query_one("#delete-deck-button", Button)
+            delete_deck_note = self.query_one("#delete-deck-note", Static)
+        except Exception:
+            return
+
+        server_mode = self._is_server_mode()
+        delete_deck_button.disabled = server_mode
+        delete_deck_note.display = server_mode
+
+    def _schedule_flashcards_refresh(self) -> None:
+        self.run_worker(self.flashcards_controller.initialize_view(), exclusive=True)
+        self.call_after_refresh(self._configure_flashcards_lifecycle_controls)
+
+    def _schedule_quizzes_refresh(self) -> None:
+        self.run_worker(self.quizzes_controller.initialize_view(), exclusive=True)
+
+    @on(Button.Pressed, "#create-deck-button")
+    def handle_create_deck(self) -> None:
+        self.run_worker(self.flashcards_controller.create_deck(), exclusive=True)
+
+    @on(Button.Pressed, "#flashcard-refresh-button")
+    def handle_refresh_cards(self) -> None:
+        self.run_worker(self.flashcards_controller.refresh_cards(), exclusive=True)
+
+    @on(Button.Pressed, "#create-card-btn")
+    def handle_create_card(self) -> None:
+        self.run_worker(self.flashcards_controller.create_card(), exclusive=True)
+
+    @on(Button.Pressed, "#delete-deck-button")
+    def handle_delete_deck(self) -> None:
+        pass
+
+    @on(Select.Changed, "#move-card-target-select")
+    def handle_move_card_target_changed(self, event: Select.Changed) -> None:
+        pass
+
+    @on(Button.Pressed, "#move-selected-card-button")
+    def handle_move_selected_card(self) -> None:
+        pass
+
+    @on(Button.Pressed, "#delete-selected-card-button")
+    def handle_delete_selected_card(self) -> None:
+        pass
+
+    @on(Button.Pressed, "#start-review-btn")
+    def handle_start_review(self) -> None:
+        self.run_worker(self.flashcards_controller.start_review(), exclusive=True)
+
+    @on(Button.Pressed, "#show-answer-button")
+    def handle_show_answer(self) -> None:
+        self.flashcards_controller.show_answer()
+
+    @on(Button.Pressed, "#review-rating-0")
+    @on(Button.Pressed, "#review-rating-1")
+    @on(Button.Pressed, "#review-rating-2")
+    @on(Button.Pressed, "#review-rating-3")
+    @on(Button.Pressed, "#review-rating-4")
+    @on(Button.Pressed, "#review-rating-5")
+    def handle_review_rating(self, event: Button.Pressed) -> None:
+        rating = int(str(event.button.id).rsplit("-", 1)[-1])
+        self.run_worker(self.flashcards_controller.submit_rating(rating), exclusive=True)
+
+    @on(Select.Changed, "#deck-select")
+    def handle_deck_select_changed(self, event: Select.Changed) -> None:
+        self.run_worker(self.flashcards_controller.handle_deck_changed())
+
+    @on(Button.Pressed, "#create-quiz-button")
+    def handle_create_quiz(self) -> None:
+        self.run_worker(self.quizzes_controller.create_quiz(), exclusive=True)
+
+    @on(Button.Pressed, "#delete-quiz-button")
+    def handle_delete_quiz(self) -> None:
+        self.run_worker(self.quizzes_controller.delete_quiz(), exclusive=True)
+
+    @on(Button.Pressed, "#create-quiz-question-button")
+    def handle_create_quiz_question(self) -> None:
+        self.run_worker(self.quizzes_controller.create_question(), exclusive=True)
+
+    @on(Button.Pressed, "#delete-quiz-question-button")
+    def handle_delete_quiz_question(self) -> None:
+        self.run_worker(self.quizzes_controller.delete_question(), exclusive=True)
+
+    @on(Button.Pressed, "#start-quiz-attempt-button")
+    def handle_start_quiz_attempt(self) -> None:
+        self.run_worker(self.quizzes_controller.start_attempt(), exclusive=True)
+
+    @on(Button.Pressed, "#submit-quiz-answer-button")
+    def handle_submit_quiz_answer(self) -> None:
+        self.run_worker(self.quizzes_controller.submit_current_answer(), exclusive=True)
+
+    @on(Button.Pressed, "#load-quiz-attempt-history-button")
+    def handle_load_quiz_attempt_history(self) -> None:
+        self.run_worker(self.quizzes_controller.load_selected_attempt(), exclusive=True)
+
+    @on(Select.Changed, "#quiz-select")
+    async def handle_quiz_select_changed(self, event: Select.Changed) -> None:
+        await self.quizzes_controller.handle_quiz_changed()
