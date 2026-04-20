@@ -214,6 +214,7 @@ These must mirror the real current server contract:
 
 - update uses `PATCH /api/v1/flashcards/{card_uuid}`
 - delete uses `DELETE /api/v1/flashcards/{card_uuid}?expected_version=...`
+- flashcard scheduler-type schema values must accept the current server enum (`sm2_plus`, `fsrs`) rather than preserving a stale client-only alias
 
 Do **not** add a deck-delete client method in this slice.
 
@@ -348,6 +349,7 @@ Add shared client tests for:
 
 - flashcard update route wiring
 - flashcard delete route wiring
+- flashcard schema acceptance of the current server scheduler-type enum values
 
 No deck-delete client test should be added in this slice.
 
