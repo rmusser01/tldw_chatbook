@@ -59,6 +59,19 @@ from .prompt_chatbook_schemas import (
     PromptCreateRequest,
     PromptPreviewRequest,
 )
+from .flashcards_schemas import (
+    FlashcardCreateRequest,
+    FlashcardDeckCreateRequest,
+    FlashcardDeckResponse,
+    FlashcardListResponse,
+    FlashcardNextReviewResponse,
+    FlashcardResponse,
+    FlashcardReviewRequest,
+    FlashcardReviewResponse,
+    FlashcardReviewSessionEndRequest,
+    FlashcardReviewSessionSummary,
+    FlashcardUpdateRequest,
+)
 from .chat_conversation_schemas import (
     ConversationScopeParams,
     ConversationUpdateRequest,
@@ -539,6 +552,126 @@ class TLDWAPIClient:
 
     async def delete_reading_progress(self, media_id: int) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/media/{media_id}/progress")
+
+    async def create_flashcard_deck(
+        self,
+        request_data: FlashcardDeckCreateRequest,
+    ) -> FlashcardDeckResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/decks",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardDeckResponse.model_validate(response)
+
+    async def list_flashcard_decks(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[FlashcardDeckResponse]:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/decks",
+            params={"limit": limit, "offset": offset},
+        )
+        return [FlashcardDeckResponse.model_validate(item) for item in list(response or [])]
+
+    async def create_flashcard(
+        self,
+        request_data: FlashcardCreateRequest,
+    ) -> FlashcardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardResponse.model_validate(response)
+
+    async def update_flashcard(
+        self,
+        card_uuid: str,
+        request_data: FlashcardUpdateRequest,
+    ) -> FlashcardResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/flashcards/{card_uuid}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardResponse.model_validate(response)
+
+    async def delete_flashcard(
+        self,
+        card_uuid: str,
+        *,
+        expected_version: int,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/flashcards/{card_uuid}",
+            params={"expected_version": expected_version},
+        )
+
+    async def list_flashcards(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        q: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> FlashcardListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards",
+            params={
+                key: value
+                for key, value in {
+                    "deck_id": deck_id,
+                    "q": q,
+                    "limit": limit,
+                    "offset": offset,
+                }.items()
+                if value is not None
+            },
+        )
+        return FlashcardListResponse.model_validate(response)
+
+    async def get_next_flashcard_review(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+    ) -> FlashcardNextReviewResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/review/next",
+            params={
+                key: value
+                for key, value in {
+                    "deck_id": deck_id,
+                }.items()
+                if value is not None
+            },
+        )
+        return FlashcardNextReviewResponse.model_validate(response)
+
+    async def review_flashcard(
+        self,
+        request_data: FlashcardReviewRequest,
+    ) -> FlashcardReviewResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/review",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardReviewResponse.model_validate(response)
+
+    async def end_flashcard_review_session(self, review_session_id: int) -> FlashcardReviewSessionSummary:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/review-sessions/end",
+            json_data=FlashcardReviewSessionEndRequest(review_session_id=review_session_id).model_dump(mode="json"),
+        )
+        return FlashcardReviewSessionSummary.model_validate(response)
 
     async def search_media_items(
         self,

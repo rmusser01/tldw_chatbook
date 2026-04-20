@@ -82,6 +82,19 @@ from .prompt_chatbook_schemas import (
     ChatbookExportJobResponse,
     ChatbookImportJobResponse,
 )
+from .flashcards_schemas import (
+    FlashcardCreateRequest,
+    FlashcardDeckCreateRequest,
+    FlashcardDeckResponse,
+    FlashcardListResponse,
+    FlashcardNextReviewResponse,
+    FlashcardResponse,
+    FlashcardReviewRequest,
+    FlashcardReviewResponse,
+    FlashcardReviewSessionEndRequest,
+    FlashcardReviewSessionSummary,
+    FlashcardUpdateRequest,
+)
 from .chat_conversation_schemas import (
     ALLOWED_CONVERSATION_STATES,
     ConversationListItem,
@@ -187,6 +200,10 @@ __all__ = [
     "PromptCreateRequest", "PromptPreviewRequest", "PromptResponse", "PromptVersionResponse",
     "ChatbookExportRequest", "ChatbookImportRequest", "ChatbookPreviewResponse",
     "ChatbookExportJobResponse", "ChatbookImportJobResponse",
+    "FlashcardCreateRequest", "FlashcardDeckCreateRequest", "FlashcardDeckResponse",
+    "FlashcardListResponse", "FlashcardNextReviewResponse", "FlashcardResponse",
+    "FlashcardReviewRequest", "FlashcardReviewResponse", "FlashcardReviewSessionEndRequest",
+    "FlashcardReviewSessionSummary", "FlashcardUpdateRequest",
     "ALLOWED_CONVERSATION_STATES",
     "ConversationState", "normalize_conversation_state",
     "ConversationScopeParams", "ConversationListItem", "ConversationListPagination",
