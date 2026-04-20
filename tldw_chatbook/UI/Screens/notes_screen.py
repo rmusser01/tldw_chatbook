@@ -1728,6 +1728,35 @@ class NotesScreen(BaseAppScreen):
     async def on_mount(self) -> None:
         super().on_mount()
         logger.info("NotesScreen mounted")
+        pending_context = getattr(getattr(self.app_instance, "__dict__", {}), "get", lambda *_: None)(
+            "pending_notes_workspace_context"
+        )
+        if isinstance(pending_context, dict) and pending_context.get("workspace_id"):
+            self.app_instance.pending_notes_workspace_context = None
+            raw_subview = pending_context.get("subview", WorkspaceSubview.DETAILS)
+            if isinstance(raw_subview, WorkspaceSubview):
+                subview = raw_subview
+            else:
+                subview = WorkspaceSubview(str(raw_subview))
+            self._set_state(
+                scope_type=ScopeType.WORKSPACE,
+                workspace_subview=subview,
+                selected_note_id=None,
+                selected_note_version=None,
+                selected_note_title="",
+                selected_note_content="",
+                selected_local_note_id=None,
+                selected_local_note_version=None,
+                selected_server_note_id=None,
+                selected_server_note_version=None,
+                selected_workspace_id=pending_context.get("workspace_id"),
+                selected_workspace_note_id=None,
+                selected_workspace_note_version=None,
+                selected_workspace_source_id=None,
+                selected_workspace_source_version=None,
+                selected_workspace_artifact_id=None,
+                selected_workspace_artifact_version=None,
+            )
         await self.refresh_current_scope()
         self._update_scope_context_ui()
 

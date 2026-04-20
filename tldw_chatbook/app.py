@@ -146,6 +146,7 @@ from .UI.Screens.coding_screen import CodingScreen
 from .UI.Screens.conversation_screen import ConversationScreen
 from .UI.Screens.media_screen import MediaScreen
 from .UI.Screens.notes_screen import NotesScreen
+from .UI.Screens.notes_scope_models import WorkspaceSubview
 from .UI.Screens.search_screen import SearchScreen
 from .UI.Screens.evals_screen import EvalsScreen
 from .UI.Screens.tools_settings_screen import ToolsSettingsScreen
@@ -154,6 +155,7 @@ from .UI.Screens.customize_screen import CustomizeScreen
 from .UI.Screens.logs_screen import LogsScreen
 from .UI.Screens.stats_screen import StatsScreen
 from .UI.Screens.media_runtime_state import MediaRuntimeState
+from .UI.Screens.study_scope_models import StudyScopeContext
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
 # The legacy per-view navigation (ingest-nav-*/ingest-view-*) is not used anymore.
 # Keep these as empty to avoid wiring legacy handlers.
@@ -1119,6 +1121,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.pending_study_scope_context: Optional[StudyScopeContext] = None
+        self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
         self.loguru_logger = loguru_logger
         self.loguru_logger.info(f"Loaded app_config - strip_thinking_tags: {self.app_config.get('chat_defaults', {}).get('strip_thinking_tags', 'NOT SET')}") # Make loguru_logger an instance variable for handlers
         self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
@@ -1307,6 +1311,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # Final memory check
         log_resource_usage()
 
+    def open_study_screen(self, scope_context: Optional[StudyScopeContext] = None) -> None:
+        self.pending_study_scope_context = scope_context
+        self.post_message(NavigateToScreen(TAB_STUDY))
+
+    def open_notes_workspace(
+        self,
+        workspace_id: str,
+        subview: WorkspaceSubview = WorkspaceSubview.DETAILS,
+    ) -> None:
+        self.pending_notes_workspace_context = {
+            "workspace_id": workspace_id,
+            "subview": subview,
+        }
+        self.post_message(NavigateToScreen(TAB_NOTES))
 
     def _wire_character_persona_services(self) -> None:
         try:
