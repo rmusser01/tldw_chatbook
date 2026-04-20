@@ -259,6 +259,10 @@ Rules:
 - global Study should remain visually unchanged when no workspace scope is active
 - workspace scope should be visually obvious at all times
 - local unavailable state should be represented as a true UI state, not just a warning toast
+- workspace-scoped empty states should be explicit and scope-aware:
+  - `No study decks in this workspace yet.`
+  - `No quizzes in this workspace yet.`
+  - these empty states must not fall back to global Study copy
 
 ### 6. Notes Workspace Entry
 
@@ -336,6 +340,12 @@ The service must fail closed:
 
 Flashcard card listing itself remains deck-based. Once the deck list is correctly scoped, card lists and review flows naturally stay within that selected deck.
 
+Search behavior in this slice is fixed:
+
+- global Study search only searches global Study decks/cards
+- workspace-scoped Study search only searches the selected workspace scope
+- client-side search/filter behavior must be applied only after scope filtering, never before it
+
 #### Quizzes
 
 Extend `tldw_chatbook/Study_Interop/quiz_scope_service.py` the same way:
@@ -348,6 +358,12 @@ Extend `tldw_chatbook/Study_Interop/quiz_scope_service.py` the same way:
   - workspace only: `workspace_id == selected_workspace_id`
 
 Controllers should never filter raw quiz results themselves.
+
+Quiz search behavior follows the same rule:
+
+- global Study search only searches global quizzes
+- workspace-scoped Study search only searches quizzes belonging to the selected workspace
+- scope filtering always happens before client-side search narrowing
 
 ### 9. Workspace Scope Availability Enforcement
 
