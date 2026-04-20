@@ -822,20 +822,24 @@ class StudyWindow(Container):
         self.run_worker(self.flashcards_controller.create_card(), exclusive=True)
 
     @on(Button.Pressed, "#delete-deck-button")
-    def handle_delete_deck(self) -> None:
-        pass
+    async def handle_delete_deck(self) -> None:
+        await self.flashcards_controller.delete_selected_deck()
 
     @on(Select.Changed, "#move-card-target-select")
     def handle_move_card_target_changed(self, event: Select.Changed) -> None:
-        pass
+        self.flashcards_controller.handle_move_target_changed()
 
     @on(Button.Pressed, "#move-selected-card-button")
-    def handle_move_selected_card(self) -> None:
-        pass
+    async def handle_move_selected_card(self) -> None:
+        await self.flashcards_controller.move_selected_card()
 
     @on(Button.Pressed, "#delete-selected-card-button")
-    def handle_delete_selected_card(self) -> None:
-        pass
+    async def handle_delete_selected_card(self) -> None:
+        await self.flashcards_controller.delete_selected_card()
+
+    @on(ListView.Selected, "#card-list")
+    async def handle_card_selected(self, event: ListView.Selected) -> None:
+        await self.flashcards_controller.handle_card_selected(event)
 
     @on(Button.Pressed, "#start-review-btn")
     def handle_start_review(self) -> None:

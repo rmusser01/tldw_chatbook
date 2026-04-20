@@ -11,8 +11,21 @@ from tldw_chatbook.UI.Study_Window import StudyWindow
 class FakeStudyScopeService:
     def __init__(self):
         self.calls = []
-        self.decks = [{"record_id": "local:study_deck:deck-local-1", "backing_id": "deck-local-1", "name": "Biology"}]
-        self.cards = [{"record_id": "local:study_flashcard:card-local-1", "backing_id": "card-local-1", "deck_record_id": "local:study_deck:deck-local-1", "front": "Question", "back": "Answer", "queue_state": "new"}]
+        self.decks = [
+            {"record_id": "local:study_deck:deck-local-1", "backing_id": "deck-local-1", "name": "Biology", "version": 3},
+            {"record_id": "local:study_deck:deck-local-2", "backing_id": "deck-local-2", "name": "Chemistry", "version": 5},
+        ]
+        self.cards = [
+            {
+                "record_id": "local:study_flashcard:card-local-1",
+                "backing_id": "card-local-1",
+                "deck_record_id": "local:study_deck:deck-local-1",
+                "front": "Question",
+                "back": "Answer",
+                "queue_state": "new",
+                "version": 7,
+            }
+        ]
         self.candidates = [
             {
                 "card": {
@@ -57,6 +70,26 @@ class FakeStudyScopeService:
         }
         self.cards.append(created)
         return created
+
+    async def move_flashcard(self, *, mode=None, card_id=None, target_deck_id=None, expected_version=None):
+        self.calls.append(("move_flashcard", mode, card_id, target_deck_id, expected_version))
+        for card in self.cards:
+            if card["backing_id"] == card_id:
+                card["deck_record_id"] = f"{mode}:study_deck:{target_deck_id}"
+                card["version"] = (card.get("version") or 0) + 1
+                return card
+        return None
+
+    async def delete_flashcard(self, *, mode=None, card_id=None, expected_version=None, hard_delete=False):
+        self.calls.append(("delete_flashcard", mode, card_id, expected_version, hard_delete))
+        self.cards = [card for card in self.cards if card["backing_id"] != card_id]
+        return {"deleted": True}
+
+    async def delete_deck(self, *, mode=None, deck_id=None, expected_version=None, hard_delete=False):
+        self.calls.append(("delete_deck", mode, deck_id, expected_version, hard_delete))
+        self.decks = [deck for deck in self.decks if deck["backing_id"] != deck_id]
+        self.cards = [card for card in self.cards if not str(card["deck_record_id"]).endswith(str(deck_id))]
+        return {"deleted": True}
 
     async def get_next_review_candidate(self, *, mode=None, deck_id=None):
         self.calls.append(("get_next_review_candidate", mode, deck_id))
@@ -251,10 +284,144 @@ async def test_flashcards_lifecycle_controls_noop_handlers_do_not_raise():
         await pilot.pause(0.3)
 
         window = app.screen.query_one(StudyWindow)
-        window.handle_delete_deck()
-        window.handle_move_selected_card()
-        window.handle_delete_selected_card()
+        await window.handle_delete_deck()
+        await window.handle_move_selected_card()
+        await window.handle_delete_selected_card()
         window.handle_move_card_target_changed(SimpleNamespace())
+
+
+@pytest.mark.asyncio
+async def test_flashcards_lifecycle_controls_disable_without_selected_card_or_target():
+    scope = FakeStudyScopeService()
+    scope.decks = [scope.decks[0]]
+    app_instance = SimpleNamespace(
+        study_scope_service=scope,
+        current_runtime_backend="local",
+        runtime_backend=None,
+        app_config={},
+        notify=lambda *args, **kwargs: None,
+    )
+    app = StudyTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#view-flashcards-btn")
+        await pilot.pause(0.3)
+
+        move_selected_button = app.screen.query_one("#move-selected-card-button", Button)
+        delete_selected_button = app.screen.query_one("#delete-selected-card-button", Button)
+
+        assert delete_selected_button.disabled is True
+        assert move_selected_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_delete_selected_card_uses_selected_card_version_and_refreshes_list():
+    scope = FakeStudyScopeService()
+    app_instance = SimpleNamespace(
+        study_scope_service=scope,
+        current_runtime_backend="server",
+        runtime_backend=None,
+        app_config={},
+        notify=lambda *args, **kwargs: None,
+    )
+    app = StudyTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#view-flashcards-btn")
+        await pilot.pause(0.3)
+
+        controller = app.screen.query_one(StudyWindow).flashcards_controller
+        deck_select = app.screen.query_one("#deck-select", Select)
+        deck_select.value = "deck-local-1"
+        await controller.refresh_cards()
+        card_list = app.screen.query_one("#card-list", ListView)
+        await controller.handle_card_selected(SimpleNamespace(item=card_list.children[0]))
+        controller.current_review_card = controller.selected_card_record
+        controller.current_review_session_id = 41
+
+        await controller.delete_selected_card()
+        await pilot.pause(0.3)
+
+        assert ("delete_flashcard", "server", "card-local-1", 7, False) in scope.calls
+        assert ("end_review_session", "server", 41) in scope.calls
+        assert len(scope.cards) == 0
+        assert "No cards in this deck." in app.screen.query_one("#card-list", ListView).children[0].children[0].renderable
+
+
+@pytest.mark.asyncio
+async def test_move_selected_card_refreshes_current_deck_and_exits_review_when_needed():
+    scope = FakeStudyScopeService()
+    app_instance = SimpleNamespace(
+        study_scope_service=scope,
+        current_runtime_backend="server",
+        runtime_backend=None,
+        app_config={},
+        notify=lambda *args, **kwargs: None,
+    )
+    app = StudyTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#view-flashcards-btn")
+        await pilot.pause(0.3)
+
+        controller = app.screen.query_one(StudyWindow).flashcards_controller
+        deck_select = app.screen.query_one("#deck-select", Select)
+        deck_select.value = "deck-local-1"
+        await controller.refresh_cards()
+        card_list = app.screen.query_one("#card-list", ListView)
+        await controller.handle_card_selected(SimpleNamespace(item=card_list.children[0]))
+        controller.current_review_card = controller.selected_card_record
+        controller.current_review_session_id = 41
+
+        move_target_select = app.screen.query_one("#move-card-target-select", Select)
+        move_target_select.value = "deck-local-2"
+        await controller.move_selected_card()
+        await pilot.pause(0.3)
+
+        assert ("move_flashcard", "server", "card-local-1", "deck-local-2", 7) in scope.calls
+        assert ("end_review_session", "server", 41) in scope.calls
+        assert all(card["deck_record_id"].endswith("deck-local-2") for card in scope.cards)
+        assert app.screen.query_one("#review-status", Static).renderable != ""
+
+
+@pytest.mark.asyncio
+async def test_local_delete_deck_uses_selected_deck_version_and_resets_review_state():
+    scope = FakeStudyScopeService()
+    app_instance = SimpleNamespace(
+        study_scope_service=scope,
+        current_runtime_backend="local",
+        runtime_backend=None,
+        app_config={},
+        notify=lambda *args, **kwargs: None,
+    )
+    app = StudyTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#view-flashcards-btn")
+        await pilot.pause(0.3)
+
+        controller = app.screen.query_one(StudyWindow).flashcards_controller
+        controller.current_review_card = dict(scope.cards[0])
+        controller.current_review_session_id = 41
+        deck_select = app.screen.query_one("#deck-select", Select)
+        deck_select.value = "deck-local-1"
+        await controller.refresh_cards()
+
+        await controller.delete_selected_deck()
+        await pilot.pause(0.3)
+
+        assert ("delete_deck", "local", "deck-local-1", 3, False) in scope.calls
+        assert controller.selected_deck_record is None
+        assert controller.selected_card_record is None
+        assert controller.current_review_card is None
+        assert controller.current_review_session_id is None
+        assert app.screen.query_one("#deck-select", Select).value == Select.BLANK
+        assert app.screen.query_one("#review-front", Static).renderable == ""
+        assert app.screen.query_one("#review-back", Static).renderable == ""
 
 
 @pytest.mark.asyncio
