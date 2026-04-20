@@ -274,7 +274,8 @@ END;
 CREATE TRIGGER conversations_au
 AFTER UPDATE ON conversations BEGIN
   INSERT INTO conversations_fts(conversations_fts,rowid,title)
-  VALUES('delete',old.rowid,old.title);
+  SELECT 'delete',old.rowid,old.title
+  WHERE old.deleted = 0 AND old.title IS NOT NULL;
 
   INSERT INTO conversations_fts(rowid,title)
   SELECT new.rowid,new.title
@@ -284,7 +285,8 @@ END;
 CREATE TRIGGER conversations_ad
 AFTER DELETE ON conversations BEGIN
   INSERT INTO conversations_fts(conversations_fts,rowid,title)
-  VALUES('delete',old.rowid,old.title);
+  SELECT 'delete',old.rowid,old.title
+  WHERE old.title IS NOT NULL;
 END;
 
 /*----------------------------------------------------------------
@@ -1882,8 +1884,18 @@ WHEN OLD.deleted = 1 AND NEW.deleted = 0
 BEGIN
   INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
   VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
-                     'version',NEW.version,'client_id',NEW.client_id));
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
 END;
 
 -- Update schema version
@@ -4481,7 +4493,8 @@ UPDATE db_schema_version
                     SELECT rowid, title, version, deleted, character_id, assistant_kind, assistant_id,
                            persona_memory_mode, scope_type, workspace_id, state, topic_label,
                            topic_label_source, topic_last_tagged_at, topic_last_tagged_message_id,
-                           cluster_id, source, external_ref
+                           cluster_id, source, external_ref,
+                           runtime_backend, discovery_owner, discovery_entity_id
                     FROM conversations
                     WHERE id = ?
                     """,
@@ -4512,6 +4525,10 @@ UPDATE db_schema_version
                     for field in ('assistant_kind', 'assistant_id', 'character_id', 'persona_memory_mode')
                 )
                 scope_update_requested = 'scope_type' in update_data or 'workspace_id' in update_data
+                runtime_update_requested = any(
+                    field in update_data
+                    for field in ("runtime_backend", "discovery_owner", "discovery_entity_id")
+                )
 
                 if assistant_update_requested:
                     assistant_kind, assistant_id, character_id, persona_memory_mode = self._normalize_conversation_assistant_identity(
@@ -4567,6 +4584,17 @@ UPDATE db_schema_version
                 if 'external_ref' in update_data:
                     external_ref = self._normalize_nullable_text(update_data.get('external_ref'))
 
+                if runtime_update_requested:
+                    runtime_backend, discovery_owner, discovery_entity_id = self._normalize_conversation_runtime_visibility(
+                        runtime_backend=update_data.get("runtime_backend", current_state["runtime_backend"]),
+                        discovery_owner=update_data.get("discovery_owner", current_state["discovery_owner"]),
+                        discovery_entity_id=update_data.get("discovery_entity_id", current_state["discovery_entity_id"]),
+                    )
+                else:
+                    runtime_backend = current_state["runtime_backend"]
+                    discovery_owner = current_state["discovery_owner"]
+                    discovery_entity_id = current_state["discovery_entity_id"]
+
                 fields_to_update_sql = []
                 params_for_set_clause = []
 
@@ -4611,6 +4639,13 @@ UPDATE db_schema_version
                 if 'external_ref' in update_data:
                     fields_to_update_sql.append("external_ref = ?")
                     params_for_set_clause.append(external_ref)
+                if runtime_update_requested:
+                    fields_to_update_sql.extend([
+                        "runtime_backend = ?",
+                        "discovery_owner = ?",
+                        "discovery_entity_id = ?",
+                    ])
+                    params_for_set_clause.extend([runtime_backend, discovery_owner, discovery_entity_id])
 
                 next_version_val = expected_version + 1
                 fields_to_update_sql.extend(["last_modified = ?", "version = ?", "client_id = ?"])
