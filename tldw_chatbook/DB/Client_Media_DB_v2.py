@@ -420,6 +420,15 @@ class MediaDatabase:
     );
     """
 
+    _READING_PROGRESS_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS ReadingProgress (
+        media_id INTEGER PRIMARY KEY,
+        progress_json TEXT NOT NULL,
+        last_modified DATETIME NOT NULL,
+        FOREIGN KEY (media_id) REFERENCES Media(id) ON DELETE CASCADE
+    );
+    """
+
     def __init__(self, db_path: Union[str, Path], client_id: str, 
                  check_integrity_on_startup: bool = False):
         """
@@ -976,6 +985,7 @@ class MediaDatabase:
                     logging.debug("Verified FTS tables exist.")
                 except sqlite3.Error as fts_err:
                     logging.warning(f"Could not verify/create FTS tables on already correct schema version: {fts_err}")
+                self._ensure_reading_progress_table(conn)
                 return
 
             if current_db_version > target_version:
@@ -1011,6 +1021,7 @@ class MediaDatabase:
                 logging.info(f"Successfully migrated to version {current_db_version}")
             
             logging.info(f"Database schema fully migrated to version {target_version}")
+            self._ensure_reading_progress_table(conn)
 
         except (DatabaseError, SchemaError, sqlite3.Error) as e:
             logging.error(f"Schema initialization/migration failed: {e}", exc_info=True)
@@ -1018,6 +1029,16 @@ class MediaDatabase:
         except Exception as e:
             logging.error(f"Unexpected error during schema initialization: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error applying schema: {e}") from e
+
+    def _ensure_reading_progress_table(self, conn: sqlite3.Connection) -> None:
+        """Create the local-only reading progress table if it does not exist."""
+        try:
+            conn.executescript(self._READING_PROGRESS_TABLE_SQL)
+            conn.commit()
+            logging.debug("Verified ReadingProgress table exists.")
+        except sqlite3.Error as e:
+            logging.error(f"Failed to create ReadingProgress table: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to create ReadingProgress table: {e}") from e
 
     # --- Internal Helpers (Unchanged) ---
     def _get_current_utc_timestamp_str(self) -> str:
@@ -1981,6 +2002,73 @@ class MediaDatabase:
         except Exception as e:
             logger.error(f"Unexpected error deleting sync log entries before {change_id_threshold} from DB '{self.db_path_str}': {e}")
             raise DatabaseError(f"Unexpected error deleting sync log entries before threshold: {e}") from e
+
+    def get_reading_progress(self, media_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch the local-only reading progress row for a media item."""
+        try:
+            cursor = self.execute_query(
+                "SELECT media_id, progress_json, last_modified FROM ReadingProgress WHERE media_id = ?",
+                (media_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            progress_data = json.loads(row["progress_json"]) if row["progress_json"] else {}
+            if not isinstance(progress_data, dict):
+                progress_data = {"value": progress_data}
+
+            result = dict(progress_data)
+            result["media_id"] = row["media_id"]
+            result["last_modified"] = row["last_modified"]
+            return result
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode reading progress for media_id={media_id}: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to decode reading progress for media_id {media_id}: {e}") from e
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching reading progress for media_id={media_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to fetch reading progress for media_id {media_id}") from e
+
+    def upsert_reading_progress(self, media_id: int, progress_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert or replace the local-only reading progress row for a media item."""
+        if not isinstance(progress_data, dict):
+            raise InputError("progress_data must be a dictionary.")
+
+        current_time = self._get_current_utc_timestamp_str()
+        progress_json = json.dumps(progress_data, separators=(',', ':'), cls=DateTimeEncoder)
+
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO ReadingProgress (media_id, progress_json, last_modified)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(media_id) DO UPDATE SET
+                        progress_json = excluded.progress_json,
+                        last_modified = excluded.last_modified
+                    """,
+                    (media_id, progress_json, current_time),
+                )
+            fetched = self.get_reading_progress(media_id)
+            if fetched is not None:
+                return fetched
+            result = dict(progress_data)
+            result["media_id"] = media_id
+            result["last_modified"] = current_time
+            return result
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error upserting reading progress for media_id={media_id} in DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to upsert reading progress for media_id {media_id}") from e
+
+    def delete_reading_progress(self, media_id: int) -> bool:
+        """Delete the local-only reading progress row for a media item."""
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute("DELETE FROM ReadingProgress WHERE media_id = ?", (media_id,))
+                return cursor.rowcount > 0
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error deleting reading progress for media_id={media_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to delete reading progress for media_id {media_id}") from e
 
     def soft_delete_media(self, media_id: int, cascade: bool = True) -> bool:
         """
