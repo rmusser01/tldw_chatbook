@@ -183,7 +183,45 @@ class TestFlashcardOperations:
         }
         with pytest.raises(InputError, match="must have both front and back"):
             db_instance.create_flashcard(card_data)
-    
+
+    def test_create_flashcard_requires_active_deck(self, db_instance):
+        missing_deck_id = str(uuid.uuid4())
+        deleted_deck_id = db_instance.create_deck("Biology")
+        db_instance.delete_deck(deleted_deck_id, expected_version=1)
+
+        with pytest.raises(InputError, match="Deck .* not found"):
+            db_instance.create_flashcard(create_flashcard_data(missing_deck_id, "ATP", "Energy"))
+
+        with pytest.raises(InputError, match="Deck .* not found"):
+            db_instance.create_flashcard(create_flashcard_data(deleted_deck_id, "ADP", "Spent energy"))
+
+    def test_create_flashcard_recounts_active_cards_instead_of_incrementing_drift(self, db_instance):
+        deck_id = db_instance.create_deck("Biology")
+        first_card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
+        second_card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "ADP", "Lower energy"))
+
+        with db_instance.transaction() as cursor:
+            cursor.execute(
+                "UPDATE flashcards SET is_deleted = 1 WHERE id = ?",
+                (second_card_id,),
+            )
+            cursor.execute(
+                "UPDATE decks SET card_count = 99 WHERE id = ?",
+                (deck_id,),
+            )
+
+        third_card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "NADH", "Electron carrier"))
+        deck = db_instance.get_deck(deck_id)
+        first_card = db_instance.get_flashcard(first_card_id)
+        second_card = db_instance.get_flashcard(second_card_id)
+        third_card = db_instance.get_flashcard(third_card_id)
+
+        assert deck is not None
+        assert deck["card_count"] == 2
+        assert first_card is not None
+        assert second_card is None
+        assert third_card is not None
+
     def test_get_flashcard(self, db_instance, sample_flashcard):
         """Test retrieving a flashcard by ID."""
         retrieved = db_instance.get_flashcard(sample_flashcard["id"])
@@ -290,6 +328,52 @@ class TestFlashcardOperations:
         assert target_deck is not None
         assert target_deck["card_count"] == 1
 
+    def test_move_flashcard_rejects_missing_or_deleted_target_deck(self, db_instance):
+        source = db_instance.create_deck("Biology")
+        deleted_target = db_instance.create_deck("Chemistry")
+        card_id = db_instance.create_flashcard(create_flashcard_data(source, "ATP", "Energy"))
+        db_instance.delete_deck(deleted_target, expected_version=1)
+
+        with pytest.raises(InputError, match="Target deck .* not found"):
+            db_instance.move_flashcard(card_id, str(uuid.uuid4()), expected_version=1)
+
+        with pytest.raises(InputError, match="Target deck .* not found"):
+            db_instance.move_flashcard(card_id, deleted_target, expected_version=1)
+
+    def test_delete_flashcard_stale_version_raises_conflict_without_mutation(self, db_instance, sample_flashcard):
+        deck_before = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        with pytest.raises(ConflictError, match="Version mismatch deleting flashcard"):
+            db_instance.delete_flashcard(sample_flashcard["id"], expected_version=0)
+
+        card_after = db_instance.get_flashcard(sample_flashcard["id"])
+        deck_after = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        assert deck_before is not None
+        assert card_after is not None
+        assert card_after["is_deleted"] == 0
+        assert deck_after is not None
+        assert deck_after["card_count"] == deck_before["card_count"] == 1
+
+    def test_move_flashcard_stale_version_raises_conflict_without_mutation(self, db_instance):
+        source = db_instance.create_deck("Biology")
+        target = db_instance.create_deck("Chemistry")
+        card_id = db_instance.create_flashcard(create_flashcard_data(source, "ATP", "Energy"))
+
+        with pytest.raises(ConflictError, match="Version mismatch moving flashcard"):
+            db_instance.move_flashcard(card_id, target, expected_version=0)
+
+        moved_card = db_instance.get_flashcard(card_id)
+        source_deck = db_instance.get_deck(source)
+        target_deck = db_instance.get_deck(target)
+
+        assert moved_card is not None
+        assert moved_card["deck_id"] == source
+        assert source_deck is not None
+        assert source_deck["card_count"] == 1
+        assert target_deck is not None
+        assert target_deck["card_count"] == 0
+
     def test_delete_deck_tombstones_name_hides_children_and_allows_recreate(self, db_instance):
         deck_id = db_instance.create_deck("Biology")
         card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
@@ -304,6 +388,23 @@ class TestFlashcardOperations:
         assert db_instance.get_flashcard(card_id) is None
         assert db_instance.list_flashcards(deck_id=deck_id, limit=10, offset=0) == []
         assert db_instance.get_due_flashcards(deck_id=deck_id, limit=10) == []
+
+    def test_delete_deck_stale_version_raises_conflict_without_mutation(self, db_instance):
+        deck_id = db_instance.create_deck("Biology")
+        card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
+
+        with pytest.raises(ConflictError, match="Version mismatch deleting deck"):
+            db_instance.delete_deck(deck_id, expected_version=0)
+
+        deck = db_instance.get_deck(deck_id)
+        card = db_instance.get_flashcard(card_id)
+
+        assert deck is not None
+        assert deck["name"] == "Biology"
+        assert deck["card_count"] == 1
+        assert card is not None
+        assert card["deck_id"] == deck_id
+        assert card["is_deleted"] == 0
 
     def test_delete_deck_renames_deleted_row_to_deterministic_tombstone(self, db_instance):
         deck_id = db_instance.create_deck("Biology")

@@ -7117,7 +7117,7 @@ UPDATE db_schema_version
                     (target_deck_id,),
                 ).fetchone()
                 if not target_row:
-                    return False
+                    raise InputError(f"Target deck {target_deck_id} not found")
 
                 row = cursor.execute(
                     "SELECT deck_id, version, is_deleted FROM flashcards WHERE id = ?",
