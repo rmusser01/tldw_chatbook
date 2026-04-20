@@ -37,4 +37,9 @@ class ServerCharacterPersonaService:
         offset: int = 0,
     ) -> Any:
         client = self._require_client()
-        return await client.list_persona_profiles()
+        return await client.list_persona_profiles(
+            active_only=active_only,
+            include_deleted=include_deleted,
+            limit=limit,
+            offset=offset,
+        )
