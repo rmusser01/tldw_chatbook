@@ -33,9 +33,11 @@ Translate the scored capability matrix into concrete implementation waves for `t
 - Notes and workspace-adjacent workflow alignment
 - Prompt library and chatbook interoperability improvements
 
-## Completed Vertical: Prompts And Chatbooks
+## Completed Verticals
 
-This first implementation vertical is now in place in the isolated `codex-prompts-chatbooks-parity` worktree.
+Three parity verticals are now landed in the isolated `codex-prompts-chatbooks-parity` worktree.
+
+### Prompts And Chatbooks
 
 - `tldw_api` now exposes prompt preview/create/version-restore methods and chatbook export/preview/import job methods.
 - Local prompt storage now preserves server-shaped structured prompt metadata through `prompt_format`, `prompt_schema_version`, and `prompt_definition`.
@@ -45,7 +47,21 @@ This first implementation vertical is now in place in the isolated `codex-prompt
 - The chatbook management window now shows recent server jobs, which partially closes the Hermes-style job visibility gap for this vertical.
 - Server-backed chatbook import is still intentionally limited to conversations, notes, and characters. Prompt, media, and embedding content still fall back to the local import path.
 
-This closes the first recommended parity vertical and keeps the follow-on work focused on broader entity alignment instead of reopening the same prompt/chatbook seam.
+### Notes And Workspace Alignment
+
+- `tldw_api` now exposes notes and workspaces CRUD surfaces needed for local/server compatibility work.
+- Local notes services and screen state are scope-aware, which keeps user-space notes and workspace-contained notes separate.
+- Workspace CRUD, workspace-scoped note controls, and local-only notes sidebar behavior are aligned with the standalone/offline-first model.
+- Follow-on fixes in this branch tightened delete handling, notes dirty-state behavior, and keyword preservation so workspace-contained notes do not leak into the general notes surface.
+
+### Chat And Conversations
+
+- `tldw_api` now exposes chat conversation client contracts for list/get/create/update/delete, tree, and message operations.
+- Local chat DB and service layers now preserve conversation metadata, scope fields, assistant/persona context, and server-shaped message payloads through one normalized seam.
+- Session state, tab restoration, and existing chat UI plumbing now retain the same conversation contract end-to-end while keeping the visible chat UI unchanged.
+- Local message persistence now preserves message variants and metadata during resave flows instead of collapsing them into a lossy linear history.
+
+This closes the current chat/conversations parity vertical and keeps the next wave focused on the remaining entity seams instead of reopening already-landed work.
 
 ## Phase 3: Retrieval And Advanced Workflows
 
@@ -79,14 +95,15 @@ This closes the first recommended parity vertical and keeps the follow-on work f
 
 ## Recommended Next Vertical
 
-- `Notes / workspace alignment` should now be the active follow-on branch.
-- Start with entity mapping and API-surface comparison before UI work.
-- Reuse the same pattern from the prompt/chatbook vertical: thin client additions first, local schema compatibility second, adapter/service layer third, then one primary UI surface.
-- Keep Hermes-inspired improvements scoped to concrete workflow pain. The chatbook job list covered the most relevant Hermes-style visibility gap for the first vertical; broader job centers and approval flows remain deferred.
+- `Characters / session alignment` should now be the active follow-on branch.
+- Start with entity mapping and API-surface comparison before UI work, especially character cards, session ownership, and character-linked message history.
+- Reuse the same pattern from the earlier verticals: thin client additions first, local schema compatibility second, adapter/service layer third, then one primary UI surface.
+- Keep the application local-first: local character/session edits remain authoritative by default, and future sync work should layer on top of the normalized seams instead of replacing them.
+- Keep Hermes-inspired improvements scoped to concrete workflow pain. Broader job centers, approval flows, and explicit local/server execution controls remain deferred unless the character vertical requires a minimal compatibility surface.
 
 ## Dirty-Tree Overlap Risk
 
-Populate this section with the exact currently modified `tldw_chatbook` files that are likely to collide with implementation before code work begins.
+Snapshot from the earlier overlap audit for this branch. Refresh it before starting the next vertical if the active local edit set changes.
 
 - `tldw_chatbook/Constants.py`
 - `tldw_chatbook/UI/Chat_Window_Enhanced.py`

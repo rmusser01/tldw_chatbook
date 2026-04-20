@@ -11,8 +11,10 @@ from textual.widgets import Input, Button, TextArea, Static, ListView, Switch
 from textual.containers import Container, Horizontal, VerticalScroll
 
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, TabState
+from tldw_chatbook.Widgets.enhanced_settings_sidebar import EnhancedSettingsSidebar
 
 
 @pytest.fixture
@@ -86,19 +88,19 @@ class TestChatWindowFileAttachmentUI:
         mock_chat_window.attachment_indicator.update("3 files attached")
     
     @pytest.mark.asyncio
-    async def test_file_picker_dialog_integration(self, mock_app, mock_chat_window):
-        """Test file picker dialog integration."""
-        # Mock file picker dialog
-        with patch('tldw_chatbook.Widgets.enhanced_file_picker.EnhancedFilePickerDialog') as MockPicker:
-            mock_dialog = Mock()
-            mock_dialog.show = AsyncMock()
-            MockPicker.return_value = mock_dialog
-            
-            # Simulate attach button click
-            await mock_chat_window.on_button_pressed(Mock(button=mock_chat_window.attach_button))
-            
-            # Verify dialog was shown
-            mock_dialog.show.assert_called_once()
+    async def test_attach_image_press_handler_delegates_to_attachment_handler(self, mock_app, mock_chat_window):
+        """Test the attach-image press handler delegates to the attachment handler."""
+        mock_chat_window.attachment_handler = Mock()
+        mock_chat_window.attachment_handler.handle_attach_image_button = AsyncMock()
+
+        event = Mock()
+        event.stop = Mock()
+        event.button = Mock(id="attach-image")
+
+        await ChatWindowEnhanced.handle_attach_image_press(mock_chat_window, event)
+
+        event.stop.assert_called_once()
+        mock_chat_window.attachment_handler.handle_attach_image_button.assert_awaited_once_with(event)
     
     def test_attachment_preview_panel(self, mock_app, mock_chat_window):
         """Test attachment preview panel displays attached files."""
@@ -150,20 +152,32 @@ class TestChatWindowRAGUI:
         rag_panel.collapsed = True
         assert rag_panel.collapsed is True
     
-    def test_rag_preset_selection(self, mock_app, mock_chat_window):
-        """Test RAG preset selection updates UI."""
-        rag_preset_select = Mock()
-        
-        # Test preset changes
-        presets = ["none", "light", "full", "custom"]
-        for preset in presets:
-            rag_preset_select.value = preset
-            assert rag_preset_select.value == preset
-            
-            # Verify UI updates based on preset
-            if preset == "custom":
-                # Custom preset should show advanced options
-                assert mock_chat_window.sidebar.query_one("#chat-advanced-rag").collapsed is False
+    def test_rag_preset_selection(self):
+        """Test the current preset seam updates RAG-related settings."""
+        sidebar = EnhancedSettingsSidebar(id_prefix="chat", config={})
+        sidebar._set_setting_value = Mock()
+        sidebar._update_preset_buttons = Mock()
+
+        sidebar._apply_preset("research")
+
+        assert sidebar.active_preset == "research"
+        sidebar._set_setting_value.assert_has_calls([
+            call("temperature", 0.3),
+            call("streaming", True),
+            call("rag_enable", True),
+            call("rag_preset", "high_accuracy"),
+            call("max_tokens", 4096),
+        ])
+        sidebar._update_preset_buttons.assert_called_once()
+
+        sidebar._set_setting_value.reset_mock()
+        sidebar._update_preset_buttons.reset_mock()
+
+        sidebar._apply_preset("custom")
+
+        assert sidebar.active_preset == "custom"
+        sidebar._set_setting_value.assert_not_called()
+        sidebar._update_preset_buttons.assert_called_once()
     
     def test_rag_search_scope_checkboxes(self, mock_app, mock_chat_window):
         """Test RAG search scope checkboxes."""
