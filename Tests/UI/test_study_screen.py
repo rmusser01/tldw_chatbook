@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from tldw_chatbook.UI.Study_Modules.flashcards_handler import StudyFlashcardsController
+from tldw_chatbook.UI.Study_Modules.quizzes_handler import StudyQuizzesController
 from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Screens.notes_scope_models import WorkspaceSubview
 
@@ -29,6 +31,17 @@ def _build_window():
         flashcards_controller=SimpleNamespace(handle_scope_changed=Mock()),
         quizzes_controller=SimpleNamespace(handle_scope_changed=Mock()),
     )
+
+
+def _build_real_controller_window(app_instance):
+    window = SimpleNamespace(
+        app_instance=app_instance,
+        runtime_backend=getattr(app_instance, "runtime_backend", None),
+        query_one=Mock(),
+    )
+    window.flashcards_controller = StudyFlashcardsController(window)
+    window.quizzes_controller = StudyQuizzesController(window)
+    return window
 
 
 @pytest.mark.asyncio
@@ -107,6 +120,105 @@ async def test_workspace_scope_derives_unavailable_in_local_mode():
     assert screen.current_scope.backend == "local"
     assert screen.current_scope.error_message is not None
     assert "server" in screen.current_scope.error_message.lower()
+
+
+@pytest.mark.asyncio
+async def test_pending_scope_is_applied_before_initialize_on_mount():
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        pending_study_scope_context=StudyScopeContext(
+            scope_type=StudyScopeType.WORKSPACE,
+            workspace_id="workspace-9",
+            workspace_name="Biology",
+        ),
+        current_runtime_backend="server",
+        runtime_backend="server",
+        notify=Mock(),
+    )
+    screen = StudyScreen(app_instance=app_instance)
+    call_order: list[str] = []
+
+    async def initialize_side_effect():
+        call_order.append("initialize")
+        assert screen.current_scope.scope_type == StudyScopeType.WORKSPACE
+        assert screen.current_scope.workspace_id == "workspace-9"
+
+    window = SimpleNamespace(
+        load_saved_sessions=AsyncMock(side_effect=lambda: call_order.append("load_saved_sessions")),
+        initialize=AsyncMock(side_effect=initialize_side_effect),
+        flashcards_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("flashcards_scope_changed")),
+        quizzes_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")),
+        _schedule_flashcards_refresh=lambda: call_order.append("schedule_flashcards"),
+        _schedule_quizzes_refresh=lambda: call_order.append("schedule_quizzes"),
+    )
+    screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
+
+    await screen.on_mount()
+
+    assert call_order.index("flashcards_scope_changed") < call_order.index("initialize")
+    assert call_order.index("quizzes_scope_changed") < call_order.index("initialize")
+    assert call_order.index("schedule_flashcards") < call_order.index("initialize")
+    assert call_order.index("schedule_quizzes") < call_order.index("initialize")
+
+
+@pytest.mark.asyncio
+async def test_scope_change_path_invokes_real_controller_seams():
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        pending_study_scope_context=StudyScopeContext(
+            scope_type=StudyScopeType.WORKSPACE,
+            workspace_id="workspace-9",
+            workspace_name="Biology",
+        ),
+        current_runtime_backend="server",
+        runtime_backend="server",
+        notify=Mock(),
+    )
+    screen = StudyScreen(app_instance=app_instance)
+    window = _build_real_controller_window(app_instance)
+    window.load_saved_sessions = AsyncMock()
+    window.initialize = AsyncMock()
+    window._schedule_flashcards_refresh = Mock()
+    window._schedule_quizzes_refresh = Mock()
+
+    window.flashcards_controller.current_review_card = {"id": "card-1"}
+    window.flashcards_controller.current_review_session_id = 41
+    window.flashcards_controller.current_decks = [{"id": "deck-1"}]
+    window.flashcards_controller.current_cards = [{"id": "card-1"}]
+    window.flashcards_controller.selected_deck_record = {"id": "deck-1"}
+    window.flashcards_controller.selected_card_record = {"id": "card-1"}
+    window.flashcards_controller.has_decks = True
+
+    window.quizzes_controller.current_attempt_id = "attempt-1"
+    window.quizzes_controller.current_attempt_questions = [{"id": "q-1"}]
+    window.quizzes_controller.current_attempt_answers = [{"id": "a-1"}]
+    window.quizzes_controller.current_question_index = 3
+    window.quizzes_controller.current_quiz_questions = [{"id": "q-1"}]
+    window.quizzes_controller.current_attempt_history = [{"id": "attempt-1"}]
+    window.quizzes_controller.has_quizzes = True
+
+    screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
+
+    await screen.on_mount()
+
+    assert window.flashcards_controller.current_review_card is None
+    assert window.flashcards_controller.current_review_session_id is None
+    assert window.flashcards_controller.current_decks == []
+    assert window.flashcards_controller.current_cards == []
+    assert window.flashcards_controller.selected_deck_record is None
+    assert window.flashcards_controller.selected_card_record is None
+    assert window.flashcards_controller.has_decks is False
+
+    assert window.quizzes_controller.current_attempt_id is None
+    assert window.quizzes_controller.current_attempt_questions == []
+    assert window.quizzes_controller.current_attempt_answers == []
+    assert window.quizzes_controller.current_question_index == 0
+    assert window.quizzes_controller.current_quiz_questions == []
+    assert window.quizzes_controller.current_attempt_history == []
+    assert window.quizzes_controller.has_quizzes is False
+
+    window._schedule_flashcards_refresh.assert_called_once_with()
+    window._schedule_quizzes_refresh.assert_called_once_with()
 
 
 def test_return_to_workspace_routes_to_notes_details():

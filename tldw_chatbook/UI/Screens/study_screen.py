@@ -150,14 +150,14 @@ class StudyScreen(BaseAppScreen):
 
         study_window = self.query_one(StudyWindow)
 
+        scope_context = self._consume_pending_scope_context() or self._current_scope_context()
+        await self._apply_scope_context(scope_context, study_window=study_window)
+
         if hasattr(study_window, 'load_saved_sessions'):
             await study_window.load_saved_sessions()
 
         if hasattr(study_window, 'initialize'):
             await study_window.initialize()
-
-        scope_context = self._consume_pending_scope_context() or self._current_scope_context()
-        await self._apply_scope_context(scope_context, study_window=study_window)
 
     async def on_screen_suspend(self) -> None:
         """Save state when screen is suspended (navigated away)."""

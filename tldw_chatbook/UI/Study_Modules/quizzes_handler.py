@@ -1,0 +1,616 @@
+"""Screen-local quizzes controller for the Study window."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import TYPE_CHECKING, Any, Optional
+
+from loguru import logger
+from textual.widgets import Input, Label, ListItem, ListView, Select, Static, TextArea
+
+from ...Study_Interop import LocalQuizService, QuizScopeService, ServerQuizService
+
+if TYPE_CHECKING:
+    from ..Study_Window import StudyWindow
+
+
+class StudyQuizzesController:
+    """Own quiz CRUD and attempt interactions inside the Study screen."""
+
+    def __init__(self, window: "StudyWindow"):
+        self.window = window
+        self.app_instance = window.app_instance
+        self.current_attempt_id: Optional[str] = None
+        self.current_attempt_questions: list[dict[str, Any]] = []
+        self.current_attempt_answers: list[dict[str, Any]] = []
+        self.current_question_index: int = 0
+        self.current_quiz_questions: list[dict[str, Any]] = []
+        self.current_attempt_history: list[dict[str, Any]] = []
+        self._scope_service_cache: Optional[QuizScopeService] = None
+        self.has_quizzes: bool = False
+
+    def _current_mode(self) -> str:
+        candidates = (
+            getattr(self.window, "runtime_backend", None),
+            getattr(self.app_instance, "runtime_backend", None),
+            getattr(self.app_instance, "current_runtime_backend", None),
+        )
+        for candidate in candidates:
+            normalized = str(candidate or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
+        return "local"
+
+    def _notify(self, message: str, severity: str = "warning") -> None:
+        notifier = getattr(self.window, "notify", None)
+        if callable(notifier):
+            notifier(message, severity=severity)
+            return
+        notifier = getattr(self.app_instance, "notify", None)
+        if callable(notifier):
+            notifier(message, severity=severity)
+
+    def _scope_service(self) -> Optional[QuizScopeService]:
+        service = getattr(self.app_instance, "study_quiz_scope_service", None)
+        if service is not None:
+            return service
+        if self._scope_service_cache is not None:
+            return self._scope_service_cache
+
+        local_service = None
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is not None:
+            local_service = LocalQuizService(db=db)
+
+        try:
+            server_service = ServerQuizService.from_config(getattr(self.app_instance, "app_config", {}) or {})
+        except ValueError:
+            server_service = ServerQuizService(client=None)
+
+        if local_service is None and getattr(server_service, "client", None) is None:
+            return None
+
+        self._scope_service_cache = QuizScopeService(
+            local_service=local_service,
+            server_service=server_service,
+        )
+        return self._scope_service_cache
+
+    def _selected_quiz_id(self) -> Optional[str]:
+        try:
+            quiz_select = self.window.query_one("#quiz-select", Select)
+        except Exception:
+            return None
+        value = getattr(quiz_select, "value", None)
+        if value in {None, "", Select.BLANK}:
+            return None
+        return str(value)
+
+    def _set_attempt_status(self, message: str) -> None:
+        self.window.query_one("#quiz-attempt-status", Static).update(message)
+
+    def _set_attempt_question(self, question_text: str = "") -> None:
+        self.window.query_one("#quiz-attempt-question", Static).update(question_text)
+
+    def _set_attempt_history_summary(self, message: str = "") -> None:
+        self.window.query_one("#quiz-attempt-history-summary", Static).update(message)
+
+    def _selected_attempt_id(self) -> Optional[str]:
+        try:
+            history_select = self.window.query_one("#quiz-attempt-history-select", Select)
+        except Exception:
+            return None
+        value = getattr(history_select, "value", None)
+        if value in {None, "", Select.BLANK}:
+            return None
+        return str(value)
+
+    def _selected_question(self) -> Optional[dict[str, Any]]:
+        if not self.current_quiz_questions:
+            return None
+        try:
+            question_list = self.window.query_one("#quiz-question-list", ListView)
+        except Exception:
+            return None
+        index = getattr(question_list, "index", None)
+        try:
+            normalized_index = int(index)
+        except (TypeError, ValueError):
+            normalized_index = 0
+        if normalized_index < 0 or normalized_index >= len(self.current_quiz_questions):
+            return None
+        return self.current_quiz_questions[normalized_index]
+
+    def handle_scope_changed(self) -> None:
+        """Reset controller-local state before scoped study data reloads."""
+        self.current_attempt_id = None
+        self.current_attempt_questions = []
+        self.current_attempt_answers = []
+        self.current_question_index = 0
+        self.current_quiz_questions = []
+        self.current_attempt_history = []
+        self.has_quizzes = False
+
+    @staticmethod
+    def _format_attempt_option_label(attempt: dict[str, Any]) -> str:
+        completed_at = str(attempt.get("completed_at") or attempt.get("started_at") or "Attempt")
+        completed_at = completed_at.replace("T", " ").replace("Z", "")
+        score = attempt.get("score")
+        total_possible = attempt.get("total_possible")
+        if score is not None and total_possible is not None:
+            return f"{completed_at} | {score}/{total_possible}"
+        return completed_at
+
+    def reset_attempt_panel(self, message: str) -> None:
+        self.current_attempt_id = None
+        self.current_attempt_questions = []
+        self.current_attempt_answers = []
+        self.current_question_index = 0
+        self.current_quiz_questions = []
+        self.window.query_one("#quiz-answer-input", Input).value = ""
+        self._set_attempt_question("")
+        self._set_attempt_status(message)
+        self._set_attempt_history_summary("")
+
+    async def _wait_for_widgets(self) -> bool:
+        for _ in range(25):
+            try:
+                quiz_select = self.window.query_one("#quiz-select", Select)
+            except Exception:
+                await asyncio.sleep(0.01)
+                continue
+
+            if getattr(quiz_select, "is_mounted", False):
+                return True
+            await asyncio.sleep(0.01)
+        return False
+
+    async def initialize_view(self) -> None:
+        service = self._scope_service()
+        if service is None:
+            self.reset_attempt_panel("Study quizzes backend is unavailable.")
+            return
+        if not await self._wait_for_widgets():
+            logger.warning("Study quizzes UI did not finish mounting before initialization")
+            self.reset_attempt_panel("Study quizzes UI is still loading.")
+            return
+        await self.refresh_quizzes()
+
+    async def refresh_quizzes(
+        self,
+        *,
+        preserve_selection: bool = True,
+        preferred_selection: Optional[str] = None,
+    ) -> None:
+        service = self._scope_service()
+        if service is None:
+            self.reset_attempt_panel("Study quizzes backend is unavailable.")
+            return
+
+        selected_before = self._selected_quiz_id() if preserve_selection else None
+        quizzes = await service.list_quizzes(mode=self._current_mode(), q=None, limit=100, offset=0)
+
+        quiz_select = self.window.query_one("#quiz-select", Select)
+        options = [
+            (str(quiz.get("name") or "Unnamed quiz"), str(quiz.get("backing_id")))
+            for quiz in quizzes
+            if quiz.get("backing_id") not in {None, ""}
+        ]
+        self.has_quizzes = bool(options)
+        if not options:
+            options = [("No quizzes available", Select.BLANK)]
+        quiz_select.set_options(options)
+
+        available_values = [option[1] for option in options]
+        if preferred_selection in available_values:
+            quiz_select.value = str(preferred_selection)
+        elif selected_before in available_values:
+            quiz_select.value = str(selected_before)
+        elif self.has_quizzes:
+            quiz_select.value = str(available_values[0])
+        else:
+            quiz_select.value = Select.BLANK
+
+        await self.refresh_questions()
+        await self.refresh_attempt_history()
+
+    async def refresh_questions(self) -> None:
+        service = self._scope_service()
+        if service is None:
+            self.reset_attempt_panel("Study quizzes backend is unavailable.")
+            return
+
+        list_view = self.window.query_one("#quiz-question-list", ListView)
+        await list_view.clear()
+
+        quiz_id = self._selected_quiz_id()
+        if quiz_id is None:
+            if not self.has_quizzes:
+                self.reset_attempt_panel("Create a quiz to begin practicing.")
+            else:
+                self.reset_attempt_panel("Select a quiz to manage its questions.")
+            return
+
+        questions = await service.list_questions(
+            mode=self._current_mode(),
+            quiz_id=quiz_id,
+            q=None,
+            include_answers=True,
+            limit=100,
+            offset=0,
+        )
+        self.current_quiz_questions = list(questions)
+
+        if not questions:
+            await list_view.append(ListItem(Label("No questions in this quiz.")))
+        else:
+            for question in questions:
+                label = str(question.get("question_text") or "Untitled question")
+                await list_view.append(ListItem(Label(label)))
+            list_view.index = 0
+
+        if self.current_attempt_id is None:
+            self._set_attempt_question("")
+            self.window.query_one("#quiz-answer-input", Input).value = ""
+            self._set_attempt_status("Ready to manage selected quiz.")
+
+    async def refresh_attempt_history(
+        self,
+        *,
+        preserve_selection: bool = True,
+        preferred_selection: Optional[str] = None,
+    ) -> None:
+        service = self._scope_service()
+        if service is None:
+            self._set_attempt_history_summary("")
+            return
+
+        history_select = self.window.query_one("#quiz-attempt-history-select", Select)
+        selected_before = self._selected_attempt_id() if preserve_selection else None
+        self._set_attempt_history_summary("")
+        quiz_id = self._selected_quiz_id()
+        if quiz_id is None:
+            self.current_attempt_history = []
+            history_select.set_options([("No attempt history", Select.BLANK)])
+            history_select.value = Select.BLANK
+            self._set_attempt_history_summary("")
+            return
+
+        attempts = await service.list_attempts(
+            mode=self._current_mode(),
+            quiz_id=quiz_id,
+            limit=100,
+            offset=0,
+        )
+        self.current_attempt_history = list(attempts or [])
+        options = [
+            (
+                self._format_attempt_option_label(attempt),
+                str(attempt.get("backing_id")),
+            )
+            for attempt in self.current_attempt_history
+            if attempt.get("backing_id") not in {None, ""}
+        ]
+        if not options:
+            history_select.set_options([("No attempt history", Select.BLANK)])
+            history_select.value = Select.BLANK
+            self._set_attempt_history_summary("")
+            return
+
+        history_select.set_options(options)
+        available_values = {option[1] for option in options}
+        if preferred_selection in available_values:
+            history_select.value = str(preferred_selection)
+        elif selected_before in available_values:
+            history_select.value = str(selected_before)
+        else:
+            history_select.value = str(options[0][1])
+
+    async def delete_quiz(self) -> None:
+        service = self._scope_service()
+        if service is None:
+            self._notify("Study quizzes backend is unavailable.")
+            return
+
+        quiz_id = self._selected_quiz_id()
+        if quiz_id is None:
+            self._notify("Select a quiz before deleting it.")
+            return
+
+        try:
+            deleted = await service.delete_quiz(
+                mode=self._current_mode(),
+                quiz_id=quiz_id,
+                expected_version=None,
+                hard_delete=False,
+            )
+        except Exception:
+            logger.error("Failed to delete quiz", exc_info=True)
+            self._notify("Failed to delete quiz.", severity="error")
+            return
+
+        if not deleted:
+            self._notify("Quiz could not be deleted.", severity="error")
+            return
+
+        await self.refresh_quizzes(preserve_selection=False)
+        if self.has_quizzes:
+            self._set_attempt_status("Quiz deleted.")
+
+    async def delete_question(self) -> None:
+        service = self._scope_service()
+        if service is None:
+            self._notify("Study quizzes backend is unavailable.")
+            return
+
+        quiz_id = self._selected_quiz_id()
+        selected_question = self._selected_question()
+        if quiz_id is None:
+            self._notify("Select a quiz before deleting a question.")
+            return
+        if selected_question is None:
+            self._notify("Select a question before deleting it.")
+            return
+
+        question_id = str(selected_question.get("backing_id") or selected_question.get("id") or "")
+        if not question_id:
+            self._notify("Selected question is missing an identifier.")
+            return
+
+        try:
+            deleted = await service.delete_question(
+                mode=self._current_mode(),
+                quiz_id=quiz_id,
+                question_id=question_id,
+                expected_version=None,
+                hard_delete=False,
+            )
+        except Exception:
+            logger.error("Failed to delete quiz question", exc_info=True)
+            self._notify("Failed to delete question.", severity="error")
+            return
+
+        if not deleted:
+            self._notify("Question could not be deleted.", severity="error")
+            return
+
+        await self.refresh_quizzes(preserve_selection=True, preferred_selection=quiz_id)
+        self._set_attempt_status("Question deleted.")
+
+    async def create_quiz(self) -> None:
+        service = self._scope_service()
+        if service is None:
+            self._notify("Study quizzes backend is unavailable.")
+            return
+
+        name_input = self.window.query_one("#new-quiz-name-input", Input)
+        description_input = self.window.query_one("#new-quiz-description-input", Input)
+        name = str(name_input.value or "").strip()
+        description = str(description_input.value or "").strip() or None
+        if not name:
+            self._notify("Quiz name is required.")
+            return
+
+        try:
+            created = await service.create_quiz(
+                mode=self._current_mode(),
+                name=name,
+                description=description,
+                time_limit_seconds=None,
+                passing_score=None,
+                workspace_id=None,
+            )
+        except Exception:
+            logger.error("Failed to create quiz", exc_info=True)
+            self._notify("Failed to create quiz.", severity="error")
+            return
+
+        name_input.value = ""
+        description_input.value = ""
+        created_id = str(created.get("backing_id") or created.get("record_id") or Select.BLANK)
+        await self.refresh_quizzes(preserve_selection=False, preferred_selection=created_id)
+        self._set_attempt_status(f"Quiz '{created.get('name', name)}' created.")
+
+    async def create_question(self) -> None:
+        service = self._scope_service()
+        if service is None:
+            self._notify("Study quizzes backend is unavailable.")
+            return
+
+        quiz_id = self._selected_quiz_id()
+        if quiz_id is None:
+            self._notify("Select a quiz before creating a question.")
+            return
+
+        question_text_widget = self.window.query_one("#quiz-question-text", TextArea)
+        correct_answer_widget = self.window.query_one("#quiz-correct-answer-input", Input)
+        question_text = str(question_text_widget.text or "").strip()
+        correct_answer = str(correct_answer_widget.value or "").strip()
+        if not question_text:
+            self._notify("Question text is required.")
+            return
+        if not correct_answer:
+            self._notify("Correct answer is required.")
+            return
+
+        try:
+            await service.create_question(
+                mode=self._current_mode(),
+                quiz_id=quiz_id,
+                question_type="fill_blank",
+                question_text=question_text,
+                correct_answer=correct_answer,
+                options=None,
+                explanation=None,
+                hint=None,
+                hint_penalty_points=0,
+                points=1,
+                order_index=0,
+                tags=None,
+                source_citations=None,
+            )
+        except Exception:
+            logger.error("Failed to create quiz question", exc_info=True)
+            self._notify("Failed to create quiz question.", severity="error")
+            return
+
+        question_text_widget.text = ""
+        correct_answer_widget.value = ""
+        await self.refresh_questions()
+        self._set_attempt_status("Question created.")
+
+    async def start_attempt(self) -> None:
+        service = self._scope_service()
+        if service is None:
+            self._notify("Study quizzes backend is unavailable.")
+            return
+
+        quiz_id = self._selected_quiz_id()
+        if quiz_id is None:
+            self._notify("Select a quiz before starting an attempt.")
+            return
+
+        try:
+            attempt = await service.start_attempt(mode=self._current_mode(), quiz_id=quiz_id)
+        except Exception:
+            logger.error("Failed to start quiz attempt", exc_info=True)
+            self._notify("Failed to start quiz attempt.", severity="error")
+            return
+
+        self.current_attempt_id = str(attempt.get("backing_id") or attempt.get("id") or "")
+        self.current_attempt_questions = list(attempt.get("questions") or [])
+        self.current_attempt_answers = []
+        self.current_question_index = 0
+        self.window.query_one("#quiz-answer-input", Input).value = ""
+
+        if not self.current_attempt_questions:
+            self.reset_attempt_panel("This quiz has no questions yet.")
+            return
+
+        self._show_current_question()
+
+    def _show_current_question(self) -> None:
+        if not self.current_attempt_questions:
+            self.reset_attempt_panel("No quiz questions are available.")
+            return
+
+        current_question = self.current_attempt_questions[self.current_question_index]
+        question_text = str(current_question.get("question_text") or "")
+        self._set_attempt_question(question_text)
+        self._set_attempt_status(
+            f"Question {self.current_question_index + 1} of {len(self.current_attempt_questions)}."
+        )
+
+    async def submit_current_answer(self) -> None:
+        service = self._scope_service()
+        if service is None:
+            self._notify("Study quizzes backend is unavailable.")
+            return
+        if self.current_attempt_id is None or not self.current_attempt_questions:
+            self._notify("Start a quiz attempt before submitting answers.")
+            return
+
+        answer_widget = self.window.query_one("#quiz-answer-input", Input)
+        user_answer = str(answer_widget.value or "").strip()
+        if not user_answer:
+            self._notify("Answer is required.")
+            return
+
+        current_question = self.current_attempt_questions[self.current_question_index]
+        question_id = str(current_question.get("backing_id") or current_question.get("id") or "")
+        self.current_attempt_answers.append(
+            {
+                "question_id": question_id,
+                "user_answer": user_answer,
+            }
+        )
+
+        if self.current_question_index + 1 < len(self.current_attempt_questions):
+            self.current_question_index += 1
+            answer_widget.value = ""
+            self._show_current_question()
+            return
+
+        try:
+            submitted = await service.submit_attempt(
+                mode=self._current_mode(),
+                attempt_id=self.current_attempt_id,
+                answers=list(self.current_attempt_answers),
+            )
+        except Exception:
+            logger.error("Failed to submit quiz attempt", exc_info=True)
+            self._notify("Failed to submit quiz attempt.", severity="error")
+            return
+
+        score = submitted.get("score")
+        total_possible = submitted.get("total_possible")
+        submitted_attempt_id = str(submitted.get("backing_id") or submitted.get("id") or "")
+        answer_widget.value = ""
+        self._set_attempt_question("Attempt complete.")
+        self._set_attempt_status(f"Score: {score} / {total_possible}")
+        self.current_attempt_id = None
+        self.current_attempt_questions = []
+        self.current_attempt_answers = []
+        self.current_question_index = 0
+        await self.refresh_attempt_history(
+            preserve_selection=False,
+            preferred_selection=submitted_attempt_id or None,
+        )
+
+    async def load_selected_attempt(self) -> None:
+        service = self._scope_service()
+        if service is None:
+            self._notify("Study quizzes backend is unavailable.")
+            return
+
+        attempt_id = self._selected_attempt_id()
+        if attempt_id is None:
+            self._notify("Select a past attempt before loading it.")
+            return
+
+        try:
+            attempt = await service.get_attempt(
+                mode=self._current_mode(),
+                attempt_id=attempt_id,
+                include_questions=True,
+                include_answers=True,
+            )
+        except Exception:
+            logger.error("Failed to load quiz attempt history", exc_info=True)
+            self._notify("Failed to load attempt history.", severity="error")
+            return
+
+        self.current_attempt_id = None
+        self.current_attempt_questions = []
+        self.current_attempt_answers = []
+        self.current_question_index = 0
+        self.window.query_one("#quiz-answer-input", Input).value = ""
+        self._set_attempt_question("Loaded completed attempt.")
+        self._set_attempt_status(f"Score: {attempt.get('score')} / {attempt.get('total_possible')}")
+
+        answers_by_question_id = {
+            str(answer.get("question_id")): answer
+            for answer in list(attempt.get("answers") or [])
+            if answer.get("question_id") is not None
+        }
+        summary_lines: list[str] = []
+        for index, question in enumerate(list(attempt.get("questions") or []), start=1):
+            question_id = str(question.get("backing_id") or question.get("id") or "")
+            answer = answers_by_question_id.get(question_id, {})
+            summary_lines.append(f"{index}. {question.get('question_text') or 'Untitled question'}")
+            if answer:
+                summary_lines.append(f"Answer: {answer.get('user_answer') or ''}")
+                if answer.get("correct_answer") is not None:
+                    summary_lines.append(f"Correct: {answer.get('correct_answer')}")
+                points_awarded = answer.get("points_awarded")
+                if points_awarded is not None:
+                    summary_lines.append(f"Points: {points_awarded}")
+        self._set_attempt_history_summary("\n".join(summary_lines))
+
+    async def handle_quiz_changed(self) -> None:
+        self.current_attempt_id = None
+        self.current_attempt_questions = []
+        self.current_attempt_answers = []
+        self.current_question_index = 0
+        await self.refresh_questions()
+        await self.refresh_attempt_history()
