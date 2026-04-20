@@ -74,7 +74,9 @@ The following decisions are fixed for this vertical:
 - There is no mixed local/server media list in this vertical. Mode determines the active source.
 - `media_screen` remains the primary browsing surface.
 - `media_ingest_screen` remains the primary ingestion-management surface.
-- The vertical does not attempt a broad media UX redesign.
+- The vertical preserves the current media product layout, but it does include targeted internal refactors where needed to introduce a real mode-aware seam.
+- Media backend ownership must be explicit for this vertical; it must not rely on ad hoc widget-local assumptions.
+- No new media-specific mode toggle is introduced in this slice. Media surfaces consume the existing runtime backend selection when available and default to `local` otherwise.
 - The server `files` domain is included for compatibility, but is not promoted to a top-level browsed library in this slice.
 - The server `reading` domain is included in the first implementation slice, not deferred.
 - The server `reading_progress` domain is included in the first implementation slice, not deferred.
@@ -90,6 +92,10 @@ The following decisions are fixed for this vertical:
 - Local integer IDs remain storage details, not UI contracts.
 - The existing local batch-ingestion workflow is not mirrored to the server in this slice.
 - In `server mode`, `media_ingest_screen` becomes a minimal ingestion-source management surface inside the current shell.
+- The legacy `Remote (TLDW API)` ingest path is retired as a direct-client execution path in this vertical.
+- The existing second ingest-panel slot becomes backend-aware:
+  - in `server mode`, it hosts scope-service-backed ingestion-source management
+  - in `local mode`, it is non-actionable and explains that server ingestion sources require server mode
 - Reading saved searches, reading digest schedules, reading note links, reading import jobs, and server TTS/summarization flows are out of scope unless needed incidentally for a shared contract.
 - Sync, dual-write, and local/server reconciliation remain out of scope.
 - RAG/chunk/template parity remains out of scope beyond metadata hooks needed to avoid blocking later work.
@@ -109,13 +115,16 @@ The following decisions are fixed for this vertical:
 - Add a mode-aware media/reading scope service used by media UI code.
 - Add normalization helpers that converge local rows and server payloads onto one media-facing contract.
 - Add a narrow local reading-progress store so offline/local mode can carry comparable progress state.
-- Add minimal app wiring so media screens can resolve the new service layer.
+- Add explicit media runtime-state wiring so both media screens resolve the same backend and invalidate state consistently.
+- Refactor `MediaWindow_v2` at the window boundary so it can consume normalized IDs and scope-service operations without a visual redesign.
+- Refactor `MediaIngestWindowRebuilt` at the window boundary so server-mode source management flows through the scope service instead of direct `TLDWAPIClient` usage.
 - Update `media_screen` to browse server-mode normalized records and inspect/update reading progress through the scope service.
 - Update `media_ingest_screen` to support server-mode ingestion-source inspection and management through the scope service.
 - Add regression coverage for:
   - schema and client route coverage
   - normalization behavior
   - local/server routing
+  - media runtime-state ownership and invalidation behavior
   - backend-change invalidation in media state
   - server-mode reading progress flows
   - server-mode ingestion-source flows
@@ -123,7 +132,8 @@ The following decisions are fixed for this vertical:
 
 ## Out Of Scope
 
-- Broad redesign of `MediaWindow_v2` or `MediaIngestWindowRebuilt`
+- Broad visual or product redesign of `MediaWindow_v2` or `MediaIngestWindowRebuilt`
+- Rewriting child media widgets beyond the boundary changes needed to remove direct backend coupling
 - Replacing the local media DB with a server cache
 - Sync or dual-write semantics
 - Background job center work
@@ -160,7 +170,7 @@ Why not chosen:
 
 ### Option C: Contract-first media/files/ingestion/reading vertical
 
-This treats the server content model as the reference, normalizes local and server data onto one shared contract, and updates the existing screens with minimal UI change.
+This treats the server content model as the reference, normalizes local and server data onto one shared contract, and updates the existing screens with contained boundary refactors instead of a visual redesign.
 
 Why chosen:
 
@@ -192,7 +202,35 @@ The goal is not to force the server’s internal decomposition into the local UI
 
 ## Architecture
 
-### 1. Service Layer
+### 1. Backend Mode Ownership
+
+The media surfaces currently do not have an explicit state owner for backend selection. This vertical must make backend ownership explicit instead of inferring it ad hoc inside individual widgets.
+
+The design requires:
+
+- one small media runtime-state holder, likely alongside the media screen wrappers
+- one authoritative `runtime_backend` value shared by `media_screen` and `media_ingest_screen`
+- initialization from the existing runtime backend selection when available, with `local` as the fallback default
+- explicit invalidation of media-derived UI state when the backend changes
+
+This runtime state owns only media-facing UI state, such as:
+
+- selected normalized record ID
+- active media type and search filters
+- cached list/detail payloads
+- reading-progress cache
+- ingestion-source detail cache
+
+On backend change, the media surfaces must clear:
+
+- selected record/detail state
+- reading-progress cache
+- ingestion-source cache
+- stale panel-specific derived state
+
+before refetching from the newly selected backend.
+
+### 2. Service Layer
 
 This vertical requires a dedicated media/reading service seam. UI code should not call `tldw_api` methods directly and should not know about separate server route families.
 
@@ -202,6 +240,7 @@ The design requires:
 - `tldw_chatbook/Media/server_media_reading_service.py`
 - `tldw_chatbook/Media/media_reading_scope_service.py`
 - a small normalization module, likely `tldw_chatbook/Media/media_reading_normalizers.py`
+- a small media runtime-state module near the screen wrappers
 
 The service structure should mirror the pattern already used elsewhere in the repo:
 
@@ -209,7 +248,7 @@ The service structure should mirror the pattern already used elsewhere in the re
 - local/server facade
 - UI consuming one mode-aware seam
 
-### 2. Canonical Identity
+### 3. Canonical Identity
 
 The normalized seam must expose string-first IDs and explicit kinds.
 
@@ -229,6 +268,7 @@ Normalized records must also carry:
 - `backend`
 - `entity_kind`
 - `source_id`
+- `backing_media_id` when the record supports reading-progress operations
 
 This is required so the UI and service layer do not conflate:
 
@@ -238,7 +278,13 @@ This is required so the UI and service layer do not conflate:
 
 just because all three represent content-adjacent objects.
 
-### 3. Shared Media-Facing Contract
+`backing_media_id` is the raw backend-native media identifier used to resolve reading progress.
+
+- For local media rows, it will usually equal the local media row ID.
+- For server reading items, it must carry the underlying server `media_id`, because server reading-progress routes are keyed by media ID rather than reading-item ID.
+- For entity kinds that do not support reading progress in this slice, it may be `None`.
+
+### 4. Shared Media-Facing Contract
 
 The media-facing normalized record should expose a stable shape regardless of backend:
 
@@ -246,6 +292,7 @@ The media-facing normalized record should expose a stable shape regardless of ba
 - `backend`
 - `entity_kind`
 - `source_id`
+- `backing_media_id`
 - `uuid`
 - `title`
 - `media_type`
@@ -264,15 +311,16 @@ Notes:
 
 - For local rows, `entity_kind` will usually be `media`.
 - For server browse rows in this slice, `entity_kind` will usually be `reading_item`.
+- `backing_media_id` is the raw progress target, not another canonicalized record ID.
 - `uuid` is preserved when present but is not the canonical outward-facing ID.
 - `reading_progress` is nested normalized progress data or `None`.
 
-### 4. Shared Reading-Progress Contract
+### 5. Shared Reading-Progress Contract
 
 Normalized reading-progress state should expose:
 
-- `media_id`
 - `backend`
+- `backing_media_id`
 - `current_page`
 - `total_pages`
 - `percent_complete`
@@ -281,9 +329,9 @@ Normalized reading-progress state should expose:
 - `cfi`
 - `last_read_at`
 
-This contract is backend-neutral even though the underlying store differs.
+This contract is backend-neutral even though the underlying store differs. The important constraint is that progress operations always have the raw backend-native media identifier they need.
 
-### 5. Local Reading Progress
+### 6. Local Reading Progress
 
 Current local media behavior does not appear to expose a comparable reading-progress contract. That is a parity hole and should not remain server-only.
 
@@ -293,10 +341,31 @@ This vertical should add a narrow local reading-progress store keyed by local me
 - one fetch helper
 - one upsert helper
 - one delete helper
+- local-only persistence semantics with no sync participation in this slice
+
+Local reading-progress rows are explicitly:
+
+- excluded from `sync_log`
+- excluded from entity versioning and document-version history
+- excluded from sync, dual-write, and conflict-resolution semantics in this slice
 
 This is not a broad reading-feature redesign. It is a minimal offline parity primitive so the mode-aware seam is not asymmetrical by design.
 
-### 6. Screen Responsibilities
+### 7. UI Boundary Adaptation
+
+The current media windows are directly coupled to integer IDs, `app_instance.media_db`, and legacy direct API usage. This vertical must budget a targeted boundary refactor. That refactor is in scope even though the visible layout remains recognizable.
+
+Required adaptation rules:
+
+- `MediaWindow_v2` remains the orchestrator, but it becomes the translation boundary between existing child-widget events and the normalized media contract.
+- The selected record tracked by the window becomes a normalized string-first ID rather than a raw integer local media ID.
+- Existing child widgets may continue to emit local integer IDs where changing that contract would create excessive churn; the window boundary translates them into normalized IDs and scope-service calls.
+- Search, detail load, delete/undelete, metadata update, analysis save, document-version save/delete, and reading-progress operations should stop reaching directly into `app_instance.media_db` from the window once the seam is in place.
+- `MediaIngestWindowRebuilt` keeps the current shell, but the server-facing panel stops constructing `TLDWAPIClient` directly and routes all server operations through the scope service.
+
+This is a boundary and state-seam refactor, not a mandate to rewrite every child widget in the media stack.
+
+### 8. Screen Responsibilities
 
 #### `media_screen`
 
@@ -305,14 +374,15 @@ This is not a broad reading-feature redesign. It is a minimal offline parity pri
 In `local` mode:
 
 - existing local media browsing behavior remains authoritative
-- the screen reads through the new scope service instead of reaching directly into local-only assumptions where feasible
+- the screen reads through the new scope service instead of reaching directly into local-only assumptions
+- the screen tracks selection by normalized record ID even when the underlying local row ID is still integer-native
 
 In `server` mode:
 
 - the screen lists normalized server-backed browse rows
 - detail inspection comes through the same scope service
 - reading progress get/update flows through the same scope service
-- backend changes invalidate current selection and cached results
+- backend changes invalidate current selection and cached results through the shared media runtime state
 - no mixed local/server list is allowed
 
 #### `media_ingest_screen`
@@ -322,10 +392,12 @@ In `server` mode:
 In `local` mode:
 
 - existing local ingestion behavior remains intact
+- the server/source panel is present only as explanatory or disabled UI, not as an alternate direct-write path
 
 In `server` mode:
 
 - the screen becomes a minimal ingestion-source management surface inside the existing shell
+- the former remote panel slot is repurposed to this server-mode source-management view
 - required operations:
   - list sources
   - inspect one source
@@ -339,7 +411,7 @@ What it explicitly does not do in this slice:
 - replicate the full local batch-ingestion wizard against the server
 - become a general server jobs console
 
-### 7. Files Domain Boundary
+### 9. Files Domain Boundary
 
 The `files` domain is included now for compatibility but is not elevated to a first-class browsed library in this vertical.
 
@@ -358,7 +430,7 @@ Therefore this slice should include:
 
 But only minimal UI exposure if an existing media flow truly needs it.
 
-### 8. Reading Domain Boundary
+### 10. Reading Domain Boundary
 
 The server `reading` surface is broader than what the existing media UI needs.
 
@@ -386,7 +458,7 @@ This vertical should explicitly defer:
 - media browse: supported
 - media detail: supported
 - reading progress get/update/delete: supported after the new local parity store lands
-- ingestion-source management: unsupported
+- ingestion-source management: unsupported beyond explanatory or disabled UI
 - file-artifact management: unsupported
 - unsupported operations fail explicitly through the scope service
 
@@ -394,7 +466,7 @@ This vertical should explicitly defer:
 
 - media/reading browse: supported through normalized server rows
 - detail inspection: supported
-- reading progress get/update/delete: supported where the server item maps to underlying media progress
+- reading progress get/update/delete: supported where the record exposes `backing_media_id`
 - ingestion-source management: supported for the chosen minimal surface
 - file-artifact coverage: supported in client/service seam, minimally surfaced in UI
 
@@ -410,6 +482,7 @@ Unsupported operations should use the same explicit pattern already established 
 Examples:
 
 - `Local ingestion sources are not available yet.`
+- `Server ingestion sources require server mode.`
 - `Server media backend is unavailable.`
 - `Select a media item first.`
 - `Reading progress is not available for this record.`
@@ -433,6 +506,7 @@ This vertical needs coverage at four layers.
 - server file artifact to normalized contract
 - local and server reading-progress normalization
 - canonical ID generation
+- `backing_media_id` mapping for records that support progress
 - timestamp normalization
 
 ### 3. Scope-Service Coverage
@@ -440,15 +514,18 @@ This vertical needs coverage at four layers.
 - local/server routing
 - explicit unsupported-operation failures
 - local reading-progress routing
+- local reading-progress non-sync semantics
 - server reading-progress routing
 - ingestion-source server routing
 
 ### 4. UI/Screen Coverage
 
+- media runtime state resolves one backend across both media surfaces
 - media screen invalidates selected item and caches on backend change
 - server-mode browse/detail path consumes normalized rows
 - server-mode reading-progress fetch/update works through the seam
 - ingest-screen server mode supports source list/detail/item list/trigger sync/patch/archive upload without broad redesign
+- local-mode ingest screen does not execute legacy direct server writes through the old remote path
 
 ## Acceptance Criteria
 
@@ -456,7 +533,9 @@ This vertical is complete when all of the following are true:
 
 - `tldw_api` covers the missing `files`, `ingestion-sources`, `reading`, and `reading-progress` endpoints needed for this slice
 - the app exposes a mode-aware media/reading service seam
+- media backend ownership is explicit and shared across both media screens
 - normalized IDs are explicit and string-first
+- normalized records expose raw `backing_media_id` where progress is supported
 - local media rows and server browse rows can both be rendered through one stable contract
 - local mode has a minimal reading-progress store
 - server-mode media browsing works without changing the overall media product layout
@@ -469,12 +548,12 @@ This vertical is complete when all of the following are true:
 The implementation should follow this order:
 
 1. Add schemas and client coverage for the new server route families.
-2. Add normalization helpers and canonical ID rules.
-3. Add local reading-progress storage and helpers.
+2. Add normalization helpers, canonical ID rules, and `backing_media_id` mapping.
+3. Add local reading-progress storage with explicit local-only, non-sync semantics.
 4. Add server service and mode-aware scope service.
-5. Wire app-level service creation.
-6. Update media screen to consume the new seam.
-7. Update media ingest screen to consume the new seam.
+5. Add explicit media runtime-state wiring and backend invalidation behavior.
+6. Refactor `MediaWindow_v2` at the window boundary to consume the new seam.
+7. Refactor `MediaIngestWindowRebuilt` at the window boundary and repurpose the legacy remote slot for server-mode source management.
 8. Add docs and regression coverage.
 
 This keeps the vertical contract-first and avoids UI work before the backend boundary is stable.
