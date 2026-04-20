@@ -92,6 +92,7 @@ Local deck-delete semantics are also fixed for this slice:
 - local deck delete is a soft-delete operation
 - local deck delete must also soft-delete the deck’s flashcards in the same transaction
 - local deleted deck/cards must disappear from normal deck lists, flashcard lists, and due-review queries
+- local soft-deleted decks must release their original `name` for reuse; the delete transaction must rewrite the stored deck name to a tombstone value rather than leaving the unique name permanently occupied
 
 ## In Scope
 
@@ -186,6 +187,13 @@ Local rules:
 - `move_flashcard` updates `deck_id`, `updated_at`, `version`, and modifier metadata
 - `delete_flashcard` soft-deletes the card by default
 - `delete_deck` soft-deletes the deck and also soft-deletes all non-deleted child cards in one transaction
+- `delete_deck` also rewrites the deleted deck row’s unique `name` to a tombstone value in the same transaction so the original user-visible name becomes reusable
+- local deck lifecycle paths touched by this slice must keep `decks.card_count` coherent rather than allowing further drift
+
+`card_count` handling is fixed for this slice:
+
+- card create, card move, card delete, and deck delete must update or recalculate `decks.card_count` for every affected local deck in the same transaction
+- the UI and normalizers should not start trusting stale `card_count` values while this work is in progress
 
 This slice should not rely on the schema’s `ON DELETE CASCADE`, because that only helps on hard delete and does not solve the soft-delete visibility problem.
 
@@ -241,10 +249,11 @@ Scope-layer behavior:
 
 This vertical must explicitly carry optimistic-locking information through the lifecycle path.
 
-The normalized flashcard records already expose `version` in `study_normalizers.py`. The controller must use that version when invoking:
+The normalized flashcard records already expose `version` in `study_normalizers.py`. The normalized deck records also expose `version`. The controller must use those versions when invoking:
 
 - `delete_flashcard`
 - `move_flashcard`
+- `delete_deck`
 
 Version flow:
 
@@ -253,9 +262,16 @@ Version flow:
 - scope service
 - local DB helper or server client
 
+Deck-delete version flow:
+
+- selected deck in UI
+- flashcards controller
+- scope service
+- local DB helper
+
 If this is omitted, server-mode lifecycle actions will fail against the current API contract.
 
-For local deck delete, expected-version support is desirable at the DB/helper layer, but the UI may treat it as optional in this slice if the current deck normalization does not yet guarantee a stable selected-deck version path.
+If deck-delete version threading is omitted, local lifecycle semantics become weaker than the rest of the compat seam for no good reason. This slice therefore requires passing `expected_version` for local `delete_deck` from the selected normalized deck record.
 
 ### 5. TUI Structure
 
@@ -323,6 +339,8 @@ Add tests for:
 - soft-deleting a deck also hides its child cards from:
   - `list_flashcards(...)`
   - `get_due_flashcards(...)`
+- soft-deleting a deck releases the original deck name so a new local deck can be created with that same user-visible name
+- local `card_count` stays coherent after card create, move, delete, and deck delete
 
 ### Client Coverage
 
@@ -340,6 +358,7 @@ Add tests for:
 - local study service lifecycle wrappers
 - server study service move/delete wrappers
 - scope-service routing for card delete and move
+- scope-service routing for local deck delete with `expected_version`
 - explicit unsupported server deck-delete behavior
 
 ### UI Coverage
