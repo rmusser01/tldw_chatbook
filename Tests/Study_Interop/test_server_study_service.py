@@ -66,6 +66,20 @@ async def test_server_study_service_deletes_flashcards_with_expected_version():
 
 
 @pytest.mark.asyncio
+async def test_server_study_service_rejects_missing_expected_version_for_delete():
+    client = FakeClient()
+    service = ServerStudyService(client=client)
+
+    with pytest.raises(
+        ValueError,
+        match="expected_version is required for server flashcard deletion\\.",
+    ):
+        await service.delete_flashcard("card-server-1", expected_version=None)
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_server_deck_delete_is_explicitly_unsupported():
     server = ServerStudyService(client=FakeClient())
 

@@ -166,6 +166,8 @@ class StudyScopeService:
         hard_delete: bool = False,
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == StudyBackend.SERVER and expected_version is None:
+            raise ValueError("expected_version is required for server flashcard deletion.")
         kwargs: dict[str, Any] = {"expected_version": expected_version}
         if normalized_mode == StudyBackend.LOCAL:
             kwargs["hard_delete"] = hard_delete

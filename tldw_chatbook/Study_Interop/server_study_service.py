@@ -127,6 +127,8 @@ class ServerStudyService:
         *,
         expected_version: int,
     ) -> dict[str, Any]:
+        if expected_version is None:
+            raise ValueError("expected_version is required for server flashcard deletion.")
         return await self._require_client().delete_flashcard(
             card_id,
             expected_version=expected_version,

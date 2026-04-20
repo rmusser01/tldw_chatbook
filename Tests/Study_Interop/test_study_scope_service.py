@@ -274,6 +274,49 @@ async def test_scope_service_routes_move_delete_and_local_deck_delete():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_rejects_missing_expected_version_for_server_delete():
+    server = FakeServerStudyService()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="expected_version is required for server flashcard deletion\\.",
+    ):
+        await scope.delete_flashcard(mode="server", card_id="card-server-1")
+
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_accepts_legacy_status_deleted_mapping():
+    class LegacyStatusServerStudyService:
+        def __init__(self):
+            self.calls = []
+
+        async def delete_flashcard(self, card_id, *, expected_version=None):
+            self.calls.append(("delete_flashcard", card_id, expected_version))
+            return {"status": "deleted"}
+
+    server = LegacyStatusServerStudyService()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+    )
+
+    deleted = await scope.delete_flashcard(
+        mode="server",
+        card_id="card-server-legacy",
+        expected_version=5,
+    )
+
+    assert deleted is True
+    assert server.calls == [("delete_flashcard", "card-server-legacy", 5)]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_does_not_swallow_server_deck_delete_unsupported_error():
     scope = StudyScopeService(
         local_service=FakeLocalStudyService(),
