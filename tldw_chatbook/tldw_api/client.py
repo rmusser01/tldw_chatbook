@@ -62,6 +62,7 @@ from .character_persona_schemas import (
     PersonaExemplarImportRequest,
     PersonaExemplarReviewRequest,
     PersonaExemplarUpdate,
+    PersonaInfo,
     PersonaProfileCreate,
     PersonaProfileUpdate,
     PresetCreate,

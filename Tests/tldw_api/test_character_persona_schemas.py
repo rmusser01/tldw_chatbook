@@ -6,19 +6,15 @@ import pytest
 from pydantic import ValidationError
 
 from tldw_chatbook.tldw_api.character_persona_schemas import (
-    CharacterCreateRequest,
+    CharacterExemplarCreate,
     CharacterResponse,
-    GreetingItem,
-    GreetingListResponse,
-    GreetingSelectRequest,
     PersonaExemplarCreate,
+    PersonaInfo,
     PersonaProfileCreate,
-    PersonaProfileResponse,
     PersonaSessionRequest,
     PersonaSessionResponse,
     PersonaSessionSummary,
     PresetCreate,
-    PresetDetail,
 )
 
 
@@ -30,20 +26,49 @@ class TestCharacterPersonaSchemas:
         assert response.name == "Ada"
         assert response.version == 2
 
+    def test_create_models_do_not_include_path_ids(self):
+        character_exemplar = CharacterExemplarCreate(text="hello")
+        persona_exemplar = PersonaExemplarCreate(content="hello")
+
+        assert "character_id" not in character_exemplar.model_dump(exclude_none=True)
+        assert "persona_id" not in persona_exemplar.model_dump(exclude_none=True)
+
+    def test_create_models_reject_embedded_path_ids(self):
+        with pytest.raises(ValidationError):
+            CharacterExemplarCreate(character_id=12, text="hello")
+
+        with pytest.raises(ValidationError):
+            PersonaExemplarCreate(persona_id="persona-1", content="hello")
+
     def test_persona_profile_create_accepts_string_ids(self):
         profile = PersonaProfileCreate(id="persona-1", name="Guide", character_card_id=12)
 
         assert profile.id == "persona-1"
         assert profile.character_card_id == 12
 
-    def test_persona_session_models_parse_summary_shapes(self):
-        request = PersonaSessionRequest(persona_id="persona-1", project_id="project-1")
-        response = PersonaSessionResponse.model_validate(
+    def test_persona_session_response_parses_nested_persona_info(self):
+        session = PersonaSessionResponse.model_validate(
             {
                 "session_id": "session-1",
-                "persona": {"id": "persona-1", "name": "Guide"},
+                "persona": {
+                    "id": "persona-1",
+                    "name": "Guide",
+                    "description": "Helps with research",
+                    "voice": "warm",
+                    "avatar_url": "https://example.com/avatar.png",
+                    "capabilities": ["search", "summarize"],
+                    "default_tools": ["rag_search"],
+                },
             }
         )
+
+        assert isinstance(session.persona, PersonaInfo)
+        assert session.persona.id == "persona-1"
+        assert session.persona.capabilities == ["search", "summarize"]
+        assert session.persona.default_tools == ["rag_search"]
+
+    def test_persona_session_models_parse_summary_shapes(self):
+        request = PersonaSessionRequest(persona_id="persona-1", project_id="project-1")
         summary = PersonaSessionSummary.model_validate(
             {
                 "session_id": "session-1",
@@ -54,35 +79,21 @@ class TestCharacterPersonaSchemas:
         )
 
         assert request.persona_id == "persona-1"
-        assert response.session_id == "session-1"
         assert summary.persona_id == "persona-1"
 
-    def test_persona_exemplar_requires_string_persona_id(self):
+    def test_preset_create_requires_section_fields(self):
         with pytest.raises(ValidationError):
-            PersonaExemplarCreate(persona_id=123, kind="style", content="hello")
+            PresetCreate(preset_id="custom", name="Custom")
 
-    def test_greeting_and_preset_models_parse(self):
-        greeting = GreetingItem(index=0, text="Hello", preview="Hello")
-        greetings = GreetingListResponse(
-            chat_id="chat-1",
-            greetings=[greeting],
-        )
-        preset = PresetDetail(
-            preset_id="default",
-            name="Default",
-            builtin=True,
-        )
-        create = PresetCreate(
+        preset = PresetCreate(
             preset_id="custom",
             name="Custom",
             section_order=["system"],
             section_templates={"system": "hi"},
         )
 
-        assert greetings.greetings[0].text == "Hello"
-        assert greetings.chat_id == "chat-1"
-        assert preset.preset_id == "default"
-        assert create.preset_id == "custom"
+        assert preset.section_order == ["system"]
+        assert preset.section_templates == {"system": "hi"}
 
     def test_preset_create_rejects_builtin_ids(self):
         with pytest.raises(ValueError, match="Cannot use a built-in preset ID"):

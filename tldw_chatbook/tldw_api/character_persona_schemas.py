@@ -154,7 +154,6 @@ class CharacterExemplarRights(BaseModel):
 
 
 class CharacterExemplarCreate(BaseModel):
-    character_id: int | None = Field(default=None, gt=0)
     text: str = Field(..., min_length=1, max_length=100_000)
     source: CharacterExemplarSource = Field(default_factory=CharacterExemplarSource)
     novelty_hint: Literal["post_cutoff", "unknown", "pre_cutoff"] = "unknown"
@@ -162,6 +161,8 @@ class CharacterExemplarCreate(BaseModel):
     safety: CharacterExemplarSafety = Field(default_factory=CharacterExemplarSafety)
     rights: CharacterExemplarRights = Field(default_factory=CharacterExemplarRights)
     length_tokens: int | None = Field(default=None, ge=1, le=10_000)
+
+    model_config = {"extra": "forbid"}
 
 
 class CharacterExemplarUpdate(BaseModel):
@@ -288,6 +289,17 @@ class PersonaProfileDeleteResponse(BaseModel):
     persona_id: StrictStr
 
 
+class PersonaInfo(BaseModel):
+    id: StrictStr
+    name: str
+    description: str | None = None
+    voice: str | None = None
+    avatar_url: str | None = None
+    capabilities: list[str] = Field(default_factory=list)
+    default_tools: list[str] = Field(default_factory=list)
+    buddy_summary: dict[str, Any] | None = None
+
+
 class PersonaSessionRequest(BaseModel):
     persona_id: StrictStr
     project_id: StrictStr | None = None
@@ -302,7 +314,7 @@ class PersonaSessionRequest(BaseModel):
 
 class PersonaSessionResponse(BaseModel):
     session_id: StrictStr
-    persona: PersonaProfileResponse | dict[str, Any]
+    persona: PersonaInfo
     scopes: list[str] = Field(default_factory=list)
     runtime_mode: PersonaMode | None = None
     scope_snapshot_id: str | None = None
@@ -329,7 +341,6 @@ class PersonaSessionDetail(PersonaSessionSummary):
 
 
 class PersonaExemplarCreate(BaseModel):
-    persona_id: StrictStr = Field(..., min_length=1, max_length=200)
     id: StrictStr | None = Field(default=None, min_length=1, max_length=200)
     kind: PersonaExemplarKind = "style"
     content: str = Field(..., min_length=1, max_length=20_000)
@@ -341,6 +352,8 @@ class PersonaExemplarCreate(BaseModel):
     source_type: PersonaExemplarSourceType = "manual"
     source_ref: str | None = Field(default=None, max_length=2048)
     notes: str | None = Field(default=None, max_length=10_000)
+
+    model_config = {"extra": "forbid"}
 
 
 class PersonaExemplarUpdate(BaseModel):
@@ -442,8 +455,8 @@ class PresetListResponse(BaseModel):
 class PresetCreate(BaseModel):
     preset_id: StrictStr = Field(..., min_length=1, max_length=128)
     name: str = Field(..., min_length=1, max_length=256)
-    section_order: list[str] = Field(default_factory=list)
-    section_templates: dict[str, str] = Field(default_factory=dict)
+    section_order: list[str]
+    section_templates: dict[str, str]
 
     @field_validator("preset_id")
     @classmethod
@@ -492,6 +505,7 @@ __all__ = [
     "PersonaProfileUpdate",
     "PersonaProfileResponse",
     "PersonaProfileDeleteResponse",
+    "PersonaInfo",
     "PersonaSessionRequest",
     "PersonaSessionResponse",
     "PersonaSessionSummary",
