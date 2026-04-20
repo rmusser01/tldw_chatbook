@@ -113,6 +113,8 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 from .Notes.Notes_Library import NotesInteropService
 from .Notes.notes_scope_service import NotesScopeService
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
+from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
+from .Character_Chat.server_character_persona_service import ServerCharacterPersonaService
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
@@ -1255,6 +1257,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.notes_scope_service = NotesScopeService(
             local_notes_service=self.notes_service,
             server_service=self.server_notes_workspace_service,
+        )
+        self.server_character_persona_service = ServerCharacterPersonaService.from_config(self.app_config)
+        self.character_persona_scope_service = CharacterPersonaScopeService(
+            local_service=self.chachanotes_db,
+            server_service=self.server_character_persona_service,
         )
         self._notes_tab_initializer = NotesTabInitializer(self)
 
