@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, StrictStr, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationInfo, field_validator, model_validator
 
 
 PersonaMode = Literal["session_scoped", "persistent_scoped"]
@@ -139,7 +139,9 @@ class CharacterExemplarLabels(BaseModel):
     emotion: Literal["angry", "neutral", "happy", "other"] = "other"
     scenario: Literal["press_challenge", "fan_banter", "debate", "boardroom", "small_talk", "other"] = "other"
     rhetorical: list[str] = Field(default_factory=list)
-    register: str | None = None
+    register_: str | None = Field(default=None, alias="register", serialization_alias="register")
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
 
 class CharacterExemplarSafety(BaseModel):

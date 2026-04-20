@@ -658,15 +658,12 @@ class TLDWAPIClient:
         limit: int = 100,
         offset: int = 0,
     ) -> Dict[str, Any]:
-        params: Dict[str, Any] = {}
-        if active_only:
-            params["active_only"] = str(active_only).lower()
-        if include_deleted:
-            params["include_deleted"] = str(include_deleted).lower()
-        if limit != 100:
-            params["limit"] = limit
-        if offset != 0:
-            params["offset"] = offset
+        params: Dict[str, Any] = {
+            "active_only": str(active_only).lower(),
+            "include_deleted": str(include_deleted).lower(),
+            "limit": limit,
+            "offset": offset,
+        }
         return await self._request("GET", "/api/v1/persona/profiles", params=params)
 
     async def get_persona_profile(self, persona_id: str) -> Dict[str, Any]:
@@ -717,17 +714,13 @@ class TLDWAPIClient:
         limit: int = 100,
         offset: int = 0,
     ) -> Dict[str, Any]:
-        params: Dict[str, Any] = {}
-        if include_disabled:
-            params["include_disabled"] = str(include_disabled).lower()
-        if include_deleted:
-            params["include_deleted"] = str(include_deleted).lower()
-        if include_deleted_personas:
-            params["include_deleted_personas"] = str(include_deleted_personas).lower()
-        if limit != 100:
-            params["limit"] = limit
-        if offset != 0:
-            params["offset"] = offset
+        params: Dict[str, Any] = {
+            "include_disabled": str(include_disabled).lower(),
+            "include_deleted": str(include_deleted).lower(),
+            "include_deleted_personas": str(include_deleted_personas).lower(),
+            "limit": limit,
+            "offset": offset,
+        }
         return await self._request("GET", f"/api/v1/persona/profiles/{persona_id}/exemplars", params=params)
 
     async def get_persona_exemplar(self, persona_id: str, exemplar_id: str) -> Dict[str, Any]:

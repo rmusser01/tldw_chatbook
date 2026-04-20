@@ -40,6 +40,16 @@ class TestCharacterPersonaSchemas:
         assert "character_id" not in character_exemplar.model_dump(exclude_none=True)
         assert "persona_id" not in persona_exemplar.model_dump(exclude_none=True)
 
+    def test_character_exemplar_labels_parses_register_and_preserves_wire_key(self):
+        labels = CharacterExemplarCreate(
+            text="hello",
+            labels={"register": "formal"},
+        ).labels
+
+        assert labels is not None
+        assert labels.register_ == "formal"
+        assert labels.model_dump(exclude_none=True)["register"] == "formal"
+
     def test_create_models_reject_embedded_path_ids(self):
         with pytest.raises(ValidationError):
             CharacterExemplarCreate(character_id=12, text="hello")

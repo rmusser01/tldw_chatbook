@@ -126,6 +126,29 @@ class TestCharacterPersonaClient:
             {"json_data": {"user_turn": "why?", "selection_config": {"budget_tokens": 600, "max_exemplar_tokens": 120, "mmr_lambda": 0.7, "use_embedding_scores": False}}},
         )
 
+    async def test_character_exemplar_batch_create_uses_list_payload(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        payload = [
+            CharacterExemplarCreate(text="hello"),
+            CharacterExemplarCreate(text="world"),
+        ]
+
+        await client.create_character_exemplar(12, payload)
+
+        _assert_request_call(
+            mocked.await_args,
+            "POST",
+            "/api/v1/characters/12/exemplars",
+            {},
+        )
+        assert mocked.await_args.kwargs["json_data"] == [
+            {"text": "hello", "source": {"type": "other"}, "novelty_hint": "unknown", "labels": {"emotion": "other", "scenario": "other", "rhetorical": []}, "safety": {"allowed": [], "blocked": []}, "rights": {"public_figure": True}},
+            {"text": "world", "source": {"type": "other"}, "novelty_hint": "unknown", "labels": {"emotion": "other", "scenario": "other", "rhetorical": []}, "safety": {"allowed": [], "blocked": []}, "rights": {"public_figure": True}},
+        ]
+
     async def test_persona_profile_endpoint_wiring(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")
         mocked = AsyncMock(return_value={"ok": True})
@@ -139,7 +162,7 @@ class TestCharacterPersonaClient:
         await client.restore_persona_profile("persona-1", 9)
 
         expected_calls = [
-            ("GET", "/api/v1/persona/profiles", {"params": {}}),
+            ("GET", "/api/v1/persona/profiles", {"params": {"active_only": "false", "include_deleted": "false", "limit": 100, "offset": 0}}),
             ("GET", "/api/v1/persona/profiles/persona-1", {}),
             ("POST", "/api/v1/persona/profiles", {}),
             (
@@ -177,7 +200,7 @@ class TestCharacterPersonaClient:
         await client.delete_persona_exemplar("persona-1", "ex-1")
 
         expected_calls = [
-            ("GET", "/api/v1/persona/profiles/persona-1/exemplars", {"params": {}}),
+            ("GET", "/api/v1/persona/profiles/persona-1/exemplars", {"params": {"include_disabled": "false", "include_deleted": "false", "include_deleted_personas": "false", "limit": 100, "offset": 0}}),
             ("GET", "/api/v1/persona/profiles/persona-1/exemplars/ex-1", {}),
             ("POST", "/api/v1/persona/profiles/persona-1/exemplars", {}),
             (
