@@ -57,6 +57,7 @@ However, the runtime, discovery, and management surfaces are still fragmented:
 - main chat and CCP do not yet share one explicit launched-session contract
 - there is no obvious app-wide local/server source abstraction for this domain
 - local persona profile and local exemplar support do not appear to be fully modeled yet
+- some legacy local character save paths still encode assistant identity using display names instead of stable IDs
 
 This is the parity gap this vertical addresses.
 
@@ -75,6 +76,8 @@ The following scope and behavior decisions are fixed for this vertical:
 - In `server mode`, supported reads, writes, and execution are server-authoritative.
 - In `server mode`, writes are server-primary only. The client updates local UI/cache after confirmed server success.
 - In `local mode`, the same conceptual entities must still exist and remain usable locally.
+- Cross-surface entity, session, exemplar, greeting, and preset IDs are string-first canonical IDs.
+- `assistant_id` must always store a stable canonical entity ID, never a display name.
 - There is no mixed local/remote CCP list view in this vertical. Mode determines the backing source for the active CCP entity area.
 - CCP becomes a dual-entity management surface, not just a character screen.
 - Main chat becomes the primary runtime surface for launched character-backed and persona-backed sessions.
@@ -83,6 +86,9 @@ The following scope and behavior decisions are fixed for this vertical:
 - Persona-backed sessions must not appear in the general main-chat history list.
 - Persona-backed chats are only visible in the CCP context of the currently selected persona profile.
 - Character-backed chats are only visible in the CCP context of the currently selected character.
+- Runtime backend is session-bound at creation or launch time. Flipping local/server mode later must not silently rewrite an already open session.
+- Changing CCP backing mode must clear entity selection, session selection, and cached discovery results before refetching from the newly active backend.
+- Restored character/persona tabs may remain open and runnable even when CCP is currently focused on a different entity, but CCP discovery lists remain selected-entity scoped.
 - A running character-backed or persona-backed session in main chat does not hard-lock provider/model/runtime controls.
 - Greetings and presets must be execution-compatible in this vertical, but their UI remains mostly default-driven rather than fully surfaced.
 - Full persona-profile CRUD is in scope, not just persona exemplar CRUD.
@@ -119,6 +125,8 @@ The following scope and behavior decisions are fixed for this vertical:
   - character-backed sessions
   - persona-backed sessions
 - Add explicit discovery/visibility metadata so main chat can run these sessions without leaking them into the ordinary history/search surfaces.
+- Backfill or default legacy conversation rows and restored-tab payloads so new runtime/discovery fields exist before the new filters and handoff rules go live.
+- Normalize legacy name-shaped assistant identity onto canonical string IDs before CCP-to-main-chat launch work.
 - Normalize CCP session/conversation identity to string-first contracts before handoff work.
 - Preserve ordinary general-chat behavior for non-character, non-persona sessions.
 - Add regression coverage for:
@@ -248,7 +256,11 @@ The minimum required metadata for this vertical is:
 - `conversation_id`
 - `assistant_kind`
 - `assistant_id`
+-   canonical string ID for the selected character or persona
+-   never a display name
 - `character_id`
+-   optional legacy/local bridge while integer-backed local character rows still exist
+-   not the canonical cross-surface identity
 - `persona_memory_mode`
 - `runtime_backend`
   - `local`
@@ -266,6 +278,19 @@ Rationale:
 - `runtime_backend` prevents server-backed sessions from falling through local persistence flows accidentally
 - `discovery_owner` prevents launched sessions from leaking into the wrong history surfaces
 - `discovery_entity_id` enforces the rule that character/persona chats only show inside the currently selected entity context in CCP
+
+Canonical identity rules:
+
+- all entity, session, exemplar, greeting, and preset IDs exposed across CCP, main chat, services, and `tldw_api` are string-first contracts
+- local integer primary keys may remain internal storage details, but adapters must translate them before server calls, launch handoff, or restored tab state serialization
+- display titles and labels must come from dedicated display fields rather than overloading `assistant_id`
+
+Session lifecycle rules:
+
+- `runtime_backend` is bound when a session is created or launched and does not change retroactively when the user flips source mode later
+- restored tabs keep their stored runtime/discovery metadata even when the currently selected CCP entity or mode differs
+- launching a session that is already open focuses the existing tab keyed by `(runtime_backend, conversation_id)` rather than creating a duplicate tab
+- if the backing entity or session has been deleted or is unavailable, the open/restored tab remains visible but must surface a degraded read-only or relaunch-required state instead of silently mutating into a different session
 
 ### 4. CCP Information Architecture
 
@@ -287,6 +312,12 @@ The visible structure should become:
   - session discovery/launch
 
 The spec should not require a full visual redesign, but it must require enough UI structure that persona profiles are not hidden as an afterthought inside character flows.
+
+Switching the CCP backing mode must:
+
+- clear selected character, persona, and session state
+- clear cached search results and entity-scoped session lists
+- refetch from the newly active backend before the user can take actions against the new selection
 
 ### 5. Main Chat Runtime Handoff
 
@@ -326,6 +357,10 @@ Must include only sessions for the currently selected persona profile.
 
 These rules must be implemented with explicit metadata contracts, not client-side heuristics based only on `character_id` presence.
 
+History inclusion and exclusion must live in DB/service queries and launch/discovery facades, not only checkbox-driven client-side filtering.
+
+The implementation must backfill or safely default existing local conversation rows so legacy character/persona conversations receive explicit `runtime_backend`, `discovery_owner`, and `discovery_entity_id` values before the new history filters go live.
+
 ### 7. Local Storage Requirements
 
 The local DB already supports:
@@ -340,8 +375,9 @@ But this vertical requires additional local modeling for full parity:
 - local character exemplar storage
 - local persona exemplar storage
 - local metadata needed for discovery ownership and runtime backend
+- migration/backfill support for legacy conversation rows and restored tab payloads that predate the new runtime/discovery contract
 
-The implementation plan should treat these as foundational schema/service tasks, not late UI polish.
+The implementation plan should treat these as foundational schema/service tasks and explicit prerequisites for CCP UI expansion, not late UI polish.
 
 ### 8. Greeting And Preset Compatibility
 
@@ -431,6 +467,14 @@ Guardrail:
 
 - normalize CCP conversation/session IDs to string-first contracts before any user-visible launch work
 
+### Risk: Canonical identity drifts back to legacy name-shaped assistant IDs
+
+Guardrail:
+
+- require `assistant_id` to hold the canonical string entity ID
+- never populate `assistant_id` from character or persona display names
+- keep display-name derivation separate from identity storage
+
 ### Risk: History leakage
 
 Guardrail:
@@ -444,6 +488,14 @@ Guardrail:
 
 - require explicit `runtime_backend`
 - route persistence through backend-aware services only
+
+### Risk: Restored tabs and mode switches behave inconsistently
+
+Guardrail:
+
+- persist runtime/discovery metadata in tab state and restore it verbatim
+- keep `runtime_backend` session-bound instead of recalculating it from the current toggle on restore
+- clear CCP selections, searches, and cached lists on mode change before refetch
 
 ### Risk: Persona support becomes fake parity
 
@@ -459,18 +511,28 @@ Guardrail:
 
 - keep character exemplar and persona exemplar contracts separate at every layer
 
+### Risk: Relaunches duplicate tabs or deleted owners produce confusing session drift
+
+Guardrail:
+
+- focus existing tabs by `(runtime_backend, conversation_id)` when possible
+- surface an explicit unavailable/relaunch-required state when the backing owner or session can no longer be resolved
+- do not silently retarget an open tab to a different entity or backend
+
 ## Recommended Implementation Sequence
 
 The implementation plan for this vertical should follow this order:
 
-1. Define and migrate local data contracts
-2. Add `tldw_api` server client coverage for characters, persona profiles, sessions, messages, exemplars, greetings, and presets
-3. Add local/server domain services plus the mode-aware facade
-4. Add main-chat launched-session runtime metadata and routing
-5. Normalize CCP identity/state and add dual-entity management areas
-6. Add session discovery and launch flows
-7. Add greeting/preset execution integration
-8. Add focused docs and verification sweep
+1. Define canonical string identity rules and legacy bridge behavior
+2. Add and migrate local data contracts for persona profiles, exemplars, and runtime/discovery metadata
+3. Backfill legacy conversations and restored tab payloads to the new runtime/discovery defaults
+4. Add `tldw_api` server client coverage for characters, persona profiles, sessions, messages, exemplars, greetings, and presets
+5. Add local/server domain services plus the mode-aware facade
+6. Add main-chat launched-session runtime metadata, persistence, restore semantics, and duplicate-tab rules
+7. Normalize CCP identity/state, mode-switch invalidation, and dual-entity management areas
+8. Add session discovery and launch flows
+9. Add greeting/preset execution integration
+10. Add focused docs and verification sweep
 
 ## Success Criteria
 
@@ -480,6 +542,7 @@ This vertical is successful when:
 - both character exemplars and persona exemplars have real local and server-backed CRUD paths
 - CCP can discover only the sessions for the currently selected character or persona
 - main chat can run those launched sessions with explicit local/server runtime behavior
+- launched sessions persist and restore with stable canonical IDs plus explicit backend/ownership metadata
 - those launched sessions do not leak into general chat history
+- switching CCP modes does not reuse stale selections or mix local/server discovery state
 - ordinary non-character, non-persona chat behavior remains intact
-
