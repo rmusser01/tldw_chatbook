@@ -117,22 +117,6 @@ class ChatTabContainer(Container):
             The tab ID of the created tab, or empty string on failure
         """
         try:
-            # Check max tabs limit
-            if len(self.sessions) >= self.max_tabs:
-                self.app_instance.notify(
-                    f"Maximum number of tabs ({self.max_tabs}) reached",
-                    severity="warning"
-                )
-                return ""
-            
-            # Validate and sanitize title
-            if title:
-                try:
-                    title = validate_text_input(title, max_length=100)
-                except Exception as e:
-                    logger.warning(f"Invalid tab title, using default: {e}")
-                    title = None
-
             if session_data is not None and session_data.conversation_id:
                 reuse_key = _session_reuse_key(session_data)
                 for existing_tab_id, existing_session in self.sessions.items():
@@ -144,6 +128,22 @@ class ChatTabContainer(Container):
                             f"Reusing existing chat tab {existing_tab_id} for conversation {reuse_key}"
                         )
                         return existing_tab_id
+
+            # Check max tabs limit
+            if len(self.sessions) >= self.max_tabs:
+                self.app_instance.notify(
+                    f"Maximum number of tabs ({self.max_tabs}) reached",
+                    severity="warning"
+                )
+                return ""
+
+            # Validate and sanitize title
+            if title:
+                try:
+                    title = validate_text_input(title, max_length=100)
+                except Exception as e:
+                    logger.warning(f"Invalid tab title, using default: {e}")
+                    title = None
             
             # Generate unique tab ID
             tab_id = str(uuid.uuid4())[:8]

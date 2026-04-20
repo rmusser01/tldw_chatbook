@@ -195,6 +195,50 @@ class TestChatTabContainer:
         tab_container.tab_bar.add_tab.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_create_new_tab_reuses_existing_persisted_session_even_when_at_max_limit(
+        self,
+        tab_container,
+    ):
+        existing_session = Mock(spec=ChatSession)
+        existing_session.session_data = ChatSessionData(
+            tab_id="abcd1234",
+            title="Persisted Session",
+            conversation_id="conv-42",
+            is_ephemeral=False,
+            runtime_backend="server",
+            discovery_owner="general_chat",
+            discovery_entity_id="assistant.remote.42",
+        )
+        tab_container.sessions = {"abcd1234": existing_session}
+        for i in range(9):
+            session = Mock(spec=ChatSession)
+            session.session_data = ChatSessionData(
+                tab_id=f"tab-{i}",
+                title=f"Other {i}",
+                conversation_id=f"conv-{i}",
+                is_ephemeral=False,
+                runtime_backend="local",
+            )
+            tab_container.sessions[f"tab-{i}"] = session
+
+        tab_id = await tab_container.create_new_tab(
+            session_data=ChatSessionData(
+                tab_id="ignored",
+                title="Duplicate Persisted Session",
+                conversation_id="conv-42",
+                is_ephemeral=False,
+                runtime_backend="server",
+                discovery_owner="general_chat",
+                discovery_entity_id="assistant.remote.42",
+            )
+        )
+
+        assert tab_id == "abcd1234"
+        assert len(tab_container.sessions) == 10
+        tab_container.app_instance.notify.assert_not_called()
+        tab_container.tab_bar.add_tab.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_create_new_tab_max_limit(self, tab_container):
         """Test creating a tab when max limit is reached."""
         # Fill up to max tabs
