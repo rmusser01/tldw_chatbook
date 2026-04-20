@@ -98,7 +98,7 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 2  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 3  # Define the version this code supports
     
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
@@ -112,11 +112,16 @@ class MediaDatabase:
             'function': '_apply_migration_v1_to_v2',
             'description': 'Add chunking configuration support'
         },
+        2: {
+            'to_version': 3,
+            'function': '_apply_migration_v2_to_v3',
+            'description': 'Add local reading progress store'
+        },
         # Future migrations: just add new entries here
-        # 2: {
-        #     'to_version': 3,
-        #     'function': '_apply_migration_v2_to_v3',
-        #     'description': 'Description of v3 changes'
+        # 3: {
+        #     'to_version': 4,
+        #     'function': '_apply_migration_v3_to_v4',
+        #     'description': 'Description of v4 changes'
         # },
     }
 
@@ -967,6 +972,26 @@ class MediaDatabase:
             logging.error(f"[Migration v1->v2] Unexpected error during migration: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during migration v1->v2: {e}") from e
 
+    def _apply_migration_v2_to_v3(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 2 to version 3 (adds local reading progress)."""
+        logging.info(f"Applying migration from version 2 to 3 (reading progress store) to DB: {self.db_path_str}...")
+        try:
+            migration_sql = f"""
+            {self._READING_PROGRESS_TABLE_SQL}
+            UPDATE schema_version SET version = 3;
+            """
+
+            with self.transaction():
+                logging.debug("[Migration v2->v3] Creating ReadingProgress table...")
+                conn.executescript(migration_sql)
+                logging.info("[Migration v2->v3] ReadingProgress migration applied successfully.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v2->v3] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v2->v3 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v2->v3] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v2->v3: {e}") from e
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -985,7 +1010,6 @@ class MediaDatabase:
                     logging.debug("Verified FTS tables exist.")
                 except sqlite3.Error as fts_err:
                     logging.warning(f"Could not verify/create FTS tables on already correct schema version: {fts_err}")
-                self._ensure_reading_progress_table(conn)
                 return
 
             if current_db_version > target_version:
@@ -1021,7 +1045,6 @@ class MediaDatabase:
                 logging.info(f"Successfully migrated to version {current_db_version}")
             
             logging.info(f"Database schema fully migrated to version {target_version}")
-            self._ensure_reading_progress_table(conn)
 
         except (DatabaseError, SchemaError, sqlite3.Error) as e:
             logging.error(f"Schema initialization/migration failed: {e}", exc_info=True)
@@ -1029,16 +1052,6 @@ class MediaDatabase:
         except Exception as e:
             logging.error(f"Unexpected error during schema initialization: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error applying schema: {e}") from e
-
-    def _ensure_reading_progress_table(self, conn: sqlite3.Connection) -> None:
-        """Create the local-only reading progress table if it does not exist."""
-        try:
-            conn.executescript(self._READING_PROGRESS_TABLE_SQL)
-            conn.commit()
-            logging.debug("Verified ReadingProgress table exists.")
-        except sqlite3.Error as e:
-            logging.error(f"Failed to create ReadingProgress table: {e}", exc_info=True)
-            raise DatabaseError(f"Failed to create ReadingProgress table: {e}") from e
 
     # --- Internal Helpers (Unchanged) ---
     def _get_current_utc_timestamp_str(self) -> str:

@@ -62,6 +62,12 @@ def get_document_version_count(db: Database, media_id: int) -> int:
     return cursor.fetchone()[0]
 
 
+def get_schema_version(db: Database) -> int:
+    """Helper to fetch the current schema version."""
+    cursor = db.execute_query("SELECT version FROM schema_version LIMIT 1")
+    return cursor.fetchone()[0]
+
+
 #######################################################################################################################
 #
 # Pytest Fixtures (Moved from conftest.py)
@@ -478,6 +484,48 @@ class TestDatabaseCRUDAndSync:
         assert get_entity_version(db_instance, "Media", media_uuid) == media_version_before
         assert get_log_count(db_instance, media_uuid) == sync_log_before
         assert get_document_version_count(db_instance, media_id) == document_versions_before
+
+    def test_reading_progress_reopens_through_versioned_migration(self, temp_db_path):
+        first_db = Database(db_path=temp_db_path, client_id="schema_client")
+        media_id, _, _ = first_db.add_media_with_keywords(
+            title="Reading Progress Migration",
+            media_type="article",
+            content="Migration content for reading progress.",
+            keywords=["reading", "migration"],
+        )
+        first_db.close_connection()
+
+        conn = sqlite3.connect(temp_db_path)
+        try:
+            conn.execute("DROP TABLE IF EXISTS ReadingProgress")
+            conn.execute("UPDATE schema_version SET version = 2")
+            conn.commit()
+        finally:
+            conn.close()
+
+        reopened_db = Database(db_path=temp_db_path, client_id="schema_client")
+        try:
+            assert get_schema_version(reopened_db) == 3
+            reopened_db.upsert_reading_progress(
+                media_id,
+                {
+                    "current_page": 8,
+                    "total_pages": 20,
+                    "view_mode": "single",
+                    "zoom_level": 1.1,
+                    "cfi": "epubcfi(/6/2[chapter]!/4/2/6)",
+                    "percentage": 40.0,
+                },
+            )
+            fetched = reopened_db.get_reading_progress(media_id)
+            assert fetched is not None
+            assert fetched["media_id"] == media_id
+            assert fetched["current_page"] == 8
+            assert fetched["zoom_level"] == 1.1
+            assert fetched["cfi"] == "epubcfi(/6/2[chapter]!/4/2/6)"
+            assert fetched["percentage"] == 40.0
+        finally:
+            reopened_db.close_connection()
 
 
 @pytest.mark.integration
