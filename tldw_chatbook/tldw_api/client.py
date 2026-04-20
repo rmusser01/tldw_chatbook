@@ -1,6 +1,8 @@
 # tldw_chatbook/tldw_api/client.py
 #
 #
+from __future__ import annotations
+
 # Imports
 import json # For MediaWiki streaming
 from pathlib import Path # For utils.prepare_files_for_httpx
@@ -38,6 +40,13 @@ from .notes_workspace_schemas import (
     WorkspaceSourceResponse,
     WorkspaceSourceUpdateRequest,
     WorkspaceUpdateRequest,
+)
+from .media_reading_schemas import (
+    FileCreateRequest,
+    IngestionSourceCreateRequest,
+    IngestionSourcePatchRequest,
+    ReadingProgressUpdate,
+    ReadingUpdateRequest,
 )
 from .prompt_chatbook_schemas import (
     ChatbookExportRequest,
@@ -389,6 +398,133 @@ class TLDWAPIClient:
                 "include_keywords": str(include_keywords).lower(),
             },
         )
+
+    async def create_file_artifact(self, request_data: FileCreateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/files/create",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def list_reference_images(self) -> Dict[str, Any]:
+        return await self._request("GET", "/api/v1/files/reference-images")
+
+    async def get_file_artifact(self, file_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/files/{file_id}")
+
+    async def delete_file_artifact(self, file_id: int, hard: bool = False, delete_file: bool = False) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/files/{file_id}",
+            params={"hard": str(hard).lower(), "delete_file": str(delete_file).lower()},
+        )
+
+    async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/ingestion-sources/",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def list_ingestion_sources(self) -> Dict[str, Any]:
+        return await self._request("GET", "/api/v1/ingestion-sources/")
+
+    async def get_ingestion_source(self, source_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/ingestion-sources/{source_id}")
+
+    async def patch_ingestion_source(
+        self,
+        source_id: int,
+        request_data: IngestionSourcePatchRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/ingestion-sources/{source_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def list_ingestion_source_items(self, source_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/ingestion-sources/{source_id}/items")
+
+    async def trigger_ingestion_source_sync(self, source_id: int) -> Dict[str, Any]:
+        return await self._request("POST", f"/api/v1/ingestion-sources/{source_id}/sync")
+
+    async def upload_ingestion_source_archive(self, source_id: int, archive_path: str) -> Dict[str, Any]:
+        httpx_files = prepare_files_for_httpx([archive_path], upload_field_name="archive")
+        try:
+            return await self._request(
+                "POST",
+                f"/api/v1/ingestion-sources/{source_id}/archive",
+                files=httpx_files,
+            )
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def list_reading_items(
+        self,
+        *,
+        status: list[str] | None = None,
+        tags: list[str] | None = None,
+        q: str | None = None,
+        domain: str | None = None,
+        favorite: bool | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        page: int = 1,
+        size: int = 20,
+        offset: int | None = None,
+        limit: int | None = None,
+        sort: str | None = None,
+    ) -> Dict[str, Any]:
+        params = {
+            "status": status,
+            "tags": tags,
+            "q": q,
+            "domain": domain,
+            "favorite": favorite,
+            "date_from": date_from,
+            "date_to": date_to,
+            "page": page,
+            "size": size,
+            "offset": offset,
+            "limit": limit,
+            "sort": sort,
+        }
+        return await self._request(
+            "GET",
+            "/api/v1/reading/items",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+
+    async def get_reading_item(self, item_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/reading/items/{item_id}")
+
+    async def update_reading_item(self, item_id: int, request_data: ReadingUpdateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/reading/items/{item_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def delete_reading_item(self, item_id: int, hard: bool = False) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/reading/items/{item_id}",
+            params={"hard": str(hard).lower()},
+        )
+
+    async def get_reading_progress(self, media_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/media/{media_id}/progress")
+
+    async def update_reading_progress(self, media_id: int, request_data: ReadingProgressUpdate) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/media/{media_id}/progress",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def delete_reading_progress(self, media_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/media/{media_id}/progress")
 
     async def search_media_items(
         self,
