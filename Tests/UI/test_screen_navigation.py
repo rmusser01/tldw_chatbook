@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from textual import on
 from textual.app import App
+from unittest.mock import MagicMock, patch
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Media import (
@@ -19,8 +20,21 @@ from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 
 
+def _build_test_app() -> TldwCli:
+    with patch("tldw_chatbook.app.load_settings", return_value={"tldw_api": {"base_url": "http://localhost:8000"}}):
+        with patch("tldw_chatbook.app.get_cli_setting", side_effect=lambda _section, _key, default=None: default):
+            with patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None):
+                with patch("tldw_chatbook.app.ServerNotesWorkspaceService.from_config", return_value=MagicMock()):
+                    with patch("tldw_chatbook.app.ServerCharacterPersonaService.from_config", return_value=MagicMock()):
+                        with patch.object(TldwCli, "_init_notes_service", lambda self, _user: setattr(self, "notes_service", None)):
+                            with patch.object(TldwCli, "_init_prompts_service", lambda self: setattr(self, "prompts_service_initialized", False)):
+                                with patch.object(TldwCli, "_init_providers_models", lambda self: setattr(self, "providers_models", {})):
+                                    with patch.object(TldwCli, "_init_media_db", lambda self: (setattr(self, "media_db", None), setattr(self, "_media_types_for_ui", ["All Media"]))):
+                                        return TldwCli()
+
+
 def test_app_uses_screen_navigation_and_wires_media_services():
-    app = TldwCli()
+    app = _build_test_app()
 
     assert app._use_screen_navigation is True
     assert isinstance(app.local_media_reading_service, LocalMediaReadingService)
@@ -30,7 +44,7 @@ def test_app_uses_screen_navigation_and_wires_media_services():
 
 
 def test_media_screen_uses_shared_runtime_state():
-    app = TldwCli()
+    app = _build_test_app()
     screen = MediaScreen(app)
 
     widgets = list(screen.compose_content())
@@ -42,7 +56,7 @@ def test_media_screen_uses_shared_runtime_state():
 
 
 def test_media_ingest_screen_uses_shared_runtime_state():
-    app = TldwCli()
+    app = _build_test_app()
     screen = MediaIngestScreen(app)
 
     widgets = list(screen.compose_content())
@@ -91,7 +105,7 @@ def test_screen_state_preservation():
             super().__init__(app_instance, "test")
             self.state_data = {"value": "saved"}
 
-    app = TldwCli()
+    app = _build_test_app()
     original = TestScreen(app)
     state = original.save_state()
 
@@ -111,7 +125,7 @@ def test_screen_lifecycle_methods():
             self.mount_called = True
             super().on_mount()
 
-    screen = TestScreen(TldwCli())
+    screen = TestScreen(_build_test_app())
     screen.on_mount()
 
     assert screen.mount_called is True
