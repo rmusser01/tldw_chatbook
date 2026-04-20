@@ -81,7 +81,7 @@ The following decisions are fixed for this slice:
   - `workspace`
 - Add a workspace entry action in the workspace context panel.
 - Add a scoped Study header/banner that makes workspace context explicit.
-- Add a clear exit action from workspace-scoped Study.
+- Add explicit scoped exit/navigation actions from workspace-scoped Study.
 - Enforce global-vs-workspace filtering for:
   - flashcard deck lists
   - quiz lists
@@ -171,13 +171,15 @@ Required behavior:
 - the helper routes through the normal screen-switch path so `current_tab` and screen lifecycle remain correct
 - the helper stores a pending Study scope context for the next Study activation
 - the pending scope context must be consumed exactly once and then cleared
+- the helper should always route through the normal screen-switch path and create a fresh `StudyScreen`, following the current app architecture
+- the design does **not** add a second `apply_scope_context(...)` path for already-mounted Study screens
 
-To make repeated workspace-to-Study transitions safe, `StudyScreen` should support both:
+Pending-context precedence is fixed:
 
-- `initial_scope_context` during creation
-- `apply_scope_context(...)` after activation if the app is switching to an already-mounted Study screen
+- if both restored screen state and a pending Study scope context exist, the pending Study scope context wins for that activation
+- after it is consumed, that resolved Study scope becomes the new persisted Study screen state
 
-This avoids stale workspace scope leaking into future ordinary Study navigation.
+This avoids stale workspace scope leaking into future ordinary Study navigation and avoids duplicate activation logic.
 
 ### 2. App-Owned Return To Workspace
 
@@ -192,6 +194,11 @@ Required behavior:
 - `Back to Workspace` from scoped Study must return to Notes workspace `DETAILS`, not workspace notes
 - the helper routes through the normal Notes screen switch path
 - Notes receives a pending workspace-selection context from the app and resolves it on activation
+
+Pending-context precedence is fixed here too:
+
+- if both restored Notes state and a pending workspace-selection context exist, the pending workspace-selection context wins for that activation
+- after it is consumed, that resolved workspace selection becomes the new persisted Notes state
 
 This keeps navigation consistent and avoids Study making private calls into Notes internals.
 
@@ -252,13 +259,16 @@ Required workspace-scoped header content:
 - a clear `Workspace Study` label
 - backend availability status
 - `Back to Workspace`
-- `Leave Workspace Study`
+- `Switch To Global Study`
 
 Rules:
 
 - global Study should remain visually unchanged when no workspace scope is active
 - workspace scope should be visually obvious at all times
 - local unavailable state should be represented as a true UI state, not just a warning toast
+- the scoped header actions have distinct behavior:
+  - `Back to Workspace` returns to Notes workspace `DETAILS`
+  - `Switch To Global Study` stays in Study but clears workspace scope and returns to ordinary global Study
 - workspace-scoped empty states should be explicit and scope-aware:
   - `No study decks in this workspace yet.`
   - `No quizzes in this workspace yet.`
@@ -340,11 +350,12 @@ The service must fail closed:
 
 Flashcard card listing itself remains deck-based. Once the deck list is correctly scoped, card lists and review flows naturally stay within that selected deck.
 
-Search behavior in this slice is fixed:
+Search behavior in this slice is intentionally narrow and must match the current UI:
 
-- global Study search only searches global Study decks/cards
-- workspace-scoped Study search only searches the selected workspace scope
-- client-side search/filter behavior must be applied only after scope filtering, never before it
+- deck lists are scope-filtered before the user selects a deck
+- flashcard card search remains selected-deck-only
+- workspace-scoped flashcard search only searches cards within decks already admitted by the selected workspace scope
+- no new cross-deck search UI is introduced in this pass
 
 #### Quizzes
 
@@ -359,11 +370,11 @@ Extend `tldw_chatbook/Study_Interop/quiz_scope_service.py` the same way:
 
 Controllers should never filter raw quiz results themselves.
 
-Quiz search behavior follows the same rule:
+Quiz list behavior is also intentionally narrow:
 
-- global Study search only searches global quizzes
-- workspace-scoped Study search only searches quizzes belonging to the selected workspace
-- scope filtering always happens before client-side search narrowing
+- quiz lists are scope-filtered before selection
+- no new quiz search UI is introduced in this pass
+- controllers should only consume already-scoped quiz lists
 
 ### 9. Workspace Scope Availability Enforcement
 
