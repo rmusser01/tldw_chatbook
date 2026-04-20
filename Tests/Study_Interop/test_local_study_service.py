@@ -135,3 +135,13 @@ def test_local_study_service_deletes_and_moves_cards_with_expected_version():
         ("move_flashcard", "card-local-1", "deck-local-2", 2),
         ("get_flashcard", "card-local-1"),
     ]
+
+
+def test_local_study_service_deletes_deck_with_expected_version():
+    db = FakeDB()
+    service = LocalStudyService(db=db)
+
+    deleted = service.delete_deck("deck-local-1", expected_version=4)
+
+    assert deleted is True
+    assert db.calls == [("delete_deck", "deck-local-1", 4, False)]

@@ -37,7 +37,7 @@ class FakeClient:
 
     async def delete_flashcard(self, card_uuid, *, expected_version):
         self.calls.append(("delete_flashcard", card_uuid, expected_version))
-        return {"status": "deleted"}
+        return {"deleted": True}
 
 
 @pytest.mark.asyncio
@@ -61,7 +61,7 @@ async def test_server_study_service_deletes_flashcards_with_expected_version():
 
     deleted = await service.delete_flashcard("card-server-1", expected_version=2)
 
-    assert deleted == {"status": "deleted"}
+    assert deleted == {"deleted": True}
     assert client.calls == [("delete_flashcard", "card-server-1", 2)]
 
 

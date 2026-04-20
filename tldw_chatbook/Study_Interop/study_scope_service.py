@@ -50,6 +50,14 @@ class StudyScopeService:
             return await value
         return value
 
+    @staticmethod
+    def _coerce_delete_result(result: Any) -> bool:
+        if isinstance(result, Mapping):
+            if "deleted" in result:
+                return bool(result.get("deleted"))
+            return str(result.get("status") or "").strip().lower() == "deleted"
+        return bool(result)
+
     async def list_decks(
         self,
         *,
@@ -167,9 +175,7 @@ class StudyScopeService:
                 **kwargs,
             )
         )
-        if isinstance(result, Mapping):
-            return str(result.get("status") or "").strip().lower() == "deleted"
-        return bool(result)
+        return self._coerce_delete_result(result)
 
     async def delete_deck(
         self,
@@ -187,9 +193,7 @@ class StudyScopeService:
                 hard_delete=hard_delete,
             )
         )
-        if isinstance(result, Mapping):
-            return str(result.get("status") or "").strip().lower() == "deleted"
-        return bool(result)
+        return self._coerce_delete_result(result)
 
     async def get_next_review_candidate(
         self,

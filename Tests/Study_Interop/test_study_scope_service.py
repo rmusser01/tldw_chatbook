@@ -155,7 +155,7 @@ class FakeServerStudyService:
 
     async def delete_flashcard(self, card_id, *, expected_version=None):
         self.calls.append(("delete_flashcard", card_id, expected_version))
-        return {"status": "deleted"}
+        return {"deleted": True}
 
     async def delete_deck(self, deck_id, *, expected_version=None, hard_delete=False):
         self.calls.append(("delete_deck", deck_id, expected_version, hard_delete))
