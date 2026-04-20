@@ -599,9 +599,6 @@ class TLDWAPIClient:
             params={"expected_version": expected_version},
         )
 
-    async def list_character_exemplars(self, character_id: int) -> Dict[str, Any]:
-        return await self._request("GET", f"/api/v1/characters/{character_id}/exemplars")
-
     async def get_character_exemplar(self, character_id: int, exemplar_id: str) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/characters/{character_id}/exemplars/{exemplar_id}")
 

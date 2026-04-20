@@ -85,7 +85,6 @@ class TestCharacterPersonaClient:
 
         create_payload = CharacterExemplarCreate(text="hello")
 
-        await client.list_character_exemplars(12)
         await client.get_character_exemplar(12, "ex-1")
         await client.create_character_exemplar(12, create_payload)
         await client.update_character_exemplar(12, "ex-1", CharacterExemplarUpdate(text="updated"))
@@ -96,33 +95,32 @@ class TestCharacterPersonaClient:
             CharacterExemplarSelectionDebugRequest(user_turn="why?"),
         )
 
-        assert len(mocked.await_args_list) == 7
-        _assert_request_call(mocked.await_args_list[0], "GET", "/api/v1/characters/12/exemplars", {})
-        _assert_request_call(mocked.await_args_list[1], "GET", "/api/v1/characters/12/exemplars/ex-1", {})
+        assert len(mocked.await_args_list) == 6
+        _assert_request_call(mocked.await_args_list[0], "GET", "/api/v1/characters/12/exemplars/ex-1", {})
         _assert_request_call(
-            mocked.await_args_list[2],
+            mocked.await_args_list[1],
             "POST",
             "/api/v1/characters/12/exemplars",
             {},
         )
-        create_payload = mocked.await_args_list[2][1]["json_data"]
+        create_payload = mocked.await_args_list[1][1]["json_data"]
         assert create_payload["text"] == "hello"
         assert "character_id" not in create_payload
         _assert_request_call(
-            mocked.await_args_list[3],
+            mocked.await_args_list[2],
             "PUT",
             "/api/v1/characters/12/exemplars/ex-1",
             {"json_data": {"text": "updated"}},
         )
-        _assert_request_call(mocked.await_args_list[4], "DELETE", "/api/v1/characters/12/exemplars/ex-1", {})
+        _assert_request_call(mocked.await_args_list[3], "DELETE", "/api/v1/characters/12/exemplars/ex-1", {})
         _assert_request_call(
-            mocked.await_args_list[5],
+            mocked.await_args_list[4],
             "POST",
             "/api/v1/characters/12/exemplars/search",
             {"json_data": {"query": "hello", "filter": {"rhetorical": []}, "limit": 20, "offset": 0, "use_embedding_scores": False}},
         )
         _assert_request_call(
-            mocked.await_args_list[6],
+            mocked.await_args_list[5],
             "POST",
             "/api/v1/characters/12/exemplars/select/debug",
             {"json_data": {"user_turn": "why?", "selection_config": {"budget_tokens": 600, "max_exemplar_tokens": 120, "mmr_lambda": 0.7, "use_embedding_scores": False}}},
