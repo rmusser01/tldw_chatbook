@@ -118,6 +118,42 @@ class TestChatTabContainer:
             
             # Verify placeholder was hidden
             assert mock_placeholder.styles.display == "none"
+
+    @pytest.mark.asyncio
+    async def test_create_new_tab_derives_title_from_session_contract(self, tab_container):
+        """Test creating a tab from session metadata derives the contract-backed title."""
+        with patch('uuid.uuid4') as mock_uuid:
+            mock_uuid.return_value = Mock()
+            mock_uuid.return_value.__str__ = Mock(return_value="87654321-1234-5678-1234-567812345678")
+
+            mock_container = Mock()
+            mock_container.mount = AsyncMock()
+            mock_placeholder = Mock()
+            mock_placeholder.styles = Mock(display="block")
+            tab_container.query_one = Mock(side_effect=[mock_container, mock_placeholder])
+
+            session_data = ChatSessionData(
+                tab_id="ignored",
+                title="",
+                conversation_id="conv-persona",
+                is_ephemeral=False,
+                assistant_kind="persona",
+                assistant_id="Planner",
+                persona_memory_mode="workspace",
+                scope_type="workspace",
+                workspace_id="workspace-123",
+            )
+
+            tab_id = await tab_container.create_new_tab(session_data=session_data)
+
+            assert tab_id == "87654321"
+            restored_session = tab_container.sessions[tab_id].session_data
+            assert restored_session.title == "Chat with Persona Planner"
+            assert restored_session.assistant_kind == "persona"
+            assert restored_session.assistant_id == "Planner"
+            assert restored_session.persona_memory_mode == "workspace"
+            assert restored_session.scope_type == "workspace"
+            assert restored_session.workspace_id == "workspace-123"
     
     @pytest.mark.asyncio
     async def test_create_new_tab_max_limit(self, tab_container):
@@ -398,10 +434,14 @@ class TestChatTabContainerIntegration:
         existing_session.session_data = ChatSessionData(tab_id="a1b2c3d4", title="Live Session")
         tab_container.sessions = {"a1b2c3d4": existing_session}
 
-        async def fake_create_new_tab(title=None):
+        async def fake_create_new_tab(title=None, session_data=None):
             new_tab_id = "restored1"
             restored_session = Mock(spec=ChatSession)
-            restored_session.session_data = ChatSessionData(tab_id=new_tab_id, title=title or "Placeholder")
+            restored_session.session_data = session_data or ChatSessionData(
+                tab_id=new_tab_id,
+                title=title or "Placeholder",
+            )
+            restored_session.session_data.tab_id = new_tab_id
             tab_container.sessions[new_tab_id] = restored_session
             return new_tab_id
 
@@ -439,6 +479,45 @@ class TestChatTabContainerIntegration:
             "restored1",
             "Persona Workspace Session",
             "Persona Tab",
+        )
+
+    @pytest.mark.asyncio
+    async def test_restore_sessions_from_state_derives_missing_title_from_contract(self, tab_container):
+        """Restoring a saved session derives a contract title when the saved title is blank."""
+        async def fake_create_new_tab(title=None, session_data=None):
+            new_tab_id = "restored2"
+            restored_session = Mock(spec=ChatSession)
+            restored_session.session_data = session_data or ChatSessionData(
+                tab_id=new_tab_id,
+                title=title or "Placeholder",
+            )
+            restored_session.session_data.tab_id = new_tab_id
+            tab_container.sessions[new_tab_id] = restored_session
+            return new_tab_id
+
+        tab_container.create_new_tab = AsyncMock(side_effect=fake_create_new_tab)
+        tab_container._force_close_tab = AsyncMock()
+
+        saved_state = {
+            "saved-tab": ChatSessionData(
+                tab_id="saved-tab",
+                title="",
+                conversation_id="conv-100",
+                is_ephemeral=False,
+                character_name="Navigator",
+                assistant_kind="character",
+                assistant_id="char-100",
+            )
+        }
+
+        await tab_container.restore_sessions_from_state(saved_state)
+
+        restored_session = tab_container.sessions["restored2"].session_data
+        assert restored_session.title == "Chat with Navigator"
+        tab_container.tab_bar.update_tab_title.assert_called_once_with(
+            "restored2",
+            "Chat with Navigator",
+            "Navigator",
         )
     
     @pytest.mark.asyncio

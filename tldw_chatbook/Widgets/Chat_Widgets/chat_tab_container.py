@@ -18,6 +18,7 @@ from textual.binding import Binding
 from .chat_tab_bar import ChatTabBar
 from .chat_session import ChatSession
 from tldw_chatbook.Widgets.confirmation_dialog import UnsavedChangesDialog
+from tldw_chatbook.Chat.chat_conversation_service import derive_conversation_title
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.input_validation import validate_text_input
@@ -28,6 +29,25 @@ if TYPE_CHECKING:
 #######################################################################################################################
 #
 # Classes:
+
+
+def _derive_session_title(
+    session_data: ChatSessionData,
+    fallback_title: Optional[str] = None,
+) -> str:
+    effective_fallback_title = session_data.title if fallback_title is None else fallback_title
+    assistant_name = None
+    if session_data.assistant_kind == "character":
+        assistant_name = session_data.character_name
+    elif session_data.assistant_kind == "persona" and session_data.assistant_id:
+        assistant_name = f"Persona {session_data.assistant_id}"
+
+    return derive_conversation_title(
+        assistant_kind=session_data.assistant_kind,
+        assistant_name=assistant_name,
+        fallback_title=effective_fallback_title,
+        character_id=session_data.character_id,
+    )
 
 class ChatTabContainer(Container):
     """
@@ -77,13 +97,18 @@ class ChatTabContainer(Container):
         # Create initial tab
         await self.create_new_tab()
     
-    async def create_new_tab(self, title: Optional[str] = None) -> str:
+    async def create_new_tab(
+        self,
+        title: Optional[str] = None,
+        session_data: Optional[ChatSessionData] = None,
+    ) -> str:
         """
         Create a new chat tab.
         
         Args:
             title: Optional title for the tab
-            
+            session_data: Optional session contract to seed the new tab
+
         Returns:
             The tab ID of the created tab, or empty string on failure
         """
@@ -119,10 +144,18 @@ class ChatTabContainer(Container):
                 return ""
             
             # Create session data
-            session_data = ChatSessionData(
-                tab_id=tab_id,
-                title=title or f"Chat {len(self.sessions) + 1}"
-            )
+            if session_data is not None:
+                session_data = ChatSessionData.from_dict(session_data.to_dict())
+                session_data.tab_id = tab_id
+                session_data.title = _derive_session_title(
+                    session_data,
+                    fallback_title=title or session_data.title,
+                )
+            else:
+                session_data = ChatSessionData(
+                    tab_id=tab_id,
+                    title=title or f"Chat {len(self.sessions) + 1}"
+                )
             
             # Create session widget
             try:
@@ -454,8 +487,9 @@ class ChatTabContainer(Container):
         # Restore each session
         for _, session_data in state.items():
             restored_session_data = ChatSessionData.from_dict(session_data.to_dict())
+            restored_session_data.title = _derive_session_title(restored_session_data)
             # Create new session
-            new_tab_id = await self.create_new_tab(title=restored_session_data.title)
+            new_tab_id = await self.create_new_tab(session_data=restored_session_data)
             if new_tab_id and new_tab_id in self.sessions:
                 # Preserve the saved session state while rebinding it to the new widget tab ID.
                 restored_session_data.tab_id = new_tab_id

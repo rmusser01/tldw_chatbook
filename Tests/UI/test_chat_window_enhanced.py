@@ -10,6 +10,10 @@ from textual.app import App
 from textual.widgets import Input, Button, TextArea, Static, ListView, Switch
 from textual.containers import Container, Horizontal, VerticalScroll
 
+from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, TabState
+
 
 @pytest.fixture
 def mock_app():
@@ -306,6 +310,92 @@ class TestChatWindowTabIntegration:
         
         # Verify contexts are separate
         assert mock_app.chat_attached_files["tab1"] != mock_app.chat_attached_files["tab2"]
+
+
+class TestChatScreenConversationParity:
+    """Test focused chat screen parity save/restore behavior."""
+
+    def test_save_tab_sessions_preserves_assistant_scope_contract(self, mock_app):
+        """Saving tab sessions preserves assistant identity and scope metadata."""
+        screen = ChatScreen(mock_app)
+        screen.chat_state = ChatScreenState()
+
+        session = Mock()
+        session.session_data = ChatSessionData(
+            tab_id="tab-1",
+            title="Persona Session",
+            conversation_id="conv-1",
+            character_id=7,
+            character_name="Navigator",
+            assistant_kind="persona",
+            assistant_id="planner",
+            persona_memory_mode="workspace",
+            scope_type="workspace",
+            workspace_id="workspace-123",
+            is_ephemeral=False,
+        )
+        session.query_one = Mock(side_effect=Exception("no widget"))
+
+        tab_container = Mock()
+        tab_container.sessions = {"tab-1": session}
+        tab_container.active_session_id = "tab-1"
+
+        screen._save_tab_sessions(tab_container)
+
+        saved_tab = screen.chat_state.get_tab_by_id("tab-1")
+        assert saved_tab is not None
+        assert saved_tab.assistant_kind == "persona"
+        assert saved_tab.assistant_id == "planner"
+        assert saved_tab.persona_memory_mode == "workspace"
+        assert saved_tab.scope_type == "workspace"
+        assert saved_tab.workspace_id == "workspace-123"
+
+    @pytest.mark.asyncio
+    async def test_restore_tab_sessions_preserves_assistant_scope_contract(self, mock_app):
+        """Restoring tab sessions reapplies assistant identity and scope metadata to live sessions."""
+        screen = ChatScreen(mock_app)
+        screen.chat_state = ChatScreenState(
+            tabs=[
+                TabState(
+                    tab_id="saved-tab",
+                    title="",
+                    conversation_id="conv-2",
+                    character_id=11,
+                    character_name="Scout",
+                    assistant_kind="character",
+                    assistant_id="char-11",
+                    persona_memory_mode="read_only",
+                    scope_type="workspace",
+                    workspace_id="workspace-999",
+                    is_ephemeral=False,
+                    has_unsaved_changes=True,
+                )
+            ],
+            active_tab_id="saved-tab",
+            tab_order=["saved-tab"],
+        )
+
+        restored_session = Mock()
+        restored_session.session_data = ChatSessionData(tab_id="restored-tab", title="placeholder")
+
+        async def fake_create_new_tab(title=None, session_data=None):
+            tab_container.sessions["restored-tab"] = restored_session
+            if session_data is not None:
+                restored_session.session_data = session_data
+            return "restored-tab"
+
+        tab_container = Mock()
+        tab_container.sessions = {}
+        tab_container.create_new_tab = AsyncMock(side_effect=fake_create_new_tab)
+
+        await screen._restore_tab_sessions(tab_container)
+
+        assert restored_session.session_data.assistant_kind == "character"
+        assert restored_session.session_data.assistant_id == "char-11"
+        assert restored_session.session_data.persona_memory_mode == "read_only"
+        assert restored_session.session_data.scope_type == "workspace"
+        assert restored_session.session_data.workspace_id == "workspace-999"
+        assert restored_session.session_data.title == "Chat with Scout"
 
 
 class TestChatWindowStreamingUI:

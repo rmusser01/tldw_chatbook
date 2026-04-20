@@ -453,6 +453,76 @@ class TestChatEventsTabsStateSynchronization:
             assert session_data.scope_type == "workspace"
             assert session_data.workspace_id == "workspace-123"
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("session_kwargs", "expected_title"),
+        [
+            (
+                {
+                    "title": "",
+                    "assistant_kind": "persona",
+                    "assistant_id": "Planner",
+                    "character_name": None,
+                },
+                "Chat with Persona Planner",
+            ),
+            (
+                {
+                    "title": "",
+                    "assistant_kind": "character",
+                    "assistant_id": "char-77",
+                    "character_name": "Navigator",
+                },
+                "Chat with Navigator",
+            ),
+            (
+                {
+                    "title": "",
+                    "assistant_kind": None,
+                    "assistant_id": None,
+                    "character_name": None,
+                },
+                "New Chat",
+            ),
+        ],
+    )
+    async def test_display_conversation_derives_session_backed_title_when_input_empty(
+        self, mock_app, session_data, mock_config, session_kwargs, expected_title
+    ):
+        """Loading a conversation falls back to the local contract when the title input is blank."""
+        for field_name, field_value in session_kwargs.items():
+            setattr(session_data, field_name, field_value)
+
+        mock_title_input = Mock()
+        mock_title_input.value = ""
+
+        mock_tab_container = Mock()
+        mock_tab_container.update_tab_title = Mock()
+
+        mock_chat_window = Mock()
+        mock_chat_window.tab_container = mock_tab_container
+
+        def query_one_side_effect(selector, widget_type=None):
+            if selector == "#chat-conversation-title-input":
+                return mock_title_input
+            if selector == "#chat-window":
+                return mock_chat_window
+            return Mock()
+
+        with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.display_conversation_in_chat_tab_ui') as mock_handler:
+            mock_handler.return_value = None
+            mock_app.query_one = Mock(side_effect=query_one_side_effect)
+
+            await chat_events_tabs.display_conversation_in_chat_tab_ui_with_tabs(
+                mock_app, "derived-conv-id", session_data
+            )
+
+        assert session_data.title == expected_title
+        mock_tab_container.update_tab_title.assert_called_once_with(
+            session_data.tab_id,
+            expected_title,
+        )
+
 ########################################################################################################################
 #
 # Error Handling Tests:
