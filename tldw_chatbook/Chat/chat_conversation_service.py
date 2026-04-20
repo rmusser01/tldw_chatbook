@@ -47,6 +47,22 @@ def _normalize_scope(scope_type: Any, workspace_id: Any) -> tuple[str, str | Non
     return "workspace", normalized_workspace_id
 
 
+def _normalize_runtime_backend(value: Any) -> str:
+    text = _clean_text(value)
+    normalized = (text or "local").lower()
+    if normalized not in {"local", "server"}:
+        return "local"
+    return normalized
+
+
+def _normalize_discovery_owner(value: Any) -> str:
+    text = _clean_text(value)
+    normalized = (text or "general_chat").lower()
+    if normalized not in {"general_chat", "ccp_character", "ccp_persona"}:
+        return "general_chat"
+    return normalized
+
+
 def _normalize_keywords(keyword_rows: Any) -> list[str]:
     if not keyword_rows:
         return []
@@ -180,6 +196,9 @@ def normalize_conversation_row(
         "character_id": conversation_row.get("character_id"),
         "assistant_kind": _normalize_assistant_kind(conversation_row.get("assistant_kind")),
         "assistant_id": _clean_text(conversation_row.get("assistant_id")),
+        "runtime_backend": _normalize_runtime_backend(conversation_row.get("runtime_backend")),
+        "discovery_owner": _normalize_discovery_owner(conversation_row.get("discovery_owner")),
+        "discovery_entity_id": _clean_text(conversation_row.get("discovery_entity_id")),
         "persona_memory_mode": _clean_text(conversation_row.get("persona_memory_mode")),
         "title": normalized_title,
         "state": normalized_state,

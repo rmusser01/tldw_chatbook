@@ -23,6 +23,21 @@ def db_instance(db_path, client_id):
 
 @pytest.mark.integration
 class TestChatPersistenceService:
+    def test_persistence_service_never_uses_display_name_as_assistant_id(self, db_instance: CharactersRAGDB):
+        service = ChatPersistenceService(db_instance)
+        character_id = db_instance.add_character_card({"name": "Alice"})
+        conversation_id = service.create_conversation(
+            character_id=character_id,
+            character_name="Alice",
+            assistant_kind="character",
+            assistant_id="char.local.alice",
+            runtime_backend="local",
+            discovery_owner="ccp_character",
+            discovery_entity_id="char.local.alice",
+        )
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["assistant_id"] == "char.local.alice"
+
     def test_update_message_content_preserves_topology_variant_and_feedback(self, db_instance: CharactersRAGDB):
         service = ChatPersistenceService(db_instance)
         char_id = db_instance.add_character_card({"name": "Preserver"})

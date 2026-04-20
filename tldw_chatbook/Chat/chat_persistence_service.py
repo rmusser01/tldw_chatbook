@@ -37,6 +37,9 @@ class ChatPersistenceService:
         character_name: Optional[str] = None,
         assistant_kind: Optional[str] = None,
         assistant_id: Optional[str] = None,
+        runtime_backend: Optional[str] = None,
+        discovery_owner: Optional[str] = None,
+        discovery_entity_id: Optional[str] = None,
         conversation_title: Optional[str] = None,
     ) -> str:
         title = self.derive_conversation_title(
@@ -49,6 +52,9 @@ class ChatPersistenceService:
             "character_id": character_id,
             "assistant_kind": assistant_kind,
             "assistant_id": assistant_id,
+            "runtime_backend": runtime_backend,
+            "discovery_owner": discovery_owner,
+            "discovery_entity_id": discovery_entity_id,
             "title": title,
             "client_id": self.db.client_id,
         })

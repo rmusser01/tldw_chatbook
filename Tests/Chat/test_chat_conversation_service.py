@@ -126,6 +126,9 @@ def test_normalize_conversation_and_message_rows_preserve_stable_shape():
     assert conversation["scope_type"] == "global"
     assert conversation["state"] == "resolved"
     assert conversation["topic_label"] == "billing"
+    assert conversation["runtime_backend"] == "local"
+    assert conversation["discovery_owner"] == "general_chat"
+    assert conversation["discovery_entity_id"] is None
     assert conversation["keywords"] == []
     assert conversation["message_count"] == 0
     assert service.derive_conversation_title({"assistant_kind": None, "title": None}) == "New Chat"
@@ -197,6 +200,9 @@ def test_list_conversations_normalizes_pagination_and_enforces_global_defaults()
     assert result["items"][0]["title"] == "Chat with Persona persona.alpha"
     assert result["items"][0]["keywords"] == ["alpha", "beta"]
     assert result["items"][0]["message_count"] == 3
+    assert result["items"][0]["runtime_backend"] == "local"
+    assert result["items"][0]["discovery_owner"] == "general_chat"
+    assert result["items"][0]["discovery_entity_id"] is None
 
     search_call = next(call for call in db.calls if call[0] == "search_conversations_page")
     assert search_call[2]["scope_type"] == "global"

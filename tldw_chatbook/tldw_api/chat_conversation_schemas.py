@@ -54,6 +54,18 @@ class ConversationListItem(BaseModel):
         description="Normalized assistant identity kind for the conversation",
     )
     assistant_id: str | None = Field(None, description="Normalized assistant identity ID for the conversation")
+    runtime_backend: Literal["local", "server"] = Field(
+        "local",
+        description="Execution backend for the assistant/runtime (local or server)",
+    )
+    discovery_owner: Literal["general_chat", "ccp_character", "ccp_persona"] = Field(
+        "general_chat",
+        description="Owning surface for discovery/canonical identity attribution",
+    )
+    discovery_entity_id: str | None = Field(
+        None,
+        description="Canonical entity ID used by the discovery surface (string-first stable ID)",
+    )
     persona_memory_mode: Literal["read_only", "read_write"] | None = Field(
         None,
         description="Persona durable memory behavior for the conversation",
@@ -144,6 +156,18 @@ class ConversationMetadata(BaseModel):
         description="Normalized assistant identity kind for the conversation",
     )
     assistant_id: str | None = Field(None, description="Normalized assistant identity ID for the conversation")
+    runtime_backend: Literal["local", "server"] = Field(
+        "local",
+        description="Execution backend for the assistant/runtime (local or server)",
+    )
+    discovery_owner: Literal["general_chat", "ccp_character", "ccp_persona"] = Field(
+        "general_chat",
+        description="Owning surface for discovery/canonical identity attribution",
+    )
+    discovery_entity_id: str | None = Field(
+        None,
+        description="Canonical entity ID used by the discovery surface (string-first stable ID)",
+    )
     persona_memory_mode: Literal["read_only", "read_write"] | None = Field(
         None,
         description="Persona durable memory behavior for the conversation",

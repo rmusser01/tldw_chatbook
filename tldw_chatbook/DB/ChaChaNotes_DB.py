@@ -58,6 +58,9 @@ from .sql_validation import validate_table_name, validate_column_name
 #
 # Functions:
 
+DEFAULT_RUNTIME_BACKEND = "local"
+DEFAULT_DISCOVERY_OWNER = "general_chat"
+
 # --- Custom Exceptions ---
 class CharactersRAGDBError(Exception):
     """Base exception for CharactersRAGDB related errors."""
@@ -128,7 +131,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 13 # Incremented schema version to add conversation metadata parity support
+    _CURRENT_SCHEMA_VERSION = 14  # Incremented schema version to add canonical assistant runtime metadata
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -1778,6 +1781,118 @@ UPDATE db_schema_version
    AND version = 12;
 """
 
+    _MIGRATE_V13_TO_V14_SQL = f"""
+-- Migration from V13 to V14: Add canonical runtime/discovery metadata columns
+
+ALTER TABLE conversations ADD COLUMN runtime_backend TEXT NOT NULL DEFAULT '{DEFAULT_RUNTIME_BACKEND}';
+ALTER TABLE conversations ADD COLUMN discovery_owner TEXT NOT NULL DEFAULT '{DEFAULT_DISCOVERY_OWNER}';
+ALTER TABLE conversations ADD COLUMN discovery_entity_id TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_conversations_runtime_backend ON conversations(runtime_backend);
+CREATE INDEX IF NOT EXISTS idx_conversations_discovery_owner ON conversations(discovery_owner);
+CREATE INDEX IF NOT EXISTS idx_conversations_discovery_entity ON conversations(discovery_entity_id);
+
+DROP TRIGGER IF EXISTS conversations_sync_create;
+DROP TRIGGER IF EXISTS conversations_sync_update;
+DROP TRIGGER IF EXISTS conversations_sync_delete;
+DROP TRIGGER IF EXISTS conversations_sync_undelete;
+
+UPDATE conversations
+   SET runtime_backend = '{DEFAULT_RUNTIME_BACKEND}'
+ WHERE runtime_backend IS NULL OR TRIM(runtime_backend) = '';
+
+UPDATE conversations
+   SET discovery_owner = '{DEFAULT_DISCOVERY_OWNER}'
+ WHERE discovery_owner IS NULL OR TRIM(discovery_owner) = '';
+
+CREATE TRIGGER conversations_sync_create
+AFTER INSERT ON conversations BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'create',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_update
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = NEW.deleted AND (
+     OLD.title IS NOT NEW.title OR
+     OLD.rating IS NOT NEW.rating OR
+     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR
+     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR
+     OLD.character_id IS NOT NEW.character_id OR
+     OLD.assistant_kind IS NOT NEW.assistant_kind OR
+     OLD.assistant_id IS NOT NEW.assistant_id OR
+     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR
+     OLD.scope_type IS NOT NEW.scope_type OR
+     OLD.workspace_id IS NOT NEW.workspace_id OR
+     OLD.state IS NOT NEW.state OR
+     OLD.topic_label IS NOT NEW.topic_label OR
+     OLD.topic_label_source IS NOT NEW.topic_label_source OR
+     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR
+     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR
+     OLD.cluster_id IS NOT NEW.cluster_id OR
+     OLD.source IS NOT NEW.source OR
+     OLD.external_ref IS NOT NEW.external_ref OR
+     OLD.runtime_backend IS NOT NEW.runtime_backend OR
+     OLD.discovery_owner IS NOT NEW.discovery_owner OR
+     OLD.discovery_entity_id IS NOT NEW.discovery_entity_id OR
+     OLD.last_modified IS NOT NEW.last_modified OR
+     OLD.version IS NOT NEW.version)
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_delete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 0 AND NEW.deleted = 1
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'delete',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
+                     'version',NEW.version,'client_id',NEW.client_id));
+END;
+
+CREATE TRIGGER conversations_sync_undelete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 1 AND NEW.deleted = 0
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
+                     'version',NEW.version,'client_id',NEW.client_id));
+END;
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 14
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 13;
+"""
+
     def __init__(self, db_path: Union[str, Path], client_id: str, 
                  check_integrity_on_startup: bool = False):
         """
@@ -2512,6 +2627,31 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V12→V13] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V12 to V13 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v13_to_v14(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 13 to version 14.
+
+        This migration adds runtime/discovery metadata fields and backfills legacy rows with safe defaults.
+        """
+        logger.info(f"Migrating schema from V13 to V14 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V13_TO_V14_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V13→V14] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 14:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V13→V14] Migration version check failed. Expected 14, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V13→V14] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V13→V14] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V13 to V14 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V13→V14] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V13 to V14 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 7 to version 8.
@@ -2612,6 +2752,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 12 and target_version > 12:
                         self._migrate_from_v12_to_v13(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 13 and target_version > 13:
+                        self._migrate_from_v13_to_v14(conn)
                 elif current_db_version == 4 and target_version >= 5:
                     self._migrate_from_v4_to_v5(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2638,6 +2781,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 12 and target_version > 12:
                         self._migrate_from_v12_to_v13(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 13 and target_version > 13:
+                        self._migrate_from_v13_to_v14(conn)
                 elif current_db_version == 5 and target_version >= 6:
                     self._migrate_from_v5_to_v6(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2661,6 +2807,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 12 and target_version > 12:
                         self._migrate_from_v12_to_v13(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 13 and target_version > 13:
+                        self._migrate_from_v13_to_v14(conn)
                 elif current_db_version == 6 and target_version >= 7:
                     self._migrate_from_v6_to_v7(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2681,6 +2830,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 12 and target_version > 12:
                         self._migrate_from_v12_to_v13(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 13 and target_version > 13:
+                        self._migrate_from_v13_to_v14(conn)
                 elif current_db_version == 7 and target_version == 8:
                     self._migrate_from_v7_to_v8(conn)
                 elif current_db_version == 8 and target_version == 9:
@@ -2693,6 +2845,8 @@ UPDATE db_schema_version
                     self._migrate_from_v11_to_v12(conn)
                 elif current_db_version == 12 and target_version == 13:
                     self._migrate_from_v12_to_v13(conn)
+                elif current_db_version == 13 and target_version == 14:
+                    self._migrate_from_v13_to_v14(conn)
                 elif current_initial_version < target_version: # An older schema exists
                     # For versions older than 4, we don't have a migration path
                     raise SchemaError(
@@ -3667,14 +3821,18 @@ UPDATE db_schema_version
         if normalized_kind == "character":
             if normalized_character_id is None:
                 if normalized_assistant_id is None:
-                    raise InputError("Character conversations require 'character_id' or a numeric 'assistant_id'.")
+                    raise InputError("Character conversations require 'character_id' or 'assistant_id'.")
                 try:
                     normalized_character_id = int(normalized_assistant_id)
                 except (TypeError, ValueError) as exc:
-                    raise InputError(f"Character assistant_id must be numeric. Got: {normalized_assistant_id}") from exc
+                    raise InputError(
+                        "Character conversations require 'character_id' when assistant_id is non-numeric."
+                    ) from exc
+            if normalized_assistant_id is None:
+                normalized_assistant_id = str(normalized_character_id)
             if normalized_memory_mode is not None:
                 raise InputError("persona_memory_mode is only valid for persona-backed conversations.")
-            return "character", str(normalized_character_id), normalized_character_id, None
+            return "character", normalized_assistant_id, normalized_character_id, None
 
         if normalized_kind == "persona":
             if normalized_assistant_id is None:
@@ -3690,6 +3848,27 @@ UPDATE db_schema_version
         if normalized_memory_mode is not None:
             raise InputError("persona_memory_mode is only valid for persona-backed conversations.")
         return "generic", normalized_assistant_id, None, None
+
+    def _normalize_conversation_runtime_visibility(
+        self,
+        *,
+        runtime_backend: Any,
+        discovery_owner: Any,
+        discovery_entity_id: Any,
+    ) -> Tuple[str, str, Optional[str]]:
+        normalized_runtime = self._normalize_nullable_text(runtime_backend)
+        normalized_owner = self._normalize_nullable_text(discovery_owner)
+        normalized_entity_id = self._normalize_nullable_text(discovery_entity_id)
+
+        runtime_value = (normalized_runtime or DEFAULT_RUNTIME_BACKEND).strip().lower()
+        if runtime_value not in {"local", "server"}:
+            runtime_value = DEFAULT_RUNTIME_BACKEND
+
+        owner_value = (normalized_owner or DEFAULT_DISCOVERY_OWNER).strip().lower()
+        if owner_value not in {"general_chat", "ccp_character", "ccp_persona"}:
+            owner_value = DEFAULT_DISCOVERY_OWNER
+
+        return runtime_value, owner_value, normalized_entity_id
 
     def add_conversation(self, conv_data: Dict[str, Any]) -> Optional[str]:
         """
@@ -3745,6 +3924,11 @@ UPDATE db_schema_version
         cluster_id = self._normalize_nullable_text(conv_data.get('cluster_id'))
         source = self._normalize_nullable_text(conv_data.get('source'))
         external_ref = self._normalize_nullable_text(conv_data.get('external_ref'))
+        runtime_backend, discovery_owner, discovery_entity_id = self._normalize_conversation_runtime_visibility(
+            runtime_backend=conv_data.get("runtime_backend"),
+            discovery_owner=conv_data.get("discovery_owner"),
+            discovery_entity_id=conv_data.get("discovery_entity_id"),
+        )
 
         now = self._get_current_utc_timestamp_iso()
         query = """
@@ -3752,14 +3936,16 @@ UPDATE db_schema_version
                                            character_id, assistant_kind, assistant_id, persona_memory_mode, \
                                            scope_type, workspace_id, state, topic_label, topic_label_source, \
                                            topic_last_tagged_at, topic_last_tagged_message_id, cluster_id, source, external_ref, \
+                                           runtime_backend, discovery_owner, discovery_entity_id, \
                                            title, rating, created_at, last_modified, client_id, version, deleted) \
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
                 """ # created_at added
         params = (
             conv_id, root_id, conv_data.get('forked_from_message_id'),
             conv_data.get('parent_conversation_id'), character_id, assistant_kind, assistant_id, persona_memory_mode,
             scope_type, workspace_id, state, topic_label, topic_label_source,
             topic_last_tagged_at, topic_last_tagged_message_id, cluster_id, source, external_ref,
+            runtime_backend, discovery_owner, discovery_entity_id,
             conv_data.get('title'), conv_data.get('rating'),
             now, now, client_id # created_at, last_modified, client_id
         )
@@ -3847,6 +4033,9 @@ UPDATE db_schema_version
                        character_id, \
                        assistant_kind, \
                        assistant_id, \
+                       runtime_backend, \
+                       discovery_owner, \
+                       discovery_entity_id, \
                        scope_type, \
                        workspace_id, \
                        state, \
