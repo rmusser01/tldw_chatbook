@@ -349,10 +349,21 @@ class ChatScreen(BaseAppScreen):
         for session_id in list(tab_container.sessions.keys()):
             if session_id != "default":
                 await tab_container.close_tab(session_id)
-        
+
+        restored_reuse_keys = {}
+
         # Restore saved tabs
         for tab_state in self.chat_state.tabs:
             restored_title = _derive_tab_title(tab_state)
+            reuse_key = None
+            if tab_state.conversation_id:
+                reuse_key = (tab_state.runtime_backend, tab_state.conversation_id)
+                existing_live_tab_id = restored_reuse_keys.get(reuse_key)
+                if existing_live_tab_id is not None:
+                    if self.chat_state.active_tab_id == tab_state.tab_id:
+                        self.chat_state.active_tab_id = existing_live_tab_id
+                    continue
+
             if tab_state.tab_id == "default" and "default" in tab_container.sessions:
                 # Update default tab
                 session = tab_container.sessions["default"]
@@ -370,6 +381,8 @@ class ChatScreen(BaseAppScreen):
                 session.session_data.workspace_id = tab_state.workspace_id
                 session.session_data.is_ephemeral = tab_state.is_ephemeral
                 session.session_data.has_unsaved_changes = tab_state.has_unsaved_changes
+                if reuse_key is not None:
+                    restored_reuse_keys[reuse_key] = "default"
             else:
                 # Create new tab
                 session_data = ChatSessionData(
@@ -394,6 +407,11 @@ class ChatScreen(BaseAppScreen):
                 )
                 tab_id = await tab_container.create_new_tab(session_data=session_data)
                 if tab_id and tab_id in tab_container.sessions:
+                    if reuse_key is not None and reuse_key in restored_reuse_keys:
+                        if self.chat_state.active_tab_id == tab_state.tab_id:
+                            self.chat_state.active_tab_id = restored_reuse_keys[reuse_key]
+                        continue
+
                     session = tab_container.sessions[tab_id]
                     session.session_data.conversation_id = tab_state.conversation_id
                     session.session_data.runtime_backend = tab_state.runtime_backend
@@ -408,6 +426,10 @@ class ChatScreen(BaseAppScreen):
                     session.session_data.workspace_id = tab_state.workspace_id
                     session.session_data.is_ephemeral = tab_state.is_ephemeral
                     session.session_data.has_unsaved_changes = tab_state.has_unsaved_changes
+                    if reuse_key is not None:
+                        restored_reuse_keys[reuse_key] = tab_id
+                    if self.chat_state.active_tab_id == tab_state.tab_id:
+                        self.chat_state.active_tab_id = tab_id
     
     def _save_input_text(self) -> None:
         """Save input text for active tab."""

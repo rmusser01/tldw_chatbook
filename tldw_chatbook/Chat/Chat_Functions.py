@@ -1545,7 +1545,14 @@ def save_chat_history_to_db_wrapper(
                 if conv_details_for_update:
                     db.update_conversation(
                         current_conversation_id,
-                        {'title': conv_details_for_update.get('title')},
+                        {
+                            'title': conv_details_for_update.get('title'),
+                            'assistant_kind': conversation_assistant_kind,
+                            'assistant_id': conversation_assistant_id,
+                            'runtime_backend': conversation_runtime_backend,
+                            'discovery_owner': conversation_discovery_owner,
+                            'discovery_entity_id': conversation_discovery_entity_id,
+                        },
                         conv_details_for_update['version']
                     )
                 else:

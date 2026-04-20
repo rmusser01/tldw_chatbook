@@ -1,9 +1,11 @@
 from datetime import datetime
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, MessageData, TabState
 
 
@@ -204,3 +206,59 @@ class TestTabStateManager:
         assert state.workspace_id == "workspace-1"
         assert "unknown_flag" not in state.__dict__
         assert state.metadata["unknown_flag"] == "kept-in-metadata"
+
+
+class TestChatScreenRestore:
+    @pytest.mark.asyncio
+    async def test_restore_tab_sessions_preserves_first_duplicate_and_remaps_active_tab(self):
+        mock_app = Mock()
+        mock_app.get_current_screen_state = Mock(return_value={})
+        mock_app.notify = Mock()
+
+        screen = ChatScreen(mock_app)
+        screen.chat_state = ChatScreenState(
+            tabs=[
+                TabState(
+                    tab_id="saved-tab-1",
+                    title="First Runtime Session",
+                    conversation_id="conv-restore",
+                    runtime_backend="server",
+                    discovery_owner="general_chat",
+                    discovery_entity_id="assistant.remote.restore",
+                    is_ephemeral=False,
+                ),
+                TabState(
+                    tab_id="saved-tab-2",
+                    title="Second Runtime Session",
+                    conversation_id="conv-restore",
+                    runtime_backend="server",
+                    discovery_owner="general_chat",
+                    discovery_entity_id="assistant.remote.restore",
+                    is_ephemeral=False,
+                ),
+            ],
+            active_tab_id="saved-tab-2",
+            tab_order=["saved-tab-1", "saved-tab-2"],
+        )
+
+        restored_session = Mock()
+        restored_session.session_data = ChatSessionData(tab_id="live-tab-1", title="placeholder")
+
+        async def fake_create_new_tab(title=None, session_data=None):
+            if "live-tab-1" not in tab_container.sessions:
+                tab_container.sessions["live-tab-1"] = restored_session
+                if session_data is not None:
+                    restored_session.session_data = session_data
+            return "live-tab-1"
+
+        tab_container = Mock()
+        tab_container.sessions = {}
+        tab_container.close_tab = AsyncMock()
+        tab_container.create_new_tab = AsyncMock(side_effect=fake_create_new_tab)
+
+        await screen._restore_tab_sessions(tab_container)
+
+        assert restored_session.session_data.title == "First Runtime Session"
+        assert restored_session.session_data.conversation_id == "conv-restore"
+        assert restored_session.session_data.runtime_backend == "server"
+        assert screen.chat_state.active_tab_id == "live-tab-1"

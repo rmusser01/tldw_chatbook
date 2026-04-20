@@ -335,6 +335,43 @@ class TestChatHistorySaving:
         assert messages["msg-assistant-1"]["is_selected_variant"] == before_messages["msg-assistant-1"]["is_selected_variant"]
         assert messages["msg-assistant-1"]["total_variants"] == before_messages["msg-assistant-1"]["total_variants"]
 
+    def test_resave_chat_history_normalizes_stale_conversation_metadata(self, db_instance: CharactersRAGDB):
+        char_id = db_instance.add_character_card({"name": "Resaver"})
+        conversation_id = db_instance.add_conversation(
+            {
+                "character_id": char_id,
+                "assistant_kind": "character",
+                "assistant_id": "Resaver",
+                "runtime_backend": "server",
+                "discovery_owner": "general_chat",
+                "discovery_entity_id": "legacy.display.name",
+                "title": "Chat with Resaver",
+                "client_id": db_instance.client_id,
+            }
+        )
+
+        resave_id, status = save_chat_history_to_db_wrapper(
+            db_instance,
+            [
+                {"role": "user", "content": "New first message"},
+                {"role": "assistant", "content": "New reply"},
+            ],
+            conversation_id,
+            None,
+            "Resaver",
+        )
+
+        assert "success" in status.lower()
+        assert resave_id == conversation_id
+
+        updated_conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert updated_conversation["assistant_kind"] == "character"
+        assert updated_conversation["assistant_id"] == str(char_id)
+        assert updated_conversation["runtime_backend"] == "local"
+        assert updated_conversation["discovery_owner"] == "ccp_character"
+        assert updated_conversation["discovery_entity_id"] == str(char_id)
+        assert updated_conversation["title"] == "Chat with Resaver"
+
     def test_resave_chat_history_rejects_generic_context_for_character_conversation(self, db_instance: CharactersRAGDB):
         db_instance.add_character_card({"name": "Resaver"})
         conversation_id, status = save_chat_history_to_db_wrapper(
