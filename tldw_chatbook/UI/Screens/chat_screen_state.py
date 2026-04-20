@@ -19,11 +19,16 @@ class MessageData:
     message_id: str
     role: str  # 'user', 'assistant', 'system'
     content: str
-    timestamp: datetime
+    timestamp: Optional[datetime]
     attachments: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     is_streaming: bool = False
     is_edited: bool = False
+    parent_message_id: Optional[str] = None
+    variant_of: Optional[str] = None
+    variant_number: Optional[int] = None
+    is_selected_variant: bool = False
+    total_variants: Optional[int] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -36,6 +41,11 @@ class MessageData:
             'metadata': self.metadata,
             'is_streaming': self.is_streaming,
             'is_edited': self.is_edited,
+            'parent_message_id': self.parent_message_id,
+            'variant_of': self.variant_of,
+            'variant_number': self.variant_number,
+            'is_selected_variant': self.is_selected_variant,
+            'total_variants': self.total_variants,
         }
     
     @classmethod
@@ -49,11 +59,16 @@ class MessageData:
             message_id=data.get('message_id', ''),
             role=data.get('role', 'user'),
             content=data.get('content', ''),
-            timestamp=timestamp or datetime.now(),
+            timestamp=timestamp,
             attachments=data.get('attachments', []),
             metadata=data.get('metadata', {}),
             is_streaming=data.get('is_streaming', False),
             is_edited=data.get('is_edited', False),
+            parent_message_id=data.get('parent_message_id'),
+            variant_of=data.get('variant_of'),
+            variant_number=data.get('variant_number'),
+            is_selected_variant=data.get('is_selected_variant', False),
+            total_variants=data.get('total_variants'),
         )
 
 
@@ -65,6 +80,11 @@ class TabState:
     conversation_id: Optional[str] = None
     character_id: Optional[int] = None
     character_name: Optional[str] = None
+    assistant_kind: Optional[str] = None
+    assistant_id: Optional[str] = None
+    persona_memory_mode: Optional[str] = None
+    scope_type: Optional[str] = None
+    workspace_id: Optional[str] = None
     
     # Input state
     input_text: str = ""
@@ -99,6 +119,11 @@ class TabState:
             'conversation_id': self.conversation_id,
             'character_id': self.character_id,
             'character_name': self.character_name,
+            'assistant_kind': self.assistant_kind,
+            'assistant_id': self.assistant_id,
+            'persona_memory_mode': self.persona_memory_mode,
+            'scope_type': self.scope_type,
+            'workspace_id': self.workspace_id,
             'input_text': self.input_text,
             'cursor_position': self.cursor_position,
             'scroll_position': self.scroll_position,
@@ -124,8 +149,10 @@ class TabState:
         last_activity = data.get('last_activity')
         if last_activity and isinstance(last_activity, str):
             last_activity = datetime.fromisoformat(last_activity)
-        
+
         messages = [MessageData.from_dict(msg) for msg in data.get('messages', [])]
+        scope_type = data.get('scope_type') or 'global'
+        workspace_id = data.get('workspace_id') if scope_type == 'workspace' else None
         
         return cls(
             tab_id=data.get('tab_id', ''),
@@ -133,6 +160,11 @@ class TabState:
             conversation_id=data.get('conversation_id'),
             character_id=data.get('character_id'),
             character_name=data.get('character_name'),
+            assistant_kind=data.get('assistant_kind'),
+            assistant_id=data.get('assistant_id'),
+            persona_memory_mode=data.get('persona_memory_mode'),
+            scope_type=scope_type,
+            workspace_id=workspace_id,
             input_text=data.get('input_text', ''),
             cursor_position=data.get('cursor_position', 0),
             scroll_position=data.get('scroll_position', 0),

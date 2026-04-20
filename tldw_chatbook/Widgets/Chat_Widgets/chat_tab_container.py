@@ -447,24 +447,25 @@ class ChatTabContainer(Container):
         Args:
             state: Dictionary mapping tab IDs to session data
         """
-        # Clear existing sessions except default
+        # Clear all existing live tabs so restore replaces the mounted UI state.
         for tab_id in list(self.sessions.keys()):
-            if tab_id != "default":
-                await self.close_tab(tab_id)
+            await self._force_close_tab(tab_id)
         
         # Restore each session
-        for tab_id, session_data in state.items():
-            if tab_id == "default" and "default" in self.sessions:
-                # Update default session
-                self.sessions["default"].session_data = session_data
-            else:
-                # Create new session
-                new_tab_id = await self.create_new_tab(title=session_data.title)
-                if new_tab_id and new_tab_id in self.sessions:
-                    # Copy the session data
-                    self.sessions[new_tab_id].session_data = session_data
-                    # Update the tab ID in session data to match new ID
-                    self.sessions[new_tab_id].session_data.tab_id = new_tab_id
+        for _, session_data in state.items():
+            restored_session_data = ChatSessionData.from_dict(session_data.to_dict())
+            # Create new session
+            new_tab_id = await self.create_new_tab(title=restored_session_data.title)
+            if new_tab_id and new_tab_id in self.sessions:
+                # Preserve the saved session state while rebinding it to the new widget tab ID.
+                restored_session_data.tab_id = new_tab_id
+                self.sessions[new_tab_id].session_data = restored_session_data
+                if self.tab_bar:
+                    self.tab_bar.update_tab_title(
+                        new_tab_id,
+                        restored_session_data.title,
+                        restored_session_data.character_name,
+                    )
 
 #
 # End of chat_tab_container.py

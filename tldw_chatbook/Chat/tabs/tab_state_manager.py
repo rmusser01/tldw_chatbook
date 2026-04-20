@@ -5,7 +5,7 @@
 import threading
 import asyncio
 from typing import Dict, Optional, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from contextlib import asynccontextmanager
 from loguru import logger
 
@@ -23,6 +23,11 @@ class TabState:
     worker_id: Optional[str] = None
     ai_message_widget_id: Optional[str] = None
     has_unsaved_changes: bool = False
+    assistant_kind: Optional[str] = None
+    assistant_id: Optional[str] = None
+    persona_memory_mode: Optional[str] = None
+    scope_type: Optional[str] = None
+    workspace_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -122,8 +127,20 @@ class TabStateManager:
             if tab_id in self._states:
                 logger.warning(f"Tab state already exists for: {tab_id}")
                 return self._states[tab_id]
-            
-            state = TabState(tab_id=tab_id, **kwargs)
+
+            explicit_fields = {field_info.name for field_info in fields(TabState)}
+            explicit_kwargs = {}
+            metadata = {}
+            for key, value in kwargs.items():
+                if key in explicit_fields:
+                    explicit_kwargs[key] = value
+                else:
+                    metadata[key] = value
+
+            if metadata:
+                explicit_kwargs['metadata'] = metadata
+
+            state = TabState(tab_id=tab_id, **explicit_kwargs)
             self._states[tab_id] = state
             logger.debug(f"Created tab state: {tab_id}")
             return state
