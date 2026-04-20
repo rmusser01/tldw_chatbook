@@ -111,6 +111,18 @@ class ConversationUpdateRequest(BaseModel):
 
     version: int = Field(..., description="Expected version for optimistic locking")
     state: ConversationState | None = Field(None, description="Lifecycle state for the conversation")
+    runtime_backend: Literal["local", "server"] | None = Field(
+        None,
+        description="Execution backend for the assistant/runtime (local or server)",
+    )
+    discovery_owner: Literal["general_chat", "ccp_character", "ccp_persona"] | None = Field(
+        None,
+        description="Owning surface for discovery/canonical identity attribution",
+    )
+    discovery_entity_id: str | None = Field(
+        None,
+        description="Canonical entity ID used by the discovery surface (string-first stable ID)",
+    )
     topic_label: str | None = Field(None, description="Primary topic label for the conversation")
     keywords: list[str] | None = Field(None, description="Replace full keyword set (use [] to clear)")
     cluster_id: str | None = Field(None, description="Cluster/group identifier")
@@ -121,6 +133,38 @@ class ConversationUpdateRequest(BaseModel):
     @classmethod
     def _validate_state(cls, value: str | None) -> ConversationState | None:
         return normalize_conversation_state(value)
+
+    @field_validator("runtime_backend", mode="before")
+    @classmethod
+    def _normalize_runtime_backend(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if not normalized:
+            raise ValueError("runtime_backend cannot be empty")
+        if normalized not in {"local", "server"}:
+            raise ValueError("runtime_backend must be 'local' or 'server'")
+        return normalized
+
+    @field_validator("discovery_owner", mode="before")
+    @classmethod
+    def _normalize_discovery_owner(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if not normalized:
+            raise ValueError("discovery_owner cannot be empty")
+        if normalized not in {"general_chat", "ccp_character", "ccp_persona"}:
+            raise ValueError("discovery_owner must be 'general_chat', 'ccp_character', or 'ccp_persona'")
+        return normalized
+
+    @field_validator("discovery_entity_id", mode="before")
+    @classmethod
+    def _normalize_discovery_entity_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
     @field_validator("keywords", mode="before")
     @classmethod

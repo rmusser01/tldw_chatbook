@@ -155,6 +155,29 @@ def test_normalize_conversation_and_message_rows_preserve_stable_shape():
     assert message["variant"]["is_selected_variant"] is True
 
 
+def test_legacy_character_conversation_defaults_missing_assistant_id_to_character_id():
+    service = ChatConversationService(FakeDB())
+
+    conversation = service.normalize_conversation_row(
+        {
+            "id": "conv-legacy",
+            "assistant_kind": "character",
+            "character_id": 9,
+            "assistant_id": None,
+            "persona_memory_mode": None,
+            "title": None,
+            "state": "in-progress",
+            "scope_type": "global",
+            "workspace_id": None,
+            "created_at": "2026-04-19T00:00:00Z",
+            "last_modified": "2026-04-19T00:01:00Z",
+            "version": 1,
+        }
+    )
+
+    assert conversation["assistant_id"] == "9"
+
+
 def test_list_conversations_normalizes_pagination_and_enforces_global_defaults():
     db = FakeDB(
         conversations_page_rows=[

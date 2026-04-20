@@ -47,6 +47,19 @@ class TestChatConversationSchemas:
         with pytest.raises(ValueError, match="Allowed: in-progress, resolved, backlog, non-viable"):
             ConversationUpdateRequest(version=1, state="unknown")
 
+    def test_update_request_preserves_runtime_and_discovery_fields_in_model_dump(self):
+        request = ConversationUpdateRequest(
+            version=9,
+            runtime_backend=" Server ",
+            discovery_owner=" CCP_CHARACTER ",
+            discovery_entity_id=" char.local.alice ",
+        )
+
+        dumped = request.model_dump(exclude_none=True, exclude_unset=True)
+        assert dumped["runtime_backend"] == "server"
+        assert dumped["discovery_owner"] == "ccp_character"
+        assert dumped["discovery_entity_id"] == "char.local.alice"
+
     def test_list_and_tree_models_parse_nested_payloads(self):
         timestamp = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 

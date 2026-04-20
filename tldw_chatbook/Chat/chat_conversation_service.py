@@ -183,6 +183,11 @@ def normalize_conversation_row(
     )
     normalized_keywords = _normalize_keywords(keywords if keywords is not None else conversation_row.get("keywords"))
     normalized_state = _normalize_state(conversation_row.get("state")) or "in-progress"
+    assistant_kind = _normalize_assistant_kind(conversation_row.get("assistant_kind"))
+    assistant_id = _clean_text(conversation_row.get("assistant_id"))
+    character_id = conversation_row.get("character_id")
+    if assistant_kind == "character" and assistant_id is None and character_id is not None:
+        assistant_id = str(character_id)
     normalized_title = derive_conversation_title(
         assistant_kind=conversation_row.get("assistant_kind"),
         assistant_name=_row_assistant_name(conversation_row),
@@ -193,9 +198,9 @@ def normalize_conversation_row(
         "id": conversation_row.get("id"),
         "scope_type": normalized_scope,
         "workspace_id": normalized_workspace_id,
-        "character_id": conversation_row.get("character_id"),
-        "assistant_kind": _normalize_assistant_kind(conversation_row.get("assistant_kind")),
-        "assistant_id": _clean_text(conversation_row.get("assistant_id")),
+        "character_id": character_id,
+        "assistant_kind": assistant_kind,
+        "assistant_id": assistant_id,
         "runtime_backend": _normalize_runtime_backend(conversation_row.get("runtime_backend")),
         "discovery_owner": _normalize_discovery_owner(conversation_row.get("discovery_owner")),
         "discovery_entity_id": _clean_text(conversation_row.get("discovery_entity_id")),
