@@ -780,7 +780,16 @@ class StudyWindow(Container):
         # Note: Study functionality now uses ChaChaNotes_DB from the app instance
     
     def _is_server_mode(self) -> bool:
-        return getattr(self.app_instance, "current_runtime_backend", None) == "server"
+        candidates = (
+            getattr(self, "runtime_backend", None),
+            getattr(self.app_instance, "runtime_backend", None),
+            getattr(self.app_instance, "current_runtime_backend", None),
+        )
+        for candidate in candidates:
+            normalized = str(candidate or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized == "server"
+        return False
 
     def _configure_flashcards_lifecycle_controls(self) -> None:
         try:

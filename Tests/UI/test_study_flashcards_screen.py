@@ -228,8 +228,33 @@ async def test_server_mode_keeps_delete_deck_visible_but_disabled():
 
         assert delete_deck_button.display is True
         assert delete_deck_button.disabled is True
+        assert delete_note.display is True
         assert "server" in delete_note.renderable.lower()
         assert "delete" in delete_note.renderable.lower()
+
+
+@pytest.mark.asyncio
+async def test_flashcards_lifecycle_controls_noop_handlers_do_not_raise():
+    scope = FakeStudyScopeService()
+    app_instance = SimpleNamespace(
+        study_scope_service=scope,
+        current_runtime_backend="local",
+        runtime_backend=None,
+        app_config={},
+        notify=lambda *args, **kwargs: None,
+    )
+    app = StudyTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#view-flashcards-btn")
+        await pilot.pause(0.3)
+
+        window = app.screen.query_one(StudyWindow)
+        window.handle_delete_deck()
+        window.handle_move_selected_card()
+        window.handle_delete_selected_card()
+        window.handle_move_card_target_changed(SimpleNamespace())
 
 
 @pytest.mark.asyncio
