@@ -423,7 +423,14 @@ class TestDatabaseCRUDAndSync:
             keywords=["reading", "progress"],
         )
 
-        payload = {"current_page": 4, "total_pages": 12, "view_mode": "single"}
+        payload = {
+            "current_page": 4,
+            "total_pages": 12,
+            "view_mode": "single",
+            "zoom_level": 1.25,
+            "cfi": "epubcfi(/6/4[chapter]!/4/2/6)",
+            "percentage": 33.3,
+        }
         written = db_instance.upsert_reading_progress(media_id, payload)
         fetched = db_instance.get_reading_progress(media_id)
 
@@ -433,6 +440,9 @@ class TestDatabaseCRUDAndSync:
         assert fetched["current_page"] == 4
         assert fetched["total_pages"] == 12
         assert fetched["view_mode"] == "single"
+        assert fetched["zoom_level"] == 1.25
+        assert fetched["cfi"] == "epubcfi(/6/4[chapter]!/4/2/6)"
+        assert fetched["percentage"] == 33.3
 
     def test_reading_progress_delete_removes_row(self, db_instance):
         media_id, _, _ = db_instance.add_media_with_keywords(
