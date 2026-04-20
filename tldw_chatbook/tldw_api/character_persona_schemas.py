@@ -16,6 +16,10 @@ PersonaSessionStatus = Literal["active", "paused", "closed", "archived"]
 PersonaExemplarKind = Literal["style", "catchphrase", "boundary", "scenario_demo", "tool_behavior"]
 PersonaExemplarSourceType = Literal["manual", "transcript_import", "character_seed", "generated_candidate"]
 PersonaExemplarReviewAction = Literal["approve", "reject"]
+PersonaConfirmationMode = Literal["always", "destructive_only", "never"]
+PersonaSetupStatus = Literal["not_started", "in_progress", "completed"]
+PersonaSetupStep = Literal["archetype", "persona", "voice", "commands", "safety", "test"]
+PersonaSetupTestType = Literal["dry_run", "live_session"]
 GreetingSelectionResponse = Literal["ok"]
 PresetBuiltinId = Literal["default", "st_default"]
 
@@ -85,14 +89,6 @@ class CharacterResponse(CharacterBase):
     model_config = {"from_attributes": True}
 
 
-class CharacterListResponse(BaseModel):
-    items: list[CharacterResponse] = Field(default_factory=list)
-    total: int = 0
-    page: int = 1
-    page_size: int = 25
-    has_more: bool = False
-
-
 class CharacterQueryRequest(BaseModel):
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=25, ge=1, le=100)
@@ -119,6 +115,9 @@ class CharacterQueryResponse(BaseModel):
     page: int = 1
     page_size: int = 25
     has_more: bool = False
+
+
+CharacterListResponse = list[CharacterResponse]
 
 
 class CharacterDeleteResponse(BaseModel):
@@ -240,6 +239,103 @@ class CharacterExemplarDeletionResponse(BaseModel):
     exemplar_id: str
 
 
+class PersonaBuddyVisualSummary(BaseModel):
+    """Compact visual traits used to render a persona buddy preview."""
+
+    species_id: StrictStr
+    silhouette_id: StrictStr
+    palette_id: StrictStr
+    accessory_id: StrictStr | None = None
+    eye_style: StrictStr | None = None
+    expression_profile: StrictStr | None = None
+
+
+class PersonaBuddySummary(BaseModel):
+    """Small buddy summary embedded into persona profile and catalog responses."""
+
+    has_buddy: bool = False
+    persona_name: str
+    role_summary: str | None = None
+    visual: PersonaBuddyVisualSummary | None = None
+
+
+class PersonaVoiceDefaults(BaseModel):
+    stt_language: StrictStr | None = None
+    stt_model: StrictStr | None = None
+    tts_provider: StrictStr | None = None
+    tts_voice: StrictStr | None = None
+    confirmation_mode: PersonaConfirmationMode | None = None
+    voice_chat_trigger_phrases: list[str] = Field(default_factory=list)
+    auto_resume: bool | None = None
+    barge_in: bool | None = None
+    auto_commit_enabled: bool | None = None
+    vad_threshold: float | None = None
+    min_silence_ms: int | None = None
+    turn_stop_secs: float | None = None
+    min_utterance_secs: float | None = None
+
+    @field_validator("stt_language", "stt_model", "tts_provider", "tts_voice", mode="before")
+    @classmethod
+    def _strip_optional_text_fields(cls, value: Any) -> Any:
+        return _strip_optional_text(value)
+
+    @field_validator("voice_chat_trigger_phrases", mode="before")
+    @classmethod
+    def _normalize_trigger_phrases(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        items = value if isinstance(value, list) else [value]
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for item in items:
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    @field_validator("vad_threshold", "turn_stop_secs", "min_utterance_secs", mode="before")
+    @classmethod
+    def _normalize_turn_detection_floats(cls, value: Any, info: ValidationInfo) -> float | None:
+        if value is None or value == "":
+            return None
+        bounds = {
+            "vad_threshold": (0.0, 1.0),
+            "turn_stop_secs": (0.05, 10.0),
+            "min_utterance_secs": (0.0, 10.0),
+        }
+        min_value, max_value = bounds[info.field_name]
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        return max(min_value, min(max_value, numeric))
+
+    @field_validator("min_silence_ms", mode="before")
+    @classmethod
+    def _normalize_min_silence_ms(cls, value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            numeric = int(value)
+        except (TypeError, ValueError):
+            return None
+        return max(50, min(10_000, numeric))
+
+
+class PersonaSetupState(BaseModel):
+    """Persisted wizard progress for one persona setup run."""
+
+    status: PersonaSetupStatus = "not_started"
+    version: int = Field(default=1, ge=1)
+    run_id: str | None = Field(default=None, min_length=1, max_length=200)
+    current_step: PersonaSetupStep = "persona"
+    completed_steps: list[PersonaSetupStep] = Field(default_factory=list)
+    completed_at: str | None = None
+    last_test_type: PersonaSetupTestType | None = None
+
+
 class PersonaProfileCreate(BaseModel):
     id: StrictStr | None = Field(default=None, min_length=1, max_length=200)
     name: str = Field(..., min_length=1, max_length=200)
@@ -249,8 +345,8 @@ class PersonaProfileCreate(BaseModel):
     system_prompt: str | None = None
     is_active: bool = True
     use_persona_state_context_default: bool = True
-    voice_defaults: dict[str, Any] = Field(default_factory=dict)
-    setup: dict[str, Any] = Field(default_factory=dict)
+    voice_defaults: PersonaVoiceDefaults = Field(default_factory=PersonaVoiceDefaults)
+    setup: PersonaSetupState = Field(default_factory=PersonaSetupState)
 
 
 class PersonaProfileUpdate(BaseModel):
@@ -260,8 +356,8 @@ class PersonaProfileUpdate(BaseModel):
     system_prompt: str | None = None
     is_active: bool | None = None
     use_persona_state_context_default: bool | None = None
-    voice_defaults: dict[str, Any] | None = None
-    setup: dict[str, Any] | None = None
+    voice_defaults: PersonaVoiceDefaults | None = None
+    setup: PersonaSetupState | None = None
 
 
 class PersonaProfileResponse(BaseModel):
@@ -276,12 +372,12 @@ class PersonaProfileResponse(BaseModel):
     system_prompt: str | None = None
     is_active: bool = True
     use_persona_state_context_default: bool = True
-    voice_defaults: dict[str, Any] = Field(default_factory=dict)
-    setup: dict[str, Any] = Field(default_factory=dict)
+    voice_defaults: PersonaVoiceDefaults = Field(default_factory=PersonaVoiceDefaults)
+    setup: PersonaSetupState = Field(default_factory=PersonaSetupState)
     created_at: str
     last_modified: str
     version: int = 1
-    buddy_summary: dict[str, Any] | None = None
+    buddy_summary: PersonaBuddySummary | None = None
 
 
 class PersonaProfileDeleteResponse(BaseModel):
@@ -297,7 +393,7 @@ class PersonaInfo(BaseModel):
     avatar_url: str | None = None
     capabilities: list[str] = Field(default_factory=list)
     default_tools: list[str] = Field(default_factory=list)
-    buddy_summary: dict[str, Any] | None = None
+    buddy_summary: PersonaBuddySummary | None = None
 
 
 class PersonaSessionRequest(BaseModel):

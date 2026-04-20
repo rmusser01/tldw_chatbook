@@ -13,6 +13,7 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     CharacterExemplarSearchRequest,
     CharacterExemplarSelectionDebugRequest,
     CharacterExemplarUpdate,
+    CharacterQueryRequest,
     CharacterUpdateRequest,
     PersonaExemplarCreate,
     PersonaExemplarImportRequest,
@@ -21,6 +22,8 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     PersonaProfileCreate,
     PersonaProfileUpdate,
     PersonaSessionRequest,
+    PersonaSetupState,
+    PersonaVoiceDefaults,
     PresetCreate,
     PresetUpdate,
 )
@@ -41,7 +44,7 @@ class TestCharacterPersonaClient:
         monkeypatch.setattr(client, "_request", mocked)
 
         await client.list_characters()
-        await client.query_characters({"query": "alpha"})
+        await client.query_characters(CharacterQueryRequest(query="alpha"))
         await client.search_characters("alpha")
         await client.get_character(12)
         await client.create_character(CharacterCreateRequest(name="Ada"))
@@ -51,7 +54,11 @@ class TestCharacterPersonaClient:
 
         expected_calls = [
             ("GET", "/api/v1/characters/", {"params": {"limit": 100, "offset": 0}}),
-            ("GET", "/api/v1/characters/query", {"params": {"query": "alpha"}}),
+            (
+                "GET",
+                "/api/v1/characters/query",
+                {"params": CharacterQueryRequest(query="alpha").model_dump(exclude_none=True, mode="json")},
+            ),
             ("GET", "/api/v1/characters/search/", {"params": {"query": "alpha", "limit": 10}}),
             ("GET", "/api/v1/characters/12", {}),
             ("POST", "/api/v1/characters/", {"json_data": {"name": "Ada"}}),
@@ -66,6 +73,10 @@ class TestCharacterPersonaClient:
         assert len(mocked.await_args_list) == len(expected_calls)
         for call_args, expected in zip(mocked.await_args_list, expected_calls):
             _assert_request_call(call_args, *expected)
+
+        query_payload = mocked.await_args_list[1][1]["params"]
+        assert query_payload["query"] == "alpha"
+        assert "page" in query_payload
 
     async def test_character_exemplar_endpoint_wiring(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")
@@ -148,8 +159,11 @@ class TestCharacterPersonaClient:
         create_payload = mocked.await_args_list[2][1]["json_data"]
         assert create_payload["id"] == "persona-1"
         assert create_payload["name"] == "Guide"
-        assert create_payload["voice_defaults"] == {}
-        assert create_payload["setup"] == {}
+        assert create_payload["voice_defaults"]["voice_chat_trigger_phrases"] == []
+        assert create_payload["setup"]["status"] == "not_started"
+        assert create_payload["setup"]["current_step"] == "persona"
+        assert isinstance(PersonaVoiceDefaults.model_validate(create_payload["voice_defaults"]), PersonaVoiceDefaults)
+        assert isinstance(PersonaSetupState.model_validate(create_payload["setup"]), PersonaSetupState)
 
     async def test_persona_exemplar_endpoint_wiring(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")

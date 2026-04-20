@@ -56,6 +56,7 @@ from .character_persona_schemas import (
     CharacterExemplarSearchRequest,
     CharacterExemplarSelectionDebugRequest,
     CharacterExemplarUpdate,
+    CharacterQueryRequest,
     CharacterUpdateRequest,
     GreetingSelectRequest,
     PersonaExemplarCreate,
@@ -556,9 +557,12 @@ class TLDWAPIClient:
             params={"limit": limit, "offset": offset},
         )
 
-    async def query_characters(self, request_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        params = request_data or {}
-        return await self._request("GET", "/api/v1/characters/query", params=params)
+    async def query_characters(self, request_data: CharacterQueryRequest) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/api/v1/characters/query",
+            params=request_data.model_dump(exclude_none=True, mode="json"),
+        )
 
     async def search_characters(self, query: str, limit: int = 10) -> Dict[str, Any]:
         return await self._request("GET", "/api/v1/characters/search/", params={"query": query, "limit": limit})

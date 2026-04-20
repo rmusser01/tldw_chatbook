@@ -7,13 +7,17 @@ from pydantic import ValidationError
 
 from tldw_chatbook.tldw_api.character_persona_schemas import (
     CharacterExemplarCreate,
+    CharacterListResponse,
     CharacterResponse,
+    PersonaBuddySummary,
     PersonaExemplarCreate,
     PersonaInfo,
     PersonaProfileCreate,
+    PersonaSetupState,
     PersonaSessionRequest,
     PersonaSessionResponse,
     PersonaSessionSummary,
+    PersonaVoiceDefaults,
     PresetCreate,
 )
 
@@ -25,6 +29,9 @@ class TestCharacterPersonaSchemas:
         assert response.id == 7
         assert response.name == "Ada"
         assert response.version == 2
+
+    def test_character_list_response_is_bare_list_alias(self):
+        assert CharacterListResponse == list[CharacterResponse]
 
     def test_create_models_do_not_include_path_ids(self):
         character_exemplar = CharacterExemplarCreate(text="hello")
@@ -45,6 +52,8 @@ class TestCharacterPersonaSchemas:
 
         assert profile.id == "persona-1"
         assert profile.character_card_id == 12
+        assert isinstance(profile.voice_defaults, PersonaVoiceDefaults)
+        assert isinstance(profile.setup, PersonaSetupState)
 
     def test_persona_session_response_parses_nested_persona_info(self):
         session = PersonaSessionResponse.model_validate(
@@ -58,6 +67,15 @@ class TestCharacterPersonaSchemas:
                     "avatar_url": "https://example.com/avatar.png",
                     "capabilities": ["search", "summarize"],
                     "default_tools": ["rag_search"],
+                    "buddy_summary": {
+                        "has_buddy": True,
+                        "persona_name": "Guide",
+                        "visual": {
+                            "species_id": "fox",
+                            "silhouette_id": "slim",
+                            "palette_id": "blue",
+                        },
+                    },
                 },
             }
         )
@@ -66,6 +84,8 @@ class TestCharacterPersonaSchemas:
         assert session.persona.id == "persona-1"
         assert session.persona.capabilities == ["search", "summarize"]
         assert session.persona.default_tools == ["rag_search"]
+        assert isinstance(session.persona.buddy_summary, PersonaBuddySummary)
+        assert session.persona.buddy_summary.has_buddy is True
 
     def test_persona_session_models_parse_summary_shapes(self):
         request = PersonaSessionRequest(persona_id="persona-1", project_id="project-1")
@@ -103,4 +123,3 @@ class TestCharacterPersonaSchemas:
                 section_order=["system"],
                 section_templates={"system": "hi"},
             )
-
