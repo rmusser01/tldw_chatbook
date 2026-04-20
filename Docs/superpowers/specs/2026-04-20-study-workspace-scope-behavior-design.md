@@ -226,7 +226,18 @@ It should define:
 - `error_message`
 - an optional return hint for `Back to Workspace`
 
-The state should be Study-owned and persist across Study screen suspend/resume.
+Source-of-truth rules are fixed:
+
+- persisted/durable Study scope inputs are:
+  - `scope_type`
+  - `workspace_id`
+  - `workspace_name`
+  - return hint
+- `workspace_scope_available` is a **derived** field, not an independently persisted source of truth
+- `backend` is also derived from the current app runtime backend, not treated as a durable persisted value
+- `error_message` is runtime state and may be recomputed on activation/refresh rather than treated as canonical persisted data
+
+The state should be Study-owned and persist across Study screen suspend/resume, but only the durable scope inputs should be serialized as the canonical persisted Study scope.
 
 ### 4. Study Screen Ownership
 
@@ -248,6 +259,18 @@ Required behavior:
 - if workspace scope is requested without a `workspace_id`, the Study screen enters an invalid-entry error state instead of falling back to global Study
 
 The screen should pass scope state into `StudyWindow` rather than forcing flashcards/quizzes controllers to infer scope from unrelated Notes state.
+
+Study scope lifecycle is fixed:
+
+- `save_state()` persists only the durable scope inputs
+- `restore_state()` restores those durable scope inputs first
+- if a pending Study scope context also exists, it overrides the restored durable scope inputs for that activation
+- after restore/override, the screen recomputes derived runtime fields:
+  - `backend`
+  - `workspace_scope_available`
+  - scoped runtime error/unavailable messaging
+- on screen resume or backend change while Study is active, the screen recomputes the derived runtime fields from the current app backend and the current durable scope inputs
+- if recomputation changes effective availability, the Study controllers must perform the normal hard scope-transition reset before the next data load
 
 ### 5. Study Window Scope UI
 
