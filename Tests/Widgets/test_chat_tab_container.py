@@ -195,6 +195,45 @@ class TestChatTabContainer:
         tab_container.tab_bar.add_tab.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_create_new_tab_does_not_reuse_same_conversation_across_different_runtime(
+        self,
+        tab_container,
+    ):
+        existing_session = Mock(spec=ChatSession)
+        existing_session.session_data = ChatSessionData(
+            tab_id="abcd1234",
+            title="Persisted Session",
+            conversation_id="conv-42",
+            is_ephemeral=False,
+            runtime_backend="server",
+        )
+        tab_container.sessions = {"abcd1234": existing_session}
+
+        with patch('uuid.uuid4') as mock_uuid:
+            mock_uuid.return_value = Mock()
+            mock_uuid.return_value.__str__ = Mock(return_value="99999999-1234-5678-1234-567812345678")
+
+            mock_container = Mock()
+            mock_container.mount = AsyncMock()
+            mock_placeholder = Mock()
+            mock_placeholder.styles = Mock(display="none")
+            tab_container.query_one = Mock(side_effect=[mock_container, mock_placeholder])
+
+            tab_id = await tab_container.create_new_tab(
+                session_data=ChatSessionData(
+                    tab_id="ignored",
+                    title="Local Version",
+                    conversation_id="conv-42",
+                    is_ephemeral=False,
+                    runtime_backend="local",
+                )
+            )
+
+        assert tab_id == "99999999"
+        assert len(tab_container.sessions) == 2
+        tab_container.tab_bar.add_tab.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_create_new_tab_reuses_existing_persisted_session_even_when_at_max_limit(
         self,
         tab_container,

@@ -35,7 +35,7 @@ Translate the scored capability matrix into concrete implementation waves for `t
 
 ## Completed Verticals
 
-Three parity verticals are now landed in the isolated `codex-prompts-chatbooks-parity` worktree.
+Four parity verticals are now landed in the isolated `codex-prompts-chatbooks-parity` worktree.
 
 ### Prompts And Chatbooks
 
@@ -62,6 +62,14 @@ Three parity verticals are now landed in the isolated `codex-prompts-chatbooks-p
 - Local message persistence now preserves message variants and metadata during resave flows instead of collapsing them into a lossy linear history.
 
 This closes the current chat/conversations parity vertical and keeps the next wave focused on the remaining entity seams instead of reopening already-landed work.
+
+### Characters, Personas, And Runtime Alignment
+
+- `tldw_api` plus the new mode-aware character/persona services now cover server characters, persona profiles, exemplars, chat greetings, and chat presets without breaking local-first standalone behavior.
+- CCP now has separate character and persona management flows, persona-aware history browsing, and backend-aware launch into main chat using explicit runtime/discovery metadata instead of legacy heuristics.
+- General chat history excludes CCP-owned character/persona conversations through DB/service filtering rather than UI-only filtering.
+- Greeting selection and preset CRUD are wired as chat-scoped server execution helpers through the service and handler seam. The broader chat UI for managing those controls is still intentionally deferred.
+- Local persona-profile persistence, sync/dual-write policy, and cross-scope movement remain follow-on work.
 
 ## Phase 3: Retrieval And Advanced Workflows
 
@@ -95,11 +103,11 @@ This closes the current chat/conversations parity vertical and keeps the next wa
 
 ## Recommended Next Vertical
 
-- `Characters / session alignment` should now be the active follow-on branch.
-- Start with entity mapping and API-surface comparison before UI work, especially character cards, session ownership, and character-linked message history.
+- `Media / ingestion alignment` should now be the active follow-on branch.
+- Start with entity mapping and API-surface comparison before UI work, especially file identity, ingestion provenance, derived artifacts, and reading-progress semantics.
 - Reuse the same pattern from the earlier verticals: thin client additions first, local schema compatibility second, adapter/service layer third, then one primary UI surface.
-- Keep the application local-first: local character/session edits remain authoritative by default, and future sync work should layer on top of the normalized seams instead of replacing them.
-- Keep Hermes-inspired improvements scoped to concrete workflow pain. Broader job centers, approval flows, and explicit local/server execution controls remain deferred unless the character vertical requires a minimal compatibility surface.
+- Keep the application local-first: local media and ingestion edits remain authoritative by default, and later sync work should layer on top of the normalized seams instead of replacing them.
+- Keep Hermes-inspired improvements scoped to concrete workflow pain. Broader job centers, approval flows, and explicit local/server execution controls remain deferred unless the next entity vertical requires a minimal compatibility surface.
 
 ## Dirty-Tree Overlap Risk
 

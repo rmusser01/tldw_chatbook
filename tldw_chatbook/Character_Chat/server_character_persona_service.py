@@ -7,7 +7,13 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
-from ..tldw_api import TLDWAPIClient
+from ..tldw_api import (
+    PersonaProfileCreate,
+    PersonaProfileUpdate,
+    PresetCreate,
+    PresetUpdate,
+    TLDWAPIClient,
+)
 
 
 class ServerCharacterPersonaService:
@@ -47,3 +53,48 @@ class ServerCharacterPersonaService:
             limit=limit,
             offset=offset,
         )
+
+    async def get_persona_profile(self, persona_id: str) -> Any:
+        client = self._require_client()
+        return await client.get_persona_profile(persona_id)
+
+    async def create_persona_profile(self, request_data: PersonaProfileCreate) -> Any:
+        client = self._require_client()
+        return await client.create_persona_profile(request_data)
+
+    async def update_persona_profile(
+        self,
+        persona_id: str,
+        request_data: PersonaProfileUpdate,
+        expected_version: Optional[int] = None,
+    ) -> Any:
+        client = self._require_client()
+        return await client.update_persona_profile(
+            persona_id,
+            request_data,
+            expected_version=expected_version,
+        )
+
+    async def list_chat_greetings(self, chat_id: str) -> Any:
+        client = self._require_client()
+        return await client.list_greetings(chat_id)
+
+    async def select_chat_greeting(self, chat_id: str, index: int) -> Any:
+        client = self._require_client()
+        return await client.select_greeting(chat_id, index)
+
+    async def list_chat_presets(self) -> Any:
+        client = self._require_client()
+        return await client.list_presets()
+
+    async def create_chat_preset(self, request_data: PresetCreate) -> Any:
+        client = self._require_client()
+        return await client.create_preset(request_data)
+
+    async def update_chat_preset(self, preset_id: str, request_data: PresetUpdate) -> Any:
+        client = self._require_client()
+        return await client.update_preset(preset_id, request_data)
+
+    async def delete_chat_preset(self, preset_id: str) -> Any:
+        client = self._require_client()
+        return await client.delete_preset(preset_id)

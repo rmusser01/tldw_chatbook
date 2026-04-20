@@ -20,6 +20,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
     handle_chat_new_conversation_button_pressed,
     handle_chat_save_current_chat_button_pressed,
     handle_chat_load_character_button_pressed,
+    is_general_history_conversation,
     # ... import other handlers as you write tests for them
 )
 from tldw_chatbook.Utils.Emoji_Handling import (
@@ -36,6 +37,23 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
 
 # The mock_app fixture is imported from Tests.fixtures.event_handler_mocks
+
+
+async def test_general_history_excludes_ccp_owned_sessions():
+    conversations = [
+        {"id": "conv-general", "discovery_owner": "general_chat"},
+        {"id": "conv-char", "discovery_owner": "ccp_character"},
+        {"id": "conv-persona", "discovery_owner": "ccp_persona"},
+        {"id": "conv-implicit"},
+    ]
+
+    visible_ids = [
+        row["id"]
+        for row in conversations
+        if is_general_history_conversation(row)
+    ]
+
+    assert visible_ids == ["conv-general", "conv-implicit"]
 
 
 # Mock external dependencies used in chat_events.py
