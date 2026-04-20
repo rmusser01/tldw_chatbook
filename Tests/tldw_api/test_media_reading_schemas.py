@@ -10,11 +10,11 @@ from tldw_chatbook.tldw_api import (
 )
 
 
-def test_reading_update_request_validates_known_fields():
-    payload = ReadingUpdateRequest(status="read", favorite=True, tags=["ai"])
+def test_reading_update_request_strips_tag_whitespace():
+    payload = ReadingUpdateRequest(status="read", favorite=True, tags=[" ai ", "priority "])
     assert payload.status == "read"
     assert payload.favorite is True
-    assert payload.tags == ["ai"]
+    assert payload.tags == ["ai", "priority"]
 
 
 def test_file_create_request_requires_persist_true():

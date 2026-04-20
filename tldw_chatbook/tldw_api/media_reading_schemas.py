@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ViewMode(str, Enum):
@@ -181,12 +181,25 @@ class IngestionSourceSyncTriggerResponse(BaseModel):
     snapshot_status: str | None = None
 
 
+IngestionSourceListResponse = list[IngestionSourceResponse]
+IngestionSourceItemListResponse = list[IngestionSourceItemResponse]
+
+
 class ReadingUpdateRequest(BaseModel):
     status: str | None = None
     favorite: bool | None = None
     tags: list[str] | None = None
     notes: str | None = None
     title: str | None = None
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _strip_tags(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return [item.strip() if isinstance(item, str) else item for item in value]
+        return value
 
 
 class ReadingItem(BaseModel):
@@ -274,7 +287,9 @@ __all__ = [
     "FileValidationIssue",
     "FileValidationResult",
     "IngestionSourceCreateRequest",
+    "IngestionSourceItemListResponse",
     "IngestionSourceItemResponse",
+    "IngestionSourceListResponse",
     "IngestionSourcePatchRequest",
     "IngestionSourceResponse",
     "IngestionSourceSyncTriggerResponse",

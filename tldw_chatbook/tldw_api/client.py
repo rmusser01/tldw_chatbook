@@ -44,7 +44,11 @@ from .notes_workspace_schemas import (
 from .media_reading_schemas import (
     FileCreateRequest,
     IngestionSourceCreateRequest,
+    IngestionSourceItemListResponse,
+    IngestionSourceListResponse,
     IngestionSourcePatchRequest,
+    IngestionSourceResponse,
+    IngestionSourceSyncTriggerResponse,
     ReadingProgressUpdate,
     ReadingUpdateRequest,
 )
@@ -419,37 +423,37 @@ class TLDWAPIClient:
             params={"hard": str(hard).lower(), "delete_file": str(delete_file).lower()},
         )
 
-    async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> Dict[str, Any]:
+    async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
         return await self._request(
             "POST",
             "/api/v1/ingestion-sources/",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
 
-    async def list_ingestion_sources(self) -> Dict[str, Any]:
+    async def list_ingestion_sources(self) -> IngestionSourceListResponse:
         return await self._request("GET", "/api/v1/ingestion-sources/")
 
-    async def get_ingestion_source(self, source_id: int) -> Dict[str, Any]:
+    async def get_ingestion_source(self, source_id: int) -> IngestionSourceResponse:
         return await self._request("GET", f"/api/v1/ingestion-sources/{source_id}")
 
     async def patch_ingestion_source(
         self,
         source_id: int,
         request_data: IngestionSourcePatchRequest,
-    ) -> Dict[str, Any]:
+    ) -> IngestionSourceResponse:
         return await self._request(
             "PATCH",
             f"/api/v1/ingestion-sources/{source_id}",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
 
-    async def list_ingestion_source_items(self, source_id: int) -> Dict[str, Any]:
+    async def list_ingestion_source_items(self, source_id: int) -> IngestionSourceItemListResponse:
         return await self._request("GET", f"/api/v1/ingestion-sources/{source_id}/items")
 
-    async def trigger_ingestion_source_sync(self, source_id: int) -> Dict[str, Any]:
+    async def trigger_ingestion_source_sync(self, source_id: int) -> IngestionSourceSyncTriggerResponse:
         return await self._request("POST", f"/api/v1/ingestion-sources/{source_id}/sync")
 
-    async def upload_ingestion_source_archive(self, source_id: int, archive_path: str) -> Dict[str, Any]:
+    async def upload_ingestion_source_archive(self, source_id: int, archive_path: str) -> IngestionSourceSyncTriggerResponse:
         httpx_files = prepare_files_for_httpx([archive_path], upload_field_name="archive")
         try:
             return await self._request(
