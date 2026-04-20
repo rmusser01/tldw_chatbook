@@ -291,6 +291,28 @@ async def test_scope_service_rejects_missing_expected_version_for_server_delete(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("expected_version", [0, -1])
+async def test_scope_service_rejects_non_positive_expected_version_for_server_delete(expected_version):
+    server = FakeServerStudyService()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="expected_version must be >= 1 for server flashcard deletion\\.",
+    ):
+        await scope.delete_flashcard(
+            mode="server",
+            card_id="card-server-1",
+            expected_version=expected_version,
+        )
+
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
 async def test_scope_service_accepts_legacy_status_deleted_mapping():
     class LegacyStatusServerStudyService:
         def __init__(self):
