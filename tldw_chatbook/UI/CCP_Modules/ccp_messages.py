@@ -1,10 +1,9 @@
-"""Message classes for CCP window inter-component communication.
+"""Message classes for CCP window inter-component communication."""
 
-Following Textual's message system for loose coupling between components.
-"""
-
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from textual.message import Message
+
+EntityId = Union[int, str]
 
 
 class CCPMessage(Message):
@@ -20,28 +19,35 @@ class ConversationMessage(CCPMessage):
     
     class Selected(CCPMessage):
         """A conversation was selected."""
-        def __init__(self, conversation_id: int, title: str, sender: Any = None) -> None:
+        def __init__(self, conversation_id: EntityId, title: str, sender: Any = None) -> None:
             super().__init__(sender)
             self.conversation_id = conversation_id
             self.title = title
     
     class Loaded(CCPMessage):
         """A conversation was loaded."""
-        def __init__(self, conversation_id: int, messages: List[Dict], sender: Any = None) -> None:
+        def __init__(
+            self,
+            conversation_id: EntityId,
+            messages: Optional[List[Dict]] = None,
+            sender: Any = None,
+            **kwargs: Any,
+        ) -> None:
             super().__init__(sender)
             self.conversation_id = conversation_id
-            self.messages = messages
+            self.messages = messages or kwargs.get("conversation_data", [])
+            self.conversation_data = kwargs.get("conversation_data")
     
     class Created(CCPMessage):
         """A new conversation was created."""
-        def __init__(self, conversation_id: int, title: str, sender: Any = None) -> None:
+        def __init__(self, conversation_id: EntityId, title: str, sender: Any = None) -> None:
             super().__init__(sender)
             self.conversation_id = conversation_id
             self.title = title
     
     class Updated(CCPMessage):
         """Conversation details were updated."""
-        def __init__(self, conversation_id: int, title: str, keywords: str, sender: Any = None) -> None:
+        def __init__(self, conversation_id: EntityId, title: str, keywords: str, sender: Any = None) -> None:
             super().__init__(sender)
             self.conversation_id = conversation_id
             self.title = title
@@ -49,7 +55,7 @@ class ConversationMessage(CCPMessage):
     
     class Deleted(CCPMessage):
         """A conversation was deleted."""
-        def __init__(self, conversation_id: int, sender: Any = None) -> None:
+        def __init__(self, conversation_id: EntityId, sender: Any = None) -> None:
             super().__init__(sender)
             self.conversation_id = conversation_id
     
@@ -66,21 +72,21 @@ class CharacterMessage(CCPMessage):
     
     class Selected(CCPMessage):
         """A character was selected."""
-        def __init__(self, character_id: int, name: str, sender: Any = None) -> None:
+        def __init__(self, character_id: EntityId, name: str, sender: Any = None) -> None:
             super().__init__(sender)
             self.character_id = character_id
             self.name = name
     
     class Loaded(CCPMessage):
         """A character card was loaded."""
-        def __init__(self, character_id: int, card_data: Dict[str, Any], sender: Any = None) -> None:
+        def __init__(self, character_id: EntityId, card_data: Dict[str, Any], sender: Any = None) -> None:
             super().__init__(sender)
             self.character_id = character_id
             self.card_data = card_data
     
     class Created(CCPMessage):
         """A new character was created."""
-        def __init__(self, character_id: int, name: str, card_data: Dict[str, Any], sender: Any = None) -> None:
+        def __init__(self, character_id: EntityId, name: str, card_data: Dict[str, Any], sender: Any = None) -> None:
             super().__init__(sender)
             self.character_id = character_id
             self.name = name
@@ -88,14 +94,14 @@ class CharacterMessage(CCPMessage):
     
     class Updated(CCPMessage):
         """Character details were updated."""
-        def __init__(self, character_id: int, card_data: Dict[str, Any], sender: Any = None) -> None:
+        def __init__(self, character_id: EntityId, card_data: Dict[str, Any], sender: Any = None) -> None:
             super().__init__(sender)
             self.character_id = character_id
             self.card_data = card_data
     
     class Deleted(CCPMessage):
         """A character was deleted."""
-        def __init__(self, character_id: int, sender: Any = None) -> None:
+        def __init__(self, character_id: EntityId, sender: Any = None) -> None:
             super().__init__(sender)
             self.character_id = character_id
     
@@ -107,7 +113,7 @@ class CharacterMessage(CCPMessage):
     
     class ExportRequested(CCPMessage):
         """Export character card requested."""
-        def __init__(self, character_id: int, file_path: str, sender: Any = None) -> None:
+        def __init__(self, character_id: EntityId, file_path: str, sender: Any = None) -> None:
             super().__init__(sender)
             self.character_id = character_id
             self.file_path = file_path
@@ -118,6 +124,45 @@ class CharacterMessage(CCPMessage):
             super().__init__(sender)
             self.field_name = field_name
             self.context = context
+
+
+class PersonaMessage(CCPMessage):
+    """Messages related to persona profile operations."""
+
+    class Selected(CCPMessage):
+        """A persona profile was selected."""
+        def __init__(self, persona_id: str, name: str, sender: Any = None) -> None:
+            super().__init__(sender)
+            self.persona_id = persona_id
+            self.name = name
+
+    class Loaded(CCPMessage):
+        """A persona profile was loaded."""
+        def __init__(self, persona_id: str, persona_data: Dict[str, Any], sender: Any = None) -> None:
+            super().__init__(sender)
+            self.persona_id = persona_id
+            self.persona_data = persona_data
+
+    class Created(CCPMessage):
+        """A new persona profile was created."""
+        def __init__(self, persona_id: str, name: str, persona_data: Dict[str, Any], sender: Any = None) -> None:
+            super().__init__(sender)
+            self.persona_id = persona_id
+            self.name = name
+            self.persona_data = persona_data
+
+    class Updated(CCPMessage):
+        """Persona profile details were updated."""
+        def __init__(self, persona_id: str, persona_data: Dict[str, Any], sender: Any = None) -> None:
+            super().__init__(sender)
+            self.persona_id = persona_id
+            self.persona_data = persona_data
+
+    class Deleted(CCPMessage):
+        """A persona profile was deleted."""
+        def __init__(self, persona_id: str, sender: Any = None) -> None:
+            super().__init__(sender)
+            self.persona_id = persona_id
 
 
 class PromptMessage(CCPMessage):

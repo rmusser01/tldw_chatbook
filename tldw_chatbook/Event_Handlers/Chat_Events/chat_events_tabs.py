@@ -9,6 +9,7 @@ from loguru import logger
 from textual.widgets import Button
 #
 # Local Imports
+from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_models import ChatSessionData
 from ...Chat.tabs import TabContext
 from ...Chat.tabs.tab_state_manager import get_tab_state_manager
@@ -21,6 +22,21 @@ if TYPE_CHECKING:
 #######################################################################################################################
 #
 # Functions:
+
+
+def _derive_session_title(session_data: ChatSessionData) -> str:
+    assistant_name = None
+    if session_data.assistant_kind == "character":
+        assistant_name = session_data.character_name
+    elif session_data.assistant_kind == "persona" and session_data.assistant_id:
+        assistant_name = f"Persona {session_data.assistant_id}"
+
+    return derive_conversation_title(
+        assistant_kind=session_data.assistant_kind,
+        assistant_name=assistant_name,
+        fallback_title=session_data.title,
+        character_id=session_data.character_id,
+    )
 
 def get_active_session_data(app: 'TldwCli') -> Optional[ChatSessionData]:
     """
@@ -259,13 +275,16 @@ async def display_conversation_in_chat_tab_ui_with_tabs(app: 'TldwCli', conversa
             
             # Update session title based on loaded conversation
             try:
-                conv_title_input = app.query_one("#chat-conversation-title-input")
+                conv_title_input = original_query_one("#chat-conversation-title-input")
                 if conv_title_input and conv_title_input.value:
                     session_data.title = conv_title_input.value
-                    # If we have access to the tab container, update the tab label
-                    chat_window = app.query_one("#chat-window")
-                    if hasattr(chat_window, 'tab_container') and chat_window.tab_container:
-                        chat_window.tab_container.update_tab_title(session_data.tab_id, session_data.title)
+                else:
+                    session_data.title = _derive_session_title(session_data)
+
+                # If we have access to the tab container, update the tab label
+                chat_window = original_query_one("#chat-window")
+                if hasattr(chat_window, 'tab_container') and chat_window.tab_container:
+                    chat_window.tab_container.update_tab_title(session_data.tab_id, session_data.title)
             except Exception as e:
                 logger.debug(f"Could not update tab title: {e}")
         

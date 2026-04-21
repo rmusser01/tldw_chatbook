@@ -1,14 +1,25 @@
 """Manager for displaying conversation messages in the CCP window."""
 
-from typing import TYPE_CHECKING, List, Dict, Any, Optional
+from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 from loguru import logger
 from textual.widgets import Static
 from textual import work
+
+from ...config import get_chachanotes_db_lazy
 
 if TYPE_CHECKING:
     from ..Conv_Char_Window import CCPWindow
 
 logger = logger.bind(module="CCPMessageManager")
+ConversationId = Union[int, str]
+
+
+def fetch_messages_for_conversation(conversation_id: ConversationId) -> List[Dict[str, Any]]:
+    """Compatibility helper for conversation message retrieval."""
+    db = get_chachanotes_db_lazy()
+    if db is None:
+        return []
+    return db.get_messages_for_conversation(str(conversation_id), limit=200)
 
 
 class CCPMessageManager:
@@ -26,6 +37,11 @@ class CCPMessageManager:
         self.message_widgets: List[Any] = []
         
         logger.debug("CCPMessageManager initialized")
+
+    def _conversation_db(self):
+        """Return the DB used for loading CCP conversation messages."""
+        app_attrs = vars(self.app_instance) if hasattr(self.app_instance, "__dict__") else {}
+        return app_attrs.get("chachanotes_db") or get_chachanotes_db_lazy()
     
     def clear_messages(self) -> None:
         """Clear all displayed messages."""
@@ -46,7 +62,7 @@ class CCPMessageManager:
             logger.error(f"Error clearing messages: {e}", exc_info=True)
     
     @work(thread=True)
-    async def load_conversation_messages(self, conversation_id: int) -> None:
+    async def load_conversation_messages(self, conversation_id: ConversationId) -> None:
         """Load and display messages for a conversation.
         
         Args:
@@ -55,10 +71,11 @@ class CCPMessageManager:
         logger.info(f"Loading messages for conversation {conversation_id}")
         
         try:
-            from ...DB.ChaChaNotes_DB import get_messages_from_conversation
-            
-            # Get messages from database
-            messages = get_messages_from_conversation(conversation_id)
+            db = self._conversation_db()
+            if db is not None and hasattr(db, "get_messages_for_conversation"):
+                messages = db.get_messages_for_conversation(str(conversation_id), limit=200)
+            else:
+                messages = fetch_messages_for_conversation(conversation_id)
             
             if messages:
                 self.current_messages = messages

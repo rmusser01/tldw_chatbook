@@ -1,15 +1,6 @@
-"""Sidebar widget for the CCP screen.
+"""Sidebar widget for the CCP screen."""
 
-This widget encapsulates the entire sidebar functionality including:
-- Conversations search and management
-- Characters management
-- Prompts management
-- Dictionaries management
-- World Books management
-
-Following Textual best practices with focused, reusable components.
-"""
-
+import inspect
 from typing import TYPE_CHECKING, Optional, List, Dict, Any
 from loguru import logger
 from textual.app import ComposeResult
@@ -49,9 +40,16 @@ class ConversationLoadRequested(CCPSidebarMessage):
 
 class CharacterLoadRequested(CCPSidebarMessage):
     """User requested to load a character."""
-    def __init__(self, character_id: Optional[int] = None) -> None:
+    def __init__(self, character_id: Optional[str] = None) -> None:
         super().__init__()
         self.character_id = character_id
+
+
+class PersonaLoadRequested(CCPSidebarMessage):
+    """User requested to load a persona profile."""
+    def __init__(self, persona_id: Optional[str] = None) -> None:
+        super().__init__()
+        self.persona_id = persona_id
 
 
 class PromptLoadRequested(CCPSidebarMessage):
@@ -200,6 +198,7 @@ class CCPSidebarWidget(VerticalScroll):
         self._conv_search_input: Optional[Input] = None
         self._conv_results_list: Optional[ListView] = None
         self._character_select: Optional[Select] = None
+        self._persona_select: Optional[Select] = None
         self._dictionary_select: Optional[Select] = None
         
         logger.debug("CCPSidebarWidget initialized")
@@ -277,6 +276,13 @@ class CCPSidebarWidget(VerticalScroll):
                            classes="sidebar-button")
                 yield Button("Delete Character", id="ccp-delete-character-button", 
                            classes="sidebar-button danger")
+
+        # ===== Personas Section =====
+        with Collapsible(title="Persona Profiles", id="ccp-personas-collapsible", collapsed=False):
+            yield Button("Create Persona", id="ccp-create-persona-button", classes="sidebar-button")
+            yield Select([], prompt="Select Persona...", allow_blank=True, id="ccp-persona-select")
+            yield Button("Load Persona", id="ccp-load-persona-button", classes="sidebar-button")
+            yield Button("Refresh Personas", id="ccp-refresh-persona-list-button", classes="sidebar-button")
         
         # ===== Prompts Section =====
         with Collapsible(title="Prompts", id="ccp-prompts-collapsible", collapsed=True):
@@ -351,9 +357,19 @@ class CCPSidebarWidget(VerticalScroll):
             self._conv_search_input = self.query_one("#conv-char-search-input", Input)
             self._conv_results_list = self.query_one("#conv-char-search-results-list", ListView)
             self._character_select = self.query_one("#conv-char-character-select", Select)
+            self._persona_select = self.query_one("#ccp-persona-select", Select)
             self._dictionary_select = self.query_one("#ccp-dictionary-select", Select)
         except Exception as e:
             logger.warning(f"Could not cache all widget references: {e}")
+
+    async def _emit_message_to_app(self, message: Message, handler_name: str) -> None:
+        """Post the message through Textual and mirror it to app-level test callbacks."""
+        self.post_message(message)
+        handler = getattr(self.app, handler_name, None)
+        if callable(handler):
+            result = handler(message)
+            if inspect.isawaitable(result):
+                await result
     
     # ===== Event Handlers =====
     
@@ -410,19 +426,42 @@ class CCPSidebarWidget(VerticalScroll):
         event.stop()
         # Get selected character from select widget
         if self._character_select and self._character_select.value:
-            try:
-                char_id = int(self._character_select.value)
-                self.post_message(CharacterLoadRequested(char_id))
-            except (ValueError, TypeError):
-                self.post_message(CharacterLoadRequested())
+            self.post_message(CharacterLoadRequested(str(self._character_select.value)))
         else:
             self.post_message(CharacterLoadRequested())
+
+    @on(Button.Pressed, "#ccp-load-persona-button")
+    async def handle_load_persona(self, event: Button.Pressed) -> None:
+        """Handle load persona button press."""
+        event.stop()
+        if self._persona_select and self._persona_select.value:
+            await self._emit_message_to_app(
+                PersonaLoadRequested(str(self._persona_select.value)),
+                "on_persona_load_requested",
+            )
+        else:
+            await self._emit_message_to_app(
+                PersonaLoadRequested(),
+                "on_persona_load_requested",
+            )
     
     @on(Button.Pressed, "#ccp-refresh-character-list-button")
     async def handle_refresh_characters(self, event: Button.Pressed) -> None:
         """Handle refresh character list button press."""
         event.stop()
         self.post_message(RefreshRequested("character"))
+
+    @on(Button.Pressed, "#ccp-create-persona-button")
+    async def handle_create_persona(self, event: Button.Pressed) -> None:
+        """Handle create persona button press."""
+        event.stop()
+        self.post_message(CreateRequested("persona"))
+
+    @on(Button.Pressed, "#ccp-refresh-persona-list-button")
+    async def handle_refresh_personas(self, event: Button.Pressed) -> None:
+        """Handle refresh persona list button press."""
+        event.stop()
+        self.post_message(RefreshRequested("persona"))
     
     @on(Button.Pressed, "#ccp-prompt-load-selected-button")
     async def handle_load_prompt(self, event: Button.Pressed) -> None:
@@ -483,7 +522,7 @@ class CCPSidebarWidget(VerticalScroll):
             characters: List of available characters
         """
         if self._character_select:
-            options = [(str(char.get('id')), char.get('name', 'Unnamed')) 
+            options = [(char.get('name', 'Unnamed'), str(char.get('id'))) 
                       for char in characters]
             self._character_select.set_options(options)
     
@@ -494,9 +533,18 @@ class CCPSidebarWidget(VerticalScroll):
             dictionaries: List of available dictionaries
         """
         if self._dictionary_select:
-            options = [(str(d.get('id')), d.get('name', 'Unnamed')) 
+            options = [(d.get('name', 'Unnamed'), str(d.get('id'))) 
                       for d in dictionaries]
             self._dictionary_select.set_options(options)
+
+    def update_persona_list(self, personas: List[Dict[str, Any]]) -> None:
+        """Update the persona select options."""
+        if self._persona_select:
+            options = [
+                (persona.get("name", "Unnamed Persona"), str(persona.get("id")))
+                for persona in personas
+            ]
+            self._persona_select.set_options(options)
     
     def show_conversation_details(self, show: bool = True) -> None:
         """Show or hide the conversation details section.

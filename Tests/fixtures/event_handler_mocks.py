@@ -233,6 +233,9 @@ def setup_mock_widgets(app):
         raise QueryError(f"Widget not found by mock: {selector}")
     
     app.query_one.side_effect = query_one_side_effect
+    app.screen = MagicMock()
+    app.screen.query_one = MagicMock(side_effect=lambda selector, widget_type=None: app.query_one(selector, widget_type))
+    app.screen.query = MagicMock(side_effect=lambda selector: app.query(selector))
     
     # Setup sidebar query_one behavior
     if "#chat-right-sidebar" in widgets:

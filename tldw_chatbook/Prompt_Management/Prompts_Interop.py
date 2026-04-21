@@ -56,13 +56,17 @@ from tldw_chatbook.DB.Prompts_DB import (
     SchemaError,
     InputError,
     ConflictError,
-    add_or_update_prompt as db_add_or_update_prompt,
     load_prompt_details_for_ui as db_load_prompt_details_for_ui,
     export_prompt_keywords_to_csv as db_export_prompt_keywords_to_csv,
     view_prompt_keywords_markdown as db_view_prompt_keywords_markdown,
     export_prompts_formatted as db_export_prompts_formatted
 )
 from tldw_chatbook.Utils.path_validation import validate_path
+from .server_prompt_adapter import (
+    local_prompt_to_preview_payload,
+    local_prompt_to_server_payload,
+    server_prompt_to_local_update,
+)
 #
 #######################################################################################################################
 #
@@ -165,11 +169,25 @@ def add_keyword(keyword_text: str) -> Tuple[Optional[int], Optional[str]]:
 
 def add_prompt(name: str, author: Optional[str], details: Optional[str],
                system_prompt: Optional[str] = None, user_prompt: Optional[str] = None,
-               keywords: Optional[List[str]] = None, overwrite: bool = False
+               keywords: Optional[List[str]] = None, overwrite: bool = False,
+               prompt_format: Optional[str] = None,
+               prompt_schema_version: Optional[int] = None,
+               prompt_definition: Optional[Any] = None,
                ) -> Tuple[Optional[int], Optional[str], str]:
     """Adds or updates a prompt. See PromptsDatabase.add_prompt for details."""
     db = get_db_instance()
-    return db.add_prompt(name, author, details, system_prompt, user_prompt, keywords, overwrite)
+    return db.add_prompt(
+        name=name,
+        author=author,
+        details=details,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        keywords=keywords,
+        overwrite=overwrite,
+        prompt_format=prompt_format,
+        prompt_schema_version=prompt_schema_version,
+        prompt_definition=prompt_definition,
+    )
 
 def update_keywords_for_prompt(prompt_id: int, keywords_list: List[str]) -> None:
     """Updates keywords for a specific prompt. See PromptsDatabase.update_keywords_for_prompt for details."""
@@ -214,6 +232,63 @@ def fetch_prompt_details(prompt_id_or_name_or_uuid: Union[int, str], include_del
     db = get_db_instance()
     return db.fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted)
 
+
+def export_prompt_to_server_payload(prompt_id_or_name_or_uuid: Union[int, str]) -> Dict[str, Any]:
+    """Exports a local prompt row into a server-compatible payload."""
+    prompt = fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted=True)
+    if not prompt:
+        raise InputError(f"Prompt '{prompt_id_or_name_or_uuid}' not found.")
+    return local_prompt_to_server_payload(prompt)
+
+
+def build_prompt_preview_payload(prompt_id_or_name_or_uuid: Union[int, str]) -> Dict[str, Any]:
+    """Builds a server preview payload from a local prompt row."""
+    prompt = fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted=True)
+    if not prompt:
+        raise InputError(f"Prompt '{prompt_id_or_name_or_uuid}' not found.")
+    return local_prompt_to_preview_payload(prompt)
+
+
+def import_prompt_from_server_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Creates or updates a local prompt from a server-shaped payload."""
+    local_update = server_prompt_to_local_update(payload)
+    prompt_name = local_update.get("name")
+    if not prompt_name:
+        raise InputError("Server prompt payload must include a name.")
+
+    prompt_id, prompt_uuid, message = add_prompt(
+        name=prompt_name,
+        author=local_update.get("author"),
+        details=local_update.get("details"),
+        system_prompt=local_update.get("system_prompt"),
+        user_prompt=local_update.get("user_prompt"),
+        keywords=local_update.get("keywords"),
+        overwrite=True,
+        prompt_format=local_update.get("prompt_format"),
+        prompt_schema_version=local_update.get("prompt_schema_version"),
+        prompt_definition=local_update.get("prompt_definition"),
+    )
+    return {"prompt_id": prompt_id, "prompt_uuid": prompt_uuid, "message": message}
+
+
+def apply_server_prompt_version(prompt_id_or_name_or_uuid: Union[int, str], payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Applies a server prompt version payload onto an existing local prompt."""
+    db = get_db_instance()
+    existing_prompt = db.fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted=True)
+    if not existing_prompt:
+        raise InputError(f"Prompt '{prompt_id_or_name_or_uuid}' not found.")
+
+    update_data = server_prompt_to_local_update(payload)
+    if not update_data:
+        raise InputError("Server prompt payload did not include any updatable fields.")
+
+    prompt_uuid, message = db.update_prompt_by_id(existing_prompt["id"], update_data)
+    return {
+        "prompt_id": existing_prompt["id"],
+        "prompt_uuid": prompt_uuid or existing_prompt.get("uuid"),
+        "message": message,
+    }
+
 def fetch_all_keywords(include_deleted: bool = False) -> List[str]:
     """Fetches all keywords. See PromptsDatabase.fetch_all_keywords for details."""
     db = get_db_instance()
@@ -252,7 +327,10 @@ def delete_sync_log_entries(change_ids: List[int]) -> int:
 
 def add_or_update_prompt_interop(name: str, author: Optional[str], details: Optional[str],
                                  system_prompt: Optional[str] = None, user_prompt: Optional[str] = None,
-                                 keywords: Optional[List[str]] = None
+                                 keywords: Optional[List[str]] = None,
+                                 prompt_format: Optional[str] = None,
+                                 prompt_schema_version: Optional[int] = None,
+                                 prompt_definition: Optional[Any] = None,
                                  ) -> Tuple[Optional[int], Optional[str], str]:
     """
     Adds a new prompt or updates an existing one (identified by name).
@@ -260,7 +338,18 @@ def add_or_update_prompt_interop(name: str, author: Optional[str], details: Opti
     This wraps the standalone add_or_update_prompt function from Prompts_DB_v2.
     """
     db = get_db_instance()
-    return db_add_or_update_prompt(db, name, author, details, system_prompt, user_prompt, keywords)
+    return db.add_prompt(
+        name=name,
+        author=author,
+        details=details,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        keywords=keywords,
+        overwrite=True,
+        prompt_format=prompt_format,
+        prompt_schema_version=prompt_schema_version,
+        prompt_definition=prompt_definition,
+    )
 
 def load_prompt_details_for_ui_interop(prompt_name: str) -> Tuple[str, str, str, str, str, str]:
     """
@@ -307,7 +396,17 @@ def export_prompts_formatted_interop(export_format: str = 'csv',
 
 # --- Mass Import Functionality ---
 
-PROMPT_FIELDS = ["name", "author", "details", "system_prompt", "user_prompt", "keywords"]
+PROMPT_FIELDS = [
+    "name",
+    "author",
+    "details",
+    "system_prompt",
+    "user_prompt",
+    "keywords",
+    "prompt_format",
+    "prompt_schema_version",
+    "prompt_definition",
+]
 
 def _normalize_prompt_data(data: Dict[str, Any]) -> Dict[str, Any]:
     """Ensures prompt data has all expected fields, defaulting to None or empty list."""
@@ -323,6 +422,25 @@ def _normalize_prompt_data(data: Dict[str, Any]) -> Dict[str, Any]:
                 normalized["keywords"] = list(normalized["keywords"])
             except TypeError:
                 normalized["keywords"] = []
+
+    if normalized["prompt_format"] is None:
+        normalized["prompt_format"] = "structured" if normalized.get("prompt_definition") is not None else "legacy"
+    elif normalized["prompt_format"] not in {"legacy", "structured"}:
+        logger.warning(
+            f"Prompt format for '{normalized.get('name', 'Unknown')}' was invalid: {normalized['prompt_format']}. "
+            "Defaulting to legacy."
+        )
+        normalized["prompt_format"] = "legacy"
+
+    if normalized["prompt_schema_version"] is not None and not isinstance(normalized["prompt_schema_version"], int):
+        try:
+            normalized["prompt_schema_version"] = int(normalized["prompt_schema_version"])
+        except (TypeError, ValueError):
+            logger.warning(
+                f"Prompt schema version for '{normalized.get('name', 'Unknown')}' was invalid: "
+                f"{normalized['prompt_schema_version']}. Resetting to None."
+            )
+            normalized["prompt_schema_version"] = None
 
 
     # Ensure specific string fields are strings or None
@@ -601,7 +719,10 @@ def import_prompts_from_files(
                     details=prompt_data.get("details"),
                     system_prompt=prompt_data.get("system_prompt"),
                     user_prompt=prompt_data.get("user_prompt"),
-                    keywords=prompt_data.get("keywords")
+                    keywords=prompt_data.get("keywords"),
+                    prompt_format=prompt_data.get("prompt_format"),
+                    prompt_schema_version=prompt_data.get("prompt_schema_version"),
+                    prompt_definition=prompt_data.get("prompt_definition"),
                 )
                 logger.info(f"Imported prompt '{prompt_name}' from {file_path_str}: {db_msg}")
                 results.append({

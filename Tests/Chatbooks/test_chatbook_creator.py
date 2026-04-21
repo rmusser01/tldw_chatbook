@@ -101,8 +101,13 @@ class TestChatbookCreator:
         return paths
     
     @pytest.fixture
-    def chatbook_creator(self, temp_db_paths):
+    def chatbook_creator(self, temp_db_paths, tmp_path, monkeypatch):
         """Create a ChatbookCreator instance with test database paths."""
+        test_user_data_dir = tmp_path / "test_data" / "home" / ".local" / "share" / "tldw_cli" / "default_user"
+        monkeypatch.setattr(
+            "tldw_chatbook.Chatbooks.chatbook_creator.get_user_data_dir",
+            lambda: test_user_data_dir,
+        )
         return ChatbookCreator(db_paths=temp_db_paths)
     
     def test_creator_initialization(self, chatbook_creator, temp_db_paths):
@@ -128,7 +133,7 @@ class TestChatbookCreator:
             ContentType.CHARACTER: []
         }
         
-        success, message = chatbook_creator.create_chatbook(
+        success, message, dependency_info = chatbook_creator.create_chatbook(
             name="Test Chatbook",
             description="A test chatbook",
             content_selections=content_selections,
@@ -138,6 +143,8 @@ class TestChatbookCreator:
         # Since we have empty databases, this should succeed but with no content
         assert success is True
         assert output_path.exists()
+        assert dependency_info["missing_dependencies"] == []
+        assert dependency_info["auto_included"] == []
         
         # Verify contents
         with zipfile.ZipFile(output_path, 'r') as zf:
@@ -182,16 +189,16 @@ class TestChatbookCreator:
         }
         
         # Mock character data
-        mock_db_instance.get_character_details.return_value = {
+        mock_db_instance.get_character_card_by_id.return_value = {
             'id': 1,
             'name': 'Test Character',
             'description': 'A test character',
             'personality': 'Helpful',
+            'avatar_path': None,
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat()
         }
-        mock_db_instance.get_character_card_details.return_value = {}
-        
+
         # Create chatbook
         output_path = tmp_path / "test_chatbook_with_data.zip"
         content_selections = {
@@ -200,7 +207,7 @@ class TestChatbookCreator:
             ContentType.CHARACTER: ["1"]
         }
         
-        success, message = chatbook_creator.create_chatbook(
+        success, message, dependency_info = chatbook_creator.create_chatbook(
             name="Test Chatbook with Data",
             description="A test chatbook containing sample data",
             content_selections=content_selections,
@@ -209,9 +216,10 @@ class TestChatbookCreator:
             tags=["test", "sample"],
             categories=["testing"]
         )
-        
+
         assert success is True
         assert output_path.exists()
+        assert dependency_info["missing_dependencies"] == []
         
         # Verify contents
         with zipfile.ZipFile(output_path, 'r') as zf:
@@ -247,7 +255,7 @@ class TestChatbookCreator:
             ContentType.CONVERSATION: ["999"]  # Non-existent ID
         }
         
-        success, message = chatbook_creator.create_chatbook(
+        success, message, dependency_info = chatbook_creator.create_chatbook(
             name="Error Test",
             description="Testing error handling",
             content_selections=content_selections,
@@ -257,6 +265,7 @@ class TestChatbookCreator:
         # Should still succeed but with no conversations
         assert success is True
         assert output_path.exists()
+        assert dependency_info["missing_dependencies"] == []
     
     @patch('zipfile.ZipFile')
     def test_create_chatbook_zip_error(self, mock_zipfile, chatbook_creator, tmp_path):
@@ -267,21 +276,22 @@ class TestChatbookCreator:
         output_path = tmp_path / "test_zip_error.zip"
         content_selections = {}
         
-        success, message = chatbook_creator.create_chatbook(
+        success, message, dependency_info = chatbook_creator.create_chatbook(
             name="ZIP Error Test",
             description="Testing ZIP error",
             content_selections=content_selections,
             output_path=output_path
         )
-        
+
         assert success is False
         assert "error" in message.lower()
+        assert dependency_info["auto_included"] == []
     
     def test_chatbook_with_media_settings(self, chatbook_creator, tmp_path):
         """Test creating chatbook with media settings."""
         output_path = tmp_path / "test_media.zip"
         
-        success, message = chatbook_creator.create_chatbook(
+        success, message, dependency_info = chatbook_creator.create_chatbook(
             name="Media Test",
             description="Testing media settings",
             content_selections={},
@@ -290,8 +300,9 @@ class TestChatbookCreator:
             media_quality="original",
             include_embeddings=True
         )
-        
+
         assert success is True
+        assert dependency_info["missing_dependencies"] == []
         
         # Check manifest for media settings
         with zipfile.ZipFile(output_path, 'r') as zf:

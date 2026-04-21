@@ -100,6 +100,7 @@ from .Event_Handlers import (
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
     search_events, subscription_events,
 )
+from .Event_Handlers.tab_initializers.notes_tab_initializer import NotesTabInitializer
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks, \
     chat_events_dictionaries
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -110,6 +111,10 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler, STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
 )
 from .Notes.Notes_Library import NotesInteropService
+from .Notes.notes_scope_service import NotesScopeService
+from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
+from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
+from .Character_Chat.server_character_persona_service import ServerCharacterPersonaService
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
@@ -1248,6 +1253,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 logging.error("ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.")
                 self.chachanotes_db = None # Explicitly set to None
 
+        self.server_notes_workspace_service = ServerNotesWorkspaceService.from_config(self.app_config)
+        self.notes_scope_service = NotesScopeService(
+            local_notes_service=self.notes_service,
+            server_service=self.server_notes_workspace_service,
+        )
+        self._wire_character_persona_services()
+        self._notes_tab_initializer = NotesTabInitializer(self)
+
         # --- Create the master handler map ---
         # This one-time setup makes the dispatcher clean and fast.
         self.button_handler_map = self._build_handler_map()
@@ -1272,6 +1285,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Final memory check
         log_resource_usage()
+
+
+    def _wire_character_persona_services(self) -> None:
+        self.server_character_persona_service = ServerCharacterPersonaService.from_config(self.app_config)
+        self.character_persona_scope_service = CharacterPersonaScopeService(
+            local_service=self.chachanotes_db,
+            server_service=self.server_character_persona_service,
+        )
 
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:
@@ -1659,6 +1680,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Handle navigation to a different screen using switch_screen for better performance."""
         screen_name = message.screen_name
         logger.info(f"Navigating to screen: {screen_name}")
+        previous_tab = self.current_tab
         
         # Save state of current screen before switching
         current_screen = self.screen
@@ -1705,6 +1727,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         screen_class = screen_map.get(screen_name)
         if screen_class:
+            if previous_tab == TAB_NOTES and previous_tab != screen_name:
+                await self._notes_tab_initializer.on_tab_hidden()
+
             # Create a fresh screen instance (per Textual best practices)
             new_screen = screen_class(self)
             
@@ -1723,6 +1748,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Update current_tab to track the active screen
             # The watcher will skip processing due to _use_screen_navigation flag
             self.current_tab = screen_name
+
+            if screen_name == TAB_NOTES and previous_tab != screen_name:
+                await self._notes_tab_initializer.on_tab_shown()
             
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
@@ -3231,6 +3259,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Hide Old Tab ---
         if old_tab and old_tab != new_tab:
+            if old_tab == TAB_NOTES:
+                self.call_after_refresh(self._notes_tab_initializer.on_tab_hidden)
+
             # Update navigation UI to remove active state from old tab
             use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
             use_links = get_cli_setting("general", "use_link_navigation", True)
@@ -3384,8 +3415,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Call immediately after refresh
             self.call_after_refresh(populate_ccp_widgets)
         elif new_tab == TAB_NOTES:
-            # NotesScreen handles its own data loading in on_mount()
-            pass
+            self.call_after_refresh(self._notes_tab_initializer.on_tab_shown)
         elif new_tab == TAB_MEDIA:
             def activate_media_initial_view():
                 try:
@@ -3678,6 +3708,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def save_current_note(self) -> bool:
         """Saves the currently selected note's title and content to the database."""
+        if isinstance(self.screen, NotesScreen):
+            return await self.screen._save_current_note()
         if not self.notes_service or not self.current_selected_note_id or self.current_selected_note_version is None:
             logging.warning("No note selected or service unavailable. Cannot save.")
             # Optionally: self.notify("No note selected to save.", severity="warning")

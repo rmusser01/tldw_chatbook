@@ -58,6 +58,9 @@ from .sql_validation import validate_table_name, validate_column_name
 #
 # Functions:
 
+DEFAULT_RUNTIME_BACKEND = "local"
+DEFAULT_DISCOVERY_OWNER = "general_chat"
+
 # --- Custom Exceptions ---
 class CharactersRAGDBError(Exception):
     """Base exception for CharactersRAGDB related errors."""
@@ -128,8 +131,14 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 12 # Incremented schema version to add message variant support
+    _CURRENT_SCHEMA_VERSION = 14  # Incremented schema version to add canonical assistant runtime metadata
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
+    _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
+    _DEFAULT_CONVERSATION_STATE = "in-progress"
+    _ALLOWED_CONVERSATION_ASSISTANT_KINDS = ("character", "persona", "generic")
+    _ALLOWED_PERSONA_MEMORY_MODES = ("read_only", "read_write")
+    _ALLOWED_CONVERSATION_CHARACTER_SCOPES = ("all", "character", "generic")
+    _ALLOWED_SCOPE_TYPES = ("global", "workspace")
 
     _FULL_SCHEMA_SQL_V4 = """
 /*───────────────────────────────────────────────────────────────
@@ -265,7 +274,8 @@ END;
 CREATE TRIGGER conversations_au
 AFTER UPDATE ON conversations BEGIN
   INSERT INTO conversations_fts(conversations_fts,rowid,title)
-  VALUES('delete',old.rowid,old.title);
+  SELECT 'delete',old.rowid,old.title
+  WHERE old.deleted = 0 AND old.title IS NOT NULL;
 
   INSERT INTO conversations_fts(rowid,title)
   SELECT new.rowid,new.title
@@ -275,7 +285,8 @@ END;
 CREATE TRIGGER conversations_ad
 AFTER DELETE ON conversations BEGIN
   INSERT INTO conversations_fts(conversations_fts,rowid,title)
-  VALUES('delete',old.rowid,old.title);
+  SELECT 'delete',old.rowid,old.title
+  WHERE old.title IS NOT NULL;
 END;
 
 /*----------------------------------------------------------------
@@ -1634,6 +1645,266 @@ UPDATE db_schema_version
    AND version = 11;
 """
 
+    _MIGRATE_V12_TO_V13_SQL = """
+-- Migration from V12 to V13: Add conversation metadata parity columns
+
+ALTER TABLE conversations ADD COLUMN assistant_kind TEXT;
+ALTER TABLE conversations ADD COLUMN assistant_id TEXT;
+ALTER TABLE conversations ADD COLUMN persona_memory_mode TEXT;
+ALTER TABLE conversations ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'global';
+ALTER TABLE conversations ADD COLUMN workspace_id TEXT;
+ALTER TABLE conversations ADD COLUMN state TEXT NOT NULL DEFAULT 'in-progress';
+ALTER TABLE conversations ADD COLUMN topic_label TEXT;
+ALTER TABLE conversations ADD COLUMN topic_label_source TEXT;
+ALTER TABLE conversations ADD COLUMN topic_last_tagged_at TEXT;
+ALTER TABLE conversations ADD COLUMN topic_last_tagged_message_id TEXT;
+ALTER TABLE conversations ADD COLUMN cluster_id TEXT;
+ALTER TABLE conversations ADD COLUMN source TEXT;
+ALTER TABLE conversations ADD COLUMN external_ref TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_conversations_scope_type ON conversations(scope_type);
+CREATE INDEX IF NOT EXISTS idx_conversations_workspace_id ON conversations(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_state ON conversations(state);
+CREATE INDEX IF NOT EXISTS idx_conversations_topic_label ON conversations(topic_label);
+CREATE INDEX IF NOT EXISTS idx_conversations_assistant_identity ON conversations(assistant_kind, assistant_id);
+
+DROP TRIGGER IF EXISTS conversations_sync_create;
+DROP TRIGGER IF EXISTS conversations_sync_update;
+DROP TRIGGER IF EXISTS conversations_sync_delete;
+DROP TRIGGER IF EXISTS conversations_sync_undelete;
+
+UPDATE conversations
+   SET scope_type = 'global'
+ WHERE scope_type IS NULL OR TRIM(scope_type) = '';
+
+UPDATE conversations
+   SET workspace_id = NULL
+ WHERE scope_type = 'global';
+
+UPDATE conversations
+   SET state = 'in-progress'
+ WHERE state IS NULL OR TRIM(state) = '';
+
+UPDATE conversations
+   SET assistant_kind = 'character'
+ WHERE character_id IS NOT NULL
+   AND (assistant_kind IS NULL OR TRIM(assistant_kind) = '');
+
+UPDATE conversations
+   SET assistant_id = CAST(character_id AS TEXT)
+ WHERE character_id IS NOT NULL
+   AND (assistant_id IS NULL OR TRIM(assistant_id) = '');
+
+CREATE TRIGGER conversations_sync_create
+AFTER INSERT ON conversations BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'create',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,'title',NEW.title,
+                     'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_update
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = NEW.deleted AND (
+     OLD.title IS NOT NEW.title OR
+     OLD.rating IS NOT NEW.rating OR
+     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR
+     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR
+     OLD.character_id IS NOT NEW.character_id OR
+     OLD.assistant_kind IS NOT NEW.assistant_kind OR
+     OLD.assistant_id IS NOT NEW.assistant_id OR
+     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR
+     OLD.scope_type IS NOT NEW.scope_type OR
+     OLD.workspace_id IS NOT NEW.workspace_id OR
+     OLD.state IS NOT NEW.state OR
+     OLD.topic_label IS NOT NEW.topic_label OR
+     OLD.topic_label_source IS NOT NEW.topic_label_source OR
+     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR
+     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR
+     OLD.cluster_id IS NOT NEW.cluster_id OR
+     OLD.source IS NOT NEW.source OR
+     OLD.external_ref IS NOT NEW.external_ref OR
+     OLD.last_modified IS NOT NEW.last_modified OR
+     OLD.version IS NOT NEW.version)
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,'title',NEW.title,
+                     'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_delete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 0 AND NEW.deleted = 1
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'delete',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
+                     'version',NEW.version,'client_id',NEW.client_id));
+END;
+
+CREATE TRIGGER conversations_sync_undelete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 1 AND NEW.deleted = 0
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,'title',NEW.title,
+                     'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+UPDATE db_schema_version
+   SET version = 13
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 12;
+"""
+
+    _MIGRATE_V13_TO_V14_SQL = f"""
+-- Migration from V13 to V14: Add canonical runtime/discovery metadata columns
+
+ALTER TABLE conversations ADD COLUMN runtime_backend TEXT NOT NULL DEFAULT '{DEFAULT_RUNTIME_BACKEND}';
+ALTER TABLE conversations ADD COLUMN discovery_owner TEXT NOT NULL DEFAULT '{DEFAULT_DISCOVERY_OWNER}';
+ALTER TABLE conversations ADD COLUMN discovery_entity_id TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_conversations_runtime_backend ON conversations(runtime_backend);
+CREATE INDEX IF NOT EXISTS idx_conversations_discovery_owner ON conversations(discovery_owner);
+CREATE INDEX IF NOT EXISTS idx_conversations_discovery_entity ON conversations(discovery_entity_id);
+
+DROP TRIGGER IF EXISTS conversations_sync_create;
+DROP TRIGGER IF EXISTS conversations_sync_update;
+DROP TRIGGER IF EXISTS conversations_sync_delete;
+DROP TRIGGER IF EXISTS conversations_sync_undelete;
+
+UPDATE conversations
+   SET runtime_backend = '{DEFAULT_RUNTIME_BACKEND}'
+ WHERE runtime_backend IS NULL OR TRIM(runtime_backend) = '';
+
+UPDATE conversations
+   SET discovery_owner = '{DEFAULT_DISCOVERY_OWNER}'
+ WHERE discovery_owner IS NULL OR TRIM(discovery_owner) = '';
+
+CREATE TRIGGER conversations_sync_create
+AFTER INSERT ON conversations BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'create',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_update
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = NEW.deleted AND (
+     OLD.title IS NOT NEW.title OR
+     OLD.rating IS NOT NEW.rating OR
+     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR
+     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR
+     OLD.character_id IS NOT NEW.character_id OR
+     OLD.assistant_kind IS NOT NEW.assistant_kind OR
+     OLD.assistant_id IS NOT NEW.assistant_id OR
+     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR
+     OLD.scope_type IS NOT NEW.scope_type OR
+     OLD.workspace_id IS NOT NEW.workspace_id OR
+     OLD.state IS NOT NEW.state OR
+     OLD.topic_label IS NOT NEW.topic_label OR
+     OLD.topic_label_source IS NOT NEW.topic_label_source OR
+     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR
+     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR
+     OLD.cluster_id IS NOT NEW.cluster_id OR
+     OLD.source IS NOT NEW.source OR
+     OLD.external_ref IS NOT NEW.external_ref OR
+     OLD.runtime_backend IS NOT NEW.runtime_backend OR
+     OLD.discovery_owner IS NOT NEW.discovery_owner OR
+     OLD.discovery_entity_id IS NOT NEW.discovery_entity_id OR
+     OLD.last_modified IS NOT NEW.last_modified OR
+     OLD.version IS NOT NEW.version)
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_delete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 0 AND NEW.deleted = 1
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'delete',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
+                     'version',NEW.version,'client_id',NEW.client_id));
+END;
+
+CREATE TRIGGER conversations_sync_undelete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 1 AND NEW.deleted = 0
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 14
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 13;
+"""
+
     def __init__(self, db_path: Union[str, Path], client_id: str, 
                  check_integrity_on_startup: bool = False):
         """
@@ -2342,6 +2613,57 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V11→V12] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V11 to V12 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v12_to_v13(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 12 to version 13.
+
+        This migration adds conversation metadata fields needed for local/server
+        conversation parity and backfills legacy rows with safe defaults.
+        """
+        logger.info(f"Migrating schema from V12 to V13 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V12_TO_V13_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V12→V13] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 13:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V12→V13] Migration version check failed. Expected 13, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V12→V13] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V12→V13] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V12 to V13 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V12→V13] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V12 to V13 for '{self._SCHEMA_NAME}': {e}") from e
+
+    def _migrate_from_v13_to_v14(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 13 to version 14.
+
+        This migration adds runtime/discovery metadata fields and backfills legacy rows with safe defaults.
+        """
+        logger.info(f"Migrating schema from V13 to V14 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V13_TO_V14_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V13→V14] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 14:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V13→V14] Migration version check failed. Expected 14, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V13→V14] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V13→V14] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V13 to V14 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V13→V14] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V13 to V14 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 7 to version 8.
@@ -2439,6 +2761,12 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 11 and target_version > 11:
                         self._migrate_from_v11_to_v12(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 12 and target_version > 12:
+                        self._migrate_from_v12_to_v13(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 13 and target_version > 13:
+                        self._migrate_from_v13_to_v14(conn)
                 elif current_db_version == 4 and target_version >= 5:
                     self._migrate_from_v4_to_v5(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2462,6 +2790,12 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 11 and target_version > 11:
                         self._migrate_from_v11_to_v12(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 12 and target_version > 12:
+                        self._migrate_from_v12_to_v13(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 13 and target_version > 13:
+                        self._migrate_from_v13_to_v14(conn)
                 elif current_db_version == 5 and target_version >= 6:
                     self._migrate_from_v5_to_v6(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2482,6 +2816,12 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 11 and target_version > 11:
                         self._migrate_from_v11_to_v12(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 12 and target_version > 12:
+                        self._migrate_from_v12_to_v13(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 13 and target_version > 13:
+                        self._migrate_from_v13_to_v14(conn)
                 elif current_db_version == 6 and target_version >= 7:
                     self._migrate_from_v6_to_v7(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2499,6 +2839,12 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 11 and target_version > 11:
                         self._migrate_from_v11_to_v12(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 12 and target_version > 12:
+                        self._migrate_from_v12_to_v13(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 13 and target_version > 13:
+                        self._migrate_from_v13_to_v14(conn)
                 elif current_db_version == 7 and target_version == 8:
                     self._migrate_from_v7_to_v8(conn)
                 elif current_db_version == 8 and target_version == 9:
@@ -2509,6 +2855,10 @@ UPDATE db_schema_version
                     self._migrate_from_v10_to_v11(conn)
                 elif current_db_version == 11 and target_version == 12:
                     self._migrate_from_v11_to_v12(conn)
+                elif current_db_version == 12 and target_version == 13:
+                    self._migrate_from_v12_to_v13(conn)
+                elif current_db_version == 13 and target_version == 14:
+                    self._migrate_from_v13_to_v14(conn)
                 elif current_initial_version < target_version: # An older schema exists
                     # For versions older than 4, we don't have a migration path
                     raise SchemaError(
@@ -3360,13 +3710,185 @@ UPDATE db_schema_version
             raise
 
     # --- Conversation Methods ---
+    @staticmethod
+    def _normalize_nullable_text(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped if stripped else None
+        return str(value)
+
+    def _normalize_conversation_state(self, state: Optional[str]) -> str:
+        if state is None:
+            return self._DEFAULT_CONVERSATION_STATE
+        if not isinstance(state, str):
+            raise InputError(f"Conversation state must be a string. Got: {state!r}")
+        normalized = state.strip().lower()
+        if not normalized:
+            raise InputError("Conversation state cannot be empty.")
+        if normalized not in self._ALLOWED_CONVERSATION_STATES:
+            raise InputError(
+                f"Invalid conversation state '{state}'. Allowed: {', '.join(self._ALLOWED_CONVERSATION_STATES)}"
+            )
+        return normalized
+
+    def _normalize_topic_label_source(self, topic_label_source: Optional[str]) -> Optional[str]:
+        normalized_source = self._normalize_nullable_text(topic_label_source)
+        if normalized_source is None:
+            return None
+        normalized_source = normalized_source.lower()
+        if normalized_source not in {"manual", "auto"}:
+            raise InputError("topic_label_source must be 'manual' or 'auto'.")
+        return normalized_source
+
+    def _normalize_conversation_character_scope(self, character_scope: Optional[str]) -> str:
+        if character_scope is None:
+            return "all"
+        if not isinstance(character_scope, str):
+            raise InputError(f"Conversation character scope must be a string. Got: {character_scope!r}")
+        normalized = character_scope.strip().lower()
+        if not normalized:
+            raise InputError("Conversation character scope cannot be empty.")
+        if normalized not in self._ALLOWED_CONVERSATION_CHARACTER_SCOPES:
+            raise InputError(
+                "Invalid conversation character scope "
+                f"'{character_scope}'. Allowed: {', '.join(self._ALLOWED_CONVERSATION_CHARACTER_SCOPES)}"
+            )
+        return normalized
+
+    def _conversation_character_scope_clause(self, character_scope: Optional[str], *, column: str = "character_id") -> Optional[str]:
+        normalized = self._normalize_conversation_character_scope(character_scope)
+        if normalized == "all":
+            return None
+        if normalized == "character":
+            return f"{column} IS NOT NULL"
+        return f"{column} IS NULL"
+
+    def _conversation_deleted_scope_clause(
+        self,
+        *,
+        include_deleted: bool = False,
+        deleted_only: bool = False,
+        column: str = "deleted",
+        true_literal: str = "1",
+        false_literal: str = "0",
+    ) -> Optional[str]:
+        if deleted_only:
+            return f"{column} = {true_literal}"
+        if include_deleted:
+            return None
+        return f"{column} = {false_literal}"
+
+    def _normalize_scope(
+        self,
+        scope_type: Optional[str],
+        workspace_id: Optional[str],
+    ) -> Tuple[str, Optional[str]]:
+        normalized_scope = (scope_type or "global").strip().lower()
+        if normalized_scope not in self._ALLOWED_SCOPE_TYPES:
+            raise InputError(f"Invalid scope_type '{scope_type}'. Allowed: {', '.join(self._ALLOWED_SCOPE_TYPES)}")
+
+        normalized_workspace_id = self._normalize_nullable_text(workspace_id)
+        if normalized_scope == "workspace":
+            if normalized_workspace_id is None:
+                raise InputError("workspace_id is required when scope_type is 'workspace'.")
+            return normalized_scope, normalized_workspace_id
+        return "global", None
+
+    def _normalize_conversation_assistant_identity(
+        self,
+        *,
+        character_id: Any,
+        assistant_kind: Any,
+        assistant_id: Any,
+        persona_memory_mode: Any,
+    ) -> Tuple[Optional[str], Optional[str], Optional[int], Optional[str]]:
+        normalized_kind = self._normalize_nullable_text(assistant_kind)
+        normalized_assistant_id = self._normalize_nullable_text(assistant_id)
+        normalized_memory_mode = self._normalize_nullable_text(persona_memory_mode)
+
+        if normalized_kind is not None:
+            normalized_kind = normalized_kind.lower()
+            if normalized_kind not in self._ALLOWED_CONVERSATION_ASSISTANT_KINDS:
+                raise InputError(
+                    f"Invalid assistant_kind '{assistant_kind}'. Allowed: {', '.join(self._ALLOWED_CONVERSATION_ASSISTANT_KINDS)}"
+                )
+
+        normalized_character_id: Optional[int] = None
+        if character_id is not None:
+            try:
+                normalized_character_id = int(character_id)
+            except (TypeError, ValueError) as exc:
+                raise InputError(f"character_id must be numeric. Got: {character_id}") from exc
+
+        if normalized_kind is None and normalized_character_id is not None:
+            normalized_kind = "character"
+
+        if normalized_kind is None:
+            if normalized_memory_mode is not None:
+                raise InputError("persona_memory_mode is only valid for persona-backed conversations.")
+            return None, None, None, None
+
+        if normalized_kind == "character":
+            if normalized_character_id is None:
+                if normalized_assistant_id is None:
+                    raise InputError("Character conversations require 'character_id' or 'assistant_id'.")
+                try:
+                    normalized_character_id = int(normalized_assistant_id)
+                except (TypeError, ValueError) as exc:
+                    raise InputError(
+                        "Character conversations require 'character_id' when assistant_id is non-numeric."
+                    ) from exc
+            if normalized_assistant_id is None:
+                normalized_assistant_id = str(normalized_character_id)
+            if normalized_memory_mode is not None:
+                raise InputError("persona_memory_mode is only valid for persona-backed conversations.")
+            return "character", normalized_assistant_id, normalized_character_id, None
+
+        if normalized_kind == "persona":
+            if normalized_assistant_id is None:
+                raise InputError("Persona conversations require a non-empty 'assistant_id'.")
+            if normalized_memory_mode is not None:
+                normalized_memory_mode = normalized_memory_mode.lower()
+                if normalized_memory_mode not in self._ALLOWED_PERSONA_MEMORY_MODES:
+                    raise InputError(
+                        f"Invalid persona_memory_mode '{persona_memory_mode}'. Allowed: {', '.join(self._ALLOWED_PERSONA_MEMORY_MODES)}"
+                    )
+            return "persona", normalized_assistant_id, None, normalized_memory_mode
+
+        if normalized_memory_mode is not None:
+            raise InputError("persona_memory_mode is only valid for persona-backed conversations.")
+        return "generic", normalized_assistant_id, None, None
+
+    def _normalize_conversation_runtime_visibility(
+        self,
+        *,
+        runtime_backend: Any,
+        discovery_owner: Any,
+        discovery_entity_id: Any,
+    ) -> Tuple[str, str, Optional[str]]:
+        normalized_runtime = self._normalize_nullable_text(runtime_backend)
+        normalized_owner = self._normalize_nullable_text(discovery_owner)
+        normalized_entity_id = self._normalize_nullable_text(discovery_entity_id)
+
+        runtime_value = (normalized_runtime or DEFAULT_RUNTIME_BACKEND).strip().lower()
+        if runtime_value not in {"local", "server"}:
+            runtime_value = DEFAULT_RUNTIME_BACKEND
+
+        owner_value = (normalized_owner or DEFAULT_DISCOVERY_OWNER).strip().lower()
+        if owner_value not in {"general_chat", "ccp_character", "ccp_persona"}:
+            owner_value = DEFAULT_DISCOVERY_OWNER
+
+        return runtime_value, owner_value, normalized_entity_id
+
     def add_conversation(self, conv_data: Dict[str, Any]) -> Optional[str]:
         """
         Adds a new conversation to the database.
 
         `id` (UUID string) can be provided; if not, it's auto-generated.
         `root_id` (UUID string) should be provided; if not, `id` is used as `root_id`.
-        `character_id` is required in `conv_data`.
+        Conversations may be character-backed, persona-backed, or generic.
         `client_id` defaults to the DB instance's `client_id` if not provided in `conv_data`.
         `version` defaults to 1. `created_at` and `last_modified` are set to current UTC time.
 
@@ -3375,17 +3897,16 @@ UPDATE db_schema_version
 
         Args:
             conv_data: A dictionary containing conversation data.
-                       Required: 'character_id'.
                        Recommended: 'id' (if providing own UUID), 'root_id'.
                        Optional: 'forked_from_message_id', 'parent_conversation_id',
-                                 'title', 'rating' (1-5), 'client_id'.
+                                 'title', 'rating' (1-5), 'client_id', assistant/scope/topic metadata.
 
         Returns:
             The string UUID of the newly created conversation.
 
         Raises:
-            InputError: If required fields like 'character_id' are missing, or if
-                        'client_id' is missing and not set on the DB instance.
+            InputError: If metadata values are invalid, or if 'client_id' is missing
+                        and not set on the DB instance.
             ConflictError: If a conversation with the provided 'id' already exists.
             CharactersRAGDBError: For other database-related errors.
         """
@@ -3393,23 +3914,50 @@ UPDATE db_schema_version
         conv_id = conv_data.get('id') or self._generate_uuid()
         root_id = conv_data.get('root_id') or conv_id  # If root_id not given, this is a new root.
 
-        if 'character_id' not in conv_data:
-            raise InputError("Required field 'character_id' is missing for conversation.")
-
         client_id = conv_data.get('client_id') or self.client_id
         if not client_id:
             raise InputError("Client ID is required for conversation (either in conv_data or DB instance).")
 
+        assistant_kind, assistant_id, character_id, persona_memory_mode = self._normalize_conversation_assistant_identity(
+            character_id=conv_data.get('character_id'),
+            assistant_kind=conv_data.get('assistant_kind'),
+            assistant_id=conv_data.get('assistant_id'),
+            persona_memory_mode=conv_data.get('persona_memory_mode'),
+        )
+        scope_type, workspace_id = self._normalize_scope(
+            conv_data.get('scope_type'),
+            conv_data.get('workspace_id'),
+        )
+        state = self._normalize_conversation_state(conv_data.get('state'))
+        topic_label = self._normalize_nullable_text(conv_data.get('topic_label'))
+        topic_label_source = self._normalize_topic_label_source(conv_data.get('topic_label_source'))
+        topic_last_tagged_at = self._normalize_nullable_text(conv_data.get('topic_last_tagged_at'))
+        topic_last_tagged_message_id = self._normalize_nullable_text(conv_data.get('topic_last_tagged_message_id'))
+        cluster_id = self._normalize_nullable_text(conv_data.get('cluster_id'))
+        source = self._normalize_nullable_text(conv_data.get('source'))
+        external_ref = self._normalize_nullable_text(conv_data.get('external_ref'))
+        runtime_backend, discovery_owner, discovery_entity_id = self._normalize_conversation_runtime_visibility(
+            runtime_backend=conv_data.get("runtime_backend"),
+            discovery_owner=conv_data.get("discovery_owner"),
+            discovery_entity_id=conv_data.get("discovery_entity_id"),
+        )
+
         now = self._get_current_utc_timestamp_iso()
         query = """
                 INSERT INTO conversations (id, root_id, forked_from_message_id, parent_conversation_id, \
-                                           character_id, title, rating, \
-                                           created_at, last_modified, client_id, version, deleted) \
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
+                                           character_id, assistant_kind, assistant_id, persona_memory_mode, \
+                                           scope_type, workspace_id, state, topic_label, topic_label_source, \
+                                           topic_last_tagged_at, topic_last_tagged_message_id, cluster_id, source, external_ref, \
+                                           runtime_backend, discovery_owner, discovery_entity_id, \
+                                           title, rating, created_at, last_modified, client_id, version, deleted) \
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
                 """ # created_at added
         params = (
             conv_id, root_id, conv_data.get('forked_from_message_id'),
-            conv_data.get('parent_conversation_id'), conv_data['character_id'],
+            conv_data.get('parent_conversation_id'), character_id, assistant_kind, assistant_id, persona_memory_mode,
+            scope_type, workspace_id, state, topic_label, topic_label_source,
+            topic_last_tagged_at, topic_last_tagged_message_id, cluster_id, source, external_ref,
+            runtime_backend, discovery_owner, discovery_entity_id,
             conv_data.get('title'), conv_data.get('rating'),
             now, now, client_id # created_at, last_modified, client_id
         )
@@ -3495,6 +4043,14 @@ UPDATE db_schema_version
                 SELECT id, \
                        root_id, \
                        character_id, \
+                       assistant_kind, \
+                       assistant_id, \
+                       runtime_backend, \
+                       discovery_owner, \
+                       discovery_entity_id, \
+                       scope_type, \
+                       workspace_id, \
+                       state, \
                        title, \
                        rating, \
                        created_at, \
@@ -3503,11 +4059,13 @@ UPDATE db_schema_version
                        client_id
                 FROM conversations
                 WHERE deleted = 0
+                  AND scope_type = 'global'
+                  AND client_id = ?
                 ORDER BY last_modified DESC, id DESC LIMIT ? \
                 OFFSET ? \
                 """
         try:
-            cursor = self.execute_query(query, (limit, offset))
+            cursor = self.execute_query(query, (self.client_id, limit, offset))
             conversations = [dict(row) for row in cursor.fetchall()]
             logger.info(f"Found {len(conversations)} active conversations (limit {limit}, offset {offset}).")
             
@@ -3531,11 +4089,11 @@ UPDATE db_schema_version
             logger.error(f"Unexpected error listing all active conversations: {e}", exc_info=True)
             raise CharactersRAGDBError(f"Unexpected error listing conversations: {e}") from e
 
-    def get_conversation_by_id(self, conversation_id: str) -> Optional[Dict[str, Any]]:
+    def get_conversation_by_id(self, conversation_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
         """
         Retrieves a specific conversation by its UUID.
 
-        Only non-deleted conversations are returned.
+        Only non-deleted conversations are returned unless include_deleted is True.
 
         Args:
             conversation_id: The string UUID of the conversation.
@@ -3548,7 +4106,9 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database errors during fetching.
         """
         start_time = time.time()
-        query = "SELECT * FROM conversations WHERE id = ? AND deleted = 0"
+        query = "SELECT * FROM conversations WHERE id = ?"
+        if not include_deleted:
+            query += " AND deleted = 0"
         try:
             cursor = self.execute_query(query, (conversation_id,))
             row = cursor.fetchone()
@@ -3631,7 +4191,11 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database errors.
         """
         start_time = time.time()
-        query = "SELECT * FROM conversations WHERE character_id = ? AND deleted = 0 ORDER BY last_modified DESC LIMIT ? OFFSET ?"
+        query = (
+            "SELECT * FROM conversations "
+            "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
+            "ORDER BY last_modified DESC LIMIT ? OFFSET ?"
+        )
         try:
             cursor = self.execute_query(query, (character_id, limit, offset))
             results = [dict(row) for row in cursor.fetchall()]
@@ -3652,6 +4216,239 @@ UPDATE db_schema_version
         except CharactersRAGDBError as e:
             logger.error(f"Database error fetching conversations for character ID {character_id}: {e}")
             raise
+
+    def search_conversations_page(
+        self,
+        query: Optional[str],
+        *,
+        client_id: Optional[str] = None,
+        include_deleted: bool = False,
+        deleted_only: bool = False,
+        character_id: Optional[int] = None,
+        character_scope: Optional[str] = None,
+        state: Optional[str] = None,
+        topic_label: Optional[str] = None,
+        scope_type: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+        **_: Any,
+    ) -> Tuple[List[Dict[str, Any]], int, float]:
+        normalized_scope, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
+        clauses: List[str] = ["scope_type = ?"]
+        params: List[Any] = [normalized_scope]
+
+        effective_client_id = self.client_id if client_id is None else client_id
+        if effective_client_id is not None:
+            clauses.append("client_id = ?")
+            params.append(effective_client_id)
+
+        if normalized_workspace_id is not None:
+            clauses.append("workspace_id = ?")
+            params.append(normalized_workspace_id)
+
+        deleted_clause = self._conversation_deleted_scope_clause(
+            include_deleted=include_deleted,
+            deleted_only=deleted_only,
+        )
+        if deleted_clause:
+            clauses.append(deleted_clause)
+
+        if character_id is not None:
+            clauses.append("character_id = ?")
+            params.append(character_id)
+
+        character_scope_clause = self._conversation_character_scope_clause(character_scope)
+        if character_scope_clause:
+            clauses.append(character_scope_clause)
+
+        if state is not None:
+            clauses.append("state = ?")
+            params.append(self._normalize_conversation_state(state))
+
+        normalized_topic_label = self._normalize_nullable_text(topic_label)
+        if normalized_topic_label is not None:
+            clauses.append("topic_label = ?")
+            params.append(normalized_topic_label)
+
+        normalized_query = self._normalize_nullable_text(query)
+        if normalized_query is not None:
+            clauses.append(
+                "("
+                "title LIKE ? OR id = ? OR EXISTS ("
+                "SELECT 1 FROM messages m "
+                "WHERE m.conversation_id = conversations.id "
+                "AND m.deleted = 0 "
+                "AND m.content LIKE ?"
+                "))"
+            )
+            like_query = f"%{normalized_query}%"
+            params.extend([like_query, normalized_query, like_query])
+
+        where_clause = " AND ".join(clauses) if clauses else "1 = 1"
+        count_query = f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"
+        page_query = (
+            "SELECT * FROM conversations "
+            f"WHERE {where_clause} "
+            "ORDER BY last_modified DESC, id DESC LIMIT ? OFFSET ?"
+        )
+
+        count_cursor = self.execute_query(count_query, tuple(params))
+        count_row = count_cursor.fetchone()
+        total = int(count_row["total"] if count_row else 0)
+
+        page_params = tuple(params + [limit, offset])
+        cursor = self.execute_query(page_query, page_params)
+        rows = [dict(row) for row in cursor.fetchall()]
+        return rows, total, 0.0
+
+    def count_messages_for_conversation(
+        self,
+        conversation_id: str,
+        include_deleted: bool = False,
+        *,
+        include_deleted_conversation: bool = False,
+    ) -> int:
+        query = (
+            "SELECT COUNT(1) AS cnt FROM messages m "
+            "JOIN conversations c ON m.conversation_id = c.id "
+            "WHERE m.conversation_id = ?"
+        )
+        params: List[Any] = [conversation_id]
+        if not include_deleted_conversation:
+            query += " AND c.deleted = 0"
+        if not include_deleted:
+            query += " AND m.deleted = 0"
+        cursor = self.execute_query(query, tuple(params))
+        row = cursor.fetchone()
+        return int(row["cnt"] if row else 0)
+
+    def count_messages_for_conversations(
+        self,
+        conversation_ids: List[str],
+        include_deleted: bool = False,
+        *,
+        include_deleted_conversation: bool = False,
+    ) -> Dict[str, int]:
+        if not conversation_ids:
+            return {}
+        placeholders = ",".join(["?"] * len(conversation_ids))
+        query = (
+            f"SELECT m.conversation_id, COUNT(1) AS cnt FROM messages m "
+            f"JOIN conversations c ON m.conversation_id = c.id "
+            f"WHERE m.conversation_id IN ({placeholders})"
+        )
+        if not include_deleted_conversation:
+            query += " AND c.deleted = 0"
+        if not include_deleted:
+            query += " AND m.deleted = 0"
+        query += " GROUP BY m.conversation_id"
+
+        cursor = self.execute_query(query, tuple(conversation_ids))
+        counts = {conversation_id: 0 for conversation_id in conversation_ids}
+        for row in cursor.fetchall():
+            counts[str(row["conversation_id"])] = int(row["cnt"] or 0)
+        return counts
+
+    def get_latest_message_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        include_deleted_conversation: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        query = (
+            "SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, "
+            "m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified, "
+            "m.version, m.client_id, m.deleted, m.feedback, m.role, "
+            "m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants "
+            "FROM messages m "
+            "JOIN conversations c ON m.conversation_id = c.id "
+            "WHERE m.conversation_id = ? AND m.deleted = 0 "
+            "ORDER BY m.timestamp DESC, m.id DESC LIMIT 1"
+        )
+        params: List[Any] = [conversation_id]
+        if not include_deleted_conversation:
+            query = query.replace(" ORDER BY", " AND c.deleted = 0 ORDER BY", 1)
+        cursor = self.execute_query(query, tuple(params))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def count_root_messages_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        include_deleted_conversation: bool = False,
+    ) -> int:
+        query = (
+            "SELECT COUNT(1) AS cnt FROM messages m "
+            "JOIN conversations c ON m.conversation_id = c.id "
+            "WHERE m.conversation_id = ? AND m.parent_message_id IS NULL "
+            "AND m.deleted = 0"
+        )
+        if not include_deleted_conversation:
+            query += " AND c.deleted = 0"
+        cursor = self.execute_query(query, (conversation_id,))
+        row = cursor.fetchone()
+        return int(row["cnt"] if row else 0)
+
+    def get_root_messages_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int,
+        offset: int,
+        order_by_timestamp: str = "ASC",
+        include_deleted_conversation: bool = False,
+    ) -> List[Dict[str, Any]]:
+        if order_by_timestamp.upper() not in ["ASC", "DESC"]:
+            raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
+        query = f"""
+            SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content,
+                   m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
+                   m.version, m.client_id, m.deleted, m.feedback, m.role,
+                   m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ?
+              AND m.parent_message_id IS NULL
+              AND m.deleted = 0
+            ORDER BY m.timestamp {order_by_timestamp}
+            LIMIT ? OFFSET ?
+        """
+        if not include_deleted_conversation:
+            query = query.replace("ORDER BY", "AND c.deleted = 0\n            ORDER BY", 1)
+        cursor = self.execute_query(query, (conversation_id, limit, offset))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_messages_for_conversation_by_parent_ids(
+        self,
+        conversation_id: str,
+        parent_ids: List[str],
+        *,
+        order_by_timestamp: str = "ASC",
+        include_deleted_conversation: bool = False,
+    ) -> List[Dict[str, Any]]:
+        if not parent_ids:
+            return []
+        if order_by_timestamp.upper() not in ["ASC", "DESC"]:
+            raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
+        placeholders = ",".join(["?"] * len(parent_ids))
+        query = f"""
+            SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content,
+                   m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
+                   m.version, m.client_id, m.deleted, m.feedback, m.role,
+                   m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ?
+              AND m.parent_message_id IN ({placeholders})
+              AND m.deleted = 0
+            ORDER BY m.timestamp {order_by_timestamp}
+        """
+        if not include_deleted_conversation:
+            query = query.replace("ORDER BY", "AND c.deleted = 0\n            ORDER BY", 1)
+        cursor = self.execute_query(query, tuple([conversation_id, *parent_ids]))
+        return [dict(row) for row in cursor.fetchall()]
 
     def update_conversation(self, conversation_id: str, update_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
         """
@@ -3682,134 +4479,209 @@ UPDATE db_schema_version
             CharactersRAGDBError: For other database-related errors (e.g., rating out of range
                                   if not caught by this method but by DB constraint).
         """
-        logger.debug(
-            f"Starting update_conversation for ID {conversation_id}, expected_version {expected_version} (FTS handled by DB triggers)")
+        logger.debug(f"Starting update_conversation for ID {conversation_id}, expected_version {expected_version}")
 
-        if 'rating' in update_data and update_data['rating'] is not None:
-             # Basic check, DB has CHECK constraint too
-            if not (1 <= update_data['rating'] <= 5):
-                raise InputError(f"Rating must be between 1 and 5. Got: {update_data['rating']}")
+        if 'rating' in update_data and update_data['rating'] is not None and not (1 <= update_data['rating'] <= 5):
+            raise InputError(f"Rating must be between 1 and 5. Got: {update_data['rating']}")
 
         now = self._get_current_utc_timestamp_iso()
 
         try:
             with self.transaction() as conn:
-                logger.debug(f"Conversation update transaction started. Connection object: {id(conn)}")
-
-                # Fetch current state, including rowid (though not used for manual FTS, it's good practice to fetch if available)
-                # and current title for potential non-FTS related "title_changed" logic.
-                cursor_check = conn.execute("SELECT rowid, title, version, deleted FROM conversations WHERE id = ?",
-                                            (conversation_id,))
-                current_state = cursor_check.fetchone()
+                current_state = conn.execute(
+                    """
+                    SELECT rowid, title, version, deleted, character_id, assistant_kind, assistant_id,
+                           persona_memory_mode, scope_type, workspace_id, state, topic_label,
+                           topic_label_source, topic_last_tagged_at, topic_last_tagged_message_id,
+                           cluster_id, source, external_ref,
+                           runtime_backend, discovery_owner, discovery_entity_id
+                    FROM conversations
+                    WHERE id = ?
+                    """,
+                    (conversation_id,),
+                ).fetchone()
 
                 if not current_state:
-                    raise ConflictError(f"Conversation ID {conversation_id} not found for update.",
-                                        entity="conversations", entity_id=conversation_id)
-                if current_state['deleted']:
-                    raise ConflictError(f"Conversation ID {conversation_id} is deleted, cannot update.",
-                                        entity="conversations", entity_id=conversation_id)
-
-                current_db_version = current_state['version']
-                current_title = current_state['title']  # For logging or other conditional logic if title changed
-
-                logger.debug(
-                    f"Conversation current DB version: {current_db_version}, Expected by client: {expected_version}, Current title: {current_title}")
-
-                if current_db_version != expected_version:
                     raise ConflictError(
-                        f"Conversation ID {conversation_id} update failed: version mismatch (db has {current_db_version}, client expected {expected_version}).",
-                        entity="conversations", entity_id=conversation_id
+                        f"Conversation ID {conversation_id} not found for update.",
+                        entity="conversations",
+                        entity_id=conversation_id,
                     )
+                if current_state['deleted']:
+                    raise ConflictError(
+                        f"Conversation ID {conversation_id} is deleted, cannot update.",
+                        entity="conversations",
+                        entity_id=conversation_id,
+                    )
+                if current_state['version'] != expected_version:
+                    raise ConflictError(
+                        f"Conversation ID {conversation_id} update failed: version mismatch (db has {current_state['version']}, client expected {expected_version}).",
+                        entity="conversations",
+                        entity_id=conversation_id,
+                    )
+
+                assistant_update_requested = any(
+                    field in update_data
+                    for field in ('assistant_kind', 'assistant_id', 'character_id', 'persona_memory_mode')
+                )
+                scope_update_requested = 'scope_type' in update_data or 'workspace_id' in update_data
+                runtime_update_requested = any(
+                    field in update_data
+                    for field in ("runtime_backend", "discovery_owner", "discovery_entity_id")
+                )
+
+                if assistant_update_requested:
+                    assistant_kind, assistant_id, character_id, persona_memory_mode = self._normalize_conversation_assistant_identity(
+                        character_id=update_data.get('character_id', current_state['character_id']),
+                        assistant_kind=update_data.get('assistant_kind', current_state['assistant_kind']),
+                        assistant_id=update_data.get('assistant_id', current_state['assistant_id']),
+                        persona_memory_mode=update_data.get('persona_memory_mode', current_state['persona_memory_mode']),
+                    )
+                else:
+                    assistant_kind = current_state['assistant_kind']
+                    assistant_id = current_state['assistant_id']
+                    character_id = current_state['character_id']
+                    persona_memory_mode = current_state['persona_memory_mode']
+
+                if scope_update_requested:
+                    scope_type, workspace_id = self._normalize_scope(
+                        update_data.get('scope_type', current_state['scope_type']),
+                        update_data.get('workspace_id', current_state['workspace_id']),
+                    )
+                else:
+                    scope_type = current_state['scope_type']
+                    workspace_id = current_state['workspace_id']
+
+                state = current_state['state']
+                if 'state' in update_data:
+                    state = self._normalize_conversation_state(update_data.get('state'))
+
+                topic_label = current_state['topic_label']
+                if 'topic_label' in update_data:
+                    topic_label = self._normalize_nullable_text(update_data.get('topic_label'))
+
+                topic_label_source = current_state['topic_label_source']
+                if 'topic_label_source' in update_data:
+                    topic_label_source = self._normalize_topic_label_source(update_data.get('topic_label_source'))
+
+                topic_last_tagged_at = current_state['topic_last_tagged_at']
+                if 'topic_last_tagged_at' in update_data:
+                    topic_last_tagged_at = self._normalize_nullable_text(update_data.get('topic_last_tagged_at'))
+
+                topic_last_tagged_message_id = current_state['topic_last_tagged_message_id']
+                if 'topic_last_tagged_message_id' in update_data:
+                    topic_last_tagged_message_id = self._normalize_nullable_text(update_data.get('topic_last_tagged_message_id'))
+
+                cluster_id = current_state['cluster_id']
+                if 'cluster_id' in update_data:
+                    cluster_id = self._normalize_nullable_text(update_data.get('cluster_id'))
+
+                source = current_state['source']
+                if 'source' in update_data:
+                    source = self._normalize_nullable_text(update_data.get('source'))
+
+                external_ref = current_state['external_ref']
+                if 'external_ref' in update_data:
+                    external_ref = self._normalize_nullable_text(update_data.get('external_ref'))
+
+                if runtime_update_requested:
+                    runtime_backend, discovery_owner, discovery_entity_id = self._normalize_conversation_runtime_visibility(
+                        runtime_backend=update_data.get("runtime_backend", current_state["runtime_backend"]),
+                        discovery_owner=update_data.get("discovery_owner", current_state["discovery_owner"]),
+                        discovery_entity_id=update_data.get("discovery_entity_id", current_state["discovery_entity_id"]),
+                    )
+                else:
+                    runtime_backend = current_state["runtime_backend"]
+                    discovery_owner = current_state["discovery_owner"]
+                    discovery_entity_id = current_state["discovery_entity_id"]
 
                 fields_to_update_sql = []
                 params_for_set_clause = []
-                title_changed_flag = False  # Flag to indicate if title was among the updated fields and changed value
 
-                # Process 'title' if present in update_data
                 if 'title' in update_data:
                     fields_to_update_sql.append("title = ?")
-                    params_for_set_clause.append(update_data['title'])
-                    if update_data['title'] != current_title:
-                        title_changed_flag = True
-
-                # Process 'rating' if present in update_data
+                    params_for_set_clause.append(update_data.get('title'))
                 if 'rating' in update_data:
                     fields_to_update_sql.append("rating = ?")
-                    params_for_set_clause.append(update_data['rating'])
+                    params_for_set_clause.append(update_data.get('rating'))
+                if assistant_update_requested:
+                    fields_to_update_sql.extend([
+                        "assistant_kind = ?",
+                        "assistant_id = ?",
+                        "character_id = ?",
+                        "persona_memory_mode = ?",
+                    ])
+                    params_for_set_clause.extend([assistant_kind, assistant_id, character_id, persona_memory_mode])
+                if scope_update_requested:
+                    fields_to_update_sql.extend(["scope_type = ?", "workspace_id = ?"])
+                    params_for_set_clause.extend([scope_type, workspace_id])
+                if 'state' in update_data:
+                    fields_to_update_sql.append("state = ?")
+                    params_for_set_clause.append(state)
+                if 'topic_label' in update_data:
+                    fields_to_update_sql.append("topic_label = ?")
+                    params_for_set_clause.append(topic_label)
+                if 'topic_label_source' in update_data:
+                    fields_to_update_sql.append("topic_label_source = ?")
+                    params_for_set_clause.append(topic_label_source)
+                if 'topic_last_tagged_at' in update_data:
+                    fields_to_update_sql.append("topic_last_tagged_at = ?")
+                    params_for_set_clause.append(topic_last_tagged_at)
+                if 'topic_last_tagged_message_id' in update_data:
+                    fields_to_update_sql.append("topic_last_tagged_message_id = ?")
+                    params_for_set_clause.append(topic_last_tagged_message_id)
+                if 'cluster_id' in update_data:
+                    fields_to_update_sql.append("cluster_id = ?")
+                    params_for_set_clause.append(cluster_id)
+                if 'source' in update_data:
+                    fields_to_update_sql.append("source = ?")
+                    params_for_set_clause.append(source)
+                if 'external_ref' in update_data:
+                    fields_to_update_sql.append("external_ref = ?")
+                    params_for_set_clause.append(external_ref)
+                if runtime_update_requested:
+                    fields_to_update_sql.extend([
+                        "runtime_backend = ?",
+                        "discovery_owner = ?",
+                        "discovery_entity_id = ?",
+                    ])
+                    params_for_set_clause.extend([runtime_backend, discovery_owner, discovery_entity_id])
 
-                # Add other updatable fields from update_data here if needed in the future
-                # Example:
-                # if 'some_other_field' in update_data:
-                #     fields_to_update_sql.append("some_other_field = ?")
-                #     params_for_set_clause.append(update_data['some_other_field'])
+                next_version_val = expected_version + 1
+                fields_to_update_sql.extend(["last_modified = ?", "version = ?", "client_id = ?"])
+                params_for_set_clause.extend([now, next_version_val, self.client_id])
 
-                next_version_val = expected_version + 1  # Version always increments on successful update
-
-                if not fields_to_update_sql:
-                    # This block executes if update_data was empty or contained no recognized updatable fields.
-                    # We still need to update last_modified, version, and client_id due to the successful version check.
-                    logger.info(
-                        f"No specific updatable fields (e.g. title, rating) found for conversation {conversation_id}. Updating metadata only.")
-                    main_update_query = "UPDATE conversations SET last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0"
-                    main_update_params = (now, next_version_val, self.client_id, conversation_id, expected_version)
-                else:
-                    # If specific fields were found, add metadata fields to the update
-                    fields_to_update_sql.extend(["last_modified = ?", "version = ?", "client_id = ?"])
-
-                    final_set_values = params_for_set_clause[:]  # Copy of values for specific fields
-                    final_set_values.extend([now, next_version_val, self.client_id])  # Add values for metadata fields
-
-                    main_update_query = f"UPDATE conversations SET {', '.join(fields_to_update_sql)} WHERE id = ? AND version = ? AND deleted = 0"
-                    main_update_params = tuple(final_set_values + [conversation_id, expected_version])
-
-                logger.debug(f"Executing MAIN conversation update query: {main_update_query}")
-                logger.debug(f"Params: {main_update_params}")
-
+                main_update_query = (
+                    f"UPDATE conversations SET {', '.join(fields_to_update_sql)} "
+                    "WHERE id = ? AND version = ? AND deleted = 0"
+                )
+                main_update_params = tuple(params_for_set_clause + [conversation_id, expected_version])
                 cursor_main = conn.execute(main_update_query, main_update_params)
-                logger.debug(f"Main Conversation Update executed, rowcount: {cursor_main.rowcount}")
-
                 if cursor_main.rowcount == 0:
-                    # This could happen if a concurrent modification occurred between the version check and this UPDATE.
-                    # Or if the record was deleted concurrently.
-                    # Re-check the state to provide a more accurate error.
-                    check_again_cursor = conn.execute("SELECT version, deleted FROM conversations WHERE id = ?",
-                                                      (conversation_id,))
-                    final_state = check_again_cursor.fetchone()
-                    msg = f"Main update for conversation ID {conversation_id} (expected v{expected_version}) affected 0 rows."
-                    if not final_state:
-                        msg = f"Conversation ID {conversation_id} disappeared before update completion (expected v{expected_version})."
-                    elif final_state['deleted']:
-                        msg = f"Conversation ID {conversation_id} was soft-deleted concurrently (expected v{expected_version} for update)."
-                    elif final_state['version'] != expected_version:
-                        msg = f"Conversation ID {conversation_id} version changed to {final_state['version']} concurrently (expected v{expected_version} for update)."
-                    else:  # Should not happen if rowcount is 0 and version check was successful.
-                        msg = f"Main update for conversation ID {conversation_id} (expected v{expected_version}) affected 0 rows for an unknown reason after passing initial checks."
-                    raise ConflictError(msg, entity="conversations", entity_id=conversation_id)
-
-                # FTS synchronization is handled by database triggers.
-                # No manual FTS DML (DELETE/INSERT on conversations_fts) is performed here.
+                    raise ConflictError(
+                        f"Conversation ID {conversation_id} could not be updated.",
+                        entity="conversations",
+                        entity_id=conversation_id,
+                    )
 
                 logger.info(
-                    f"Updated conversation ID {conversation_id} from version {expected_version} to version {next_version_val} (FTS handled by DB triggers). Title changed: {title_changed_flag}")
+                    f"Updated conversation ID {conversation_id} from version {expected_version} to version {next_version_val}."
+                )
                 return True
 
-        except sqlite3.IntegrityError as e: # e.g. rating check constraint
+        except sqlite3.IntegrityError as e:
             raise CharactersRAGDBError(f"Database integrity error during update_conversation: {e}") from e
-        except sqlite3.DatabaseError as e:
-            # This broad catch is for unexpected SQLite errors, including potential "malformed" if it still occurs.
-            logger.critical(f"DATABASE ERROR during update_conversation (FTS handled by DB triggers): {e}")
-            logger.critical(f"Error details: {str(e)}")
-            # Specific handling for "malformed" can be added if needed, but the goal is to prevent it.
-            raise CharactersRAGDBError(f"Database error during update_conversation: {e}") from e
-        except ConflictError:  # Re-raise ConflictErrors for tests or callers to handle
+        except ConflictError:
             raise
         except InputError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Application-level database error in update_conversation for ID {conversation_id}: {e}",
-                         exc_info=True)
+            logger.error(
+                f"Application-level database error in update_conversation for ID {conversation_id}: {e}",
+                exc_info=True,
+            )
             raise
-        except Exception as e:  # Catch-all for any other unexpected Python errors
+        except Exception as e:
             logger.error(f"Unexpected Python error in update_conversation for ID {conversation_id}: {e}", exc_info=True)
             raise CharactersRAGDBError(f"Unexpected error during update_conversation: {e}") from e
 
@@ -5619,6 +6491,95 @@ UPDATE db_schema_version
                 """
         cursor = self.execute_query(query, (conversation_id,))
         return [dict(row) for row in cursor.fetchall()]
+
+    def get_keywords_for_conversations(self, conversation_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        if not conversation_ids:
+            return {}
+        placeholders = ",".join(["?"] * len(conversation_ids))
+        query = f"""
+                SELECT ck.conversation_id, k.*
+                FROM keywords k
+                         JOIN conversation_keywords ck ON k.id = ck.keyword_id
+                WHERE ck.conversation_id IN ({placeholders})
+                  AND k.deleted = 0
+                ORDER BY ck.conversation_id, k.keyword COLLATE NOCASE
+                """
+        cursor = self.execute_query(query, tuple(conversation_ids))
+        grouped: Dict[str, List[Dict[str, Any]]] = {conversation_id: [] for conversation_id in conversation_ids}
+        for row in cursor.fetchall():
+            record = dict(row)
+            conversation_id = str(record.pop("conversation_id"))
+            grouped.setdefault(conversation_id, []).append(record)
+        return grouped
+
+    def replace_keywords_for_conversation(self, conversation_id: str, keyword_ids: List[int]) -> bool:
+        normalized_keyword_ids = list(dict.fromkeys(int(keyword_id) for keyword_id in keyword_ids))
+        now_iso = self._get_current_utc_timestamp_iso()
+        try:
+            with self.transaction() as conn:
+                existing_rows = conn.execute(
+                    "SELECT keyword_id FROM conversation_keywords WHERE conversation_id = ?",
+                    (conversation_id,),
+                ).fetchall()
+                existing_keyword_ids = {
+                    int(row["keyword_id"] if isinstance(row, sqlite3.Row) else row[0])
+                    for row in existing_rows
+                }
+                desired_keyword_ids = set(normalized_keyword_ids)
+
+                to_remove = sorted(existing_keyword_ids - desired_keyword_ids)
+                to_add = [keyword_id for keyword_id in normalized_keyword_ids if keyword_id not in existing_keyword_ids]
+
+                for keyword_id in to_remove:
+                    conn.execute(
+                        "DELETE FROM conversation_keywords WHERE conversation_id = ? AND keyword_id = ?",
+                        (conversation_id, keyword_id),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO sync_log (entity, entity_id, operation, timestamp, client_id, version, payload)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "conversation_keywords",
+                            f"{conversation_id}_{keyword_id}",
+                            "delete",
+                            now_iso,
+                            self.client_id,
+                            1,
+                            json.dumps({"conversation_id": conversation_id, "keyword_id": keyword_id}),
+                        ),
+                    )
+
+                for keyword_id in to_add:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO conversation_keywords (conversation_id, keyword_id, created_at) VALUES (?, ?, ?)",
+                        (conversation_id, keyword_id, now_iso),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO sync_log (entity, entity_id, operation, timestamp, client_id, version, payload)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "conversation_keywords",
+                            f"{conversation_id}_{keyword_id}",
+                            "create",
+                            now_iso,
+                            self.client_id,
+                            1,
+                            json.dumps(
+                                {
+                                    "conversation_id": conversation_id,
+                                    "keyword_id": keyword_id,
+                                    "created_at": now_iso,
+                                }
+                            ),
+                        ),
+                    )
+            return True
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(f"Database error replacing keywords for conversation: {e}") from e
 
     def get_conversations_for_keyword(self, keyword_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         query = """
