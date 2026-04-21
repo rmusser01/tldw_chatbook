@@ -52,6 +52,7 @@ class NotesScreenState:
     selected_server_note_id: Optional[str] = None
     selected_server_note_version: Optional[int] = None
     selected_workspace_id: Optional[str] = None
+    selected_workspace_version: Optional[int] = None
     selected_workspace_note_id: Optional[int] = None
     selected_workspace_note_version: Optional[int] = None
     selected_workspace_source_id: Optional[str] = None
