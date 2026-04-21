@@ -367,7 +367,7 @@ class TestChatHistorySaving:
         updated_conversation = db_instance.get_conversation_by_id(conversation_id)
         assert updated_conversation["assistant_kind"] == "character"
         assert updated_conversation["assistant_id"] == str(char_id)
-        assert updated_conversation["runtime_backend"] == "local"
+        assert updated_conversation["runtime_backend"] == "server"
         assert updated_conversation["discovery_owner"] == "ccp_character"
         assert updated_conversation["discovery_entity_id"] == str(char_id)
         assert updated_conversation["title"] == "Chat with Resaver"
@@ -486,6 +486,40 @@ class TestChatHistorySaving:
         assert conversation["runtime_backend"] == "server"
         assert conversation["discovery_owner"] == "ccp_persona"
         assert conversation["discovery_entity_id"] == "persona.local.alice"
+
+    def test_resave_generic_chat_history_preserves_existing_runtime_and_scope_metadata(self, db_instance: CharactersRAGDB):
+        conversation_id = db_instance.add_conversation(
+            {
+                "title": "Workspace Generic",
+                "runtime_backend": "server",
+                "discovery_owner": "general_chat",
+                "scope_type": "workspace",
+                "workspace_id": "ws-1",
+                "client_id": db_instance.client_id,
+            }
+        )
+
+        resave_id, status = save_chat_history_to_db_wrapper(
+            db=db_instance,
+            chatbot_history=[
+                {"role": "user", "content": "Workspace conversation"},
+                {"role": "assistant", "content": "Workspace reply"},
+            ],
+            conversation_id=conversation_id,
+            media_content_for_char_assoc=None,
+            character_name_for_chat=None,
+        )
+
+        assert "success" in status.lower()
+        assert resave_id == conversation_id
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["assistant_kind"] is None
+        assert conversation["assistant_id"] is None
+        assert conversation["runtime_backend"] == "server"
+        assert conversation["discovery_owner"] == "general_chat"
+        assert conversation["scope_type"] == "workspace"
+        assert conversation["workspace_id"] == "ws-1"
 
 
 @pytest.mark.integration
