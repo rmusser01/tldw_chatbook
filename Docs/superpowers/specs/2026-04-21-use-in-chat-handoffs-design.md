@@ -41,10 +41,11 @@ The design is anchored to the following explicit user decisions:
 
 The current branch already has reusable seams that make a thin first pass practical:
 
-- `NotesScreen` maintains current selection state and mirrors key fields like `current_selected_note_title` and `current_selected_note_content` back onto the app instance.
+- `NotesScreen` maintains current selection state for all note scopes, but only local-note flows reliably mirror the legacy `current_selected_note_*` fields back onto the app instance. Server and workspace note selections should be treated as screen-state-owned in this slice.
 - `MediaWindow_v2` maintains a current selected record and hydrates media detail before showing the viewer/metadata surface.
 - `SearchRAGWindow` renders each result as a `SearchResult` card with per-result action buttons, but it does not expose a durable selected-result contract yet.
 - `TldwCli` already owns app-level handoff helpers for other destinations, such as `open_study_screen()` and `open_notes_workspace()`, by storing pending context on the app and navigating to the target screen.
+- `ChatWindowEnhanced` still supports both tabbed and legacy single-session chat modes in the current branch.
 
 Because of that, the lowest-friction design is app-owned pending handoff state plus thin per-surface payload adapters.
 
@@ -68,6 +69,8 @@ The first pass should prefer this app-owned helper over introducing a heavier ge
 - surfaces already know their `app_instance`
 - the target behavior is one-way and simple in this slice
 - it avoids widget-to-widget coupling without adding another indirection layer too early
+
+Because the user explicitly chose `always open a new Chat session`, the first pass must fail closed when tabbed chat is unavailable. In legacy single-session mode, `Use in Chat` should be disabled or should notify the user that tabbed chat is required for this action. It must not silently inject handoff context into the current single-session conversation.
 
 ### Shared Payload Contract
 
@@ -166,6 +169,8 @@ The same result-card action should work for:
 - RAG results
 - Web Search results
 
+This requires an explicit result-card-to-window handoff seam in the first pass. `SearchResult` should not call the app helper directly with hidden assumptions. Instead, the result card should emit a dedicated event/message or invoke a callback supplied by `SearchRAGWindow`, and the window should normalize the result payload before forwarding it into `open_chat_with_handoff()`.
+
 The Search adapter should derive the payload directly from the result object:
 
 - title
@@ -192,19 +197,26 @@ For this slice, isolation is the intended behavior:
 - no injection into another session’s ongoing context
 - each handoff becomes its own fresh unit of work
 
+To make that enforceable against the current tab-reuse logic, handoff-created sessions must be created as fresh ephemeral sessions with no conversation reuse key on creation. In practice, the initial handoff session contract must not carry a `conversation_id` that would trigger `ChatTabContainer.create_new_tab()` reuse behavior.
+
 ### Pending Handoff Ownership
 
 The app should store the pending handoff during navigation. `ChatScreen` consumes it when Chat opens.
+
+Ordering matters in the current branch because `ChatScreen` already restores saved chat state and active-tab selection on open. The handoff flow must not race that restore process.
 
 Recommended target lifecycle:
 
 1. source surface calls `app_instance.open_chat_with_handoff(payload)`
 2. app stores `pending_chat_handoff`
 3. app navigates to Chat
-4. `ChatScreen` consumes the pending handoff
-5. `ChatScreen` creates a brand-new chat tab/session
-6. `ChatScreen` applies the handoff payload to that session
-7. Chat clears the app-level pending handoff after consumption
+4. `ChatScreen` completes its normal restore path first
+5. `ChatScreen` then consumes `pending_chat_handoff` in a post-restore phase
+6. `ChatScreen` creates a brand-new chat tab/session and makes it active
+7. `ChatScreen` applies the handoff payload to that fresh session only
+8. Chat clears the app-level pending handoff after one successful consumption
+
+If handoff session creation fails, `pending_chat_handoff` should remain uncleared so the failure is explicit and debuggable, but the UI must notify the user that the handoff did not complete.
 
 ### Visible Handoff Card
 
@@ -217,6 +229,8 @@ The new Chat session should render a dedicated handoff card near the top of the 
 - a clear next-step hint such as `Review the draft prompt below and send when ready.`
 
 This card is required for visibility of system status and handoff confidence.
+
+The card should be mounted at the session layer, not at the global Chat screen layer. The recommended first-pass seam is to render it as the first item in the destination session’s chat log so it stays local to that session and survives tab switches/restores consistently.
 
 ### Draft Prompt Behavior
 
@@ -232,7 +246,12 @@ If the payload is sparse, fall back to a neutral draft:
 
 The handoff card and its payload should belong to the new chat session rather than to Chat globally. The recommended persistence boundary is session/tab state, so the handoff remains visible if the user navigates away and returns before acting on it.
 
-That implies a small extension to chat session state, for example a session-scoped `pending_handoff` or `handoff_payload`, rather than global app-only transient state.
+That implies touching both live and persisted chat session contracts:
+
+- live session contract, such as `ChatSessionData`
+- persisted restore contract, such as `TabState`
+
+The first pass should use a session-scoped `pending_handoff` or `handoff_payload` field rather than relying on app-only transient state after initial consumption.
 
 ## UI Placement
 
@@ -262,9 +281,13 @@ Minimum required coverage:
 - Media payload creation from current hydrated selected media state
 - Search payload creation from both RAG and Web Search result cards
 - app-owned handoff always creating a new Chat session
+- tabs-disabled single-session mode refuses the handoff cleanly and does not mutate the current conversation
 - `ChatScreen` consuming pending handoff state on navigation
 - visible handoff card rendering in the new session
 - draft prompt prefilled and not auto-sent
+- `pending_chat_handoff` clears after one successful consumption and does not replay on later Chat visits
+- handoff-created session is fresh even when Chat already has restored tabs
+- handoff card and drafted prompt survive tab switching and screen restore
 - disabled or warning path when no valid Notes or Media selection exists
 - failure path when new Chat session creation fails
 
@@ -284,6 +307,8 @@ Recommended implementation touch points for this slice:
   add app-owned pending handoff state and `open_chat_with_handoff()`
 - `tldw_chatbook/UI/Screens/chat_screen.py`
   consume pending handoff, create new session, and apply handoff state
+- `tldw_chatbook/Chat/chat_models.py`
+  extend the live session contract for session-scoped handoff state
 - `tldw_chatbook/UI/Screens/chat_screen_state.py`
   persist session-scoped handoff payload
 - `tldw_chatbook/UI/Screens/notes_screen.py`
@@ -293,7 +318,7 @@ Recommended implementation touch points for this slice:
 - `tldw_chatbook/UI/Views/RAGSearch/search_result.py`
   add per-result `Use in Chat`
 - `tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py`
-  support forwarding per-result handoff actions if needed
+  normalize Search result handoff events and forward them through the app-owned helper
 - `Tests/UI/test_chat_first_handoffs.py`
   new focused handoff coverage
 
