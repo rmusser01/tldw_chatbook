@@ -4,6 +4,7 @@ MediaWindow v2 - Orchestrator for media browsing components.
 This is a refactored version that uses the new component-based architecture.
 """
 
+import inspect
 from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from textual import on
 from textual.app import ComposeResult
@@ -123,7 +124,7 @@ class MediaWindow(Container):
     
     # Reactive properties
     active_media_type: reactive[Optional[str]] = reactive(None)
-    selected_media_id: reactive[Optional[int]] = reactive(None)
+    selected_media_id: reactive[Optional[str]] = reactive(None)
     media_active_view: reactive[Optional[str]] = reactive(None)
     sidebar_collapsed: reactive[bool] = reactive(False)
     list_collapsed: reactive[bool] = reactive(False)
@@ -132,11 +133,154 @@ class MediaWindow(Container):
         """Initialize the MediaWindow."""
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.runtime_state = getattr(app_instance, "media_runtime_state", None)
         self.media_types = self._get_media_types()
         
     def _get_media_types(self) -> List[str]:
         """Get media types from the app instance."""
         return getattr(self.app_instance, '_media_types_for_ui', [])
+
+    def _scope_service(self):
+        """Return the shared media-reading scope service."""
+        return getattr(self.app_instance, "media_reading_scope_service", None)
+
+    async def _maybe_await(self, value: Any) -> Any:
+        """Support sync or async seam calls."""
+        if inspect.isawaitable(value):
+            return await value
+        return value
+
+    def _runtime_backend(self) -> str:
+        """Return the currently active media backend."""
+        runtime_state = getattr(self, "runtime_state", None)
+        if runtime_state is None:
+            runtime_state = getattr(self.app_instance, "media_runtime_state", None)
+        if runtime_state is None:
+            return "local"
+        return str(getattr(runtime_state, "runtime_backend", "local") or "local")
+
+    def _record_backend(self, record: Optional[Dict[str, Any]] = None) -> str:
+        """Resolve backend from a normalized record or current runtime state."""
+        if isinstance(record, dict) and record.get("backend"):
+            return str(record["backend"])
+        return self._runtime_backend()
+
+    def _record_id(self, record: Optional[Dict[str, Any]] = None, fallback: Any = None) -> Optional[str]:
+        """Resolve a normalized record ID from record payload or fallback values."""
+        if isinstance(record, dict) and record.get("id") not in (None, ""):
+            return str(record["id"])
+        if fallback in (None, ""):
+            return None
+        return str(fallback)
+
+    def _source_media_id(self, record: Optional[Dict[str, Any]] = None, fallback: Any = None) -> Any:
+        """Resolve the backend-specific media/read-item identifier used by the seam."""
+        if isinstance(record, dict):
+            source_id = record.get("source_id")
+            if source_id not in (None, ""):
+                return source_id
+            record_id = record.get("id")
+            if isinstance(record_id, str) and ":" in record_id:
+                return record_id.rsplit(":", 1)[-1]
+
+        if isinstance(fallback, str) and ":" in fallback:
+            return fallback.rsplit(":", 1)[-1]
+        return fallback
+
+    def _record_for_event(self, event: Any) -> Dict[str, Any]:
+        """Resolve the richest available record for a UI event."""
+        event_record = getattr(event, "media_data", None)
+        if isinstance(event_record, dict):
+            return dict(event_record)
+
+        record_id = self._record_id(
+            None,
+            getattr(event, "record_id", None) or getattr(event, "media_id", None),
+        )
+        if record_id and self.runtime_state:
+            cached = self.runtime_state.detail_by_record_id.get(record_id)
+            if cached:
+                return dict(cached)
+
+        viewer_record = getattr(self.viewer_panel, "media_data", None)
+        if isinstance(viewer_record, dict):
+            return dict(viewer_record)
+
+        return {}
+
+    def _show_viewer(self) -> None:
+        """Hide the empty state and display the viewer panel."""
+        self.query_one("#media-empty-state").add_class("hidden")
+        self.viewer_panel.remove_class("hidden")
+
+    def _show_empty_state(self) -> None:
+        """Show the empty state and hide the viewer panel."""
+        self.query_one("#media-empty-state").remove_class("hidden")
+        self.viewer_panel.add_class("hidden")
+
+    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+        """Reset media state when the active backend changes."""
+        if self.runtime_state is not None:
+            self.runtime_state.reset_for_backend(runtime_backend)
+        self.active_media_type = None
+        self.selected_media_id = None
+        if hasattr(self.list_panel, "selected_id"):
+            self.list_panel.selected_id = None
+        if hasattr(self.viewer_panel, "media_data"):
+            self.viewer_panel.media_data = None
+        self.viewer_panel.clear_display()
+        self._show_empty_state()
+
+    async def load_reading_progress(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Load and cache reading progress for a normalized media record."""
+        record_id = self._record_id(record)
+        if record_id is None:
+            return None
+
+        if record.get("backing_media_id") in (None, ""):
+            return None
+
+        scope_service = self._scope_service()
+        if scope_service is None:
+            return None
+
+        progress = await self._maybe_await(
+            scope_service.get_reading_progress(
+                mode=self._record_backend(record),
+                record=record,
+            )
+        )
+        if progress is not None and self.runtime_state is not None:
+            self.runtime_state.reading_progress_by_record_id[record_id] = progress
+        return progress
+
+    async def _load_document_versions(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Load analysis/document versions through the scope seam."""
+        scope_service = self._scope_service()
+        if scope_service is None:
+            self.viewer_panel.load_analysis_versions([])
+            return []
+
+        try:
+            versions = await self._maybe_await(
+                scope_service.list_document_versions(
+                    mode=self._record_backend(record),
+                    media_id=self._source_media_id(record),
+                    include_deleted=False,
+                )
+            )
+        except ValueError as exc:
+            logger.debug(f"Document versions unavailable for record {record.get('id')}: {exc}")
+            versions = []
+        except Exception as exc:
+            logger.error(f"Failed to load document versions for record {record.get('id')}: {exc}")
+            versions = []
+
+        if not isinstance(versions, (list, tuple)):
+            versions = []
+
+        self.viewer_panel.load_analysis_versions(list(versions or []))
+        return list(versions or [])
     
     def compose(self) -> ComposeResult:
         """Compose the MediaWindow UI."""
@@ -240,48 +384,107 @@ class MediaWindow(Container):
             )
     
     @on(MediaItemSelectedEvent)
-    def handle_media_item_selected(self, event: MediaItemSelectedEvent) -> None:
-        """Handle media item selection from list panel."""
-        logger.info(f"Media item selected: {event.media_id}")
-        self.selected_media_id = event.media_id
-        
-        # Fetch full media data including content
-        if self.app_instance.media_db:
-            full_media_data = self.app_instance.media_db.get_media_by_id(event.media_id, include_trash=True)
-            if full_media_data:
-                # Also fetch the latest document version to get analysis
-                try:
-                    from ..DB.Client_Media_DB_v2 import get_document_version
-                    doc_version = get_document_version(self.app_instance.media_db, event.media_id, include_content=False)
-                    if doc_version and doc_version.get('analysis_content'):
-                        full_media_data['analysis'] = doc_version['analysis_content']
-                except Exception as e:
-                    logger.debug(f"Could not fetch document version for analysis: {e}")
-                
-                self.viewer_panel.load_media(full_media_data)
-            else:
-                logger.error(f"Failed to fetch full data for media ID {event.media_id}")
-                # Fall back to partial data
-                self.viewer_panel.load_media(event.media_data)
-        else:
-            # No database available, use partial data
-            self.viewer_panel.load_media(event.media_data)
-            
-        # Hide empty state, show viewer
-        self.query_one("#media-empty-state").add_class("hidden")
-        self.viewer_panel.remove_class("hidden")
+    async def handle_media_item_selected(self, event: MediaItemSelectedEvent) -> None:
+        """Handle list selection using normalized record IDs and the shared seam."""
+        record = self._record_for_event(event)
+        record_id = self._record_id(
+            record,
+            getattr(event, "record_id", None) or getattr(event, "media_id", None),
+        )
+        if record_id is None:
+            logger.warning("Media selection ignored because no record ID was provided")
+            return
+
+        record["id"] = record_id
+        record.setdefault("backend", self._runtime_backend())
+
+        logger.info(f"Media item selected: {record_id}")
+        self.selected_media_id = record_id
+        if self.runtime_state is not None:
+            self.runtime_state.selected_record_id = record_id
+
+        detail = dict(record)
+        scope_service = self._scope_service()
+        if scope_service is not None:
+            try:
+                scoped_detail = await self._maybe_await(
+                    scope_service.get_media_detail(
+                        mode=self._record_backend(record),
+                        media_id=self._source_media_id(
+                            record,
+                            fallback=getattr(event, "media_id", None),
+                        ),
+                    )
+                )
+                if isinstance(scoped_detail, dict):
+                    detail = scoped_detail
+            except Exception as exc:
+                logger.error(f"Failed to load media detail for {record_id}: {exc}")
+
+        detail.setdefault("id", record_id)
+        detail.setdefault("backend", record.get("backend", self._runtime_backend()))
+        detail.setdefault(
+            "source_id",
+            self._source_media_id(detail, fallback=self._source_media_id(record, fallback=getattr(event, "media_id", None))),
+        )
+
+        if detail.get("reading_progress") is None:
+            progress = await self.load_reading_progress(detail)
+            if progress is not None:
+                detail["reading_progress"] = progress
+        elif self.runtime_state is not None:
+            self.runtime_state.reading_progress_by_record_id[record_id] = detail["reading_progress"]
+
+        if self.runtime_state is not None:
+            self.runtime_state.detail_by_record_id[record_id] = detail
+        self.viewer_panel.load_media(detail)
+        await self._load_document_versions(detail)
+        self._show_viewer()
     
     @on(MediaMetadataUpdateEvent)
     async def handle_metadata_update(self, event: MediaMetadataUpdateEvent) -> None:
-        """Handle metadata update from viewer panel."""
-        # Set the type slug
+        """Handle metadata updates through the scope seam."""
         event.type_slug = self.active_media_type or ""
-        
-        # Forward to existing handler
-        from ..Event_Handlers import media_events
-        await media_events.handle_media_metadata_update(self.app_instance, event)
-        
-        # Refresh the list
+
+        record = self._record_for_event(event)
+        record_id = self._record_id(
+            record,
+            getattr(event, "record_id", None) or getattr(event, "media_id", None),
+        )
+        if record_id is None:
+            self.app_instance.notify("Unable to determine media record for update", severity="error")
+            return
+
+        record["id"] = record_id
+        try:
+            await self._scope_service().update_media_metadata(
+                mode=self._record_backend(record),
+                media_id=self._source_media_id(record, fallback=getattr(event, "media_id", None)),
+                title=event.title,
+                media_type=event.media_type,
+                author=event.author,
+                url=event.url,
+                keywords=event.keywords,
+            )
+            updated_record = dict(record)
+            updated_record.update(
+                {
+                    "title": event.title,
+                    "media_type": event.media_type,
+                    "author": event.author,
+                    "url": event.url,
+                    "keywords": event.keywords,
+                }
+            )
+            if self.runtime_state is not None:
+                self.runtime_state.detail_by_record_id[record_id] = updated_record
+            self.viewer_panel.load_media(updated_record)
+            await self._load_document_versions(updated_record)
+        except Exception as exc:
+            logger.error(f"Error updating metadata for {record_id}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
+            return
+
         if self.active_media_type:
             search_term = self.search_panel.search_term
             keyword_filter = self.search_panel.keyword_filter
@@ -310,41 +513,58 @@ class MediaWindow(Container):
         
         confirmed = await self.app.push_screen_wait(dialog)
         if confirmed:
-            # Perform the deletion
-            if self.app_instance.media_db:
-                success = self.app_instance.media_db.soft_delete_media(event.media_id)
-                if success:
-                    self.app_instance.notify(f"'{event.media_title}' has been deleted", severity="information")
-                    
-                    # Refresh the list after deletion
-                    if self.active_media_type:
-                        search_term = self.search_panel.search_term
-                        keyword_filter = self.search_panel.keyword_filter
-                        self._perform_search(
-                            self.active_media_type,
-                            search_term,
-                            keyword_filter
-                        )
-                        
-                    # Clear the viewer if the deleted item was being displayed
-                    if self.selected_media_id == event.media_id:
-                        self.selected_media_id = None
-                        self.viewer_panel.clear_display()
-                        # Show empty state
-                        self.query_one("#media-empty-state").remove_class("hidden")
-                        self.viewer_panel.add_class("hidden")
-                else:
-                    self.app_instance.notify(f"Failed to delete '{event.media_title}'", severity="error")
+            record = self._record_for_event(event)
+            record_id = self._record_id(
+                record,
+                getattr(event, "record_id", None) or getattr(event, "media_id", None),
+            )
+            try:
+                success = await self._scope_service().delete_media(
+                    mode=self._record_backend(record),
+                    media_id=self._source_media_id(record, fallback=getattr(event, "media_id", None)),
+                )
+            except Exception as exc:
+                logger.error(f"Error deleting media {record_id}: {exc}", exc_info=True)
+                self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
+                return
+
+            if success:
+                self.app_instance.notify(f"'{event.media_title}' has been deleted", severity="information")
+
+                if self.active_media_type:
+                    search_term = self.search_panel.search_term
+                    keyword_filter = self.search_panel.keyword_filter
+                    self._perform_search(
+                        self.active_media_type,
+                        search_term,
+                        keyword_filter
+                    )
+
+                if record_id is not None and self.selected_media_id == record_id:
+                    self.selected_media_id = None
+                    if self.runtime_state is not None:
+                        self.runtime_state.selected_record_id = None
+                    self.viewer_panel.clear_display()
+                    self._show_empty_state()
+            else:
+                self.app_instance.notify(f"Failed to delete '{event.media_title}'", severity="error")
         else:
             logger.info(f"Media deletion cancelled for: {event.media_title}")
     
     @on(MediaUndeleteEvent)
     async def handle_media_undelete(self, event: MediaUndeleteEvent) -> None:
-        """Handle undelete event."""
-        from ..Event_Handlers import media_events
-        await media_events.handle_media_undelete(self.app_instance, event)
-        
-        # Refresh the list
+        """Handle undelete through the shared seam."""
+        record = self._record_for_event(event)
+        try:
+            await self._scope_service().undelete_media(
+                mode=self._record_backend(record),
+                media_id=self._source_media_id(record, fallback=getattr(event, "media_id", None)),
+            )
+        except Exception as exc:
+            logger.error(f"Error undeleting media {getattr(event, 'record_id', getattr(event, 'media_id', None))}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
+            return
+
         if self.active_media_type:
             search_term = self.search_panel.search_term
             keyword_filter = self.search_panel.keyword_filter
@@ -394,13 +614,15 @@ class MediaWindow(Container):
                            f"temperature={event.temperature}, top_p={event.top_p}, min_p={event.min_p}, "
                            f"max_tokens={event.max_tokens}")
                 
-                # Get media content
-                if not self.app_instance.media_db:
-                    logger.error("Media database not available")
-                    self.app_instance.notify("Media database not available", severity="error")
-                    return
-                
-                media_data = self.app_instance.media_db.get_media_by_id(event.media_id)
+                record = self._record_for_event(event)
+                media_data = dict(record) if record else None
+
+                if not media_data and self.app_instance.media_db and event.media_id not in (None, ""):
+                    try:
+                        media_data = self.app_instance.media_db.get_media_by_id(event.media_id)
+                    except Exception as exc:
+                        logger.debug(f"Local media lookup failed for analysis request {event.media_id}: {exc}")
+
                 if not media_data:
                     logger.error(f"Media item not found for id={event.media_id}")
                     self.app_instance.notify("Media item not found", severity="error")
@@ -603,40 +825,43 @@ class MediaWindow(Container):
     def handle_analysis_save(self, event: MediaAnalysisSaveEvent) -> None:
         """Handle saving new analysis."""
         event.type_slug = self.active_media_type or ""
-        
+        self.run_worker(self._handle_analysis_save_async(event), exclusive=True)
+
+    async def _handle_analysis_save_async(self, event: MediaAnalysisSaveEvent) -> None:
+        """Persist a new analysis version via the shared seam."""
+        record = self._record_for_event(event)
+        record_id = self._record_id(
+            record,
+            getattr(event, "record_id", None) or getattr(event, "media_id", None),
+        )
+        if record_id is None:
+            self.app_instance.notify("Media item not found", severity="error")
+            return
+
+        record["id"] = record_id
         try:
-            if not self.app_instance.media_db:
-                self.app_instance.notify("Media database not available", severity="error")
-                return
-            
-            # Get the current content
-            media_data = self.app_instance.media_db.get_media_by_id(event.media_id)
-            if not media_data:
-                self.app_instance.notify("Media item not found", severity="error")
-                return
-            
-            # Create a new document version with the analysis
-            # Note: create_document_version expects to be called within a transaction
-            with self.app_instance.media_db.transaction():
-                version_info = self.app_instance.media_db.create_document_version(
-                    media_id=event.media_id,
-                    content=media_data.get('content', ''),
-                    analysis_content=event.analysis_content
-                )
-            
-            if version_info:
-                self.app_instance.notify("Analysis saved successfully", severity="information")
-                # Update the viewer to show it's now saved
-                self.viewer_panel.has_existing_analysis = True
-                self.viewer_panel._update_analysis_button_states()
-                # Reload all analyses to include the new one
-                self.viewer_panel.load_all_analyses()
-            else:
-                self.app_instance.notify("Failed to save analysis", severity="error")
-                
-        except Exception as e:
-            logger.error(f"Error saving analysis: {e}", exc_info=True)
-            self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
+            version_info = await self._scope_service().save_analysis_version(
+                mode=self._record_backend(record),
+                media_id=self._source_media_id(record, fallback=getattr(event, "media_id", None)),
+                content=record.get("content", ""),
+                analysis_content=event.analysis_content,
+            )
+        except ValueError as exc:
+            self.app_instance.notify(str(exc), severity="warning")
+            return
+        except Exception as exc:
+            logger.error(f"Error saving analysis for {record_id}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
+            return
+
+        if version_info:
+            self.app_instance.notify("Analysis saved successfully", severity="information")
+            self.viewer_panel.has_existing_analysis = True
+            self.viewer_panel.current_analysis = event.analysis_content
+            self.viewer_panel._update_analysis_button_states()
+            await self._load_document_versions(record)
+        else:
+            self.app_instance.notify("Failed to save analysis", severity="error")
     
     @on(MediaAnalysisSaveAsNoteEvent)
     def handle_analysis_save_as_note(self, event: MediaAnalysisSaveAsNoteEvent) -> None:
@@ -678,80 +903,87 @@ class MediaWindow(Container):
     def handle_analysis_overwrite(self, event: MediaAnalysisOverwriteEvent) -> None:
         """Handle overwriting existing analysis."""
         event.type_slug = self.active_media_type or ""
-        
+        self.run_worker(self._handle_analysis_overwrite_async(event), exclusive=True)
+
+    async def _handle_analysis_overwrite_async(self, event: MediaAnalysisOverwriteEvent) -> None:
+        """Persist an overwrite analysis version via the shared seam."""
+        record = self._record_for_event(event)
+        record_id = self._record_id(
+            record,
+            getattr(event, "record_id", None) or getattr(event, "media_id", None),
+        )
+        if record_id is None:
+            self.app_instance.notify("Media item not found", severity="error")
+            return
+
+        record["id"] = record_id
         try:
-            if not self.app_instance.media_db:
-                self.app_instance.notify("Media database not available", severity="error")
-                return
-            
-            # Get the current content
-            media_data = self.app_instance.media_db.get_media_by_id(event.media_id)
-            if not media_data:
-                self.app_instance.notify("Media item not found", severity="error")
-                return
-            
-            # Create a new document version with the updated analysis
-            # This will overwrite the analysis for this media item
-            # Note: create_document_version expects to be called within a transaction
-            with self.app_instance.media_db.transaction():
-                version_info = self.app_instance.media_db.create_document_version(
-                    media_id=event.media_id,
-                    content=media_data.get('content', ''),
-                    analysis_content=event.analysis_content
-                )
-            
-            if version_info:
-                self.app_instance.notify("Analysis overwritten successfully", severity="information")
-                # Update the viewer state
-                self.viewer_panel.has_existing_analysis = True
-                self.viewer_panel.current_analysis = event.analysis_content
-                self.viewer_panel._update_analysis_button_states()
-                # Reload all analyses to show the updated version
-                self.viewer_panel.load_all_analyses()
-            else:
-                self.app_instance.notify("Failed to overwrite analysis", severity="error")
-                
-        except Exception as e:
-            logger.error(f"Error overwriting analysis: {e}", exc_info=True)
-            self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
+            version_info = await self._scope_service().overwrite_analysis_version(
+                mode=self._record_backend(record),
+                media_id=self._source_media_id(record, fallback=getattr(event, "media_id", None)),
+                content=record.get("content", ""),
+                analysis_content=event.analysis_content,
+            )
+        except ValueError as exc:
+            self.app_instance.notify(str(exc), severity="warning")
+            return
+        except Exception as exc:
+            logger.error(f"Error overwriting analysis for {record_id}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
+            return
+
+        if version_info:
+            self.app_instance.notify("Analysis overwritten successfully", severity="information")
+            self.viewer_panel.has_existing_analysis = True
+            self.viewer_panel.current_analysis = event.analysis_content
+            self.viewer_panel._update_analysis_button_states()
+            await self._load_document_versions(record)
+        else:
+            self.app_instance.notify("Failed to overwrite analysis", severity="error")
     
     @on(MediaAnalysisDeleteEvent)
     def handle_analysis_delete(self, event: MediaAnalysisDeleteEvent) -> None:
         """Handle deleting an analysis version."""
         event.type_slug = self.active_media_type or ""
-        
+        self.run_worker(self._handle_analysis_delete_async(event), exclusive=True)
+
+    async def _handle_analysis_delete_async(self, event: MediaAnalysisDeleteEvent) -> None:
+        """Delete an analysis version through the shared seam."""
+        if not event.version_uuid:
+            logger.info("No UUID provided, this appears to be a legacy analysis")
+            self.app_instance.notify("Cannot delete legacy analysis from database", severity="warning")
+            return
+
+        record = self._record_for_event(event)
         try:
-            if not self.app_instance.media_db:
-                self.app_instance.notify("Media database not available", severity="error")
-                return
-            
-            # Only try to delete if we have a valid UUID
-            if event.version_uuid:
-                # Delete the document version
-                success = self.app_instance.media_db.soft_delete_document_version(event.version_uuid)
-                
-                if success:
-                    self.app_instance.notify("Analysis deleted successfully", severity="information")
-                    # Reload all analyses to reflect the deletion
-                    self.viewer_panel.load_all_analyses()
-                else:
-                    # If deletion failed, it might be the last version
-                    # Check if we can clear the media's analysis field instead
-                    logger.info("Could not delete document version, might be the last one")
-                    self.app_instance.notify("This is the last analysis version", severity="warning")
-            else:
-                # No UUID means this is a legacy analysis in the media table
-                logger.info("No UUID provided, this appears to be a legacy analysis")
-                self.app_instance.notify("Cannot delete legacy analysis from database", severity="warning")
-                
-        except Exception as e:
-            logger.error(f"Error deleting analysis: {e}", exc_info=True)
-            self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
+            success = await self._scope_service().delete_analysis_version(
+                mode=self._record_backend(record),
+                version_uuid=event.version_uuid,
+            )
+        except ValueError as exc:
+            self.app_instance.notify(str(exc), severity="warning")
+            return
+        except Exception as exc:
+            logger.error(f"Error deleting analysis {event.version_uuid}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
+            return
+
+        if success:
+            self.app_instance.notify("Analysis deleted successfully", severity="information")
+            await self._load_document_versions(record)
+        else:
+            logger.info("Could not delete document version, might be the last one")
+            self.app_instance.notify("This is the last analysis version", severity="warning")
     
     def activate_media_type(self, type_slug: str, display_name: str) -> None:
         """Activate a media type and perform initial search."""
         logger.info(f"activate_media_type called: type_slug='{type_slug}', display_name='{display_name}'")
         self.active_media_type = type_slug
+        if self.runtime_state is not None:
+            self.runtime_state.active_media_type = type_slug
+            self.runtime_state.search_term = ""
+            self.runtime_state.keyword_filter = ""
+            self.runtime_state.selected_record_id = None
         
         # Update navigation panel
         self.nav_panel.selected_type = type_slug
@@ -764,8 +996,7 @@ class MediaWindow(Container):
         
         # Show empty state
         try:
-            self.query_one("#media-empty-state").remove_class("hidden")
-            self.viewer_panel.add_class("hidden")
+            self._show_empty_state()
         except Exception:
             pass
         
@@ -792,6 +1023,8 @@ class MediaWindow(Container):
         """Update search results in the list panel."""
         try:
             logger.info(f"Updating search results: {len(results)} items, page {page}/{total_pages}")
+            if self.runtime_state is not None:
+                self.runtime_state.browse_items = list(results)
             self.list_panel.load_items(results, page, total_pages)
         except Exception as e:
             logger.error(f"Error updating search results: {e}", exc_info=True)
@@ -822,8 +1055,9 @@ class MediaWindow(Container):
         async def perform_search():
             logger.info(f"perform_search coroutine executing for type '{type_slug}'")
             try:
-                if not self.app_instance.media_db:
-                    logger.error("Media DB service not available")
+                scope_service = self._scope_service()
+                if scope_service is None:
+                    logger.error("Media reading scope service not available")
                     return
                 
                 # Skip search for special windows
@@ -845,24 +1079,49 @@ class MediaWindow(Container):
                 if keyword_filter:
                     keywords_list = [k.strip() for k in keyword_filter.split(',') if k.strip()]
 
-                # Search for media items using search_media_db method
-                results, total_matches = self.app_instance.media_db.search_media_db(
-                    search_query=search_term if search_term else None,
-                    media_types=media_types_filter,
-                    search_fields=['title', 'content', 'author', 'url', 'type', 'analysis_content'],
-                    must_have_keywords=keywords_list,
-                    sort_by="last_modified_desc",
-                    page=self.list_panel.current_page,
-                    results_per_page=self.list_panel.items_per_page,
-                    include_trash=False,
-                    include_deleted=self.search_panel.show_deleted
+                mode = self._runtime_backend()
+                search_filters = {
+                    "sort_by": "last_modified_desc",
+                    "include_deleted": getattr(self.search_panel, "show_deleted", False),
+                }
+                if mode == "local":
+                    search_filters.update(
+                        {
+                            "media_types": media_types_filter,
+                            "must_have_keywords": keywords_list,
+                            "fields": ['title', 'content', 'author', 'url', 'type', 'analysis_content'],
+                            "include_trash": False,
+                        }
+                    )
+
+                offset = max(self.list_panel.current_page - 1, 0) * self.list_panel.items_per_page
+                payload = await scope_service.search_media(
+                    mode=mode,
+                    query=search_term if search_term else None,
+                    limit=self.list_panel.items_per_page,
+                    offset=offset,
+                    **search_filters,
                 )
+                results = list(payload.get("items", []))
+                total_matches = int(payload.get("total", len(results)) or 0)
+
+                if mode == "server" and type_slug not in ["all-media", "analysis-review"]:
+                    expected_media_type = type_slug.replace("-", "_")
+                    results = [
+                        item for item in results
+                        if str(item.get("media_type") or "").strip().lower() == expected_media_type
+                    ]
+                    total_matches = len(results)
                 
                 logger.info(f"Search returned {len(results)} results, total matches: {total_matches}")
+                if self.runtime_state is not None:
+                    self.runtime_state.search_term = search_term
+                    self.runtime_state.keyword_filter = keyword_filter
                 
                 if results:
                     # Calculate total pages
                     total_pages = (total_matches + self.list_panel.items_per_page - 1) // self.list_panel.items_per_page
+                    total_pages = max(total_pages, 1)
                     
                     # Update the list panel
                     self.update_search_results(

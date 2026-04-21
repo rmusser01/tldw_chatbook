@@ -13,6 +13,7 @@ from tldw_chatbook.Widgets.CCP_Widgets import (
     EditPersonaRequested,
     PersonaLoadRequested,
     PersonaSaveRequested,
+    StartPersonaChatRequested,
 )
 
 
@@ -108,6 +109,23 @@ class TestCCPPersonaWidgets:
         event.stop.assert_called_once()
         posted = widget.post_message.call_args[0][0]
         assert isinstance(posted, EditPersonaRequested)
+        assert posted.persona_id == "persona.local.alice"
+
+    @pytest.mark.asyncio
+    async def test_persona_card_start_chat_posts_message(self, mock_parent_screen, sample_persona_data):
+        widget = CCPPersonaCardWidget(parent_screen=mock_parent_screen)
+        widget.persona_data = dict(sample_persona_data)
+        widget.post_message = Mock()
+        widget._emit_message_to_app = AsyncMock(
+            side_effect=lambda message, _handler_name: widget.post_message(message)
+        )
+        event = Mock()
+
+        await widget.handle_start_chat(event)
+
+        event.stop.assert_called_once()
+        posted = widget.post_message.call_args[0][0]
+        assert isinstance(posted, StartPersonaChatRequested)
         assert posted.persona_id == "persona.local.alice"
 
     @pytest.mark.asyncio

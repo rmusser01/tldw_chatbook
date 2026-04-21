@@ -28,6 +28,7 @@ from ...Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPane
 from ...Widgets.emoji_picker import EmojiPickerScreen, EmojiSelected
 from ..Navigation.base_app_screen import BaseAppScreen
 from .notes_scope_models import NotesScreenState, PendingNavigation, ScopeType, WorkspaceSubview
+from .study_scope_models import StudyScopeContext, StudyScopeType
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -276,6 +277,20 @@ class NotesScreen(BaseAppScreen):
             sidebar_right.apply_scope_context(self.state.scope_type.value, resource_kind)
         except QueryError:
             return
+
+    def _current_workspace_study_context(self) -> StudyScopeContext | None:
+        if self.state.scope_type != ScopeType.WORKSPACE:
+            return None
+        workspace_id = self.state.selected_workspace_id
+        if not workspace_id:
+            return None
+        workspace = self._workspace_context_payload.get("workspace", {}) or {}
+        workspace_name = workspace.get("name") or self.state.selected_note_title or None
+        return StudyScopeContext(
+            scope_type=StudyScopeType.WORKSPACE,
+            workspace_id=workspace_id,
+            workspace_name=workspace_name,
+        )
 
     def _baseline_changes(
         self,
@@ -1572,6 +1587,17 @@ class NotesScreen(BaseAppScreen):
         if deleted_id and resource_kind == "note":
             self.post_message(NoteDeleted(deleted_id))
 
+    @on(Button.Pressed, "#workspace-open-study-button")
+    def handle_workspace_open_study_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        scope_context = self._current_workspace_study_context()
+        if scope_context is None:
+            self._notify("No workspace selected for study.", severity="warning")
+            return
+        open_study = getattr(self.app_instance, "open_study_screen", None)
+        if callable(open_study):
+            open_study(scope_context)
+
     @on(Button.Pressed, "#notes-export-markdown-button")
     async def handle_export_markdown_button(self, event: Button.Pressed) -> None:
         event.stop()
@@ -1725,9 +1751,39 @@ class NotesScreen(BaseAppScreen):
         if emoji_char:
             self.post_message(EmojiSelected(emoji_char))
 
+    def _consume_pending_workspace_return_context(self) -> bool:
+        pending_context = getattr(getattr(self.app_instance, "__dict__", {}), "get", lambda *_: None)(
+            "pending_notes_workspace_context"
+        )
+        if not (isinstance(pending_context, dict) and pending_context.get("workspace_id")):
+            return False
+
+        self.app_instance.pending_notes_workspace_context = None
+        raw_subview = pending_context.get("subview", WorkspaceSubview.DETAILS)
+        if isinstance(raw_subview, WorkspaceSubview):
+            subview = raw_subview
+        else:
+            subview = WorkspaceSubview(str(raw_subview))
+
+        self._apply_navigation_target(
+            PendingNavigation(
+                target_scope=ScopeType.WORKSPACE,
+                target_workspace_id=pending_context.get("workspace_id"),
+                target_workspace_subview=subview,
+            )
+        )
+        self._set_state(has_unsaved_changes=False, pending_navigation=None)
+        return True
+
     async def on_mount(self) -> None:
         super().on_mount()
         logger.info("NotesScreen mounted")
+        self._consume_pending_workspace_return_context()
+        await self.refresh_current_scope()
+        self._update_scope_context_ui()
+
+    async def on_screen_resume(self) -> None:
+        self._consume_pending_workspace_return_context()
         await self.refresh_current_scope()
         self._update_scope_context_ui()
 

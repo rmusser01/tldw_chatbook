@@ -39,7 +39,7 @@ def get_log_count(db: Database, entity_uuid: str) -> int:
     return cursor.fetchone()[0]
 
 
-def get_latest_log(db: Database, entity_uuid: str) -> dict | None:
+def get_latest_log(db: Database, entity_uuid: str):
     """Helper to get the most recent sync log for an entity."""
     cursor = db.execute_query(
         "SELECT * FROM sync_log WHERE entity_uuid = ? ORDER BY change_id DESC LIMIT 1",
@@ -49,11 +49,23 @@ def get_latest_log(db: Database, entity_uuid: str) -> dict | None:
     return dict(row) if row else None
 
 
-def get_entity_version(db: Database, entity_table: str, uuid: str) -> int | None:
+def get_entity_version(db: Database, entity_table: str, uuid: str):
     """Helper to get the current version of an entity."""
     cursor = db.execute_query(f"SELECT version FROM {entity_table} WHERE uuid = ?", (uuid,))
     row = cursor.fetchone()
     return row['version'] if row else None
+
+
+def get_document_version_count(db: Database, media_id: int) -> int:
+    """Helper to count document versions for a media item."""
+    cursor = db.execute_query("SELECT COUNT(*) FROM DocumentVersions WHERE media_id = ?", (media_id,))
+    return cursor.fetchone()[0]
+
+
+def get_schema_version(db: Database) -> int:
+    """Helper to fetch the current schema version."""
+    cursor = db.execute_query("SELECT version FROM schema_version LIMIT 1")
+    return cursor.fetchone()[0]
 
 
 #######################################################################################################################
@@ -409,6 +421,112 @@ class TestDatabaseCRUDAndSync:
                 (current_version + 1, kw_id), commit=True
             )
 
+    def test_reading_progress_round_trip(self, db_instance):
+        media_id, _, _ = db_instance.add_media_with_keywords(
+            title="Reading Progress Round Trip",
+            media_type="article",
+            content="Round trip content for local reading progress.",
+            keywords=["reading", "progress"],
+        )
+
+        payload = {
+            "current_page": 4,
+            "total_pages": 12,
+            "view_mode": "single",
+            "zoom_level": 1.25,
+            "cfi": "epubcfi(/6/4[chapter]!/4/2/6)",
+            "percentage": 33.3,
+        }
+        written = db_instance.upsert_reading_progress(media_id, payload)
+        fetched = db_instance.get_reading_progress(media_id)
+
+        assert written["media_id"] == media_id
+        assert fetched is not None
+        assert fetched["media_id"] == media_id
+        assert fetched["current_page"] == 4
+        assert fetched["total_pages"] == 12
+        assert fetched["view_mode"] == "single"
+        assert fetched["zoom_level"] == 1.25
+        assert fetched["cfi"] == "epubcfi(/6/4[chapter]!/4/2/6)"
+        assert fetched["percentage"] == 33.3
+
+    def test_reading_progress_delete_removes_row(self, db_instance):
+        media_id, _, _ = db_instance.add_media_with_keywords(
+            title="Reading Progress Delete",
+            media_type="article",
+            content="Delete content for local reading progress.",
+            keywords=["reading", "delete"],
+        )
+
+        db_instance.upsert_reading_progress(media_id, {"current_page": 2, "total_pages": 5})
+
+        assert db_instance.delete_reading_progress(media_id) is True
+        assert db_instance.get_reading_progress(media_id) is None
+        assert db_instance.delete_reading_progress(media_id) is False
+
+    def test_reading_progress_upsert_is_local_only(self, db_instance):
+        media_id, media_uuid, _ = db_instance.add_media_with_keywords(
+            title="Reading Progress Local Only",
+            media_type="article",
+            content="Local-only content for reading progress.",
+            keywords=["reading", "local"],
+        )
+
+        media_version_before = get_entity_version(db_instance, "Media", media_uuid)
+        sync_log_before = get_log_count(db_instance, media_uuid)
+        document_versions_before = get_document_version_count(db_instance, media_id)
+
+        db_instance.upsert_reading_progress(
+            media_id,
+            {"current_page": 7, "total_pages": 11, "view_mode": "single"},
+        )
+
+        assert get_entity_version(db_instance, "Media", media_uuid) == media_version_before
+        assert get_log_count(db_instance, media_uuid) == sync_log_before
+        assert get_document_version_count(db_instance, media_id) == document_versions_before
+
+    def test_reading_progress_reopens_through_versioned_migration(self, temp_db_path):
+        first_db = Database(db_path=temp_db_path, client_id="schema_client")
+        media_id, _, _ = first_db.add_media_with_keywords(
+            title="Reading Progress Migration",
+            media_type="article",
+            content="Migration content for reading progress.",
+            keywords=["reading", "migration"],
+        )
+        first_db.close_connection()
+
+        conn = sqlite3.connect(temp_db_path)
+        try:
+            conn.execute("DROP TABLE IF EXISTS MediaReadingProgress")
+            conn.execute("UPDATE schema_version SET version = 2")
+            conn.commit()
+        finally:
+            conn.close()
+
+        reopened_db = Database(db_path=temp_db_path, client_id="schema_client")
+        try:
+            assert get_schema_version(reopened_db) == 3
+            reopened_db.upsert_reading_progress(
+                media_id,
+                {
+                    "current_page": 8,
+                    "total_pages": 20,
+                    "view_mode": "single",
+                    "zoom_level": 1.1,
+                    "cfi": "epubcfi(/6/2[chapter]!/4/2/6)",
+                    "percentage": 40.0,
+                },
+            )
+            fetched = reopened_db.get_reading_progress(media_id)
+            assert fetched is not None
+            assert fetched["media_id"] == media_id
+            assert fetched["current_page"] == 8
+            assert fetched["zoom_level"] == 1.1
+            assert fetched["cfi"] == "epubcfi(/6/2[chapter]!/4/2/6)"
+            assert fetched["percentage"] == 40.0
+        finally:
+            reopened_db.close_connection()
+
 
 @pytest.mark.integration
 class TestSyncLogManagement:
@@ -462,4 +580,3 @@ class TestSyncLogManagement:
 #
 # End of test_media_db_v2.py
 ########################################################################################################################
-

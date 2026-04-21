@@ -4,7 +4,7 @@ from typing import Any, Iterable
 
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll
-from textual.widgets import Label, ListItem, ListView, Static
+from textual.widgets import Button, Label, ListItem, ListView, Static
 
 
 class WorkspaceContextPanel(VerticalScroll):
@@ -55,6 +55,7 @@ class WorkspaceContextPanel(VerticalScroll):
             yield Static("Workspace Details", classes="workspace-heading")
             yield Label("", id="workspace-name")
             yield Label("", id="workspace-summary")
+            yield Button("Open Study", id="workspace-open-study-button", variant="primary")
 
         with Container(id="workspace-notes", classes="workspace-subview"):
             yield Static("Workspace Notes", classes="workspace-heading")

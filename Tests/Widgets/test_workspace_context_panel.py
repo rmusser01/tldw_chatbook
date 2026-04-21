@@ -63,6 +63,19 @@ async def test_workspace_context_panel_renders_workspace_details_fields():
 
 
 @pytest.mark.asyncio
+async def test_workspace_context_panel_exposes_open_study_action_only_in_details():
+    panel = WorkspaceContextPanel()
+    app = PanelTestApp(panel)
+
+    async with app.run_test() as pilot:
+        open_study_button = panel.query_one("#workspace-open-study-button", Button)
+
+        assert str(open_study_button.label) == "Open Study"
+        assert len(panel.query("Button")) == 1
+        assert open_study_button.parent.id == "workspace-details"
+
+
+@pytest.mark.asyncio
 async def test_workspace_context_panel_populates_workspace_lists():
     panel = WorkspaceContextPanel()
     app = PanelTestApp(panel)

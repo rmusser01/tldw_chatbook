@@ -50,6 +50,7 @@ from .ccp_character_editor_widget import (
 from .ccp_persona_card_widget import (
     CCPPersonaCardWidget,
     EditPersonaRequested,
+    StartPersonaChatRequested,
 )
 
 from .ccp_persona_editor_widget import (
@@ -116,6 +117,7 @@ __all__ = [
     'DeleteCharacterRequested',
     'StartChatRequested',
     'EditPersonaRequested',
+    'StartPersonaChatRequested',
     
     # Character Editor Messages
     'CharacterSaveRequested',

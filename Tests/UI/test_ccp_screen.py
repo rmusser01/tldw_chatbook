@@ -11,6 +11,8 @@ from tldw_chatbook.Widgets.CCP_Widgets import (
     CCPPersonaCardWidget,
     CCPPersonaEditorWidget,
     ContinueConversationRequested,
+    StartChatRequested,
+    StartPersonaChatRequested,
 )
 
 
@@ -165,5 +167,85 @@ class TestCCPScreenIntegration:
             await screen.on_continue_conversation_requested(ContinueConversationRequested())
 
             tab_container.create_new_tab.assert_awaited_once()
+            tab_container.switch_to_tab_async.assert_awaited_once_with("tab-1")
+            display_mock.assert_not_called()
+
+    async def test_start_character_chat_launches_blank_main_chat_session(self, mock_app_instance, monkeypatch):
+        app = CCPTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = pilot.app.screen
+            screen.state.selected_character_id = "7"
+            screen.state.selected_character_name = "Alice Character"
+            screen.state.selected_character_data = {"id": 7, "name": "Alice Character"}
+
+            tab_container = Mock()
+            tab_container.sessions = {}
+            tab_container.create_new_tab = AsyncMock(return_value="tab-1")
+            tab_container.switch_to_tab_async = AsyncMock()
+
+            chat_window = Mock()
+            chat_window._get_tab_container = Mock(return_value=tab_container)
+            pilot.app.query_one = Mock(return_value=chat_window)
+
+            display_mock = AsyncMock()
+            monkeypatch.setattr(
+                "tldw_chatbook.Event_Handlers.Chat_Events.chat_events_tabs.display_conversation_in_chat_tab_ui_with_tabs",
+                display_mock,
+            )
+
+            await screen.on_start_chat_requested(StartChatRequested(7))
+
+            session_data = tab_container.create_new_tab.await_args.kwargs["session_data"]
+            assert session_data.conversation_id is None
+            assert session_data.is_ephemeral is True
+            assert session_data.character_id == 7
+            assert session_data.character_name == "Alice Character"
+            assert session_data.assistant_kind == "character"
+            assert session_data.assistant_id == "7"
+            assert session_data.discovery_owner == "ccp_character"
+            assert session_data.discovery_entity_id == "7"
+            tab_container.switch_to_tab_async.assert_awaited_once_with("tab-1")
+            display_mock.assert_not_called()
+
+    async def test_start_persona_chat_launches_blank_main_chat_session(self, mock_app_instance, monkeypatch):
+        app = CCPTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = pilot.app.screen
+            screen.state.selected_persona_id = "persona.local.alice"
+            screen.state.selected_character_name = "Alice Persona"
+            screen.persona_handler.current_persona_data = {
+                "id": "persona.local.alice",
+                "name": "Alice Persona",
+                "mode": "session_scoped",
+            }
+
+            tab_container = Mock()
+            tab_container.sessions = {}
+            tab_container.create_new_tab = AsyncMock(return_value="tab-1")
+            tab_container.switch_to_tab_async = AsyncMock()
+
+            chat_window = Mock()
+            chat_window._get_tab_container = Mock(return_value=tab_container)
+            pilot.app.query_one = Mock(return_value=chat_window)
+
+            display_mock = AsyncMock()
+            monkeypatch.setattr(
+                "tldw_chatbook.Event_Handlers.Chat_Events.chat_events_tabs.display_conversation_in_chat_tab_ui_with_tabs",
+                display_mock,
+            )
+
+            await screen.on_start_persona_chat_requested(StartPersonaChatRequested("persona.local.alice"))
+
+            session_data = tab_container.create_new_tab.await_args.kwargs["session_data"]
+            assert session_data.conversation_id is None
+            assert session_data.is_ephemeral is True
+            assert session_data.character_id is None
+            assert session_data.character_name == "Alice Persona"
+            assert session_data.assistant_kind == "persona"
+            assert session_data.assistant_id == "persona.local.alice"
+            assert session_data.discovery_owner == "ccp_persona"
+            assert session_data.discovery_entity_id == "persona.local.alice"
             tab_container.switch_to_tab_async.assert_awaited_once_with("tab-1")
             display_mock.assert_not_called()

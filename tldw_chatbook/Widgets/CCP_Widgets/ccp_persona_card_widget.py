@@ -30,6 +30,14 @@ class EditPersonaRequested(PersonaCardMessage):
         self.persona_id = persona_id
 
 
+class StartPersonaChatRequested(PersonaCardMessage):
+    """User requested to start a chat with the persona."""
+
+    def __init__(self, persona_id: str) -> None:
+        super().__init__()
+        self.persona_id = persona_id
+
+
 class CCPPersonaCardWidget(Container):
     """Read-only persona profile view."""
 
@@ -50,6 +58,7 @@ class CCPPersonaCardWidget(Container):
             yield Static("", id="ccp-persona-name-display")
             yield Static("", id="ccp-persona-mode-display")
             yield TextArea("", id="ccp-persona-system-prompt-display", read_only=True)
+            yield Button("Start Chat", id="ccp-persona-start-chat-button")
             yield Button("Edit Persona", id="ccp-persona-edit-button")
 
     def load_persona(self, persona_data: Dict[str, Any]) -> None:
@@ -79,4 +88,15 @@ class CCPPersonaCardWidget(Container):
             await self._emit_message_to_app(
                 EditPersonaRequested(str(persona_id)),
                 "on_edit_persona_requested",
+            )
+
+    @on(Button.Pressed, "#ccp-persona-start-chat-button")
+    async def handle_start_chat(self, event: Button.Pressed) -> None:
+        """Emit a start-chat request for the loaded persona."""
+        event.stop()
+        persona_id = self.persona_data.get("id")
+        if persona_id:
+            await self._emit_message_to_app(
+                StartPersonaChatRequested(str(persona_id)),
+                "on_start_persona_chat_requested",
             )

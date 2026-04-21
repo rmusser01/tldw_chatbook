@@ -4,6 +4,7 @@ Focused tests for the scope-aware NotesScreen state and routing hooks.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -16,6 +17,7 @@ from tldw_chatbook.UI.Screens.notes_scope_models import (
     ScopeType,
     WorkspaceSubview,
 )
+from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeContext, StudyScopeType
 from tldw_chatbook.Event_Handlers.tab_initializers.notes_tab_initializer import NotesTabInitializer
 from tldw_chatbook.UI.Screens.notes_screen import NotesScreen
 from tldw_chatbook.Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPanel
@@ -30,6 +32,8 @@ class NotesScreenTestApp(App[None]):
         self.notes_scope_service = screen.notes_scope_service
         self.server_notes_workspace_service = screen.server_notes_workspace_service
         self.notify = Mock()
+        self.open_study_screen = Mock()
+        self.open_notes_workspace = Mock()
         self.call_from_thread = Mock()
         self.loguru_logger = Mock()
         self.current_selected_note_id = None
@@ -85,6 +89,8 @@ def mock_app_instance(mock_local_notes_service):
     app.notes_scope_service = Mock()
     app.server_notes_workspace_service = Mock()
     app.notify = Mock()
+    app.open_study_screen = Mock()
+    app.open_notes_workspace = Mock()
     app.push_screen = Mock()
     app.push_screen_wait = AsyncMock(return_value=True)
     app.call_from_thread = Mock()
@@ -192,6 +198,86 @@ class TestNotesScreenMethods:
         assert screen.state.selected_workspace_artifact_id == "artifact-5"
         assert screen.state.selected_workspace_artifact_version == 8
         assert screen.state.auto_save_enabled is False
+
+    @pytest.mark.asyncio
+    async def test_on_mount_consumes_pending_workspace_return_context(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.restore_state(
+            {
+                "notes_state": {
+                    "scope_type": ScopeType.LOCAL_NOTE.value,
+                    "workspace_subview": WorkspaceSubview.NOTES.value,
+                    "selected_note_id": 11,
+                    "selected_workspace_id": None,
+                    "has_unsaved_changes": True,
+                }
+            }
+        )
+        screen.state = replace(
+            screen.state,
+            has_unsaved_changes=True,
+            pending_navigation=PendingNavigation(
+                target_scope=ScopeType.SERVER_NOTE,
+                target_id="server-note-7",
+                requires_confirmation=True,
+            ),
+        )
+        mock_app_instance.pending_notes_workspace_context = {
+            "workspace_id": "ws-9",
+            "subview": WorkspaceSubview.DETAILS,
+        }
+        screen.refresh_current_scope = AsyncMock()  # type: ignore[method-assign]
+        screen._update_scope_context_ui = Mock()  # type: ignore[method-assign]
+
+        await screen.on_mount()
+
+        assert screen.state.scope_type == ScopeType.WORKSPACE
+        assert screen.state.workspace_subview == WorkspaceSubview.DETAILS
+        assert screen.state.selected_workspace_id == "ws-9"
+        assert screen.state.has_unsaved_changes is False
+        assert screen.state.pending_navigation is None
+        assert mock_app_instance.pending_notes_workspace_context is None
+        screen.refresh_current_scope.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_on_screen_resume_consumes_pending_workspace_return_context(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.restore_state(
+            {
+                "notes_state": {
+                    "scope_type": ScopeType.LOCAL_NOTE.value,
+                    "workspace_subview": WorkspaceSubview.NOTES.value,
+                    "selected_note_id": 11,
+                    "selected_workspace_id": None,
+                    "has_unsaved_changes": True,
+                }
+            }
+        )
+        screen.state = replace(
+            screen.state,
+            has_unsaved_changes=True,
+            pending_navigation=PendingNavigation(
+                target_scope=ScopeType.SERVER_NOTE,
+                target_id="server-note-8",
+                requires_confirmation=True,
+            ),
+        )
+        mock_app_instance.pending_notes_workspace_context = {
+            "workspace_id": "ws-12",
+            "subview": WorkspaceSubview.DETAILS,
+        }
+        screen.refresh_current_scope = AsyncMock()  # type: ignore[method-assign]
+        screen._update_scope_context_ui = Mock()  # type: ignore[method-assign]
+
+        await screen.on_screen_resume()
+
+        assert screen.state.scope_type == ScopeType.WORKSPACE
+        assert screen.state.workspace_subview == WorkspaceSubview.DETAILS
+        assert screen.state.selected_workspace_id == "ws-12"
+        assert screen.state.has_unsaved_changes is False
+        assert screen.state.pending_navigation is None
+        assert mock_app_instance.pending_notes_workspace_context is None
+        screen.refresh_current_scope.assert_awaited_once()
 
     def test_switching_scope_with_unsaved_changes_requires_decision(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
@@ -892,6 +978,39 @@ class TestNotesScreenMethods:
             assert top_save_button.display is False
             assert export_actions.display is False
             assert str(title.renderable) == "Workspace Details"
+
+    @pytest.mark.asyncio
+    async def test_workspace_details_panel_open_study_button_uses_workspace_scope(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+
+        async with app.run_test() as pilot:
+            screen._set_state(
+                scope_type=ScopeType.WORKSPACE,
+                workspace_subview=WorkspaceSubview.DETAILS,
+                selected_workspace_id="workspace-7",
+                selected_note_title="Biology",
+            )
+            screen._workspace_context_payload = {
+                "workspace": {"id": "workspace-7", "name": "Biology"},
+                "notes": [],
+                "sources": [],
+                "artifacts": [],
+            }
+            screen._update_scope_context_ui()
+            await pilot.pause()
+
+            open_study_button = screen.query_one("#workspace-open-study-button", Button)
+            open_study_button.press()
+            await pilot.pause()
+
+            mock_app_instance.open_study_screen.assert_called_once_with(
+                StudyScopeContext(
+                    scope_type=StudyScopeType.WORKSPACE,
+                    workspace_id="workspace-7",
+                    workspace_name="Biology",
+                )
+            )
 
     @pytest.mark.asyncio
     async def test_scope_context_hides_local_only_left_sidebar_create_controls(self, mock_app_instance):

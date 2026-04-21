@@ -193,7 +193,7 @@ class CollectionListItem(ListItem):
                 # Metadata row
                 with Horizontal(classes="collection-metadata-row"):
                     # Document count
-                    doc_count = self.collection_info.get('document_count', 0)
+                    doc_count = self.collection_info.get('document_count', self.collection_info.get('count', 0))
                     yield Static(f"📄 {doc_count} docs", classes="collection-doc-count")
                     
                     # Last modified

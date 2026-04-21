@@ -1,0 +1,229 @@
+from unittest.mock import Mock
+
+import pytest
+
+from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
+
+
+class FakeClient:
+    def __init__(self):
+        self.calls = []
+
+    async def list_reading_items(self, **kwargs):
+        self.calls.append(("list_reading_items", kwargs))
+        return {"items": [{"id": 41, "media_id": 99, "title": "Server Article"}], "total": 1}
+
+    async def get_reading_item(self, item_id):
+        self.calls.append(("get_reading_item", item_id))
+        return {"id": item_id, "media_id": 99, "title": "Server Detail"}
+
+    async def update_reading_item(self, item_id, request_data):
+        self.calls.append(("update_reading_item", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"id": item_id, "updated": True}
+
+    async def delete_reading_item(self, item_id, hard=False):
+        self.calls.append(("delete_reading_item", item_id, hard))
+        return {"status": "deleted", "item_id": item_id, "hard": hard}
+
+    async def get_reading_progress(self, media_id):
+        self.calls.append(("get_reading_progress", media_id))
+        return {"media_id": media_id, "current_page": 4, "total_pages": 10, "percent_complete": 40.0}
+
+    async def update_reading_progress(self, media_id, request_data):
+        self.calls.append(("update_reading_progress", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"media_id": media_id, "current_page": 5, "total_pages": 10, "percent_complete": 50.0}
+
+    async def delete_reading_progress(self, media_id):
+        self.calls.append(("delete_reading_progress", media_id))
+        return {"deleted": True}
+
+    async def list_ingestion_sources(self):
+        self.calls.append(("list_ingestion_sources",))
+        return [{"id": 7, "source_type": "archive_snapshot", "sink_type": "media", "policy": "canonical", "enabled": True}]
+
+    async def get_ingestion_source(self, source_id):
+        self.calls.append(("get_ingestion_source", source_id))
+        return {"id": source_id, "source_type": "archive_snapshot", "sink_type": "media", "policy": "canonical", "enabled": True}
+
+    async def patch_ingestion_source(self, source_id, request_data):
+        self.calls.append(("patch_ingestion_source", source_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"id": source_id, "enabled": False, "source_type": "archive_snapshot", "sink_type": "media", "policy": "canonical"}
+
+    async def list_ingestion_source_items(self, source_id):
+        self.calls.append(("list_ingestion_source_items", source_id))
+        return [{"id": 55, "source_id": source_id, "normalized_relative_path": "chapter-1.md", "sync_status": "synced"}]
+
+    async def trigger_ingestion_source_sync(self, source_id):
+        self.calls.append(("trigger_ingestion_source_sync", source_id))
+        return {"status": "queued", "source_id": source_id, "job_id": 123}
+
+    async def upload_ingestion_source_archive(self, source_id, archive_path):
+        self.calls.append(("upload_ingestion_source_archive", source_id, archive_path))
+        return {"status": "queued", "source_id": source_id, "job_id": 124}
+
+
+@pytest.mark.asyncio
+async def test_server_service_delegates_search_and_detail_to_reading_item_endpoints():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    search_result = await service.search_media(query="rag", limit=25, offset=10, status=["saved"])
+    detail = await service.get_media_detail(41)
+
+    assert search_result["items"][0]["id"] == 41
+    assert detail["id"] == 41
+    assert client.calls[:2] == [
+        ("list_reading_items", {"q": "rag", "limit": 25, "offset": 10, "status": ["saved"]}),
+        ("get_reading_item", 41),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_builds_reading_item_update_payload():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    result = await service.update_media_metadata(
+        41,
+        title="Renamed",
+        status="reading",
+        favorite=True,
+        tags=["ai", "ml"],
+        notes="Keep this one.",
+    )
+
+    assert result == {"id": 41, "updated": True}
+    assert client.calls == [
+        (
+            "update_reading_item",
+            41,
+            {
+                "status": "reading",
+                "favorite": True,
+                "tags": ["ai", "ml"],
+                "notes": "Keep this one.",
+                "title": "Renamed",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_rejects_local_only_metadata_fields():
+    service = ServerMediaReadingService(client=FakeClient())
+
+    with pytest.raises(ValueError, match="Unsupported server media metadata fields: author"):
+        await service.update_media_metadata(41, author="Ada")
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_reading_progress_calls_with_schema_objects():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    fetched = await service.get_reading_progress(99)
+    updated = await service.update_reading_progress(
+        99,
+        {
+            "current_page": 5,
+            "total_pages": 10,
+            "zoom_level": 110,
+            "view_mode": "continuous",
+            "cfi": "epubcfi(/6/2)",
+            "percent_complete": 50.0,
+        },
+    )
+    deleted = await service.delete_reading_progress(99)
+
+    assert fetched["percent_complete"] == 40.0
+    assert updated["percent_complete"] == 50.0
+    assert deleted == {"deleted": True}
+    assert client.calls == [
+        ("get_reading_progress", 99),
+        (
+            "update_reading_progress",
+            99,
+            {
+                "current_page": 5,
+                "total_pages": 10,
+                "zoom_level": 110,
+                "view_mode": "continuous",
+                "cfi": "epubcfi(/6/2)",
+                "percentage": 50.0,
+            },
+        ),
+        ("delete_reading_progress", 99),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_ingestion_source_calls_and_payloads():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    listed = await service.list_ingestion_sources()
+    detail = await service.get_ingestion_source(7)
+    patched = await service.patch_ingestion_source(7, enabled=False, policy="canonical")
+    items = await service.list_ingestion_source_items(7)
+    triggered = await service.trigger_ingestion_source_sync(7)
+    uploaded = await service.upload_ingestion_source_archive(7, "/tmp/archive.zip")
+
+    assert listed[0]["id"] == 7
+    assert detail["id"] == 7
+    assert patched["enabled"] is False
+    assert items[0]["source_id"] == 7
+    assert triggered["job_id"] == 123
+    assert uploaded["job_id"] == 124
+    assert client.calls == [
+        ("list_ingestion_sources",),
+        ("get_ingestion_source", 7),
+        ("patch_ingestion_source", 7, {"policy": "canonical", "enabled": False}),
+        ("list_ingestion_source_items", 7),
+        ("trigger_ingestion_source_sync", 7),
+        ("upload_ingestion_source_archive", 7, "/tmp/archive.zip"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_delete_routes_to_soft_delete_endpoint_and_undelete_fails_explicitly():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    deleted = await service.delete_media(41)
+
+    assert deleted["status"] == "deleted"
+    assert client.calls == [("delete_reading_item", 41, False)]
+
+    with pytest.raises(ValueError, match="Server media undelete is not available yet."):
+        await service.undelete_media(41)
+
+
+@pytest.mark.asyncio
+async def test_server_service_document_version_helpers_fail_explicitly():
+    service = ServerMediaReadingService(client=FakeClient())
+
+    with pytest.raises(ValueError, match="Server document versions are not available yet."):
+        await service.list_document_versions(99)
+
+    with pytest.raises(ValueError, match="Server document versions are not available yet."):
+        await service.save_analysis_version(99, content="body", analysis_content="analysis")
+
+    with pytest.raises(ValueError, match="Server document versions are not available yet."):
+        await service.overwrite_analysis_version(99, content="body", analysis_content="analysis")
+
+    with pytest.raises(ValueError, match="Server document versions are not available yet."):
+        await service.delete_analysis_version("version-1")
+
+
+def test_server_service_from_config_uses_shared_api_client_builder(monkeypatch):
+    sentinel_client = Mock()
+    build_client = Mock(return_value=sentinel_client)
+    monkeypatch.setattr(
+        "tldw_chatbook.Media.server_media_reading_service.build_tldw_api_client_from_config",
+        build_client,
+    )
+
+    service = ServerMediaReadingService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+
+    assert service.client is sentinel_client
+    build_client.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})

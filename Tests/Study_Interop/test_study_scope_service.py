@@ -1,0 +1,572 @@
+import pytest
+
+from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
+
+
+class FakeLocalStudyService:
+    def __init__(self):
+        self.calls = []
+
+    def list_decks(self, *, limit=100, offset=0):
+        self.calls.append(("list_decks", limit, offset))
+        return [{"id": "deck-local-1", "name": "Biology", "description": "Cell review"}]
+
+    def create_deck(self, *, name, description=None):
+        self.calls.append(("create_deck", name, description))
+        return {"id": "deck-local-1", "name": name, "description": description}
+
+    def list_flashcards(self, *, deck_id=None, q=None, limit=100, offset=0):
+        self.calls.append(("list_flashcards", deck_id, q, limit, offset))
+        return [{"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer", "tags": "science"}]
+
+    def create_flashcard(self, *, deck_id, front, back, tags=None, notes=None, extra=None):
+        self.calls.append(("create_flashcard", deck_id, front, back, tags, notes, extra))
+        return {
+            "id": "card-local-1",
+            "deck_id": deck_id,
+            "front": front,
+            "back": back,
+            "tags": " ".join(tags or []),
+            "notes": notes,
+            "extra": extra,
+            "type": "basic",
+        }
+
+    def get_next_review_candidate(self, *, deck_id=None):
+        self.calls.append(("get_next_review_candidate", deck_id))
+        return {"card": {"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer"}, "selection_reason": "due"}
+
+    def submit_flashcard_review(self, card_id, *, rating):
+        self.calls.append(("submit_flashcard_review", card_id, rating))
+        return {
+            "card": {
+                "id": card_id,
+                "deck_id": "deck-local-1",
+                "front": "Question",
+                "back": "Answer",
+                "interval": 3,
+                "repetitions": 1,
+                "ease_factor": 2.6,
+            },
+            "rating": rating,
+        }
+
+    def move_flashcard(self, card_id, *, target_deck_id, expected_version=None):
+        self.calls.append(("move_flashcard", card_id, target_deck_id, expected_version))
+        return {
+            "id": card_id,
+            "deck_id": target_deck_id,
+            "front": "Question",
+            "back": "Answer",
+            "tags": "science biology",
+            "type": "basic",
+            "version": 3,
+        }
+
+    def delete_flashcard(self, card_id, *, expected_version=None, hard_delete=False):
+        self.calls.append(("delete_flashcard", card_id, expected_version, hard_delete))
+        return True
+
+    def delete_deck(self, deck_id, *, expected_version=None, hard_delete=False):
+        self.calls.append(("delete_deck", deck_id, expected_version, hard_delete))
+        return True
+
+    def end_review_session(self, review_session_id):
+        self.calls.append(("end_review_session", review_session_id))
+        return None
+
+
+class FakeServerStudyService:
+    def __init__(self):
+        self.calls = []
+
+    async def list_decks(self, *, limit=100, offset=0):
+        self.calls.append(("list_decks", limit, offset))
+        return [{"id": 7, "name": "Biology", "description": "Cell review", "scheduler_type": "fsrs"}]
+
+    async def get_next_review_candidate(self, *, deck_id=None):
+        self.calls.append(("get_next_review_candidate", deck_id))
+        return {
+            "card": {
+                "uuid": "card-server-1",
+                "deck_id": deck_id,
+                "front": "Question",
+                "back": "Answer",
+                "tags": ["science"],
+                "is_cloze": False,
+                "ef": 2.5,
+                "interval_days": 0,
+                "repetitions": 0,
+                "lapses": 0,
+                "queue_state": "new",
+                "created_at": "2026-04-20T00:00:00Z",
+                "last_modified": "2026-04-20T00:01:00Z",
+                "deleted": False,
+                "client_id": "server-client",
+                "version": 1,
+                "model_type": "basic",
+                "reverse": False,
+                "scheduler_type": "fsrs",
+                "next_intervals": {"again": "10m", "good": "1d"},
+            },
+            "selection_reason": "new",
+        }
+
+    async def submit_flashcard_review(self, card_id, *, rating, answer_time_ms=None):
+        self.calls.append(("submit_flashcard_review", card_id, rating, answer_time_ms))
+        return {
+            "uuid": card_id,
+            "ef": 2.6,
+            "interval_days": 3,
+            "repetitions": 1,
+            "lapses": 0,
+            "due_at": "2026-04-23T00:00:00Z",
+            "last_reviewed_at": "2026-04-20T00:05:00Z",
+            "last_modified": "2026-04-20T00:05:00Z",
+            "version": 2,
+            "scheduler_type": "fsrs",
+            "queue_state": "review",
+            "next_intervals": {"again": "10m", "good": "3d"},
+            "review_session_id": 41,
+        }
+
+    async def move_flashcard(self, card_id, *, target_deck_id, expected_version=None):
+        self.calls.append(("move_flashcard", card_id, target_deck_id, expected_version))
+        return {
+            "uuid": card_id,
+            "deck_id": target_deck_id,
+            "front": "Question",
+            "back": "Answer",
+            "tags": ["science"],
+            "is_cloze": False,
+            "ef": 2.5,
+            "interval_days": 0,
+            "repetitions": 0,
+            "lapses": 0,
+            "queue_state": "new",
+            "created_at": "2026-04-20T00:00:00Z",
+            "last_modified": "2026-04-20T00:02:00Z",
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 2,
+            "model_type": "basic",
+            "reverse": False,
+        }
+
+    async def delete_flashcard(self, card_id, *, expected_version=None):
+        self.calls.append(("delete_flashcard", card_id, expected_version))
+        return {"deleted": True}
+
+    async def delete_deck(self, deck_id, *, expected_version=None, hard_delete=False):
+        self.calls.append(("delete_deck", deck_id, expected_version, hard_delete))
+        raise NotImplementedError("Flashcard deck deletion is not supported by the current server API.")
+
+    async def end_review_session(self, review_session_id):
+        self.calls.append(("end_review_session", review_session_id))
+        return {"id": review_session_id, "status": "completed"}
+
+
+class PagedFakeServerStudyService:
+    def __init__(self, pages, *, fail_on_offset=None):
+        self.calls = []
+        self.pages = pages
+        self.fail_on_offset = fail_on_offset
+
+    async def list_decks(self, *, limit=100, offset=0):
+        self.calls.append(("list_decks", limit, offset))
+        if self.fail_on_offset is not None and offset == self.fail_on_offset:
+            raise RuntimeError("deck page load failed")
+        return list(self.pages.get(offset, []))
+
+    async def create_deck(self, *, name, description=None, workspace_id=None, scheduler_type=None):
+        self.calls.append(("create_deck", name, description, workspace_id, scheduler_type))
+        return {"id": "deck-created", "name": name, "description": description, "workspace_id": workspace_id}
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_deck_list_by_backend():
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=FakeServerStudyService(),
+    )
+
+    local_decks = await scope.list_decks(mode="local")
+    server_decks = await scope.list_decks(mode="server")
+
+    assert local_decks[0]["record_id"] == "local:study_deck:deck-local-1"
+    assert server_decks[0]["record_id"] == "server:study_deck:7"
+    assert server_decks[0]["scheduler_type"] == "fsrs"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_filters_global_and_workspace_decks_without_mixing():
+    server = PagedFakeServerStudyService(
+        {
+            0: [
+                {"id": 1, "name": "Global One", "workspace_id": None},
+                {"id": 2, "name": "Workspace One A", "workspace_id": "ws-1"},
+            ],
+            2: [
+                {"id": 3, "name": "Workspace Two", "workspace_id": "ws-2"},
+                {"id": 4, "name": "Global Two", "workspace_id": None},
+            ],
+            4: [
+                {"id": 5, "name": "Workspace One B", "workspace_id": "ws-1"},
+            ],
+        }
+    )
+    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+
+    global_decks = await scope.list_decks(mode="server", scope_type="global", limit=2, offset=0)
+    workspace_decks = await scope.list_decks(
+        mode="server",
+        scope_type="workspace",
+        workspace_id="ws-1",
+        limit=2,
+        offset=0,
+    )
+
+    assert [deck["record_id"] for deck in global_decks] == ["server:study_deck:1", "server:study_deck:4"]
+    assert [deck["record_id"] for deck in workspace_decks] == ["server:study_deck:2", "server:study_deck:5"]
+    assert server.calls == [
+        ("list_decks", 2, 0),
+        ("list_decks", 2, 2),
+        ("list_decks", 2, 4),
+        ("list_decks", 2, 0),
+        ("list_decks", 2, 2),
+        ("list_decks", 2, 4),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_applies_offset_after_client_side_deck_scope_filtering():
+    server = PagedFakeServerStudyService(
+        {
+            0: [
+                {"id": 1, "name": "Global One", "workspace_id": None},
+                {"id": 2, "name": "Workspace One A", "workspace_id": "ws-1"},
+            ],
+            2: [
+                {"id": 3, "name": "Workspace Two", "workspace_id": "ws-2"},
+                {"id": 4, "name": "Global Two", "workspace_id": None},
+            ],
+            4: [
+                {"id": 5, "name": "Workspace One B", "workspace_id": "ws-1"},
+            ],
+        }
+    )
+    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+
+    global_decks = await scope.list_decks(mode="server", scope_type="global", limit=2, offset=1)
+    workspace_decks = await scope.list_decks(
+        mode="server",
+        scope_type="workspace",
+        workspace_id="ws-1",
+        limit=2,
+        offset=1,
+    )
+
+    assert [deck["record_id"] for deck in global_decks] == ["server:study_deck:4"]
+    assert [deck["record_id"] for deck in workspace_decks] == ["server:study_deck:5"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "kwargs"),
+    [
+        ("list_decks", {"mode": "server", "scope_type": "invalid", "limit": 1}),
+        (
+            "create_deck",
+            {"mode": "server", "scope_type": "invalid", "name": "Workspace deck", "description": None},
+        ),
+    ],
+)
+async def test_scope_service_rejects_invalid_scope_type_for_scoped_methods(method_name, kwargs):
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=FakeServerStudyService(),
+    )
+
+    with pytest.raises(ValueError, match="Invalid study scope_type: invalid"):
+        await getattr(scope, method_name)(**kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "kwargs"),
+    [
+        ("list_decks", {"mode": "server", "scope_type": "workspace", "limit": 1}),
+        (
+            "create_deck",
+            {"mode": "server", "scope_type": "workspace", "name": "Workspace deck", "description": None},
+        ),
+    ],
+)
+async def test_scope_service_rejects_missing_workspace_id_for_workspace_scope(method_name, kwargs):
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=FakeServerStudyService(),
+    )
+
+    with pytest.raises(ValueError, match="workspace_id is required when scope_type='workspace'"):
+        await getattr(scope, method_name)(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_workspace_scope_in_local_mode():
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=FakeServerStudyService(),
+    )
+
+    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
+        await scope.list_decks(mode="local", scope_type="workspace", workspace_id="ws-1")
+
+    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
+        await scope.create_deck(
+            mode="local",
+            scope_type="workspace",
+            workspace_id="ws-1",
+            name="Workspace deck",
+            description=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_workspace_scope_for_local_review_calls():
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=FakeServerStudyService(),
+    )
+
+    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
+        await scope.get_next_review_candidate(
+            mode="local",
+            scope_type="workspace",
+            workspace_id="ws-1",
+            deck_id="deck-local-1",
+        )
+
+    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
+        await scope.submit_flashcard_review(
+            mode="local",
+            scope_type="workspace",
+            workspace_id="ws-1",
+            card_id="card-local-1",
+            rating=3,
+        )
+
+
+@pytest.mark.asyncio
+async def test_scope_service_forwards_workspace_id_on_server_create_and_nulls_global_create():
+    server = PagedFakeServerStudyService({0: []})
+    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+
+    await scope.create_deck(
+        mode="server",
+        scope_type="workspace",
+        workspace_id="ws-7",
+        name="Workspace deck",
+        description="Scoped",
+    )
+    await scope.create_deck(
+        mode="server",
+        scope_type="global",
+        workspace_id="ws-7",
+        name="Global deck",
+        description=None,
+    )
+
+    assert server.calls == [
+        ("create_deck", "Workspace deck", "Scoped", "ws-7", None),
+        ("create_deck", "Global deck", None, None, None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_keeps_workspace_load_errors_scoped():
+    server = PagedFakeServerStudyService(
+        {
+            0: [
+                {"id": 1, "name": "Global One", "workspace_id": None},
+                {"id": 2, "name": "Workspace One", "workspace_id": "ws-2"},
+            ],
+            2: [{"id": 3, "name": "Workspace Two", "workspace_id": "ws-1"}],
+        },
+        fail_on_offset=2,
+    )
+    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+
+    with pytest.raises(RuntimeError, match="deck page load failed"):
+        await scope.list_decks(mode="server", scope_type="workspace", workspace_id="ws-1", limit=2, offset=0)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_flashcard_create_and_list_by_backend():
+    local = FakeLocalStudyService()
+    scope = StudyScopeService(local_service=local, server_service=FakeServerStudyService())
+
+    created = await scope.create_flashcard(
+        mode="local",
+        deck_id="deck-local-1",
+        front="Question",
+        back="Answer",
+        tags=["science", "biology"],
+    )
+    listed = await scope.list_flashcards(mode="local", deck_id="deck-local-1", q="bio", limit=10, offset=1)
+
+    assert created["record_id"] == "local:study_flashcard:card-local-1"
+    assert listed[0]["deck_record_id"] == "local:study_deck:deck-local-1"
+    assert local.calls[0] == ("create_flashcard", "deck-local-1", "Question", "Answer", ["science", "biology"], None, None)
+    assert local.calls[1] == ("list_flashcards", "deck-local-1", "bio", 10, 1)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_merges_server_review_outcome_with_current_card():
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+
+    candidate = await scope.get_next_review_candidate(mode="server", deck_id=7)
+    outcome = await scope.submit_flashcard_review(
+        mode="server",
+        card_id="card-server-1",
+        rating=4,
+        current_card=candidate["card"],
+    )
+
+    assert outcome["card"]["front"] == "Question"
+    assert outcome["card"]["interval_days"] == 3
+    assert outcome["review_session"]["review_session_id"] == 41
+    assert server.calls == [
+        ("get_next_review_candidate", 7),
+        ("submit_flashcard_review", "card-server-1", 4, None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_ends_server_review_session_and_noops_locally():
+    local = FakeLocalStudyService()
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=local, server_service=server)
+
+    local_result = await scope.end_review_session(mode="local", review_session_id=11)
+    server_result = await scope.end_review_session(mode="server", review_session_id=41)
+
+    assert local_result is None
+    assert server_result["status"] == "completed"
+    assert ("end_review_session", 11) not in local.calls
+    assert server.calls == [("end_review_session", 41)]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_move_delete_and_local_deck_delete():
+    local = FakeLocalStudyService()
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=local, server_service=server)
+
+    moved = await scope.move_flashcard(
+        mode="server",
+        card_id="card-server-1",
+        target_deck_id=9,
+        expected_version=2,
+    )
+    deleted_card = await scope.delete_flashcard(
+        mode="server",
+        card_id="card-server-1",
+        expected_version=3,
+    )
+    deleted_deck = await scope.delete_deck(
+        mode="local",
+        deck_id="deck-local-1",
+        expected_version=4,
+    )
+
+    assert moved["record_id"] == "server:study_flashcard:card-server-1"
+    assert moved["deck_record_id"] == "server:study_deck:9"
+    assert moved["version"] == 2
+    assert deleted_card is True
+    assert deleted_deck is True
+    assert server.calls == [
+        ("move_flashcard", "card-server-1", 9, 2),
+        ("delete_flashcard", "card-server-1", 3),
+    ]
+    assert local.calls == [("delete_deck", "deck-local-1", 4, False)]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_missing_expected_version_for_server_delete():
+    server = FakeServerStudyService()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="expected_version is required for server flashcard deletion\\.",
+    ):
+        await scope.delete_flashcard(mode="server", card_id="card-server-1")
+
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expected_version", [0, -1])
+async def test_scope_service_rejects_non_positive_expected_version_for_server_delete(expected_version):
+    server = FakeServerStudyService()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="expected_version must be >= 1 for server flashcard deletion\\.",
+    ):
+        await scope.delete_flashcard(
+            mode="server",
+            card_id="card-server-1",
+            expected_version=expected_version,
+        )
+
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_accepts_legacy_status_deleted_mapping():
+    class LegacyStatusServerStudyService:
+        def __init__(self):
+            self.calls = []
+
+        async def delete_flashcard(self, card_id, *, expected_version=None):
+            self.calls.append(("delete_flashcard", card_id, expected_version))
+            return {"status": "deleted"}
+
+    server = LegacyStatusServerStudyService()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+    )
+
+    deleted = await scope.delete_flashcard(
+        mode="server",
+        card_id="card-server-legacy",
+        expected_version=5,
+    )
+
+    assert deleted is True
+    assert server.calls == [("delete_flashcard", "card-server-legacy", 5)]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_does_not_swallow_server_deck_delete_unsupported_error():
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=FakeServerStudyService(),
+    )
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Flashcard deck deletion is not supported by the current server API\\.",
+    ):
+        await scope.delete_deck(mode="server", deck_id=7, expected_version=2)

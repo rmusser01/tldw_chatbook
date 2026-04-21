@@ -1,10 +1,10 @@
 import json
-import sqlite3
 import uuid
 from pathlib import Path
 
 import pytest
 
+from Tests.ChaChaNotesDB.legacy_conversation_schema import create_legacy_v12_conversations_db
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
 
 
@@ -45,71 +45,6 @@ def _sample_character_id(db: CharactersRAGDB) -> int:
             "first_message": "Hello from parity.",
         }
     )
-
-
-def _create_legacy_v12_db(db_path: Path, client_id: str, rows):
-    connection = sqlite3.connect(str(db_path))
-    try:
-        connection.executescript(
-            """
-            CREATE TABLE db_schema_version(
-              schema_name TEXT PRIMARY KEY NOT NULL,
-              version INTEGER NOT NULL
-            );
-
-            INSERT INTO db_schema_version(schema_name, version)
-            VALUES('rag_char_chat_schema', 12);
-
-            CREATE TABLE conversations(
-              id TEXT PRIMARY KEY,
-              root_id TEXT NOT NULL,
-              forked_from_message_id TEXT,
-              parent_conversation_id TEXT,
-              character_id INTEGER,
-              title TEXT,
-              rating INTEGER,
-              created_at DATETIME NOT NULL,
-              last_modified DATETIME NOT NULL,
-              deleted BOOLEAN NOT NULL DEFAULT 0,
-              client_id TEXT NOT NULL,
-              version INTEGER NOT NULL DEFAULT 1
-            );
-
-            CREATE TABLE sync_log(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              entity TEXT NOT NULL,
-              entity_id TEXT NOT NULL,
-              operation TEXT NOT NULL,
-              timestamp DATETIME NOT NULL,
-              client_id TEXT NOT NULL,
-              version INTEGER NOT NULL,
-              payload TEXT
-            );
-            """
-        )
-        connection.executemany(
-            """
-            INSERT INTO conversations(
-              id,
-              root_id,
-              forked_from_message_id,
-              parent_conversation_id,
-              character_id,
-              title,
-              rating,
-              created_at,
-              last_modified,
-              deleted,
-              client_id,
-              version
-            )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            rows,
-        )
-        connection.commit()
-    finally:
-        connection.close()
 
 
 class TestConversationParity:
@@ -157,9 +92,8 @@ class TestConversationParity:
 
     def test_legacy_rows_default_to_global_scope_and_null_workspace(self, db_path, client_id):
         legacy_conversation_id = str(uuid.uuid4())
-        _create_legacy_v12_db(
+        create_legacy_v12_conversations_db(
             db_path,
-            client_id,
             [
                 (
                     legacy_conversation_id,
@@ -190,9 +124,8 @@ class TestConversationParity:
 
     def test_legacy_character_rows_backfill_character_assistant_identity(self, db_path, client_id):
         legacy_conversation_id = str(uuid.uuid4())
-        _create_legacy_v12_db(
+        create_legacy_v12_conversations_db(
             db_path,
-            client_id,
             [
                 (
                     legacy_conversation_id,

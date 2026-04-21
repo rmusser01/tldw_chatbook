@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Optional, List, Dict, Any
 from loguru import logger
+import json
 import os
 import time
 
@@ -407,38 +408,42 @@ class EmbeddingsManagementWindow(Widget):
     
     async def _load_collections_list(self) -> None:
         """Load the list of vector collections."""
-        if not self.chroma_manager:
-            return
-        
         try:
             collection_list = self.query_one("#embeddings-collection-list", ListView)
             await collection_list.clear()
-            
-            # Get collections from ChromaDB
-            # Note: This is a simplified version - actual implementation would need
-            # to interface with ChromaDB's collection listing API
-            self.collections = []  # Placeholder for actual collection data
-            
-            # Show empty state if no collections
+
+            self.collections = await self._fetch_collection_records()
             if not self.collections:
+                self.selected_collection = None
+                self.selected_collections.clear()
+                self._clear_collection_info()
                 empty_state = CollectionsEmptyState()
                 await collection_list.append(empty_state)
             else:
-                for collection_name in self.collections:
-                    # Create collection info (placeholder)
-                    collection_info = {
-                        'document_count': 0,
-                        'last_modified': None,
-                        'status': 'ready'
-                    }
-                    
+                available_names = set()
+                for collection_info in self.collections:
+                    collection_name = str(
+                        collection_info.get("name")
+                        or collection_info.get("backing_collection_name")
+                        or ""
+                    ).strip()
+                    if not collection_name:
+                        continue
+                    available_names.add(collection_name)
                     item = CollectionListItem(
                         collection_name,
                         collection_info,
                         show_selection=self.batch_mode_enabled,
                         id=f"collection-{collection_name}"
                     )
+                    item.is_selected = collection_name in self.selected_collections
                     await collection_list.append(item)
+
+                if self.selected_collection and self.selected_collection not in available_names:
+                    self.selected_collection = None
+                    self._clear_collection_info()
+                elif self.selected_collection in available_names:
+                    await self._update_collection_info(str(self.selected_collection))
             
             logger.info("Collections list loaded")
             
@@ -815,11 +820,158 @@ class EmbeddingsManagementWindow(Widget):
         # This is a simplified check - actual implementation would
         # check the model cache directory
         return False
+
+    def _runtime_backend(self) -> str:
+        """Resolve the active runtime backend for this admin surface."""
+        candidates = (
+            getattr(getattr(self.app_instance, "media_runtime_state", None), "runtime_backend", None),
+            getattr(self.app_instance, "current_runtime_backend", None),
+            getattr(self.app_instance, "runtime_backend", None),
+        )
+        for candidate in candidates:
+            normalized = str(candidate or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
+        return "local"
+
+    def _scope_service(self) -> Any:
+        """Return the mode-aware RAG admin scope service when available."""
+        return getattr(self.app_instance, "rag_admin_scope_service", None)
+
+    def _fallback_collection_record(self, collection: Any) -> Dict[str, Any]:
+        """Normalize a local Chroma collection object for collection-list rendering."""
+        metadata = dict(getattr(collection, "metadata", {}) or {})
+        return {
+            "name": getattr(collection, "name", ""),
+            "count": 0,
+            "embedding_dimension": metadata.get("embedding_dimension"),
+            "metadata": metadata,
+            "provider": metadata.get("provider"),
+            "status": "ready",
+            "backend": "local",
+        }
+
+    async def _fetch_collection_records(self) -> List[Dict[str, Any]]:
+        """Fetch collection list records via the scope service or local fallback."""
+        scope = self._scope_service()
+        if scope is not None:
+            records = await scope.list_collections(mode=self._runtime_backend())
+            return list(records or [])
+
+        if not self.chroma_manager:
+            return []
+
+        collections = self.chroma_manager.list_collections() or []
+        return [self._fallback_collection_record(collection) for collection in collections]
+
+    async def _get_collection_detail_record(self, collection_name: str) -> Dict[str, Any]:
+        """Fetch detailed collection information for the selected collection."""
+        scope = self._scope_service()
+        if scope is not None:
+            return await scope.get_collection_detail(
+                mode=self._runtime_backend(),
+                collection_name=collection_name,
+            )
+
+        if self.chroma_manager is None or getattr(self.chroma_manager, "client", None) is None:
+            for collection in self.collections:
+                if collection.get("name") == collection_name:
+                    return dict(collection)
+            raise ValueError(f"Collection '{collection_name}' is unavailable.")
+
+        collection = self.chroma_manager.client.get_collection(name=collection_name)
+        metadata = dict(getattr(collection, "metadata", {}) or {})
+        try:
+            count = int(collection.count())
+        except Exception:
+            count = 0
+        return {
+            "name": getattr(collection, "name", collection_name),
+            "count": count,
+            "embedding_dimension": metadata.get("embedding_dimension"),
+            "metadata": metadata,
+            "provider": metadata.get("provider"),
+            "status": "ready",
+            "backend": "local",
+        }
+
+    async def _delete_collection_backend_only(self, collection_name: str) -> None:
+        """Delete one collection via the active backend without refreshing the UI."""
+        scope = self._scope_service()
+        if scope is not None:
+            await scope.delete_collection(
+                mode=self._runtime_backend(),
+                collection_name=collection_name,
+            )
+        elif self.chroma_manager is not None:
+            self.chroma_manager.delete_collection(collection_name)
+        else:
+            raise ValueError("Collection backend is unavailable.")
+
+    async def _delete_collection_by_name(self, collection_name: str, *, refresh: bool = True) -> None:
+        """Delete one collection via the active backend and refresh local state."""
+        await self._delete_collection_backend_only(collection_name)
+        self.selected_collections.discard(collection_name)
+        if self.selected_collection == collection_name:
+            self.selected_collection = None
+            self._clear_collection_info()
+        if refresh:
+            await self._load_collections_list()
+
+    async def _delete_collection_batch(self, collection_names: List[str]) -> tuple[List[str], Dict[str, str]]:
+        """Delete multiple collections and return successes plus failures."""
+        deleted: List[str] = []
+        failures: Dict[str, str] = {}
+
+        for collection_name in collection_names:
+            try:
+                await self._delete_collection_by_name(collection_name, refresh=False)
+                deleted.append(collection_name)
+            except Exception as exc:
+                failures[collection_name] = str(exc)
+                logger.error(f"Failed to delete collection '{collection_name}': {exc}")
+
+        if deleted:
+            await self._load_collections_list()
+        return deleted, failures
+
+    def _collection_metadata_text(self, detail: Dict[str, Any]) -> str:
+        """Format collection metadata for the detail pane."""
+        payload = dict(detail.get("metadata") or {})
+        if detail.get("embedding_dimension") is not None:
+            payload.setdefault("embedding_dimension", detail["embedding_dimension"])
+        if detail.get("provider"):
+            payload.setdefault("provider", detail["provider"])
+        if detail.get("backend"):
+            payload.setdefault("backend", detail["backend"])
+        if detail.get("status"):
+            payload.setdefault("status", detail["status"])
+        if not payload:
+            return "{}"
+        return json.dumps(payload, indent=2, sort_keys=True)
+
+    def _clear_collection_info(self) -> None:
+        """Reset the collection detail pane."""
+        try:
+            self.query_one("#embeddings-collection-name", Static).update("")
+            self.query_one("#embeddings-collection-count", Static).update("")
+            self.query_one("#embeddings-collection-metadata", TextArea).text = ""
+        except Exception as e:
+            logger.warning(f"Failed to clear collection info: {e}")
     
     async def _update_collection_info(self, collection_name: str) -> None:
         """Update the collection information display."""
-        # This would be implemented when we have actual ChromaDB collection data
-        pass
+        try:
+            detail = await self._get_collection_detail_record(collection_name)
+            detail_name = str(detail.get("name") or collection_name)
+            detail_count = detail.get("count", detail.get("document_count", 0))
+
+            self.query_one("#embeddings-collection-name", Static).update(detail_name)
+            self.query_one("#embeddings-collection-count", Static).update(str(detail_count))
+            self.query_one("#embeddings-collection-metadata", TextArea).text = self._collection_metadata_text(detail)
+        except Exception as e:
+            logger.error(f"Failed to update collection info for '{collection_name}': {e}")
+            self._clear_collection_info()
     
     def _show_error(self, message: str) -> None:
         """Show an error message in the UI."""
@@ -943,8 +1095,17 @@ class EmbeddingsManagementWindow(Widget):
         confirm = await self.app.push_screen_wait(dialog)
         
         if confirm:
-            # TODO: Implement actual collection deletion
-            self.notify(f"Collection deletion for '{self.selected_collection}' not yet implemented", severity="information")
+            collection_name = str(self.selected_collection)
+            try:
+                await self._delete_collection_by_name(collection_name)
+                self.notify(f"Deleted collection '{collection_name}'", severity="success")
+                if self.activity_log:
+                    self.activity_log.log_success(f"Deleted collection: {collection_name}", "collections")
+            except Exception as e:
+                logger.error(f"Failed to delete collection '{collection_name}': {e}")
+                self.notify(f"Failed to delete collection: {str(e)}", severity="error")
+                if self.activity_log:
+                    self.activity_log.log_error(f"Failed to delete collection {collection_name}: {str(e)}", "collections")
     
     @on(Button.Pressed, "#embeddings-favorite-model")
     async def on_favorite_model(self, event: Button.Pressed) -> None:
@@ -1104,11 +1265,37 @@ class EmbeddingsManagementWindow(Widget):
         confirm = await self.app.push_screen_wait(dialog)
         
         if confirm:
-            # TODO: Implement batch collection deletion
-            self.notify(f"Batch deletion of {len(self.selected_collections)} collections not yet implemented", severity="information")
-            # Clear selections after operation
+            collection_names = sorted(self.selected_collections)
+            deleted, failures = await self._delete_collection_batch(collection_names)
             self.selected_collections.clear()
-            await self._load_collections_list()
+
+            if deleted and not failures:
+                self.notify(f"Deleted {len(deleted)} collections", severity="success")
+                if self.activity_log:
+                    self.activity_log.log_success(
+                        f"Deleted {len(deleted)} collections",
+                        "collections"
+                    )
+            elif deleted and failures:
+                self.notify(
+                    f"Deleted {len(deleted)} collections; {len(failures)} failed",
+                    severity="warning"
+                )
+                if self.activity_log:
+                    self.activity_log.log_warning(
+                        f"Deleted {len(deleted)} collections; failures: {', '.join(sorted(failures))}",
+                        "collections"
+                    )
+            else:
+                self.notify(
+                    f"Failed to delete {len(failures)} collections",
+                    severity="error"
+                )
+                if self.activity_log:
+                    self.activity_log.log_error(
+                        f"Failed batch collection deletion: {', '.join(sorted(failures))}",
+                        "collections"
+                    )
     
     @on(Checkbox.Changed)
     async def on_checkbox_changed(self, event: Checkbox.Changed) -> None:

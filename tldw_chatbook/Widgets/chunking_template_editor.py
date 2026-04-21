@@ -2,6 +2,7 @@
 Modal screen for creating and editing chunking templates.
 """
 
+import inspect
 from typing import TYPE_CHECKING, Optional, Dict, Any, Callable, List, Tuple
 import json
 from textual import on, work
@@ -18,7 +19,6 @@ from loguru import logger
 from ..Widgets.form_components import create_form_field, create_button_group
 from ..Chunking.chunking_interop_library import (
     ChunkingInteropService, 
-    get_chunking_service,
     ChunkingTemplateError,
     TemplateNotFoundError,
     SystemTemplateError
@@ -127,12 +127,9 @@ class ChunkingTemplateEditor(ModalScreen):
         self.chunking_service = None
         
         # Parse existing pipeline if editing
-        if template_data and 'template_json' in template_data:
-            try:
-                template_obj = json.loads(template_data['template_json'])
-                self.pipeline_stages = template_obj.get('pipeline', [])
-            except:
-                self.pipeline_stages = []
+        template_obj = self._template_payload_from_template_data()
+        if isinstance(template_obj.get("pipeline"), list):
+            self.pipeline_stages = template_obj.get("pipeline", [])
     
     def compose(self) -> ComposeResult:
         """Compose the editor UI."""
@@ -177,7 +174,8 @@ class ChunkingTemplateEditor(ModalScreen):
             "input",
             placeholder="e.g., Academic Paper Chunking",
             default_value=self.template_data.get('name', ''),
-            required=True
+            required=True,
+            disabled=self.mode == "edit",
         )
         
         # Description
@@ -241,12 +239,12 @@ class ChunkingTemplateEditor(ModalScreen):
         """Compose the JSON editor section."""
         yield Label("Template JSON Configuration", classes="section-title")
         yield Static(
-            "Advanced users can edit the template JSON directly.",
+            "Advanced users can edit the template JSON directly. The JSON editor is the authoritative payload used when saving.",
             classes="help-text"
         )
         
         # Generate current JSON
-        current_json = self._generate_template_json()
+        current_json = self._template_payload_from_template_data() or self._default_template_payload()
         
         yield TextArea(
             json.dumps(current_json, indent=2),
@@ -281,12 +279,6 @@ class ChunkingTemplateEditor(ModalScreen):
     
     def on_mount(self) -> None:
         """Initialize the editor when mounted."""
-        # Initialize chunking service
-        if hasattr(self.app_instance, 'media_db') and self.app_instance.media_db:
-            self.chunking_service = get_chunking_service(self.app_instance.media_db)
-        else:
-            logger.warning("Media database not available for chunking service")
-        
         # Set up preview table
         table = self.query_one("#preview-results-table", DataTable)
         table.add_columns("Chunk #", "Text Preview", "Words", "Type")
@@ -295,6 +287,49 @@ class ChunkingTemplateEditor(ModalScreen):
         if self.pipeline_stages:
             self._populate_pipeline_stages()
     
+    def _runtime_backend(self) -> str:
+        candidates = (
+            getattr(getattr(self.app_instance, "media_runtime_state", None), "runtime_backend", None),
+            getattr(self.app_instance, "current_runtime_backend", None),
+            getattr(self.app_instance, "runtime_backend", None),
+        )
+        for candidate in candidates:
+            normalized = str(candidate or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
+        return "local"
+
+    def _scope_service(self) -> Any:
+        return getattr(self.app_instance, "rag_admin_scope_service", None)
+
+    def _template_payload_from_template_data(self) -> Dict[str, Any]:
+        template_value = self.template_data.get("template")
+        if isinstance(template_value, dict):
+            return dict(template_value)
+        raw_json = self.template_data.get("template_json")
+        if isinstance(raw_json, str) and raw_json.strip():
+            try:
+                parsed = json.loads(raw_json)
+            except (TypeError, ValueError):
+                return {}
+            if isinstance(parsed, dict):
+                return parsed
+        return {}
+
+    def _default_template_payload(self) -> Dict[str, Any]:
+        try:
+            base_method = self.query_one("#base-method", Select).value
+        except Exception:
+            base_method = "words"
+        return {
+            "preprocessing": [],
+            "chunking": {
+                "method": str(base_method or "words"),
+                "config": {"max_size": 400, "overlap": 100},
+            },
+            "postprocessing": [],
+        }
+
     def _populate_pipeline_stages(self) -> None:
         """Populate the pipeline stages from existing data."""
         container = self.query_one("#pipeline-stages-container", Container)
@@ -359,67 +394,16 @@ class ChunkingTemplateEditor(ModalScreen):
         return stage_container
     
     def _generate_template_json(self) -> Dict[str, Any]:
-        """Generate the current template JSON from form fields."""
+        """Generate the current template payload from the JSON editor or a fallback skeleton."""
         try:
-            # Get basic info
-            name = self.query_one("#template-name", Input).value
-            description = self.query_one("#template-description", TextArea).text
-            base_method = self.query_one("#base-method", Select).value
-            version = self.query_one("#template-version", Input).value
-            
-            # Build pipeline from stages
-            pipeline = []
-            stages_container = self.query_one("#pipeline-stages-container", Container)
-            
-            for i, stage_widget in enumerate(stages_container.children):
-                if not isinstance(stage_widget, Container):
-                    continue
-                
-                stage_type = stage_widget.query_one(f"#stage-type-{i}", Select).value
-                stage_data = {"stage": stage_type}
-                
-                # Add method for chunk stages
-                if stage_type == "chunk":
-                    try:
-                        method_select = stage_widget.query_one(f"#stage-method-{i}", Select)
-                        stage_data["method"] = method_select.value
-                    except:
-                        stage_data["method"] = base_method
-                
-                # Add options if present
-                try:
-                    options_area = stage_widget.query_one(f"#stage-options-{i}", TextArea)
-                    if options_area.text.strip():
-                        stage_data["options"] = json.loads(options_area.text)
-                except:
-                    pass
-                
-                pipeline.append(stage_data)
-            
-            # If no pipeline stages, add default chunk stage
-            if not pipeline:
-                pipeline = [{
-                    "stage": "chunk",
-                    "method": base_method,
-                    "options": {
-                        "max_size": 400,
-                        "overlap": 100
-                    }
-                }]
-            
-            return {
-                "name": name,
-                "description": description,
-                "base_method": base_method,
-                "pipeline": pipeline,
-                "metadata": {
-                    "version": version or "1.0"
-                }
-            }
-            
+            json_editor = self.query_one("#json-editor", TextArea)
+            parsed = json.loads(json_editor.text)
+            if not isinstance(parsed, dict):
+                raise ValueError("Template JSON must be an object")
+            return parsed
         except Exception as e:
             logger.error(f"Error generating template JSON: {e}")
-            return {}
+            return self._default_template_payload()
     
     @on(Button.Pressed, "#add-stage-btn")
     def add_pipeline_stage(self) -> None:
@@ -468,10 +452,11 @@ class ChunkingTemplateEditor(ModalScreen):
                     pass
     
     @on(Button.Pressed, "#save-template-btn")
-    def save_template(self) -> None:
+    async def save_template(self) -> None:
         """Save the template."""
-        if not self.chunking_service:
-            self.app_instance.notify("Chunking service not available", severity="error")
+        scope = self._scope_service()
+        if scope is None:
+            self.app_instance.notify("RAG admin scope service not available", severity="error")
             return
         
         # Validate required fields
@@ -491,28 +476,25 @@ class ChunkingTemplateEditor(ModalScreen):
         
         try:
             if self.mode == "create":
-                # Create new template using the service
-                template_id = self.chunking_service.create_template(
+                await scope.create_template(
+                    mode=self._runtime_backend(),
                     name=name,
                     description=description,
-                    template_json=template_json,
-                    is_system=False
+                    template=template_json,
                 )
-                logger.info(f"Created template '{name}' with ID {template_id}")
+                logger.info(f"Created template '{name}'")
                 
             else:  # edit mode
-                # Update existing template
-                template_id = self.template_data.get('id')
-                if not template_id:
-                    raise ValueError("No template ID for update")
-                
-                self.chunking_service.update_template(
-                    template_id=template_id,
-                    name=name,
+                template_name = self.template_data.get("backing_template_name") or self.template_data.get("name")
+                if not template_name:
+                    raise ValueError("No template name for update")
+                await scope.update_template(
+                    template_name,
+                    mode=self._runtime_backend(),
                     description=description,
-                    template_json=template_json
+                    template=template_json,
                 )
-                logger.info(f"Updated template '{name}' (ID: {template_id})")
+                logger.info(f"Updated template '{template_name}'")
             
             self.app_instance.notify(
                 f"Template '{name}' saved successfully",
@@ -521,7 +503,9 @@ class ChunkingTemplateEditor(ModalScreen):
             
             # Call the callback if provided
             if self.on_save_callback:
-                self.on_save_callback()
+                callback_result = self.on_save_callback()
+                if inspect.isawaitable(callback_result):
+                    await callback_result
             
             # Close the modal
             self.dismiss()
@@ -555,12 +539,8 @@ class ChunkingTemplateEditor(ModalScreen):
             # Try to generate JSON
             template_json = self._generate_template_json()
             
-            # Validate structure
-            if not template_json.get('name'):
-                raise ValueError("Template name is required")
-            
-            if not template_json.get('pipeline'):
-                raise ValueError("At least one pipeline stage is required")
+            if "chunking" not in template_json and "pipeline" not in template_json:
+                raise ValueError("Template JSON must contain either 'chunking' or a legacy 'pipeline'.")
             
             # Check JSON editor if on that tab
             try:
@@ -601,21 +581,25 @@ class ChunkingTemplateEditor(ModalScreen):
         try:
             from ..Chunking.Chunk_Lib import Chunker
             
-            # Extract base method and options
-            base_method = template_config.get('base_method', 'words')
-            pipeline = template_config.get('pipeline', [])
-            
-            # Find chunk stage options
-            chunk_options = {
-                'max_size': 400,
-                'overlap': 100
-            }
-            
-            for stage in pipeline:
-                if stage.get('stage') == 'chunk':
-                    chunk_options.update(stage.get('options', {}))
-                    base_method = stage.get('method', base_method)
-                    break
+            # Extract base method and options from either the new server-compatible
+            # schema or the legacy local pipeline schema.
+            chunk_options = {'max_size': 400, 'overlap': 100}
+            base_method = "words"
+
+            chunking = template_config.get("chunking")
+            if isinstance(chunking, dict):
+                base_method = str(chunking.get("method") or base_method)
+                config = chunking.get("config")
+                if isinstance(config, dict):
+                    chunk_options.update(config)
+            else:
+                base_method = str(template_config.get('base_method', base_method))
+                pipeline = template_config.get('pipeline', [])
+                for stage in pipeline if isinstance(pipeline, list) else []:
+                    if stage.get('stage') == 'chunk':
+                        chunk_options.update(stage.get('options', {}))
+                        base_method = stage.get('method', base_method)
+                        break
             
             # Create chunker and generate chunks
             chunker = Chunker()

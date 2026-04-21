@@ -712,6 +712,18 @@ class MediaViewerPanel(Container):
             # Status
             if self.media_data.get('is_deleted'):
                 lines.append("[red][bold]Status:[/bold] DELETED[/red]")
+
+            if self.media_data.get("backing_media_id") not in (None, ""):
+                progress = self.media_data.get("reading_progress") or {}
+                current_page = progress.get("current_page")
+                total_pages = progress.get("total_pages")
+                percent_complete = progress.get("percent_complete")
+
+                if current_page is not None or total_pages is not None:
+                    progress_text = f"{current_page or 0} / {total_pages or '?'}"
+                    if percent_complete is not None:
+                        progress_text = f"{progress_text} ({float(percent_complete):.1f}%)"
+                    lines.append(f"[bold]Reading Progress:[/bold] {progress_text}")
             
             display.update("\n".join(lines))
         except Exception as e:
@@ -778,6 +790,11 @@ class MediaViewerPanel(Container):
     def clear_display(self) -> None:
         """Clear all displays when no item is selected."""
         try:
+            self.media_data = None
+            self.all_analyses = []
+            self.current_analysis = None
+            self.current_analysis_index = 0
+            self.has_existing_analysis = False
             self.query_one("#metadata-display", Static).update("*No item selected*")
             self.query_one("#content-display", Markdown).update("*No item selected*")
             self.query_one("#analysis-display", Markdown).update("*No item selected*")
@@ -862,7 +879,9 @@ class MediaViewerPanel(Container):
                 author=author,
                 url=url,
                 keywords=keyword_list,
-                type_slug=""  # Will be set by MediaWindow
+                type_slug="",  # Will be set by MediaWindow
+                record_id=self.media_data.get("id"),
+                backing_media_id=self.media_data.get("backing_media_id"),
             ))
             
             # Exit edit mode
@@ -883,7 +902,9 @@ class MediaViewerPanel(Container):
             self.post_message(MediaDeleteConfirmationEvent(
                 media_id=self.media_data['id'],
                 media_title=self.media_data.get('title', 'Untitled'),
-                type_slug=""  # Will be set by MediaWindow
+                type_slug="",  # Will be set by MediaWindow
+                record_id=self.media_data.get("id"),
+                backing_media_id=self.media_data.get("backing_media_id"),
             ))
     
     @on(Input.Changed, "#content-search-input")
@@ -999,53 +1020,31 @@ class MediaViewerPanel(Container):
             self.populate_providers()
         except Exception as e:
             logger.debug(f"Could not populate providers: {e}")
-        
-        # Load all analyses for this media item
-        self.load_all_analyses()
-    
-    def load_all_analyses(self) -> None:
-        """Load all analyses (document versions) for the current media item."""
-        if not self.media_data or not self.app_instance.media_db:
+
+        self.load_analysis_versions([])
+
+    def load_analysis_versions(self, analyses: List[Dict[str, Any]]) -> None:
+        """Load analysis versions supplied by the active scope service."""
+        if not self.media_data:
             self.all_analyses = []
             self.current_analysis_index = 0
+            self.current_analysis = None
+            self.has_existing_analysis = False
             self._update_analysis_navigation()
             return
-        
+
         try:
-            media_id = self.media_data.get('id')
-            if not media_id:
-                return
-            
-            # Get all document versions with analysis content
-            all_versions = self.app_instance.media_db.get_all_document_versions(
-                media_id=media_id,
-                include_content=False,  # We don't need content, just analysis
-                include_deleted=False
-            )
-            
-            logger.debug(f"Found {len(all_versions)} total versions for media_id={media_id}")
-            
-            # Filter to only versions that have analysis content
-            self.all_analyses = [v for v in all_versions if v.get('analysis_content')]
-            
-            logger.info(f"Found {len(self.all_analyses)} analyses with content out of {len(all_versions)} total versions")
-            
-            # Sort by version number (newest first)
+            self.all_analyses = [dict(version) for version in analyses if version.get("analysis_content")]
             self.all_analyses.sort(key=lambda x: x.get('version_number', 0), reverse=True)
-            
-            # Set current index to 0 (most recent) if we have analyses
+
             if self.all_analyses:
                 self.current_analysis_index = 0
                 self.has_existing_analysis = True
-                # Display the current analysis
                 self._display_analysis_at_index(0)
             else:
                 self.current_analysis_index = 0
                 self.has_existing_analysis = False
-                # If no analyses in versions but media has analysis, use it
                 if self.media_data.get('analysis'):
-                    logger.info("No document versions with analysis, but media has analysis field")
-                    # Create a pseudo-version for the existing analysis
                     self.all_analyses = [{
                         'version_number': 0,
                         'analysis_content': self.media_data['analysis'],
@@ -1054,6 +1053,14 @@ class MediaViewerPanel(Container):
                     }]
                     self.has_existing_analysis = True
                     self._display_analysis_at_index(0)
+                else:
+                    self.current_analysis = None
+                    self._update_analysis_button_states()
+                    try:
+                        self.query_one("#analysis-display", Markdown).update("*No analysis available for this media item.*")
+                        self.query_one("#analysis-date-info", Static).update("")
+                    except Exception:
+                        pass
             
             self._update_analysis_navigation()
             
@@ -1061,7 +1068,14 @@ class MediaViewerPanel(Container):
             logger.error(f"Error loading all analyses: {e}", exc_info=True)
             self.all_analyses = []
             self.current_analysis_index = 0
+            self.current_analysis = None
+            self.has_existing_analysis = False
+            self._update_analysis_button_states()
             self._update_analysis_navigation()
+
+    def load_all_analyses(self) -> None:
+        """Compatibility wrapper for callers that have not switched to scope-owned loading."""
+        self.load_analysis_versions([])
     
     def _display_analysis_at_index(self, index: int) -> None:
         """Display the analysis at the given index."""
@@ -1470,7 +1484,9 @@ class MediaViewerPanel(Container):
                 top_p=top_p,
                 min_p=min_p,
                 max_tokens=max_tokens,
-                type_slug=""  # Will be set by MediaWindow
+                type_slug="",  # Will be set by MediaWindow
+                record_id=self.media_data.get("id"),
+                backing_media_id=self.media_data.get("backing_media_id"),
             ))
             
             logger.debug("MediaAnalysisRequestEvent posted successfully")
@@ -1522,7 +1538,8 @@ class MediaViewerPanel(Container):
         self.post_message(MediaAnalysisSaveEvent(
             media_id=self.media_data['id'],
             analysis_content=self.current_analysis,
-            type_slug=""  # Will be set by MediaWindow
+            type_slug="",  # Will be set by MediaWindow
+            record_id=self.media_data.get("id"),
         ))
     
     @on(Button.Pressed, "#save-as-note-btn")
@@ -1535,7 +1552,8 @@ class MediaViewerPanel(Container):
         self.post_message(MediaAnalysisSaveAsNoteEvent(
             media_id=self.media_data['id'],
             media_title=self.media_data.get('title', 'Untitled Media'),
-            analysis_content=self.current_analysis
+            analysis_content=self.current_analysis,
+            record_id=self.media_data.get("id"),
         ))
     
     @on(Button.Pressed, "#edit-analysis-btn")
@@ -1600,7 +1618,8 @@ class MediaViewerPanel(Container):
         self.post_message(MediaAnalysisOverwriteEvent(
             media_id=self.media_data['id'],
             analysis_content=analysis_content,
-            type_slug=""  # Will be set by MediaWindow
+            type_slug="",  # Will be set by MediaWindow
+            record_id=self.media_data.get("id"),
         ))
         
         # Exit edit mode if active
@@ -1708,7 +1727,8 @@ class MediaViewerPanel(Container):
                 self.post_message(MediaAnalysisDeleteEvent(
                     media_id=self.media_data['id'],
                     version_uuid=analysis_uuid,
-                    type_slug=""  # Will be set by MediaWindow
+                    type_slug="",  # Will be set by MediaWindow
+                    record_id=self.media_data.get("id"),
                 ))
             else:
                 # For unsaved analyses or legacy analyses without UUID

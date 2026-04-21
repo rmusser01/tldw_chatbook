@@ -1,6 +1,8 @@
 # tldw_chatbook/tldw_api/client.py
 #
 #
+from __future__ import annotations
+
 # Imports
 import json # For MediaWiki streaming
 from pathlib import Path # For utils.prepare_files_for_httpx
@@ -39,11 +41,73 @@ from .notes_workspace_schemas import (
     WorkspaceSourceUpdateRequest,
     WorkspaceUpdateRequest,
 )
+from .media_reading_schemas import (
+    FileCreateRequest,
+    IngestionSourceCreateRequest,
+    IngestionSourceItemListResponse,
+    IngestionSourceItemResponse,
+    IngestionSourceListResponse,
+    IngestionSourcePatchRequest,
+    IngestionSourceResponse,
+    IngestionSourceSyncTriggerResponse,
+    ReadingProgressUpdate,
+    ReadingUpdateRequest,
+)
 from .prompt_chatbook_schemas import (
     ChatbookExportRequest,
     ChatbookImportRequest,
     PromptCreateRequest,
     PromptPreviewRequest,
+)
+from .rag_admin_schemas import (
+    ChunkingTemplateApplyRequest,
+    ChunkingTemplateApplyResponse,
+    ChunkingTemplateCreateRequest,
+    ChunkingTemplateDiagnosticsResponse,
+    ChunkingTemplateListResponse,
+    ChunkingTemplateResponse,
+    ChunkingTemplateUpdateRequest,
+    EmbeddingCollectionListResponse,
+    EmbeddingCollectionResponse,
+    EmbeddingCollectionStatsResponse,
+)
+from .evaluations_schemas import (
+    CreateEvaluationRequest,
+    EvaluationDatasetCreateRequest,
+    EvaluationDatasetListResponse,
+    EvaluationDatasetResponse,
+    EvaluationListResponse,
+    EvaluationResponse,
+    EvaluationRunCreateRequest,
+    EvaluationRunListResponse,
+    EvaluationRunResponse,
+    UpdateEvaluationRequest,
+)
+from .flashcards_schemas import (
+    FlashcardCreateRequest,
+    FlashcardDeckCreateRequest,
+    FlashcardDeckResponse,
+    FlashcardListResponse,
+    FlashcardNextReviewResponse,
+    FlashcardResponse,
+    FlashcardReviewRequest,
+    FlashcardReviewResponse,
+    FlashcardReviewSessionEndRequest,
+    FlashcardReviewSessionSummary,
+    FlashcardUpdateRequest,
+)
+from .quizzes_schemas import (
+    QuizAttemptListResponse,
+    QuizAttemptResponse,
+    QuizAttemptSubmitRequest,
+    QuizCreateRequest,
+    QuizListResponse,
+    QuizQuestionCreateRequest,
+    QuizQuestionListResponse,
+    QuizQuestionResponse,
+    QuizQuestionUpdateRequest,
+    QuizResponse,
+    QuizUpdateRequest,
 )
 from .chat_conversation_schemas import (
     ConversationScopeParams,
@@ -389,6 +453,692 @@ class TLDWAPIClient:
                 "include_keywords": str(include_keywords).lower(),
             },
         )
+
+    async def create_file_artifact(self, request_data: FileCreateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/files/create",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def list_reference_images(self) -> Dict[str, Any]:
+        return await self._request("GET", "/api/v1/files/reference-images")
+
+    async def get_file_artifact(self, file_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/files/{file_id}")
+
+    async def delete_file_artifact(self, file_id: int, hard: bool = False, delete_file: bool = False) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/files/{file_id}",
+            params={"hard": str(hard).lower(), "delete_file": str(delete_file).lower()},
+        )
+
+    async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/ingestion-sources/",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return IngestionSourceResponse.model_validate(response)
+
+    async def list_ingestion_sources(self) -> IngestionSourceListResponse:
+        response = await self._request("GET", "/api/v1/ingestion-sources/")
+        return [IngestionSourceResponse.model_validate(item) for item in response]
+
+    async def get_ingestion_source(self, source_id: int) -> IngestionSourceResponse:
+        response = await self._request("GET", f"/api/v1/ingestion-sources/{source_id}")
+        return IngestionSourceResponse.model_validate(response)
+
+    async def patch_ingestion_source(
+        self,
+        source_id: int,
+        request_data: IngestionSourcePatchRequest,
+    ) -> IngestionSourceResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/ingestion-sources/{source_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return IngestionSourceResponse.model_validate(response)
+
+    async def list_ingestion_source_items(self, source_id: int) -> IngestionSourceItemListResponse:
+        response = await self._request("GET", f"/api/v1/ingestion-sources/{source_id}/items")
+        return [IngestionSourceItemResponse.model_validate(item) for item in response]
+
+    async def trigger_ingestion_source_sync(self, source_id: int) -> IngestionSourceSyncTriggerResponse:
+        response = await self._request("POST", f"/api/v1/ingestion-sources/{source_id}/sync")
+        return IngestionSourceSyncTriggerResponse.model_validate(response)
+
+    async def upload_ingestion_source_archive(self, source_id: int, archive_path: str) -> IngestionSourceSyncTriggerResponse:
+        httpx_files = prepare_files_for_httpx([archive_path], upload_field_name="archive")
+        try:
+            response = await self._request(
+                "POST",
+                f"/api/v1/ingestion-sources/{source_id}/archive",
+                files=httpx_files,
+            )
+            return IngestionSourceSyncTriggerResponse.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def list_reading_items(
+        self,
+        *,
+        status: list[str] | None = None,
+        tags: list[str] | None = None,
+        q: str | None = None,
+        domain: str | None = None,
+        favorite: bool | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        page: int = 1,
+        size: int = 20,
+        offset: int | None = None,
+        limit: int | None = None,
+        sort: str | None = None,
+    ) -> Dict[str, Any]:
+        params = {
+            "status": status,
+            "tags": tags,
+            "q": q,
+            "domain": domain,
+            "favorite": favorite,
+            "date_from": date_from,
+            "date_to": date_to,
+            "sort": sort,
+        }
+        if offset is not None or limit is not None:
+            params["offset"] = offset
+            params["limit"] = limit
+        else:
+            params["page"] = page
+            params["size"] = size
+        return await self._request(
+            "GET",
+            "/api/v1/reading/items",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+
+    async def get_reading_item(self, item_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/reading/items/{item_id}")
+
+    async def update_reading_item(self, item_id: int, request_data: ReadingUpdateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/reading/items/{item_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def delete_reading_item(self, item_id: int, hard: bool = False) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/reading/items/{item_id}",
+            params={"hard": str(hard).lower()},
+        )
+
+    async def get_reading_progress(self, media_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/media/{media_id}/progress")
+
+    async def update_reading_progress(self, media_id: int, request_data: ReadingProgressUpdate) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/media/{media_id}/progress",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def delete_reading_progress(self, media_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/media/{media_id}/progress")
+
+    async def list_chunking_templates(
+        self,
+        *,
+        include_builtin: bool = True,
+        include_custom: bool = True,
+        tags: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
+    ) -> ChunkingTemplateListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/chunking/templates",
+            params={
+                key: value
+                for key, value in {
+                    "include_builtin": include_builtin,
+                    "include_custom": include_custom,
+                    "tags": tags,
+                    "user_id": user_id,
+                }.items()
+                if value is not None
+            },
+        )
+        return ChunkingTemplateListResponse.model_validate(response)
+
+    async def get_chunking_template(self, template_name: str) -> ChunkingTemplateResponse:
+        response = await self._request("GET", f"/api/v1/chunking/templates/{template_name}")
+        return ChunkingTemplateResponse.model_validate(response)
+
+    async def create_chunking_template(
+        self,
+        request_data: ChunkingTemplateCreateRequest,
+    ) -> ChunkingTemplateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/chunking/templates",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ChunkingTemplateResponse.model_validate(response)
+
+    async def update_chunking_template(
+        self,
+        template_name: str,
+        request_data: ChunkingTemplateUpdateRequest,
+    ) -> ChunkingTemplateResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/chunking/templates/{template_name}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ChunkingTemplateResponse.model_validate(response)
+
+    async def delete_chunking_template(self, template_name: str, hard_delete: bool = False) -> None:
+        await self._request(
+            "DELETE",
+            f"/api/v1/chunking/templates/{template_name}",
+            params={"hard_delete": hard_delete},
+        )
+
+    async def apply_chunking_template(
+        self,
+        request_data: ChunkingTemplateApplyRequest,
+        *,
+        include_metadata: bool = False,
+    ) -> ChunkingTemplateApplyResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/chunking/templates/apply",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            params={"include_metadata": include_metadata},
+        )
+        return ChunkingTemplateApplyResponse.model_validate(response)
+
+    async def get_chunking_template_diagnostics(self) -> ChunkingTemplateDiagnosticsResponse:
+        response = await self._request("GET", "/api/v1/chunking/templates/diagnostics")
+        return ChunkingTemplateDiagnosticsResponse.model_validate(response)
+
+    async def list_embedding_collections(self) -> EmbeddingCollectionListResponse:
+        response = await self._request("GET", "/api/v1/embeddings/collections")
+        return [EmbeddingCollectionResponse.model_validate(item) for item in response]
+
+    async def delete_embedding_collection(self, collection_name: str) -> None:
+        await self._request("DELETE", f"/api/v1/embeddings/collections/{collection_name}")
+
+    async def get_embedding_collection_stats(
+        self,
+        collection_name: str,
+    ) -> EmbeddingCollectionStatsResponse:
+        response = await self._request("GET", f"/api/v1/embeddings/collections/{collection_name}/stats")
+        return EmbeddingCollectionStatsResponse.model_validate(response)
+
+    async def create_evaluation_dataset(
+        self,
+        request_data: EvaluationDatasetCreateRequest,
+    ) -> EvaluationDatasetResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/datasets",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return EvaluationDatasetResponse.model_validate(response)
+
+    async def list_evaluation_datasets(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> EvaluationDatasetListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/evaluations/datasets",
+            params={"limit": limit, "offset": offset},
+        )
+        return EvaluationDatasetListResponse.model_validate(response)
+
+    async def get_evaluation_dataset(
+        self,
+        dataset_id: str,
+        *,
+        include_samples: bool = True,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> EvaluationDatasetResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/evaluations/datasets/{dataset_id}",
+            params={
+                key: value
+                for key, value in {
+                    "include_samples": include_samples,
+                    "limit": limit,
+                    "offset": offset,
+                }.items()
+                if value is not None
+            },
+        )
+        return EvaluationDatasetResponse.model_validate(response)
+
+    async def delete_evaluation_dataset(self, dataset_id: str) -> None:
+        await self._request("DELETE", f"/api/v1/evaluations/datasets/{dataset_id}")
+
+    async def create_evaluation(
+        self,
+        request_data: CreateEvaluationRequest,
+    ) -> EvaluationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return EvaluationResponse.model_validate(response)
+
+    async def list_evaluations(
+        self,
+        *,
+        limit: int = 20,
+        after: Optional[str] = None,
+        eval_type: Optional[str] = None,
+    ) -> EvaluationListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/evaluations",
+            params={
+                key: value
+                for key, value in {
+                    "limit": limit,
+                    "after": after,
+                    "eval_type": eval_type,
+                }.items()
+                if value is not None
+            },
+        )
+        return EvaluationListResponse.model_validate(response)
+
+    async def get_evaluation(self, eval_id: str) -> EvaluationResponse:
+        response = await self._request("GET", f"/api/v1/evaluations/{eval_id}")
+        return EvaluationResponse.model_validate(response)
+
+    async def update_evaluation(
+        self,
+        eval_id: str,
+        request_data: UpdateEvaluationRequest,
+    ) -> EvaluationResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/evaluations/{eval_id}",
+            json_data=request_data.model_dump(exclude_none=True, exclude_unset=True, mode="json"),
+        )
+        return EvaluationResponse.model_validate(response)
+
+    async def delete_evaluation(self, eval_id: str) -> None:
+        await self._request("DELETE", f"/api/v1/evaluations/{eval_id}")
+
+    async def create_evaluation_run(
+        self,
+        eval_id: str,
+        request_data: EvaluationRunCreateRequest,
+    ) -> EvaluationRunResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/evaluations/{eval_id}/runs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return EvaluationRunResponse.model_validate(response)
+
+    async def list_evaluation_runs(
+        self,
+        eval_id: str,
+        *,
+        limit: int = 20,
+        after: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> EvaluationRunListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/evaluations/{eval_id}/runs",
+            params={
+                key: value
+                for key, value in {
+                    "limit": limit,
+                    "after": after,
+                    "status": status,
+                }.items()
+                if value is not None
+            },
+        )
+        return EvaluationRunListResponse.model_validate(response)
+
+    async def get_evaluation_run(self, run_id: str) -> EvaluationRunResponse:
+        response = await self._request("GET", f"/api/v1/evaluations/runs/{run_id}")
+        return EvaluationRunResponse.model_validate(response)
+
+    async def cancel_evaluation_run(self, run_id: str) -> Dict[str, Any]:
+        return await self._request("POST", f"/api/v1/evaluations/runs/{run_id}/cancel")
+
+    async def create_flashcard_deck(
+        self,
+        request_data: FlashcardDeckCreateRequest,
+    ) -> FlashcardDeckResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/decks",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardDeckResponse.model_validate(response)
+
+    async def list_flashcard_decks(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[FlashcardDeckResponse]:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/decks",
+            params={"limit": limit, "offset": offset},
+        )
+        return [FlashcardDeckResponse.model_validate(item) for item in list(response or [])]
+
+    async def create_flashcard(
+        self,
+        request_data: FlashcardCreateRequest,
+    ) -> FlashcardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardResponse.model_validate(response)
+
+    async def update_flashcard(
+        self,
+        card_uuid: str,
+        request_data: FlashcardUpdateRequest,
+    ) -> FlashcardResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/flashcards/{card_uuid}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardResponse.model_validate(response)
+
+    async def delete_flashcard(
+        self,
+        card_uuid: str,
+        *,
+        expected_version: int,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/flashcards/{card_uuid}",
+            params={"expected_version": expected_version},
+        )
+
+    async def list_flashcards(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        q: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> FlashcardListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards",
+            params={
+                key: value
+                for key, value in {
+                    "deck_id": deck_id,
+                    "q": q,
+                    "limit": limit,
+                    "offset": offset,
+                }.items()
+                if value is not None
+            },
+        )
+        return FlashcardListResponse.model_validate(response)
+
+    async def get_next_flashcard_review(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+    ) -> FlashcardNextReviewResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/review/next",
+            params={
+                key: value
+                for key, value in {
+                    "deck_id": deck_id,
+                }.items()
+                if value is not None
+            },
+        )
+        return FlashcardNextReviewResponse.model_validate(response)
+
+    async def review_flashcard(
+        self,
+        request_data: FlashcardReviewRequest,
+    ) -> FlashcardReviewResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/review",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardReviewResponse.model_validate(response)
+
+    async def end_flashcard_review_session(self, review_session_id: int) -> FlashcardReviewSessionSummary:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/review-sessions/end",
+            json_data=FlashcardReviewSessionEndRequest(review_session_id=review_session_id).model_dump(mode="json"),
+        )
+        return FlashcardReviewSessionSummary.model_validate(response)
+
+    async def create_quiz(
+        self,
+        request_data: QuizCreateRequest,
+    ) -> QuizResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/quizzes",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return QuizResponse.model_validate(response)
+
+    async def list_quizzes(
+        self,
+        *,
+        q: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[QuizResponse]:
+        response = await self._request(
+            "GET",
+            "/api/v1/quizzes",
+            params={
+                key: value
+                for key, value in {
+                    "q": q,
+                    "limit": limit,
+                    "offset": offset,
+                }.items()
+                if value is not None
+            },
+        )
+        payload = QuizListResponse.model_validate(response)
+        return payload.items
+
+    async def get_quiz(self, quiz_id: int | str) -> QuizResponse:
+        response = await self._request("GET", f"/api/v1/quizzes/{quiz_id}")
+        return QuizResponse.model_validate(response)
+
+    async def update_quiz(
+        self,
+        quiz_id: int | str,
+        request_data: QuizUpdateRequest,
+    ) -> QuizResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/quizzes/{quiz_id}",
+            json_data=request_data.model_dump(exclude_none=True, exclude_unset=True, mode="json"),
+        )
+        return QuizResponse.model_validate(response)
+
+    async def delete_quiz(
+        self,
+        quiz_id: int | str,
+        *,
+        expected_version: Optional[int] = None,
+        hard: bool = False,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/quizzes/{quiz_id}",
+            params={
+                "expected_version": expected_version,
+                "hard": hard,
+            },
+        )
+
+    async def create_quiz_question(
+        self,
+        quiz_id: int | str,
+        request_data: QuizQuestionCreateRequest,
+    ) -> QuizQuestionResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/quizzes/{quiz_id}/questions",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return QuizQuestionResponse.model_validate(response)
+
+    async def list_quiz_questions(
+        self,
+        quiz_id: int | str,
+        *,
+        q: Optional[str] = None,
+        include_answers: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> QuizQuestionListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/quizzes/{quiz_id}/questions",
+            params={
+                key: value
+                for key, value in {
+                    "q": q,
+                    "include_answers": include_answers,
+                    "limit": limit,
+                    "offset": offset,
+                }.items()
+                if value is not None
+            },
+        )
+        return QuizQuestionListResponse.model_validate(response)
+
+    async def update_quiz_question(
+        self,
+        quiz_id: int | str,
+        question_id: int | str,
+        request_data: QuizQuestionUpdateRequest | Dict[str, Any],
+    ) -> QuizQuestionResponse:
+        payload = (
+            request_data.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+            if hasattr(request_data, "model_dump")
+            else dict(request_data)
+        )
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/quizzes/{quiz_id}/questions/{question_id}",
+            json_data=payload,
+        )
+        return QuizQuestionResponse.model_validate(response)
+
+    async def delete_quiz_question(
+        self,
+        quiz_id: int | str,
+        question_id: int | str,
+        *,
+        expected_version: Optional[int] = None,
+        hard: bool = False,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/quizzes/{quiz_id}/questions/{question_id}",
+            params={
+                "expected_version": expected_version,
+                "hard": hard,
+            },
+        )
+
+    async def start_quiz_attempt(self, quiz_id: int | str) -> QuizAttemptResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/quizzes/{quiz_id}/attempts",
+        )
+        return QuizAttemptResponse.model_validate(response)
+
+    async def submit_quiz_attempt(
+        self,
+        attempt_id: int | str,
+        request_data: QuizAttemptSubmitRequest,
+    ) -> QuizAttemptResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/quizzes/attempts/{attempt_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return QuizAttemptResponse.model_validate(response)
+
+    async def list_quiz_attempts(
+        self,
+        *,
+        quiz_id: Optional[int | str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> QuizAttemptListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/quizzes/attempts",
+            params={
+                key: value
+                for key, value in {
+                    "quiz_id": quiz_id,
+                    "limit": limit,
+                    "offset": offset,
+                }.items()
+                if value is not None
+            },
+        )
+        return QuizAttemptListResponse.model_validate(response)
+
+    async def get_quiz_attempt(
+        self,
+        attempt_id: int | str,
+        *,
+        include_questions: bool = False,
+        include_answers: bool = False,
+    ) -> QuizAttemptResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/quizzes/attempts/{attempt_id}",
+            params={
+                "include_questions": include_questions,
+                "include_answers": include_answers,
+            },
+        )
+        return QuizAttemptResponse.model_validate(response)
 
     async def search_media_items(
         self,
