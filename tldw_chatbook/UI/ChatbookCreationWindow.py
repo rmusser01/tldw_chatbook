@@ -350,7 +350,7 @@ class ChatbookCreationWindow(ModalScreen):
         self.app.notify(f"Creating chatbook '{name}'...", severity="information")
         
         try:
-            success, message = self.creator.create_chatbook(
+            success, message, _dependency_info = self.creator.create_chatbook(
                 name=name,
                 description=description,
                 content_selections=content_selections,

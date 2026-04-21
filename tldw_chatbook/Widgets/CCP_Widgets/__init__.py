@@ -9,6 +9,7 @@ from .ccp_sidebar_widget import (
     ConversationSearchRequested,
     ConversationLoadRequested,
     CharacterLoadRequested,
+    PersonaLoadRequested,
     PromptLoadRequested,
     DictionaryLoadRequested,
     ImportRequested,
@@ -46,6 +47,16 @@ from .ccp_character_editor_widget import (
     AlternateGreetingRemoved,
 )
 
+from .ccp_persona_card_widget import (
+    CCPPersonaCardWidget,
+    EditPersonaRequested,
+)
+
+from .ccp_persona_editor_widget import (
+    CCPPersonaEditorWidget,
+    PersonaSaveRequested,
+)
+
 from .ccp_prompt_editor_widget import (
     CCPPromptEditorWidget,
     PromptSaveRequested,
@@ -75,6 +86,8 @@ __all__ = [
     'ConversationMessageWidget',
     'CCPCharacterCardWidget',
     'CCPCharacterEditorWidget',
+    'CCPPersonaCardWidget',
+    'CCPPersonaEditorWidget',
     'CCPPromptEditorWidget',
     'CCPDictionaryEditorWidget',
     
@@ -82,6 +95,7 @@ __all__ = [
     'ConversationSearchRequested',
     'ConversationLoadRequested',
     'CharacterLoadRequested',
+    'PersonaLoadRequested',
     'PromptLoadRequested',
     'DictionaryLoadRequested',
     'ImportRequested',
@@ -101,6 +115,7 @@ __all__ = [
     'ExportCharacterRequested',
     'DeleteCharacterRequested',
     'StartChatRequested',
+    'EditPersonaRequested',
     
     # Character Editor Messages
     'CharacterSaveRequested',
@@ -110,6 +125,7 @@ __all__ = [
     'CharacterEditorCancelled',
     'AlternateGreetingAdded',
     'AlternateGreetingRemoved',
+    'PersonaSaveRequested',
     
     # Prompt Editor Messages
     'PromptSaveRequested',

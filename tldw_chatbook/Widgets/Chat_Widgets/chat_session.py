@@ -150,7 +150,7 @@ class ChatSession(Container):
     
     async def handle_send_stop_button(self, event):
         """Handle send/stop button press with debouncing."""
-        from ..Event_Handlers.Chat_Events import chat_events_tabs
+        from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_tabs
         
         current_time = time.time() * 1000
         
@@ -197,7 +197,7 @@ class ChatSession(Container):
     
     async def handle_suggest_button(self, event):
         """Handle suggest response button press."""
-        from ..Event_Handlers.Chat_Events import chat_events_tabs
+        from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_tabs
         logger.info(f"Suggest button pressed for tab {self.session_data.tab_id}")
         # Use tab-aware handler
         await chat_events_tabs.handle_respond_for_me_button_pressed_with_tabs(
@@ -220,9 +220,12 @@ class ChatSession(Container):
     
     def clear_chat(self) -> None:
         """Clear the chat log for this session."""
-        chat_log = self.get_chat_log()
-        chat_log.remove_children()
-        logger.info(f"Cleared chat log for tab {self.session_data.tab_id}")
+        try:
+            chat_log = self.get_chat_log()
+            chat_log.remove_children()
+            logger.info(f"Cleared chat log for tab {self.session_data.tab_id}")
+        except Exception as e:
+            logger.warning(f"Could not clear chat log for tab {self.session_data.tab_id}: {e}")
     
     # Button event handlers
     @on(Button.Pressed)

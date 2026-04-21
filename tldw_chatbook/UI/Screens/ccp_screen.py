@@ -21,9 +21,13 @@ from ...Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SID
 # Import widget components
 from ...Widgets.CCP_Widgets import (
     CCPSidebarWidget,
+    ContinueConversationRequested,
     ConversationSearchRequested,
     ConversationLoadRequested,
     CharacterLoadRequested,
+    EditPersonaRequested,
+    PersonaLoadRequested,
+    PersonaSaveRequested,
     PromptLoadRequested,
     DictionaryLoadRequested,
     ImportRequested,
@@ -35,12 +39,14 @@ from ...Widgets.CCP_Widgets import (
 from ..CCP_Modules import (
     CCPConversationHandler,
     CCPCharacterHandler,
+    CCPPersonaHandler,
     CCPPromptHandler,
     CCPDictionaryHandler,
     CCPMessageManager,
     CCPSidebarHandler,
     ConversationMessage,
     CharacterMessage,
+    PersonaMessage,
     PromptMessage,
     DictionaryMessage,
     ViewChangeMessage,
@@ -110,11 +116,12 @@ class CCPScreenState:
     active_view: str = "conversations"  # conversations, character_card, character_editor, etc.
     
     # Selected items
-    selected_conversation_id: Optional[int] = None
+    selected_conversation_id: Optional[str] = None
     selected_conversation_title: str = ""
     selected_conversation_messages: List[Dict[str, Any]] = field(default_factory=list)
     
-    selected_character_id: Optional[int] = None
+    selected_character_id: Optional[str] = None
+    selected_persona_id: Optional[str] = None
     selected_character_name: str = ""
     selected_character_data: Dict[str, Any] = field(default_factory=dict)
     is_editing_character: bool = False
@@ -164,6 +171,19 @@ class CCPScreenState:
     # Validation flags
     has_unsaved_changes: bool = False
     validation_errors: Dict[str, str] = field(default_factory=dict)
+
+    def reset_for_backend_change(self) -> None:
+        """Clear entity/session state when the backing mode changes."""
+        self.selected_character_id = None
+        self.selected_persona_id = None
+        self.selected_conversation_id = None
+        self.selected_character_name = ""
+        self.selected_character_data = {}
+        self.selected_conversation_title = ""
+        self.selected_conversation_messages = []
+        self.conversation_search_results = []
+        self.character_actions_visible = False
+        self.conversation_details_visible = False
 
 
 class CCPScreen(BaseAppScreen):
@@ -516,6 +536,7 @@ class CCPScreen(BaseAppScreen):
         # Initialize modular handlers
         self.conversation_handler = CCPConversationHandler(self)
         self.character_handler = CCPCharacterHandler(self)
+        self.persona_handler = CCPPersonaHandler(self)
         self.prompt_handler = CCPPromptHandler(self)
         self.dictionary_handler = CCPDictionaryHandler(self)
         self.message_manager = CCPMessageManager(self)
@@ -545,6 +566,8 @@ class CCPScreen(BaseAppScreen):
             CCPConversationViewWidget,
             CCPCharacterCardWidget,
             CCPCharacterEditorWidget,
+            CCPPersonaCardWidget,
+            CCPPersonaEditorWidget,
             CCPPromptEditorWidget,
             CCPDictionaryEditorWidget,
         )
@@ -572,6 +595,10 @@ class CCPScreen(BaseAppScreen):
                 
                 # Character editor widget
                 yield CCPCharacterEditorWidget(parent_screen=self)
+
+                # Persona profile widgets
+                yield CCPPersonaCardWidget(parent_screen=self)
+                yield CCPPersonaEditorWidget(parent_screen=self)
                 
                 # Prompt editor widget
                 yield CCPPromptEditorWidget(parent_screen=self)
@@ -606,12 +633,11 @@ class CCPScreen(BaseAppScreen):
         """Initialize the UI state."""
         # Refresh lists
         await self.character_handler.refresh_character_list()
+        await self.persona_handler.refresh_persona_list()
         await self.dictionary_handler.refresh_dictionary_list()
         
-        # Set initial view
-        new_state = self.state
-        new_state.active_view = "conversations"
-        self.state = new_state
+        # Set initial view and ensure non-active views are hidden.
+        await self._switch_view("conversations")
 
     # ===== Event Handlers using @on decorators =====
     
@@ -678,6 +704,11 @@ class CCPScreen(BaseAppScreen):
             await self.character_handler.load_character(message.character_id)
         else:
             await self.character_handler.handle_load_character()
+
+    async def on_persona_load_requested(self, message: PersonaLoadRequested) -> None:
+        """Handle persona load request from sidebar."""
+        if message.persona_id:
+            await self.persona_handler.load_persona(message.persona_id)
     
     async def on_prompt_load_requested(self, message: PromptLoadRequested) -> None:
         """Handle prompt load request from sidebar."""
@@ -711,6 +742,8 @@ class CCPScreen(BaseAppScreen):
         """Handle create request from sidebar."""
         if message.item_type == "character":
             await self.character_handler.handle_create()
+        elif message.item_type == "persona":
+            await self.persona_handler.handle_create_persona()
         elif message.item_type == "prompt":
             await self.prompt_handler.handle_create()
         elif message.item_type == "dictionary":
@@ -718,11 +751,21 @@ class CCPScreen(BaseAppScreen):
         elif message.item_type == "worldbook":
             # Handle worldbook creation
             pass
+
+    async def on_edit_persona_requested(self, message: EditPersonaRequested) -> None:
+        """Handle persona edit requests from the persona card."""
+        await self.persona_handler.handle_edit_persona(message.persona_id)
+
+    async def on_persona_save_requested(self, message: PersonaSaveRequested) -> None:
+        """Handle persona save requests from the persona editor."""
+        await self.persona_handler.save_persona(message.persona_data)
     
     async def on_refresh_requested(self, message: RefreshRequested) -> None:
         """Handle refresh request from sidebar."""
         if message.list_type == "character":
             await self.character_handler.refresh_character_list()
+        elif message.list_type == "persona":
+            await self.persona_handler.refresh_persona_list()
         elif message.list_type == "dictionary":
             await self.dictionary_handler.refresh_dictionary_list()
         elif message.list_type == "worldbook":
@@ -734,6 +777,8 @@ class CCPScreen(BaseAppScreen):
         # Update state with loaded conversation
         new_state = self.state
         new_state.selected_conversation_id = message.conversation_id
+        if getattr(message, "conversation_data", None):
+            new_state.selected_conversation_title = message.conversation_data.get("title", "")
         new_state.conversation_details_visible = True
         self.state = new_state
         
@@ -751,6 +796,7 @@ class CCPScreen(BaseAppScreen):
         # Update state with loaded character
         new_state = self.state
         new_state.selected_character_id = message.character_id
+        new_state.selected_persona_id = None
         new_state.selected_character_data = message.card_data
         new_state.character_actions_visible = True
         self.state = new_state
@@ -761,6 +807,34 @@ class CCPScreen(BaseAppScreen):
             actions_container.remove_class("hidden")
         except NoMatches:
             pass
+
+    async def on_persona_message_loaded(self, message: PersonaMessage.Loaded) -> None:
+        """Handle persona loaded message."""
+        new_state = self.state
+        new_state.selected_persona_id = message.persona_id
+        new_state.selected_character_id = None
+        new_state.selected_character_data = message.persona_data
+        new_state.selected_character_name = message.persona_data.get("name", "")
+        new_state.character_actions_visible = False
+        self.state = new_state
+
+        try:
+            persona_card = self.query_one("#ccp-persona-card-view")
+            if hasattr(persona_card, "load_persona"):
+                persona_card.load_persona(message.persona_data)
+        except NoMatches:
+            pass
+
+        try:
+            persona_editor = self.query_one("#ccp-persona-editor-view")
+            if hasattr(persona_editor, "load_persona"):
+                persona_editor.load_persona(message.persona_data)
+        except NoMatches:
+            pass
+
+    async def on_continue_conversation_requested(self, message: ContinueConversationRequested) -> None:
+        """Handle request to continue the loaded CCP conversation in main chat."""
+        await self._launch_selected_conversation_in_chat()
     
     async def on_prompt_message_loaded(self, message: PromptMessage.Loaded) -> None:
         """Handle prompt loaded message."""
@@ -819,7 +893,8 @@ class CCPScreen(BaseAppScreen):
         # Ensure active view is valid
         valid_views = [
             "conversations", "conversation_messages", "character_card", 
-            "character_editor", "prompt_editor", "dictionary_view", 
+            "character_editor", "persona_profiles", "persona_editor",
+            "prompt_editor", "dictionary_view", 
             "dictionary_editor"
         ]
         if state.active_view not in valid_views:
@@ -841,6 +916,8 @@ class CCPScreen(BaseAppScreen):
                 "#ccp-conversation-messages-view",
                 "#ccp-character-card-view",
                 "#ccp-character-editor-view",
+                "#ccp-persona-card-view",
+                "#ccp-persona-editor-view",
                 "#ccp-prompt-editor-view",
                 "#ccp-dictionary-view",
                 "#ccp-dictionary-editor-view"
@@ -859,6 +936,8 @@ class CCPScreen(BaseAppScreen):
                 "conversation_messages": "#ccp-conversation-messages-view",
                 "character_card": "#ccp-character-card-view",
                 "character_editor": "#ccp-character-editor-view",
+                "persona_profiles": "#ccp-persona-card-view",
+                "persona_editor": "#ccp-persona-editor-view",
                 "prompt_editor": "#ccp-prompt-editor-view",
                 "dictionary_view": "#ccp-dictionary-view",
                 "dictionary_editor": "#ccp-dictionary-editor-view"
@@ -927,6 +1006,7 @@ class CCPScreen(BaseAppScreen):
             "ccp_state": {
                 "active_view": self.state.active_view,
                 "selected_character_id": self.state.selected_character_id,
+                "selected_persona_id": self.state.selected_persona_id,
                 "selected_conversation_id": self.state.selected_conversation_id,
                 "selected_prompt_id": self.state.selected_prompt_id,
                 "selected_dictionary_id": self.state.selected_dictionary_id,
@@ -947,6 +1027,7 @@ class CCPScreen(BaseAppScreen):
             new_state = CCPScreenState(
                 active_view=ccp_state.get("active_view", "conversations"),
                 selected_character_id=ccp_state.get("selected_character_id"),
+                selected_persona_id=ccp_state.get("selected_persona_id"),
                 selected_conversation_id=ccp_state.get("selected_conversation_id"),
                 selected_prompt_id=ccp_state.get("selected_prompt_id"),
                 selected_dictionary_id=ccp_state.get("selected_dictionary_id"),
@@ -965,3 +1046,74 @@ class CCPScreen(BaseAppScreen):
                 async def load_restored_conversation():
                     await self.conversation_handler.load_conversation(self.state.selected_conversation_id)
                 self.call_after_refresh(load_restored_conversation)
+
+    def _get_chat_tab_container(self):
+        """Return the main chat tab container if the chat screen is mounted."""
+        try:
+            chat_window = self.app.query_one("#chat-window")
+        except Exception:
+            return None
+
+        getter = getattr(chat_window, "_get_tab_container", None)
+        if callable(getter):
+            container = getter()
+            if container is not None:
+                return container
+
+        for attr_name in ("_tab_container", "tab_container"):
+            container = getattr(chat_window, attr_name, None)
+            if container is not None:
+                return container
+
+        return None
+
+    async def _launch_selected_conversation_in_chat(self) -> None:
+        """Open the currently selected CCP conversation in the main chat UI."""
+        from ...Chat.chat_models import ChatSessionData
+        from ...Event_Handlers.Chat_Events.chat_events_tabs import display_conversation_in_chat_tab_ui_with_tabs
+
+        contract = self.conversation_handler.get_conversation_contract(self.state.selected_conversation_id)
+        conversation_id = contract.get("id")
+        if not conversation_id:
+            self.notify("Load a conversation before continuing it in chat.", severity="warning")
+            return
+
+        tab_container = self._get_chat_tab_container()
+        if tab_container is None:
+            self.notify("Main chat tabs are not available right now.", severity="warning")
+            return
+
+        session_contract = ChatSessionData(
+            tab_id="ccp-launch",
+            title=contract.get("title", ""),
+            conversation_id=conversation_id,
+            is_ephemeral=False,
+            runtime_backend=contract.get("runtime_backend", "local"),
+            discovery_owner=contract.get("discovery_owner", "general_chat"),
+            discovery_entity_id=contract.get("discovery_entity_id"),
+            character_id=contract.get("character_id"),
+            character_name=self.state.selected_character_name or contract.get("character_name"),
+            assistant_kind=contract.get("assistant_kind"),
+            assistant_id=contract.get("assistant_id"),
+            persona_memory_mode=contract.get("persona_memory_mode"),
+            scope_type=contract.get("scope_type"),
+            workspace_id=contract.get("workspace_id"),
+        )
+
+        existing_tab_ids = set(getattr(tab_container, "sessions", {}).keys())
+        tab_id = await tab_container.create_new_tab(session_data=session_contract)
+        if not tab_id:
+            return
+
+        if hasattr(tab_container, "switch_to_tab_async"):
+            await tab_container.switch_to_tab_async(tab_id)
+
+        sessions = getattr(tab_container, "sessions", {})
+        session = sessions.get(tab_id)
+        session_data = session.session_data if session is not None else session_contract
+        if tab_id not in existing_tab_ids:
+            await display_conversation_in_chat_tab_ui_with_tabs(
+                self.app_instance,
+                conversation_id,
+                session_data=session_data,
+            )

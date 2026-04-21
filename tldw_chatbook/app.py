@@ -100,6 +100,7 @@ from .Event_Handlers import (
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
     search_events, subscription_events,
 )
+from .Event_Handlers.tab_initializers.notes_tab_initializer import NotesTabInitializer
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks, \
     chat_events_dictionaries
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -110,6 +111,21 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler, STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
 )
 from .Notes.Notes_Library import NotesInteropService
+from .Notes.notes_scope_service import NotesScopeService
+from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
+from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
+from .Character_Chat.server_character_persona_service import ServerCharacterPersonaService
+from .RAG_Admin.local_rag_admin_service import LocalRAGAdminService
+from .RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
+from .RAG_Admin.server_rag_admin_service import ServerRAGAdminService
+from .Study_Interop import (
+    LocalQuizService,
+    LocalStudyService,
+    QuizScopeService,
+    ServerQuizService,
+    ServerStudyService,
+    StudyScopeService,
+)
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
@@ -141,6 +157,7 @@ from .UI.Screens.coding_screen import CodingScreen
 from .UI.Screens.conversation_screen import ConversationScreen
 from .UI.Screens.media_screen import MediaScreen
 from .UI.Screens.notes_screen import NotesScreen
+from .UI.Screens.notes_scope_models import WorkspaceSubview
 from .UI.Screens.search_screen import SearchScreen
 from .UI.Screens.evals_screen import EvalsScreen
 from .UI.Screens.tools_settings_screen import ToolsSettingsScreen
@@ -148,6 +165,8 @@ from .UI.Screens.llm_screen import LLMScreen
 from .UI.Screens.customize_screen import CustomizeScreen
 from .UI.Screens.logs_screen import LogsScreen
 from .UI.Screens.stats_screen import StatsScreen
+from .UI.Screens.media_runtime_state import MediaRuntimeState
+from .UI.Screens.study_scope_models import StudyScopeContext
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
 # The legacy per-view navigation (ingest-nav-*/ingest-view-*) is not used anymore.
 # Keep these as empty to avoid wiring legacy handlers.
@@ -168,6 +187,11 @@ from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
 from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
 from .UI.SearchWindow import SearchWindow
+from tldw_chatbook.Media import (
+    LocalMediaReadingService,
+    MediaReadingScopeService,
+    ServerMediaReadingService,
+)
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
@@ -1108,6 +1132,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.pending_study_scope_context: Optional[StudyScopeContext] = None
+        self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
         self.loguru_logger = loguru_logger
         self.loguru_logger.info(f"Loaded app_config - strip_thinking_tags: {self.app_config.get('chat_defaults', {}).get('strip_thinking_tags', 'NOT SET')}") # Make loguru_logger an instance variable for handlers
         self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
@@ -1116,7 +1142,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         log_histogram("app_startup_phase_duration_seconds", self._startup_phases["basic_init"], 
                      labels={"phase": "basic_init"}, 
                      documentation="Duration of startup phase in seconds")
-        
 
         # Phase 2: Attribute initialization
         phase_start = time.perf_counter()
@@ -1212,6 +1237,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if not hasattr(self, '_media_types_for_ui'):
             self._media_types_for_ui = ["Error: Media DB not loaded"]
 
+        initial_media_runtime_backend = self._resolve_initial_media_runtime_backend()
+        self.media_runtime_state = MediaRuntimeState(runtime_backend=initial_media_runtime_backend)
+        self.local_media_reading_service = LocalMediaReadingService(self.media_db)
+        try:
+            self.server_media_reading_service = ServerMediaReadingService.from_config(self.app_config)
+        except ValueError:
+            self.server_media_reading_service = ServerMediaReadingService(client=None)
+        self.media_reading_scope_service = MediaReadingScopeService(
+            local_service=self.local_media_reading_service,
+            server_service=self.server_media_reading_service,
+        )
+
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}")
 
@@ -1248,6 +1285,30 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 logging.error("ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.")
                 self.chachanotes_db = None # Explicitly set to None
 
+        try:
+            self.server_notes_workspace_service = ServerNotesWorkspaceService.from_config(self.app_config)
+        except ValueError:
+            self.server_notes_workspace_service = ServerNotesWorkspaceService(client=None)
+        self.notes_scope_service = NotesScopeService(
+            local_notes_service=self.notes_service,
+            server_service=self.server_notes_workspace_service,
+        )
+        try:
+            self.server_rag_admin_service = ServerRAGAdminService.from_config(self.app_config)
+        except ValueError:
+            self.server_rag_admin_service = ServerRAGAdminService(client=None)
+        self.local_rag_admin_service = LocalRAGAdminService(
+            self.media_db,
+            app_config=self.app_config,
+        )
+        self.rag_admin_scope_service = RAGAdminScopeService(
+            local_service=self.local_rag_admin_service,
+            server_service=self.server_rag_admin_service,
+        )
+        self._wire_study_services()
+        self._wire_character_persona_services()
+        self._notes_tab_initializer = NotesTabInitializer(self)
+
         # --- Create the master handler map ---
         # This one-time setup makes the dispatcher clean and fast.
         self.button_handler_map = self._build_handler_map()
@@ -1272,6 +1333,72 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Final memory check
         log_resource_usage()
+
+    def open_study_screen(self, scope_context: Optional[StudyScopeContext] = None) -> None:
+        self.pending_study_scope_context = scope_context
+        self.post_message(NavigateToScreen(TAB_STUDY))
+
+    def open_notes_workspace(
+        self,
+        workspace_id: str,
+        subview: WorkspaceSubview = WorkspaceSubview.DETAILS,
+    ) -> None:
+        self.pending_notes_workspace_context = {
+            "workspace_id": workspace_id,
+            "subview": subview,
+        }
+        self.post_message(NavigateToScreen(TAB_NOTES))
+
+    def _wire_character_persona_services(self) -> None:
+        try:
+            self.server_character_persona_service = ServerCharacterPersonaService.from_config(self.app_config)
+        except ValueError:
+            self.server_character_persona_service = ServerCharacterPersonaService(client=None)
+        self.character_persona_scope_service = CharacterPersonaScopeService(
+            local_service=self.chachanotes_db,
+            server_service=self.server_character_persona_service,
+        )
+
+    def _wire_study_services(self) -> None:
+        self.local_study_service = LocalStudyService(self.chachanotes_db) if self.chachanotes_db is not None else None
+        self.local_quiz_service = LocalQuizService(self.chachanotes_db) if self.chachanotes_db is not None else None
+        try:
+            self.server_study_service = ServerStudyService.from_config(self.app_config)
+        except ValueError:
+            self.server_study_service = ServerStudyService(client=None)
+        try:
+            self.server_quiz_service = ServerQuizService.from_config(self.app_config)
+        except ValueError:
+            self.server_quiz_service = ServerQuizService(client=None)
+        self.study_scope_service = StudyScopeService(
+            local_service=self.local_study_service,
+            server_service=self.server_study_service,
+        )
+        self.study_quiz_scope_service = QuizScopeService(
+            local_service=self.local_quiz_service,
+            server_service=self.server_quiz_service,
+        )
+
+    def _resolve_initial_media_runtime_backend(self) -> str:
+        """Default media backend to local when no valid runtime value is available."""
+        for candidate in (
+            getattr(self, "current_runtime_backend", None),
+            getattr(self, "runtime_backend", None),
+        ):
+            normalized = str(candidate or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
+        return "local"
+
+    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+        normalized_backend = str(runtime_backend or "").strip().lower()
+        if normalized_backend in {"local", "server"}:
+            self.current_runtime_backend = normalized_backend
+            self.runtime_backend = normalized_backend
+        active_screen = getattr(self, "screen", None)
+        callback = getattr(active_screen, "handle_runtime_backend_changed", None)
+        if callable(callback):
+            await callback(normalized_backend)
 
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:
@@ -1659,6 +1786,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Handle navigation to a different screen using switch_screen for better performance."""
         screen_name = message.screen_name
         logger.info(f"Navigating to screen: {screen_name}")
+        previous_tab = self.current_tab
         
         # Save state of current screen before switching
         current_screen = self.screen
@@ -1705,6 +1833,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         screen_class = screen_map.get(screen_name)
         if screen_class:
+            if previous_tab == TAB_NOTES and previous_tab != screen_name:
+                await self._notes_tab_initializer.on_tab_hidden()
+
             # Create a fresh screen instance (per Textual best practices)
             new_screen = screen_class(self)
             
@@ -1723,6 +1854,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Update current_tab to track the active screen
             # The watcher will skip processing due to _use_screen_navigation flag
             self.current_tab = screen_name
+
+            if screen_name == TAB_NOTES and previous_tab != screen_name:
+                await self._notes_tab_initializer.on_tab_shown()
             
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
@@ -3214,6 +3348,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Hide Old Tab ---
         if old_tab and old_tab != new_tab:
+            if old_tab == TAB_NOTES:
+                self.call_after_refresh(self._notes_tab_initializer.on_tab_hidden)
+
             # Update navigation UI to remove active state from old tab
             use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
             use_links = get_cli_setting("general", "use_link_navigation", True)
@@ -3367,8 +3504,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Call immediately after refresh
             self.call_after_refresh(populate_ccp_widgets)
         elif new_tab == TAB_NOTES:
-            # NotesScreen handles its own data loading in on_mount()
-            pass
+            self.call_after_refresh(self._notes_tab_initializer.on_tab_shown)
         elif new_tab == TAB_MEDIA:
             def activate_media_initial_view():
                 try:
@@ -3661,6 +3797,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def save_current_note(self) -> bool:
         """Saves the currently selected note's title and content to the database."""
+        if isinstance(self.screen, NotesScreen):
+            return await self.screen._save_current_note()
         if not self.notes_service or not self.current_selected_note_id or self.current_selected_note_version is None:
             logging.warning("No note selected or service unavailable. Cannot save.")
             # Optionally: self.notify("No note selected to save.", severity="warning")

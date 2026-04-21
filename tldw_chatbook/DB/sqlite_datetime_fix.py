@@ -26,7 +26,10 @@ def convert_datetime(s):
         return None
     if isinstance(s, bytes):
         s = s.decode('utf-8')
-    # Parse ISO format
+    # The app stores UTC timestamps with a trailing Z, which older
+    # fromisoformat variants do not consistently accept.
+    if s.endswith('Z'):
+        s = s[:-1] + '+00:00'
     return datetime.fromisoformat(s)
 
 

@@ -4,7 +4,7 @@
 # Imports
 import re
 import uuid
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 #
 # 3rd-Party Imports
 from loguru import logger
@@ -18,6 +18,7 @@ from textual.binding import Binding
 from .chat_tab_bar import ChatTabBar
 from .chat_session import ChatSession
 from tldw_chatbook.Widgets.confirmation_dialog import UnsavedChangesDialog
+from tldw_chatbook.Chat.chat_conversation_service import derive_conversation_title
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.input_validation import validate_text_input
@@ -28,6 +29,29 @@ if TYPE_CHECKING:
 #######################################################################################################################
 #
 # Classes:
+
+
+def _derive_session_title(
+    session_data: ChatSessionData,
+    fallback_title: Optional[str] = None,
+) -> str:
+    effective_fallback_title = session_data.title if fallback_title is None else fallback_title
+    assistant_name = None
+    if session_data.assistant_kind == "character":
+        assistant_name = session_data.character_name
+    elif session_data.assistant_kind == "persona" and session_data.assistant_id:
+        assistant_name = f"Persona {session_data.assistant_id}"
+
+    return derive_conversation_title(
+        assistant_kind=session_data.assistant_kind,
+        assistant_name=assistant_name,
+        fallback_title=effective_fallback_title,
+        character_id=session_data.character_id,
+    )
+
+
+def _session_reuse_key(session_data: ChatSessionData) -> Tuple[str, Optional[str]]:
+    return (session_data.runtime_backend, session_data.conversation_id)
 
 class ChatTabContainer(Container):
     """
@@ -77,17 +101,34 @@ class ChatTabContainer(Container):
         # Create initial tab
         await self.create_new_tab()
     
-    async def create_new_tab(self, title: Optional[str] = None) -> str:
+    async def create_new_tab(
+        self,
+        title: Optional[str] = None,
+        session_data: Optional[ChatSessionData] = None,
+    ) -> str:
         """
         Create a new chat tab.
         
         Args:
             title: Optional title for the tab
-            
+            session_data: Optional session contract to seed the new tab
+
         Returns:
             The tab ID of the created tab, or empty string on failure
         """
         try:
+            if session_data is not None and session_data.conversation_id:
+                reuse_key = _session_reuse_key(session_data)
+                for existing_tab_id, existing_session in self.sessions.items():
+                    existing_session_data = existing_session.session_data
+                    if not existing_session_data.conversation_id:
+                        continue
+                    if _session_reuse_key(existing_session_data) == reuse_key:
+                        logger.info(
+                            f"Reusing existing chat tab {existing_tab_id} for conversation {reuse_key}"
+                        )
+                        return existing_tab_id
+
             # Check max tabs limit
             if len(self.sessions) >= self.max_tabs:
                 self.app_instance.notify(
@@ -95,7 +136,7 @@ class ChatTabContainer(Container):
                     severity="warning"
                 )
                 return ""
-            
+
             # Validate and sanitize title
             if title:
                 try:
@@ -119,10 +160,18 @@ class ChatTabContainer(Container):
                 return ""
             
             # Create session data
-            session_data = ChatSessionData(
-                tab_id=tab_id,
-                title=title or f"Chat {len(self.sessions) + 1}"
-            )
+            if session_data is not None:
+                session_data = ChatSessionData.from_dict(session_data.to_dict())
+                session_data.tab_id = tab_id
+                session_data.title = _derive_session_title(
+                    session_data,
+                    fallback_title=title or session_data.title,
+                )
+            else:
+                session_data = ChatSessionData(
+                    tab_id=tab_id,
+                    title=title or f"Chat {len(self.sessions) + 1}"
+                )
             
             # Create session widget
             try:
@@ -447,24 +496,37 @@ class ChatTabContainer(Container):
         Args:
             state: Dictionary mapping tab IDs to session data
         """
-        # Clear existing sessions except default
+        # Clear all existing live tabs so restore replaces the mounted UI state.
         for tab_id in list(self.sessions.keys()):
-            if tab_id != "default":
-                await self.close_tab(tab_id)
-        
+            await self._force_close_tab(tab_id)
+
+        restored_reuse_keys = set()
+
         # Restore each session
-        for tab_id, session_data in state.items():
-            if tab_id == "default" and "default" in self.sessions:
-                # Update default session
-                self.sessions["default"].session_data = session_data
-            else:
-                # Create new session
-                new_tab_id = await self.create_new_tab(title=session_data.title)
-                if new_tab_id and new_tab_id in self.sessions:
-                    # Copy the session data
-                    self.sessions[new_tab_id].session_data = session_data
-                    # Update the tab ID in session data to match new ID
-                    self.sessions[new_tab_id].session_data.tab_id = new_tab_id
+        for _, session_data in state.items():
+            restored_session_data = ChatSessionData.from_dict(session_data.to_dict())
+            restored_session_data.title = _derive_session_title(restored_session_data)
+            reuse_key = None
+            if restored_session_data.conversation_id:
+                reuse_key = _session_reuse_key(restored_session_data)
+
+            # Create new session
+            new_tab_id = await self.create_new_tab(session_data=restored_session_data)
+            if new_tab_id and new_tab_id in self.sessions:
+                if reuse_key is not None and reuse_key in restored_reuse_keys:
+                    continue
+
+                # Preserve the saved session state while rebinding it to the new widget tab ID.
+                restored_session_data.tab_id = new_tab_id
+                self.sessions[new_tab_id].session_data = restored_session_data
+                if self.tab_bar:
+                    self.tab_bar.update_tab_title(
+                        new_tab_id,
+                        restored_session_data.title,
+                        restored_session_data.character_name,
+                    )
+                if reuse_key is not None:
+                    restored_reuse_keys.add(reuse_key)
 
 #
 # End of chat_tab_container.py

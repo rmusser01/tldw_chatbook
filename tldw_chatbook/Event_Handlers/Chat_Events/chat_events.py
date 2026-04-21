@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 import uuid
-from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
+from typing import TYPE_CHECKING, List, Dict, Any, Mapping, Optional, Union
 #
 # 3rd-Party Imports
 from loguru import logger as loguru_logger
@@ -2800,6 +2800,15 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
             if filtered_count > 0:
                 loguru_logger.debug(f"Filtered out {filtered_count} character conversations, keeping {len(conversations)} regular chats")
 
+        if conversations:
+            original_count = len(conversations)
+            conversations = [conv for conv in conversations if is_general_history_conversation(conv)]
+            filtered_count = original_count - len(conversations)
+            if filtered_count > 0:
+                loguru_logger.debug(
+                    f"Filtered out {filtered_count} CCP-owned conversations from general history"
+                )
+
         if not conversations:
             await results_list_view.append(ListItem(Label("No conversations found.")))
         else:
@@ -2855,6 +2864,11 @@ async def handle_chat_conversation_search_bar_changed(app: 'TldwCli', event_valu
         0.5,
         lambda: perform_chat_conversation_search(app)
     )
+
+
+def is_general_history_conversation(row: Mapping[str, Any]) -> bool:
+    """Return True when a conversation belongs in the general chat history."""
+    return (row.get("discovery_owner") or "general_chat") == "general_chat"
 
 
 async def handle_chat_search_checkbox_changed(app: 'TldwCli', checkbox_id: str, value: bool) -> None:

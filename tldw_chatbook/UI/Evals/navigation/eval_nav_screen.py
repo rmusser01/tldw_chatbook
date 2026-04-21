@@ -196,7 +196,7 @@ class EvalNavigationScreen(Screen):
                 id="quick_test",
                 title="Quick Test",
                 icon="⚡",
-                description="Run a single evaluation\nwith one model and task",
+                description="Run a single local evaluation\nwith one model and task",
                 shortcut="Press [1]",
                 color="success"
             ),
@@ -226,9 +226,9 @@ class EvalNavigationScreen(Screen):
             ),
             NavigationCard(
                 id="tasks",
-                title="Task Manager",
+                title="Evaluations",
                 icon="📋",
-                description="Create, edit and manage\nevaluation tasks",
+                description="Browse evaluation definitions,\ndatasets and recent runs",
                 shortcut="Press [5]",
                 color="secondary"
             ),

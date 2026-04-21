@@ -13,6 +13,7 @@ from .ccp_messages import (
     CCPMessage,
     ConversationMessage,
     CharacterMessage,
+    PersonaMessage,
     PromptMessage,
     DictionaryMessage,
     SidebarMessage,
@@ -21,6 +22,7 @@ from .ccp_messages import (
 
 from .ccp_conversation_handler import CCPConversationHandler
 from .ccp_character_handler import CCPCharacterHandler
+from .ccp_persona_handler import CCPPersonaHandler
 from .ccp_prompt_handler import CCPPromptHandler
 from .ccp_dictionary_handler import CCPDictionaryHandler
 from .ccp_message_manager import CCPMessageManager
@@ -63,6 +65,7 @@ __all__ = [
     'CCPMessage',
     'ConversationMessage',
     'CharacterMessage', 
+    'PersonaMessage',
     'PromptMessage',
     'DictionaryMessage',
     'SidebarMessage',
@@ -71,6 +74,7 @@ __all__ = [
     # Handlers
     'CCPConversationHandler',
     'CCPCharacterHandler',
+    'CCPPersonaHandler',
     'CCPPromptHandler',
     'CCPDictionaryHandler',
     'CCPMessageManager',

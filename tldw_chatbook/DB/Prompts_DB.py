@@ -88,7 +88,7 @@ class ConflictError(DatabaseError):
 
 # --- Database Class ---
 class PromptsDatabase:
-    _CURRENT_SCHEMA_VERSION = 1
+    _CURRENT_SCHEMA_VERSION = 2
 
     _TABLES_SQL_V1 = """
     PRAGMA foreign_keys = ON;
@@ -509,6 +509,19 @@ class PromptsDatabase:
 
     _SCHEMA_UPDATE_VERSION_SQL_V1 = "UPDATE schema_version SET version = 1 WHERE version = 0;"
 
+    _MIGRATIONS = {
+        0: {
+            "to_version": 1,
+            "function": "_apply_schema_v1",
+            "description": "Initial prompts schema",
+        },
+        1: {
+            "to_version": 2,
+            "function": "_apply_migration_v1_to_v2",
+            "description": "Add structured prompt metadata columns",
+        },
+    }
+
     def _apply_schema_v1(self, conn: sqlite3.Connection):
         logging.info(f"Applying initial schema (Version 1) to DB: {self.db_path_str}...")
         try:
@@ -548,6 +561,40 @@ class PromptsDatabase:
             logging.error(f"[Schema V1] Application failed: {e}", exc_info=True)
             raise DatabaseError(f"DB schema V1 setup failed: {e}") from e
 
+    def _apply_migration_v1_to_v2(self, conn: sqlite3.Connection):
+        logging.info(f"Applying prompts migration from version 1 to 2 for DB: {self.db_path_str}...")
+        migration_sql = """
+        ALTER TABLE Prompts ADD COLUMN prompt_format TEXT NOT NULL DEFAULT 'legacy';
+        ALTER TABLE Prompts ADD COLUMN prompt_schema_version INTEGER;
+        ALTER TABLE Prompts ADD COLUMN prompt_definition TEXT;
+        UPDATE schema_version SET version = 2 WHERE version = 1;
+        """
+
+        try:
+            with self.transaction():
+                conn.executescript(migration_sql)
+
+                cursor = conn.execute("PRAGMA table_info(Prompts)")
+                columns = {row['name'] for row in cursor.fetchall()}
+                expected_cols = {
+                    'prompt_format',
+                    'prompt_schema_version',
+                    'prompt_definition',
+                }
+                if not expected_cols.issubset(columns):
+                    missing_cols = expected_cols - columns
+                    raise SchemaError(f"Validation Error: Prompts table missing migrated columns: {missing_cols}")
+
+                cursor_check = conn.execute("SELECT version FROM schema_version LIMIT 1")
+                version_in_tx = cursor_check.fetchone()
+                if not version_in_tx or version_in_tx['version'] != 2:
+                    raise SchemaError("Schema version update to 2 did not take effect within transaction.")
+
+            logging.info(f"Prompts migration to version 2 applied successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v1->v2] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v1->v2 failed: {e}") from e
+
     def _initialize_schema(self):
         conn = self.get_connection()
         try:
@@ -569,17 +616,35 @@ class PromptsDatabase:
                 raise SchemaError(
                     f"DB schema version ({current_db_version}) is newer than supported ({target_version}).")
 
-            if current_db_version == 0:
-                self._apply_schema_v1(conn)
-                final_db_version = self._get_db_version(conn)
-                if final_db_version != target_version:
+            while current_db_version < target_version:
+                migration = self._MIGRATIONS.get(current_db_version)
+                if not migration:
+                    raise SchemaError(f"No migration path defined from version {current_db_version}.")
+
+                next_version = migration["to_version"]
+                migration_func = getattr(self, migration["function"], None)
+                if migration_func is None:
+                    raise SchemaError(f"Migration function {migration['function']} not found.")
+
+                logging.info(
+                    f"Applying migration: {migration['description']} (v{current_db_version} -> v{next_version})"
+                )
+                migration_func(conn)
+
+                current_db_version = self._get_db_version(conn)
+                if current_db_version != next_version:
                     raise SchemaError(
-                        f"Schema migration applied, but final DB version is {final_db_version}, expected {target_version}.")
-                logging.info(f"Database schema initialized/migrated to version {target_version}.")
-            else:
-                # Placeholder for future migrations from v1 to v2, etc.
-                raise SchemaError(
-                    f"Migration needed from {current_db_version} to {target_version}, but no path defined.")
+                        f"Migration {migration['function']} failed. Expected version {next_version}, got {current_db_version}."
+                    )
+
+            try:
+                conn.executescript(self._FTS_TABLES_SQL)
+                conn.commit()
+                logging.debug("Verified FTS tables exist after migrations.")
+            except sqlite3.Error as fts_err:
+                logging.warning(f"Could not verify/create FTS tables after migrations: {fts_err}")
+
+            logging.info(f"Database schema initialized/migrated to version {target_version}.")
         except (DatabaseError, SchemaError, sqlite3.Error) as e:
             logging.error(f"Schema initialization/migration failed: {e}", exc_info=True)
             raise DatabaseError(f"Schema initialization failed: {e}") from e
@@ -593,6 +658,22 @@ class PromptsDatabase:
 
     def _normalize_keyword(self, keyword: str) -> str:
         return re.sub(r'\s+', ' ', keyword.strip().lower())
+
+    def _normalize_prompt_format(self, prompt_format: Optional[str]) -> str:
+        if prompt_format is None:
+            return "legacy"
+        if prompt_format not in {"legacy", "structured"}:
+            raise InputError("Prompt format must be either 'legacy' or 'structured'.")
+        return prompt_format
+
+    def _serialize_prompt_definition(self, prompt_definition: Any) -> Optional[str]:
+        if prompt_definition is None:
+            return None
+        if isinstance(prompt_definition, str):
+            return prompt_definition
+        if isinstance(prompt_definition, (dict, list)):
+            return json.dumps(prompt_definition)
+        raise InputError("Prompt definition must be a JSON string, dict, list, or None.")
 
     def _get_next_version(self, conn: sqlite3.Connection, table: str, id_col: str, id_val: Any) -> Optional[
         Tuple[int, int]]:
@@ -776,7 +857,10 @@ class PromptsDatabase:
 
     def add_prompt(self, name: str, author: Optional[str], details: Optional[str],
                    system_prompt: Optional[str] = None, user_prompt: Optional[str] = None,
-                   keywords: Optional[List[str]] = None, overwrite: bool = False) -> Tuple[
+                   keywords: Optional[List[str]] = None, overwrite: bool = False,
+                   prompt_format: Optional[str] = None,
+                   prompt_schema_version: Optional[int] = None,
+                   prompt_definition: Optional[Any] = None) -> Tuple[
         Optional[int], Optional[str], str]:
         start_time = time.time()
         
@@ -786,11 +870,20 @@ class PromptsDatabase:
 
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
+        normalized_prompt_definition = self._serialize_prompt_definition(prompt_definition)
+        normalized_prompt_format = self._normalize_prompt_format(prompt_format) if prompt_format is not None else None
 
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT id, uuid, version, deleted FROM Prompts WHERE name = ?", (name,))
+                cursor.execute(
+                    """
+                    SELECT id, uuid, version, deleted, prompt_format, prompt_schema_version, prompt_definition
+                    FROM Prompts
+                    WHERE name = ?
+                    """,
+                    (name,),
+                )
                 existing = cursor.fetchone()
 
                 prompt_id: Optional[int] = None
@@ -809,9 +902,23 @@ class PromptsDatabase:
                     # Overwrite or undelete-and-update
                     action_taken = "updated"
                     new_version = current_version + 1
+                    resolved_prompt_format = normalized_prompt_format if normalized_prompt_format is not None else existing['prompt_format']
+                    resolved_prompt_schema_version = (
+                        prompt_schema_version
+                        if prompt_schema_version is not None
+                        else existing['prompt_schema_version']
+                    )
+                    resolved_prompt_definition = (
+                        normalized_prompt_definition
+                        if prompt_definition is not None
+                        else existing['prompt_definition']
+                    )
                     update_data = {
                         'name': name, 'author': author, 'details': details, 'system_prompt': system_prompt,
                         'user_prompt': user_prompt,
+                        'prompt_format': resolved_prompt_format,
+                        'prompt_schema_version': resolved_prompt_schema_version,
+                        'prompt_definition': resolved_prompt_definition,
                         'last_modified': current_time, 'version': new_version, 'client_id': client_id, 'deleted': 0,
                         'uuid': prompt_uuid
                     }
@@ -820,14 +927,29 @@ class PromptsDatabase:
                                           details=?,
                                           system_prompt=?,
                                           user_prompt=?,
+                                          prompt_format=?,
+                                          prompt_schema_version=?,
+                                          prompt_definition=?,
                                           last_modified=?,
                                           version=?,
                                           client_id=?,
                                           deleted=0
                                       WHERE id = ?
                                         AND version = ?""",
-                                   (author, details, system_prompt, user_prompt, current_time, new_version, client_id,
-                                    prompt_id, current_version))
+                                   (
+                                       author,
+                                       details,
+                                       system_prompt,
+                                       user_prompt,
+                                       resolved_prompt_format,
+                                       resolved_prompt_schema_version,
+                                       resolved_prompt_definition,
+                                       current_time,
+                                       new_version,
+                                       client_id,
+                                       prompt_id,
+                                       current_version,
+                                   ))
                     if cursor.rowcount == 0:
                         # If it was deleted and overwrite is true, version check might fail if version wasn't for active.
                         # Or, a concurrent update happened.
@@ -850,17 +972,47 @@ class PromptsDatabase:
                     action_taken = "added"
                     prompt_uuid = self._generate_uuid()
                     new_version = 1
+                    resolved_prompt_format = normalized_prompt_format or "legacy"
                     insert_data = {
                         'name': name, 'author': author, 'details': details, 'system_prompt': system_prompt,
                         'user_prompt': user_prompt,
+                        'prompt_format': resolved_prompt_format,
+                        'prompt_schema_version': prompt_schema_version,
+                        'prompt_definition': normalized_prompt_definition,
                         'uuid': prompt_uuid, 'last_modified': current_time, 'version': new_version,
                         'client_id': client_id, 'deleted': 0
                     }
                     cursor.execute(
-                        """INSERT INTO Prompts (name, author, details, system_prompt, user_prompt, uuid, last_modified,
-                                                version, client_id, deleted)
-                                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
-                                   (name, author, details, system_prompt, user_prompt, prompt_uuid, current_time, new_version, client_id))
+                        """INSERT INTO Prompts (
+                                                name,
+                                                author,
+                                                details,
+                                                system_prompt,
+                                                user_prompt,
+                                                prompt_format,
+                                                prompt_schema_version,
+                                                prompt_definition,
+                                                uuid,
+                                                last_modified,
+                                                version,
+                                                client_id,
+                                                deleted
+                                            )
+                                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                                   (
+                                       name,
+                                       author,
+                                       details,
+                                       system_prompt,
+                                       user_prompt,
+                                       resolved_prompt_format,
+                                       prompt_schema_version,
+                                       normalized_prompt_definition,
+                                       prompt_uuid,
+                                       current_time,
+                                       new_version,
+                                       client_id,
+                                   ))
                     prompt_id = cursor.lastrowid
                     if not prompt_id: raise DatabaseError("Failed to get ID for new prompt.")
                     self._log_sync_event(conn, 'Prompts', prompt_uuid, 'create', new_version, insert_data)
@@ -999,6 +1151,9 @@ class PromptsDatabase:
 
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
+        normalized_prompt_definition = None
+        if 'prompt_definition' in update_data:
+            normalized_prompt_definition = self._serialize_prompt_definition(update_data.get('prompt_definition'))
 
         try:
             with self.transaction() as conn:
@@ -1052,6 +1207,15 @@ class PromptsDatabase:
                 if 'user_prompt' in update_data:
                     set_clauses.append("user_prompt = ?")
                     params.append(update_data.get('user_prompt'))
+                if 'prompt_format' in update_data:
+                    set_clauses.append("prompt_format = ?")
+                    params.append(self._normalize_prompt_format(update_data.get('prompt_format')))
+                if 'prompt_schema_version' in update_data:
+                    set_clauses.append("prompt_schema_version = ?")
+                    params.append(update_data.get('prompt_schema_version'))
+                if 'prompt_definition' in update_data:
+                    set_clauses.append("prompt_definition = ?")
+                    params.append(normalized_prompt_definition)
 
                 # Always update these
                 set_clauses.extend(

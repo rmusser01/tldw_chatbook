@@ -2,7 +2,7 @@
 Media Ingestion Window - Rebuilt following Textual best practices.
 
 This module provides a clean, modern interface for ingesting media content
-both from local files and remote sources via the TLDW API.
+from local files and from server-backed ingestion sources.
 """
 
 from pathlib import Path
@@ -45,6 +45,7 @@ from ..Local_Ingestion import (
 )
 from ..tldw_api import TLDWAPIClient
 from ..DB.Client_Media_DB_v2 import MediaDatabase
+from ..Widgets.Media import MediaIngestionSourcePanel
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -676,7 +677,7 @@ class MediaIngestWindowRebuilt(Widget):
     Main Media Ingestion Window following Textual best practices.
     
     This widget provides a tabbed interface for ingesting media content
-    from both local files and remote sources via the TLDW API.
+    from local files and for managing server-backed ingestion sources.
     """
     
     DEFAULT_CSS = """
@@ -716,24 +717,28 @@ class MediaIngestWindowRebuilt(Widget):
         """Initialize the Media Ingestion Window."""
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.runtime_state = getattr(app_instance, "media_runtime_state", None)
         logger.info("MediaIngestWindowRebuilt initialized")
     
     def compose(self) -> ComposeResult:
         """Compose the main ingestion interface."""
         with TabbedContent(initial="local-tab"):
             with TabPane("Local Files", id="local-tab"):
-                yield LocalIngestionPanel(self.app_instance, id="local-panel")
+                self.local_panel = LocalIngestionPanel(self.app_instance, id="local-panel")
+                yield self.local_panel
             
-            with TabPane("Remote (TLDW API)", id="remote-tab"):
-                yield RemoteIngestionPanel(self.app_instance, id="remote-panel")
+            with TabPane("Server Sources", id="sources-tab"):
+                self.source_panel = MediaIngestionSourcePanel(self.app_instance, id="source-panel")
+                yield self.source_panel
         
         yield IngestionResultsPanel(id="results-panel")
     
     @on(TabbedContent.TabActivated)
     def handle_tab_change(self, event: TabbedContent.TabActivated) -> None:
         """Handle tab switching."""
-        self.current_tab = "local" if event.tab.id == "local-tab" else "remote"
+        self.current_tab = "local" if event.tab.id == "local-tab" else "sources"
         logger.debug(f"Switched to {self.current_tab} tab")
+        self.run_worker(self.refresh_backend_view(), exclusive=True)
     
     @on(ProcessingStarted)
     def handle_processing_started(self, event: ProcessingStarted) -> None:
@@ -766,4 +771,21 @@ class MediaIngestWindowRebuilt(Widget):
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.info("MediaIngestWindowRebuilt mounted")
+        self.run_worker(self.refresh_backend_view(), exclusive=True)
         self.notify("Media Ingestion ready", severity="information")
+
+    async def refresh_backend_view(self) -> None:
+        """Refresh the backend-aware server source panel."""
+        if self.runtime_state is None:
+            self.runtime_state = getattr(self.app_instance, "media_runtime_state", None)
+
+        runtime_backend = "local"
+        if self.runtime_state is not None:
+            runtime_backend = str(getattr(self.runtime_state, "runtime_backend", "local") or "local")
+
+        source_panel = getattr(self, "source_panel", None)
+        if source_panel is None:
+            return
+
+        source_panel.runtime_backend = runtime_backend
+        await source_panel.refresh_for_mode()

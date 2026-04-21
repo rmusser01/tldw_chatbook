@@ -2,20 +2,19 @@
 Widget for managing chunking templates with CRUD operations.
 """
 
-from typing import TYPE_CHECKING, Optional, List, Dict, Any, Tuple
+from typing import TYPE_CHECKING, Optional, List, Dict, Any
 from datetime import datetime
 import json
 from pathlib import Path
 
-from textual import on, work
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal, VerticalScroll
 from textual.widgets import (
     Static, Button, Label, DataTable, Input, 
-    ListView, ListItem, Markdown, Header, Footer
+    Markdown
 )
 from textual.reactive import reactive
-from textual.message import Message
 from loguru import logger
 
 from ..Chunking.chunking_interop_library import (
@@ -78,7 +77,7 @@ class ChunkingTemplatesWidget(Container):
     """
     
     # Reactive attributes
-    selected_template_id = reactive(None)
+    selected_template_record_id = reactive(None)
     filter_text = reactive("")
     templates_data = reactive([])
     
@@ -91,7 +90,9 @@ class ChunkingTemplatesWidget(Container):
         """
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self.templates_cache = {}
+        self.templates_cache_by_record_id: Dict[str, Dict[str, Any]] = {}
+        self.templates_cache_by_name: Dict[str, Dict[str, Any]] = {}
+        self.filtered_templates: List[Dict[str, Any]] = []
         self.chunking_service = None
         
     def compose(self) -> ComposeResult:
@@ -127,7 +128,7 @@ class ChunkingTemplatesWidget(Container):
         with VerticalScroll(classes="template-details"):
             yield Markdown("", id="template-details-display")
     
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Initialize the widget when mounted."""
         # Setup the table columns
         table = self.query_one("#templates-table", DataTable)
@@ -140,22 +141,85 @@ class ChunkingTemplatesWidget(Container):
             "ID"
         )
         
-        # Initialize the chunking service
+        # Initialize the local chunking service for import/export helpers.
         if hasattr(self.app_instance, 'media_db') and self.app_instance.media_db:
             self.chunking_service = get_chunking_service(self.app_instance.media_db)
-            self.refresh_templates()
         else:
             logger.warning("Media database not available for chunking service")
+        await self.refresh_templates()
     
-    def watch_selected_template_id(self, old_id: Optional[int], new_id: Optional[int]) -> None:
+    def _runtime_backend(self) -> str:
+        """Resolve the active runtime backend for this admin surface."""
+        candidates = (
+            getattr(getattr(self.app_instance, "media_runtime_state", None), "runtime_backend", None),
+            getattr(self.app_instance, "current_runtime_backend", None),
+            getattr(self.app_instance, "runtime_backend", None),
+        )
+        for candidate in candidates:
+            normalized = str(candidate or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
+        return "local"
+
+    def _scope_service(self) -> Any:
+        return getattr(self.app_instance, "rag_admin_scope_service", None)
+
+    def _record_for_selection(self) -> Optional[Dict[str, Any]]:
+        if not self.selected_template_record_id:
+            return None
+        return self.templates_cache_by_record_id.get(str(self.selected_template_record_id))
+
+    def _extract_template_object(self, template: Dict[str, Any]) -> Dict[str, Any]:
+        payload = template.get("template")
+        if isinstance(payload, dict):
+            return dict(payload)
+        raw_json = template.get("template_json")
+        if isinstance(raw_json, str) and raw_json.strip():
+            try:
+                parsed = json.loads(raw_json)
+            except (TypeError, ValueError):
+                return {}
+            if isinstance(parsed, dict):
+                return parsed
+        return {}
+
+    def _extract_base_method(self, template: Dict[str, Any]) -> str:
+        template_obj = self._extract_template_object(template)
+        chunking = template_obj.get("chunking")
+        if isinstance(chunking, dict):
+            method = chunking.get("method")
+            if method:
+                return str(method)
+
+        base_method = template_obj.get("base_method")
+        if base_method:
+            return str(base_method)
+
+        for stage in template_obj.get("pipeline", []) if isinstance(template_obj.get("pipeline"), list) else []:
+            if stage.get("stage") == "chunk" and stage.get("method"):
+                return str(stage["method"])
+        return "unknown"
+
+    def _format_created_date(self, created_at: Any) -> str:
+        if isinstance(created_at, datetime):
+            return created_at.strftime("%Y-%m-%d %H:%M")
+        if isinstance(created_at, str) and created_at.strip():
+            try:
+                parsed = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError:
+                return created_at
+            return parsed.strftime("%Y-%m-%d %H:%M")
+        return "Unknown"
+
+    def watch_selected_template_record_id(self, old_id: Optional[str], new_id: Optional[str]) -> None:
         """React to template selection changes."""
         # Update button states
         has_selection = new_id is not None
         is_system = False
         
-        if has_selection and new_id in self.templates_cache:
-            template = self.templates_cache[new_id]
-            is_system = template.get('is_system', False)
+        if has_selection and new_id in self.templates_cache_by_record_id:
+            template = self.templates_cache_by_record_id[new_id]
+            is_system = bool(template.get('is_builtin', False))
         
         # Enable/disable buttons based on selection and type
         self.query_one("#edit-template-btn", Button).disabled = not has_selection or is_system
@@ -170,53 +234,41 @@ class ChunkingTemplatesWidget(Container):
         """React to filter text changes."""
         self._apply_filter()
     
-    @work(thread=True)
-    def refresh_templates(self) -> None:
-        """Refresh the templates list from the database."""
+    async def refresh_templates(self) -> None:
+        """Refresh the templates list from the active backend."""
         try:
-            if not self.chunking_service:
-                logger.warning("Chunking service not available")
+            scope = self._scope_service()
+            if scope is None:
+                logger.warning("RAG admin scope service not available")
                 return
-            
-            # Get all templates using the service
-            templates = self.chunking_service.get_all_templates()
-            
-            # Clear and rebuild cache
-            self.templates_cache.clear()
-            
-            # Process templates for display
-            display_templates = []
-            for template in templates:
-                # Parse template JSON to get method
-                try:
-                    template_obj = json.loads(template['template_json'])
-                    template['base_method'] = template_obj.get('base_method', 'unknown')
-                except:
-                    template['base_method'] = 'unknown'
-                
-                self.templates_cache[template['id']] = template
-                display_templates.append(template)
-            
-            self.app_instance.call_from_thread(self._update_table, display_templates)
-            
-        except ChunkingTemplateError as e:
-            logger.error(f"Error refreshing templates: {e}")
-            self.app_instance.call_from_thread(
-                self.app_instance.notify,
-                f"Error loading templates: {str(e)}",
-                severity="error"
+            templates = await scope.list_templates(
+                mode=self._runtime_backend(),
+                include_builtin=True,
+                include_custom=True,
             )
+            for template in templates:
+                template["base_method"] = self._extract_base_method(template)
+
+            self._update_table(templates)
+
         except Exception as e:
-            logger.error(f"Unexpected error refreshing templates: {e}")
-            self.app_instance.call_from_thread(
-                self.app_instance.notify,
-                f"Unexpected error: {str(e)}",
+            logger.error(f"Error refreshing templates: {e}")
+            self.app_instance.notify(
+                f"Error loading templates: {str(e)}",
                 severity="error"
             )
     
     def _update_table(self, templates: List[Dict[str, Any]]) -> None:
         """Update the templates table with new data."""
         self.templates_data = templates
+        self.templates_cache_by_record_id = {
+            str(template["record_id"]): dict(template)
+            for template in templates
+        }
+        self.templates_cache_by_name = {
+            str(template["name"]): dict(template)
+            for template in templates
+        }
         self._apply_filter()
     
     def _apply_filter(self) -> None:
@@ -226,26 +278,21 @@ class ChunkingTemplatesWidget(Container):
         
         filter_text = self.filter_text.lower()
         
+        self.filtered_templates = []
         for template in self.templates_data:
             # Apply filter
             if filter_text:
                 searchable = f"{template['name']} {template['description']} {template['base_method']}".lower()
                 if filter_text not in searchable:
                     continue
+            self.filtered_templates.append(template)
             
             # Format data for display
-            template_type = "System" if template['is_system'] else "Custom"
-            # Handle created_at whether it's a string or datetime object
-            created_at = template['created_at']
-            if isinstance(created_at, str):
-                created_date = datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M")
-            elif isinstance(created_at, datetime):
-                created_date = created_at.strftime("%Y-%m-%d %H:%M")
-            else:
-                created_date = "Unknown"
+            template_type = "Built-in" if template.get('is_builtin') else "Custom"
+            created_date = self._format_created_date(template.get('created_at'))
             
             # Add row with styled type
-            if template['is_system']:
+            if template.get('is_builtin'):
                 template_type = f"[bold cyan]{template_type}[/bold cyan]"
             
             table.add_row(
@@ -254,52 +301,38 @@ class ChunkingTemplatesWidget(Container):
                 template_type,
                 template['base_method'],
                 created_date,
-                str(template['id'])
+                str(template.get('backing_id') or template.get('record_id'))
             )
     
     def _update_template_details(self) -> None:
         """Update the template details display."""
         details_display = self.query_one("#template-details-display", Markdown)
         
-        if not self.selected_template_id or self.selected_template_id not in self.templates_cache:
+        template = self._record_for_selection()
+        if template is None:
             details_display.update("*Select a template to view details*")
             return
         
-        template = self.templates_cache[self.selected_template_id]
-        
         try:
-            template_obj = json.loads(template['template_json'])
-            pipeline_stages = template_obj.get('pipeline', [])
-            
-            # Format pipeline stages for display
-            pipeline_text = ""
-            for i, stage in enumerate(pipeline_stages, 1):
-                stage_type = stage.get('stage', 'unknown')
-                method = stage.get('method', '')
-                options = stage.get('options', {})
-                
-                pipeline_text += f"\n{i}. **{stage_type.title()} Stage**"
-                if method:
-                    pipeline_text += f" - Method: `{method}`"
-                if options:
-                    pipeline_text += f"\n   - Options: `{json.dumps(options, indent=2)}`"
-            
+            template_obj = self._extract_template_object(template)
             details_md = f"""## {template['name']}
 
-**Type:** {"System Template" if template['is_system'] else "Custom Template"}  
-**Base Method:** `{template_obj.get('base_method', 'unknown')}`  
-**Description:** {template['description']}
+**Type:** {"Built-in Template" if template.get('is_builtin') else "Custom Template"}  
+**Backend:** `{template.get('backend', self._runtime_backend())}`  
+**Method:** `{self._extract_base_method(template)}`  
+**Description:** {template.get('description') or ""}
 
-### Pipeline Configuration
-{pipeline_text if pipeline_text else "*No pipeline stages defined*"}
+### Template JSON
+```json
+{json.dumps(template_obj, indent=2)}
+```
 
 ### Metadata
-- **Version:** {template_obj.get('metadata', {}).get('version', '1.0')}
-- **Created:** {template['created_at']}
-- **Updated:** {template['updated_at']}
-- **ID:** {template['id']}
+- **Created:** {template.get('created_at')}
+- **Updated:** {template.get('updated_at')}
+- **Version:** {template.get('version', 1)}
+- **Record ID:** {template.get('record_id')}
 """
-            
             details_display.update(details_md)
             
         except Exception as e:
@@ -311,13 +344,8 @@ class ChunkingTemplatesWidget(Container):
         """Handle template selection from the table."""
         if event.row_index is None:
             return
-        
-        table = self.query_one("#templates-table", DataTable)
-        row_data = table.get_row_at(event.row_index)
-        
-        if row_data and len(row_data) > 5:
-            template_id = int(row_data[5])  # ID is in the last column
-            self.selected_template_id = template_id
+        if event.row_index < len(self.filtered_templates):
+            self.selected_template_record_id = self.filtered_templates[event.row_index]["record_id"]
     
     @on(Input.Changed, "#template-filter-input")
     def handle_filter_change(self, event: Input.Changed) -> None:
@@ -325,9 +353,9 @@ class ChunkingTemplatesWidget(Container):
         self.filter_text = event.value
     
     @on(Button.Pressed, "#refresh-templates-btn")
-    def handle_refresh(self) -> None:
+    async def handle_refresh(self) -> None:
         """Handle refresh button press."""
-        self.refresh_templates()
+        await self.refresh_templates()
     
     @on(Button.Pressed, "#new-template-btn")
     def handle_new_template(self) -> None:
@@ -345,12 +373,12 @@ class ChunkingTemplatesWidget(Container):
     @on(Button.Pressed, "#edit-template-btn")
     def handle_edit_template(self) -> None:
         """Handle edit template button press."""
-        if not self.selected_template_id:
+        if not self.selected_template_record_id:
             return
         
-        template = self.templates_cache.get(self.selected_template_id)
-        if not template or template.get('is_system'):
-            self.app_instance.notify("Cannot edit system templates", severity="warning")
+        template = self._record_for_selection()
+        if not template or template.get('is_builtin'):
+            self.app_instance.notify("Cannot edit built-in templates", severity="warning")
             return
         
         from .chunking_template_editor import ChunkingTemplateEditor
@@ -367,18 +395,19 @@ class ChunkingTemplatesWidget(Container):
     @on(Button.Pressed, "#duplicate-template-btn")
     def handle_duplicate_template(self) -> None:
         """Handle duplicate template button press."""
-        if not self.selected_template_id:
+        if not self.selected_template_record_id:
             return
         
-        template = self.templates_cache.get(self.selected_template_id)
+        template = self._record_for_selection()
         if not template:
             return
         
         # Create a copy with modified name
         duplicate = template.copy()
         duplicate['name'] = f"{template['name']} (Copy)"
-        duplicate['is_system'] = False  # Duplicates are always custom
-        duplicate.pop('id', None)  # Remove ID so a new one is created
+        duplicate['is_builtin'] = False  # Duplicates are always custom
+        duplicate.pop('record_id', None)
+        duplicate.pop('backing_id', None)
         
         from .chunking_template_editor import ChunkingTemplateEditor
         
@@ -394,15 +423,15 @@ class ChunkingTemplatesWidget(Container):
     @on(Button.Pressed, "#delete-template-btn")
     async def handle_delete_template(self) -> None:
         """Handle delete template button press."""
-        if not self.selected_template_id:
+        if not self.selected_template_record_id:
             return
         
-        template = self.templates_cache.get(self.selected_template_id)
+        template = self._record_for_selection()
         if not template:
             return
         
-        if template.get('is_system'):
-            self.app_instance.notify("Cannot delete system templates", severity="warning")
+        if template.get('is_builtin'):
+            self.app_instance.notify("Cannot delete built-in templates", severity="warning")
             return
         
         # Show confirmation dialog
@@ -415,7 +444,7 @@ class ChunkingTemplatesWidget(Container):
         
         confirmed = await self.app_instance.push_screen_wait(dialog)
         if confirmed:
-            self.delete_template(self.selected_template_id)
+            await self.delete_template(template["backing_template_name"])
     
     @on(Button.Pressed, "#import-template-btn")
     def handle_import_template(self) -> None:
@@ -435,12 +464,16 @@ class ChunkingTemplatesWidget(Container):
     @on(Button.Pressed, "#export-template-btn")
     def handle_export_template(self) -> None:
         """Handle export template button press."""
-        if not self.selected_template_id or not self.chunking_service:
+        if self._runtime_backend() != "local":
+            self.app_instance.notify("Server template export is not available yet", severity="warning")
+            return
+        template = self._record_for_selection()
+        if template is None or not self.chunking_service:
             return
         
         try:
             # Export using the service
-            export_data = self.chunking_service.export_template(self.selected_template_id)
+            export_data = self.chunking_service.export_template(int(template["backing_id"]))
             
             # Save to file
             template_name = export_data['name'].replace(' ', '_')
@@ -465,6 +498,9 @@ class ChunkingTemplatesWidget(Container):
     
     def _import_template_file(self, path: Optional[Path]) -> None:
         """Import a template from a JSON file."""
+        if self._runtime_backend() != "local":
+            self.app_instance.notify("Server template import is not available yet", severity="warning")
+            return
         if not path or not path.exists() or not self.chunking_service:
             return
         
@@ -484,7 +520,7 @@ class ChunkingTemplatesWidget(Container):
             )
             
             # Refresh the templates list
-            self.refresh_templates()
+            self.app_instance.run_worker(self.refresh_templates(), exclusive=True)
             
         except InputError as e:
             logger.error(f"Invalid template data: {e}")
@@ -499,25 +535,27 @@ class ChunkingTemplatesWidget(Container):
                 severity="error"
             )
     
-    def _on_template_saved(self) -> None:
+    async def _on_template_saved(self) -> None:
         """Callback when a template is saved from the editor."""
-        self.refresh_templates()
+        await self.refresh_templates()
     
-    def delete_template(self, template_id: int) -> None:
-        """Delete a template from the database."""
+    async def delete_template(self, template_name: str) -> None:
+        """Delete a template through the active backend seam."""
         try:
-            if not self.chunking_service:
-                raise ChunkingTemplateError("Chunking service not available")
-            
-            # Delete using the service
-            self.chunking_service.delete_template(template_id)
+            scope = self._scope_service()
+            if scope is None:
+                raise ChunkingTemplateError("RAG admin scope service not available")
+            await scope.delete_template(
+                template_name,
+                mode=self._runtime_backend(),
+            )
             
             self.app_instance.notify("Template deleted successfully", severity="information")
-            self.selected_template_id = None
-            self.refresh_templates()
+            self.selected_template_record_id = None
+            await self.refresh_templates()
             
         except SystemTemplateError:
-            self.app_instance.notify("Cannot delete system templates", severity="warning")
+            self.app_instance.notify("Cannot delete built-in templates", severity="warning")
         except TemplateNotFoundError:
             self.app_instance.notify("Template not found", severity="warning")
         except ChunkingTemplateError as e:

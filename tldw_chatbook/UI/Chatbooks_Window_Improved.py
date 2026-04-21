@@ -217,7 +217,7 @@ class ChatbooksWindowImproved(Screen):
     
     .quick-actions-grid {
         layout: grid;
-        grid-size: 4 1;
+        grid-size: 3 2;
         grid-gutter: 2;
         height: auto;
         margin-bottom: 1;
@@ -319,7 +319,7 @@ class ChatbooksWindowImproved(Screen):
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
-        self.app = app_instance
+        self.app_instance = app_instance
         self._export_path = Path.home() / "Documents" / "Chatbooks"
         
     def compose(self) -> ComposeResult:
@@ -337,12 +337,20 @@ class ChatbooksWindowImproved(Screen):
                 # Create card
                 with Container(classes="action-card", id="create-action"):
                     yield Static("✨", classes="action-icon")
-                    yield Static("Create New", classes="action-label")
+                    yield Static("Create Local", classes="action-label")
                 
                 # Import card
                 with Container(classes="action-card", id="import-action"):
                     yield Static("📥", classes="action-icon")
-                    yield Static("Import", classes="action-label")
+                    yield Static("Import Local", classes="action-label")
+
+                with Container(classes="action-card", id="create-server-action"):
+                    yield Static("☁️", classes="action-icon")
+                    yield Static("Create Server", classes="action-label")
+
+                with Container(classes="action-card", id="import-server-action"):
+                    yield Static("🔄", classes="action-icon")
+                    yield Static("Import Server", classes="action-label")
                 
                 # Templates card
                 with Container(classes="action-card", id="templates-action"):
@@ -516,7 +524,7 @@ class ChatbooksWindowImproved(Screen):
             
         except Exception as e:
             logger.error(f"Error refreshing chatbooks: {e}")
-            self.app.notify(f"Error loading chatbooks: {str(e)}", severity="error")
+            self.app_instance.notify(f"Error loading chatbooks: {str(e)}", severity="error")
             
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
@@ -528,6 +536,10 @@ class ChatbooksWindowImproved(Screen):
             await self.action_create_chatbook()
         elif button_id in ["empty-import-btn", "import-action"]:
             await self.action_import_chatbook()
+        elif button_id == "create-server-action":
+            await self.action_create_chatbook_server()
+        elif button_id == "import-server-action":
+            await self.action_import_chatbook_server()
         elif button_id in ["empty-templates-btn", "templates-action"]:
             await self.action_browse_templates()
         elif button_id == "manage-action":
@@ -537,7 +549,14 @@ class ChatbooksWindowImproved(Screen):
         """Handle container clicks for action cards."""
         # Check if clicked element or parent is an action card
         element = event.target
-        while element and element.id not in ["create-action", "import-action", "templates-action", "manage-action"]:
+        while element and element.id not in [
+            "create-action",
+            "import-action",
+            "create-server-action",
+            "import-server-action",
+            "templates-action",
+            "manage-action",
+        ]:
             element = element.parent
             
         if element:
@@ -545,6 +564,10 @@ class ChatbooksWindowImproved(Screen):
                 await self.action_create_chatbook()
             elif element.id == "import-action":
                 await self.action_import_chatbook()
+            elif element.id == "create-server-action":
+                await self.action_create_chatbook_server()
+            elif element.id == "import-server-action":
+                await self.action_import_chatbook_server()
             elif element.id == "templates-action":
                 await self.action_browse_templates()
             elif element.id == "manage-action":
@@ -555,52 +578,60 @@ class ChatbooksWindowImproved(Screen):
         if event.input.id == "chatbook-search":
             self.search_query = event.value
             
-    async def action_create_chatbook(self) -> None:
+    async def action_create_chatbook(self, execution_mode: str = "local") -> None:
         """Launch the chatbook creation wizard."""
         from .Wizards.ChatbookCreationWizard import ChatbookCreationWizard
         
-        wizard = ChatbookCreationWizard(self.app)
-        result = await self.app.push_screen(wizard, wait_for_dismiss=True)
+        wizard = ChatbookCreationWizard(self.app_instance, initial_execution_mode=execution_mode)
+        result = await self.app_instance.push_screen(wizard, wait_for_dismiss=True)
         
         if result and result.get("success"):
-            self.app.notify("Chatbook created successfully!", severity="success")
+            self.app_instance.notify("Chatbook created successfully!", severity="success")
             await self._refresh_chatbooks()
             
-    async def action_import_chatbook(self) -> None:
+    async def action_import_chatbook(self, execution_mode: str = "local") -> None:
         """Launch the chatbook import wizard."""
         from .Wizards.ChatbookImportWizard import ChatbookImportWizard
         
-        wizard = ChatbookImportWizard(self.app)
-        result = await self.app.push_screen(wizard, wait_for_dismiss=True)
+        wizard = ChatbookImportWizard(self.app_instance, initial_execution_mode=execution_mode)
+        result = await self.app_instance.push_screen(wizard, wait_for_dismiss=True)
         
         if result and result.get("success"):
-            self.app.notify("Chatbook imported successfully!", severity="success")
+            self.app_instance.notify("Chatbook imported successfully!", severity="success")
             await self._refresh_chatbooks()
+
+    async def action_create_chatbook_server(self) -> None:
+        """Launch the chatbook creation wizard in server mode."""
+        await self.action_create_chatbook(execution_mode="server")
+
+    async def action_import_chatbook_server(self) -> None:
+        """Launch the chatbook import wizard in server mode."""
+        await self.action_import_chatbook(execution_mode="server")
             
     async def action_browse_templates(self) -> None:
         """Open the templates browser."""
-        from .Wizards.ChatbookTemplatesWindow import ChatbookTemplatesWindow
+        from .ChatbookTemplatesWindow import ChatbookTemplatesWindow
         
-        templates_window = ChatbookTemplatesWindow(self.app)
-        result = await self.app.push_screen(templates_window, wait_for_dismiss=True)
+        templates_window = ChatbookTemplatesWindow(self.app_instance)
+        result = await self.app_instance.push_screen(templates_window, wait_for_dismiss=True)
         
         if result:
             # User selected a template, launch creation wizard with pre-filled data
             from .Wizards.ChatbookCreationWizard import ChatbookCreationWizard
             
-            wizard = ChatbookCreationWizard(self.app, template_data=result)
-            create_result = await self.app.push_screen(wizard, wait_for_dismiss=True)
+            wizard = ChatbookCreationWizard(self.app_instance, template_data=result)
+            create_result = await self.app_instance.push_screen(wizard, wait_for_dismiss=True)
             
             if create_result and create_result.get("success"):
-                self.app.notify("Chatbook created from template!", severity="success")
+                self.app_instance.notify("Chatbook created from template!", severity="success")
                 await self._refresh_chatbooks()
                 
     async def action_manage_exports(self) -> None:
         """Open the export management window."""
-        from .Wizards.ChatbookExportManagementWindow import ChatbookExportManagementWindow
+        from .ChatbookExportManagementWindow import ChatbookExportManagementWindow
         
-        management_window = ChatbookExportManagementWindow(self.app)
-        await self.app.push_screen(management_window, wait_for_dismiss=True)
+        management_window = ChatbookExportManagementWindow(self.app_instance)
+        await self.app_instance.push_screen(management_window, wait_for_dismiss=True)
         
         # Refresh after management in case anything was deleted
         await self._refresh_chatbooks()
@@ -608,7 +639,7 @@ class ChatbooksWindowImproved(Screen):
     async def action_refresh(self) -> None:
         """Refresh the chatbooks list."""
         await self._refresh_chatbooks()
-        self.app.notify("Chatbooks refreshed", severity="info")
+        self.app_instance.notify("Chatbooks refreshed", severity="info")
         
     async def action_close(self) -> None:
         """Close the chatbooks window."""

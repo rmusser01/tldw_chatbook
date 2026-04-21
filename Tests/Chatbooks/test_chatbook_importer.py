@@ -117,21 +117,21 @@ class TestChatbookImporter:
             "updated_at": datetime.now().isoformat(),
             "content_items": [
                 {
-                    "id": "conversation_1",
+                    "id": "1",
                     "type": "conversation",
                     "title": "Test Conversation",
                     "created_at": datetime.now().isoformat(),
                     "file_path": "content/conversations/conversation_1.json"
                 },
                 {
-                    "id": "note_1",
+                    "id": "1",
                     "type": "note",
                     "title": "Test Note",
                     "created_at": datetime.now().isoformat(),
                     "file_path": "content/notes/Test Note.md"
                 },
                 {
-                    "id": "character_1",
+                    "id": "1",
                     "type": "character",
                     "title": "Test Character",
                     "created_at": datetime.now().isoformat(),
@@ -140,8 +140,8 @@ class TestChatbookImporter:
             ],
             "relationships": [
                 {
-                    "source_id": "conversation_1",
-                    "target_id": "character_1",
+                    "source_id": "1",
+                    "target_id": "1",
                     "relationship_type": "uses_character",
                     "metadata": {}
                 }
@@ -165,6 +165,7 @@ class TestChatbookImporter:
         # Create conversation content
         conversation_content = {
             "id": 1,
+            "name": "Test Conversation",
             "title": "Test Conversation",
             "created_at": datetime.now().isoformat(),
             "messages": [
@@ -253,7 +254,10 @@ Keywords: test, sample"""
         mock_db_instance.add_message.return_value = True
         mock_db_instance.add_note.return_value = 1
         mock_db_instance.create_character.return_value = 1
-        
+        mock_db_instance.get_conversation_by_name.return_value = []
+        mock_db_instance.get_note_by_title.return_value = None
+        mock_db_instance.get_character_card_by_name.return_value = None
+
         status = ImportStatus()
         
         success, message = chatbook_importer.import_chatbook(
@@ -276,7 +280,10 @@ Keywords: test, sample"""
         mock_db_instance.add_message.return_value = True
         mock_db_instance.add_note.return_value = 1
         mock_db_instance.create_character.return_value = 1
-        
+        mock_db_instance.get_conversation_by_name.return_value = []
+        mock_db_instance.get_note_by_title.return_value = None
+        mock_db_instance.get_character_card_by_name.return_value = None
+
         status = ImportStatus()
         
         # Import with SKIP resolution
@@ -301,7 +308,16 @@ Keywords: test, sample"""
         mock_db_instance.add_message.return_value = True
         mock_db_instance.add_note.return_value = 1
         mock_db_instance.create_character.return_value = 1
-        
+        mock_db_instance.get_conversation_by_name.side_effect = (
+            lambda name: [{"id": 99, "title": name}] if name == "Test Conversation" else []
+        )
+        mock_db_instance.get_note_by_title.side_effect = (
+            lambda title: {"id": 88, "title": title} if title == "Test Note" else None
+        )
+        mock_db_instance.get_character_card_by_name.side_effect = (
+            lambda name: {"id": 77, "name": name} if name == "Test Character" else None
+        )
+
         status = ImportStatus()
         
         # Import with RENAME resolution
@@ -327,7 +343,10 @@ Keywords: test, sample"""
         mock_db_instance.add_message.return_value = True
         mock_db_instance.add_note.return_value = 1
         mock_db_instance.create_character.return_value = 1
-        
+        mock_db_instance.get_conversation_by_name.return_value = []
+        mock_db_instance.get_note_by_title.return_value = None
+        mock_db_instance.get_character_card_by_name.return_value = None
+
         status = ImportStatus()
         
         success, message = chatbook_importer.import_chatbook(

@@ -203,22 +203,12 @@ class TestChatFunction:
 @pytest.mark.integration
 class TestChatHistorySaving:
     def test_save_chat_history_to_db_new_conversation(self, db_instance: CharactersRAGDB):
-        # Create default character first
-        default_char_id = db_instance.add_character_card({
-            "name": "Default Character",
-            "description": "Default character for general conversations",
-            "system_prompt": "You are a helpful assistant.",
-            "tags": ["default"],
-            "creator_notes": ""
-        })
-        
         # The history format is now OpenAI's message objects
         chatbot_history = [
             {"role": "user", "content": "Hello there"},
             {"role": "assistant", "content": "General Kenobi"}
         ]
 
-        # Uses default character
         conv_id, status = save_chat_history_to_db_wrapper(
             db=db_instance,
             chatbot_history=chatbot_history,
@@ -236,18 +226,11 @@ class TestChatHistorySaving:
         assert messages[1]['sender'] == 'assistant'
 
         conv_details = db_instance.get_conversation_by_id(conv_id)
-        assert conv_details['character_id'] == default_char_id  # Default character
+        assert conv_details['character_id'] is None
+        assert conv_details['assistant_kind'] is None
+        assert conv_details['title'] == "New Chat"
 
     def test_save_chat_history_with_image(self, db_instance: CharactersRAGDB):
-        # Create default character first
-        db_instance.add_character_card({
-            "name": "Default Character",
-            "description": "Default character for general conversations",
-            "system_prompt": "You are a helpful assistant.",
-            "tags": ["default"],
-            "creator_notes": ""
-        })
-        
         b64_img = create_base64_image()
         chatbot_history = [
             {"role": "user", "content": [
@@ -267,14 +250,70 @@ class TestChatHistorySaving:
         assert messages[0]['image_mime_type'] == "image/png"
         assert messages[1]['image_data'] is None
 
+    def test_save_character_chat_history_uses_canonical_character_id_as_assistant_id(self, db_instance: CharactersRAGDB):
+        character_id = db_instance.add_character_card({"name": "Canonical Saver"})
+
+        conv_id, status = save_chat_history_to_db_wrapper(
+            db=db_instance,
+            chatbot_history=[
+                {"role": "user", "content": "Hello there"},
+                {"role": "assistant", "content": "General Kenobi"},
+            ],
+            conversation_id=None,
+            media_content_for_char_assoc=None,
+            character_name_for_chat="Canonical Saver",
+        )
+
+        assert "success" in status.lower()
+        assert conv_id is not None
+
+        conv_details = db_instance.get_conversation_by_id(conv_id)
+        assert conv_details["assistant_kind"] == "character"
+        assert conv_details["assistant_id"] == str(character_id)
+        assert conv_details["title"] == "Chat with Canonical Saver"
+
     def test_resave_chat_history(self, db_instance: CharactersRAGDB):
         char_id = db_instance.add_character_card({"name": "Resaver"})
-        initial_history = [{"role": "user", "content": "First message"}]
+        initial_history = [
+            {
+                "id": "msg-user-1",
+                "role": "user",
+                "content": "First message",
+            },
+            {
+                "id": "msg-assistant-1",
+                "role": "assistant",
+                "content": "Initial reply",
+                "parent_message_id": "msg-user-1",
+                "feedback": "liked",
+            },
+        ]
         conv_id, _ = save_chat_history_to_db_wrapper(db_instance, initial_history, None, None, "Resaver")
 
+        db_instance.create_message_variant(
+            original_message_id="msg-assistant-1",
+            variant_content="Variant reply",
+            is_selected=True,
+        )
+
+        before_messages = {
+            message["id"]: message
+            for message in db_instance.get_messages_for_conversation(conv_id)
+        }
+
         updated_history = [
-            {"role": "user", "content": "New first message"},
-            {"role": "assistant", "content": "New reply"}
+            {
+                "id": "msg-user-1",
+                "role": "user",
+                "content": "New first message",
+            },
+            {
+                "id": "msg-assistant-1",
+                "role": "assistant",
+                "content": "New reply",
+                "parent_message_id": "msg-user-1",
+                "feedback": "liked",
+            },
         ]
 
         # Resave with same conv_id
@@ -282,9 +321,104 @@ class TestChatHistorySaving:
         assert "success" in status.lower()
         assert resave_id == conv_id
 
-        messages = db_instance.get_messages_for_conversation(conv_id)
-        assert len(messages) == 2
-        assert messages[0]['content'] == "New first message"
+        messages = {
+            message["id"]: message
+            for message in db_instance.get_messages_for_conversation(conv_id)
+        }
+        assert set(messages) == set(before_messages)
+        assert messages["msg-user-1"]["content"] == "New first message"
+        assert messages["msg-assistant-1"]["content"] == "New reply"
+        assert messages["msg-assistant-1"]["parent_message_id"] == before_messages["msg-assistant-1"]["parent_message_id"]
+        assert messages["msg-assistant-1"]["feedback"] == before_messages["msg-assistant-1"]["feedback"]
+        assert messages["msg-assistant-1"]["variant_of"] == before_messages["msg-assistant-1"]["variant_of"]
+        assert messages["msg-assistant-1"]["variant_number"] == before_messages["msg-assistant-1"]["variant_number"]
+        assert messages["msg-assistant-1"]["is_selected_variant"] == before_messages["msg-assistant-1"]["is_selected_variant"]
+        assert messages["msg-assistant-1"]["total_variants"] == before_messages["msg-assistant-1"]["total_variants"]
+
+    def test_resave_chat_history_normalizes_stale_conversation_metadata(self, db_instance: CharactersRAGDB):
+        char_id = db_instance.add_character_card({"name": "Resaver"})
+        conversation_id = db_instance.add_conversation(
+            {
+                "character_id": char_id,
+                "assistant_kind": "character",
+                "assistant_id": "Resaver",
+                "runtime_backend": "server",
+                "discovery_owner": "general_chat",
+                "discovery_entity_id": "legacy.display.name",
+                "title": "Chat with Resaver",
+                "client_id": db_instance.client_id,
+            }
+        )
+
+        resave_id, status = save_chat_history_to_db_wrapper(
+            db_instance,
+            [
+                {"role": "user", "content": "New first message"},
+                {"role": "assistant", "content": "New reply"},
+            ],
+            conversation_id,
+            None,
+            "Resaver",
+        )
+
+        assert "success" in status.lower()
+        assert resave_id == conversation_id
+
+        updated_conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert updated_conversation["assistant_kind"] == "character"
+        assert updated_conversation["assistant_id"] == str(char_id)
+        assert updated_conversation["runtime_backend"] == "local"
+        assert updated_conversation["discovery_owner"] == "ccp_character"
+        assert updated_conversation["discovery_entity_id"] == str(char_id)
+        assert updated_conversation["title"] == "Chat with Resaver"
+
+    def test_resave_chat_history_rejects_generic_context_for_character_conversation(self, db_instance: CharactersRAGDB):
+        db_instance.add_character_card({"name": "Resaver"})
+        conversation_id, status = save_chat_history_to_db_wrapper(
+            db_instance,
+            [{"role": "user", "content": "Bound message"}],
+            None,
+            None,
+            "Resaver",
+        )
+        assert "success" in status.lower()
+
+        resave_id, resave_status = save_chat_history_to_db_wrapper(
+            db_instance,
+            [{"role": "user", "content": "Generic overwrite attempt"}],
+            conversation_id,
+            None,
+            None,
+        )
+
+        assert resave_id == conversation_id
+        assert "mismatch" in resave_status.lower()
+        messages = db_instance.get_messages_for_conversation(conversation_id)
+        assert [message["content"] for message in messages] == ["Bound message"]
+
+    def test_resave_chat_history_rejects_character_context_for_generic_conversation(self, db_instance: CharactersRAGDB):
+        db_instance.add_character_card({"name": "Resaver"})
+        conversation_id, status = save_chat_history_to_db_wrapper(
+            db_instance,
+            [{"role": "user", "content": "Generic message"}],
+            None,
+            None,
+            None,
+        )
+        assert "success" in status.lower()
+
+        resave_id, resave_status = save_chat_history_to_db_wrapper(
+            db_instance,
+            [{"role": "user", "content": "Character overwrite attempt"}],
+            conversation_id,
+            None,
+            "Resaver",
+        )
+
+        assert resave_id == conversation_id
+        assert "mismatch" in resave_status.lower()
+        messages = db_instance.get_messages_for_conversation(conversation_id)
+        assert [message["content"] for message in messages] == ["Generic message"]
 
 
 @pytest.mark.integration

@@ -16,6 +16,8 @@ from textual.css.query import QueryError
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData
+from ...Chat.chat_conversation_service import derive_conversation_title
+from ...Chat.chat_models import ChatSessionData
 from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...state.ui_state import UIState
 
@@ -27,6 +29,21 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 logger = logger.bind(module="ChatScreen")
+
+
+def _derive_tab_title(tab_state: TabState) -> str:
+    assistant_name = None
+    if tab_state.assistant_kind == "character":
+        assistant_name = tab_state.character_name
+    elif tab_state.assistant_kind == "persona" and tab_state.assistant_id:
+        assistant_name = f"Persona {tab_state.assistant_id}"
+
+    return derive_conversation_title(
+        assistant_kind=tab_state.assistant_kind,
+        assistant_name=assistant_name,
+        fallback_title=tab_state.title,
+        character_id=tab_state.character_id,
+    )
 
 
 class ChatScreen(BaseAppScreen):
@@ -283,8 +300,16 @@ class ChatScreen(BaseAppScreen):
                 tab_id=session_id,
                 title=session.session_data.title,
                 conversation_id=session.session_data.conversation_id,
+                runtime_backend=session.session_data.runtime_backend,
+                discovery_owner=session.session_data.discovery_owner,
+                discovery_entity_id=session.session_data.discovery_entity_id,
                 character_id=session.session_data.character_id,
                 character_name=session.session_data.character_name,
+                assistant_kind=session.session_data.assistant_kind,
+                assistant_id=session.session_data.assistant_id,
+                persona_memory_mode=session.session_data.persona_memory_mode,
+                scope_type=session.session_data.scope_type,
+                workspace_id=session.session_data.workspace_id,
                 is_active=(session_id == tab_container.active_session_id),
                 is_ephemeral=session.session_data.is_ephemeral,
                 has_unsaved_changes=session.session_data.has_unsaved_changes,
@@ -324,26 +349,87 @@ class ChatScreen(BaseAppScreen):
         for session_id in list(tab_container.sessions.keys()):
             if session_id != "default":
                 await tab_container.close_tab(session_id)
-        
+
+        restored_reuse_keys = {}
+
         # Restore saved tabs
         for tab_state in self.chat_state.tabs:
+            restored_title = _derive_tab_title(tab_state)
+            reuse_key = None
+            if tab_state.conversation_id:
+                reuse_key = (tab_state.runtime_backend, tab_state.conversation_id)
+                existing_live_tab_id = restored_reuse_keys.get(reuse_key)
+                if existing_live_tab_id is not None:
+                    if self.chat_state.active_tab_id == tab_state.tab_id:
+                        self.chat_state.active_tab_id = existing_live_tab_id
+                    continue
+
             if tab_state.tab_id == "default" and "default" in tab_container.sessions:
                 # Update default tab
                 session = tab_container.sessions["default"]
-                session.session_data.title = tab_state.title
+                session.session_data.title = restored_title
                 session.session_data.conversation_id = tab_state.conversation_id
+                session.session_data.runtime_backend = tab_state.runtime_backend
+                session.session_data.discovery_owner = tab_state.discovery_owner
+                session.session_data.discovery_entity_id = tab_state.discovery_entity_id
                 session.session_data.character_id = tab_state.character_id
                 session.session_data.character_name = tab_state.character_name
+                session.session_data.assistant_kind = tab_state.assistant_kind
+                session.session_data.assistant_id = tab_state.assistant_id
+                session.session_data.persona_memory_mode = tab_state.persona_memory_mode
+                session.session_data.scope_type = tab_state.scope_type
+                session.session_data.workspace_id = tab_state.workspace_id
+                session.session_data.is_ephemeral = tab_state.is_ephemeral
+                session.session_data.has_unsaved_changes = tab_state.has_unsaved_changes
+                if reuse_key is not None:
+                    restored_reuse_keys[reuse_key] = "default"
             else:
                 # Create new tab
-                tab_id = await tab_container.create_new_tab(title=tab_state.title)
+                session_data = ChatSessionData(
+                    tab_id=tab_state.tab_id,
+                    title=restored_title,
+                    conversation_id=tab_state.conversation_id,
+                    is_ephemeral=tab_state.is_ephemeral,
+                    runtime_backend=tab_state.runtime_backend,
+                    discovery_owner=tab_state.discovery_owner,
+                    discovery_entity_id=tab_state.discovery_entity_id,
+                    character_id=tab_state.character_id,
+                    character_name=tab_state.character_name,
+                    assistant_kind=tab_state.assistant_kind,
+                    assistant_id=tab_state.assistant_id,
+                    persona_memory_mode=tab_state.persona_memory_mode,
+                    scope_type=tab_state.scope_type,
+                    workspace_id=tab_state.workspace_id,
+                    has_unsaved_changes=tab_state.has_unsaved_changes,
+                    system_prompt_override=tab_state.system_prompt_override,
+                    temperature_override=tab_state.temperature_override,
+                    max_tokens_override=tab_state.max_tokens_override,
+                )
+                tab_id = await tab_container.create_new_tab(session_data=session_data)
                 if tab_id and tab_id in tab_container.sessions:
+                    if reuse_key is not None and reuse_key in restored_reuse_keys:
+                        if self.chat_state.active_tab_id == tab_state.tab_id:
+                            self.chat_state.active_tab_id = restored_reuse_keys[reuse_key]
+                        continue
+
                     session = tab_container.sessions[tab_id]
                     session.session_data.conversation_id = tab_state.conversation_id
+                    session.session_data.runtime_backend = tab_state.runtime_backend
+                    session.session_data.discovery_owner = tab_state.discovery_owner
+                    session.session_data.discovery_entity_id = tab_state.discovery_entity_id
                     session.session_data.character_id = tab_state.character_id
                     session.session_data.character_name = tab_state.character_name
+                    session.session_data.assistant_kind = tab_state.assistant_kind
+                    session.session_data.assistant_id = tab_state.assistant_id
+                    session.session_data.persona_memory_mode = tab_state.persona_memory_mode
+                    session.session_data.scope_type = tab_state.scope_type
+                    session.session_data.workspace_id = tab_state.workspace_id
                     session.session_data.is_ephemeral = tab_state.is_ephemeral
                     session.session_data.has_unsaved_changes = tab_state.has_unsaved_changes
+                    if reuse_key is not None:
+                        restored_reuse_keys[reuse_key] = tab_id
+                    if self.chat_state.active_tab_id == tab_state.tab_id:
+                        self.chat_state.active_tab_id = tab_id
     
     def _save_input_text(self) -> None:
         """Save input text for active tab."""

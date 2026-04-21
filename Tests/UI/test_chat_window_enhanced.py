@@ -10,6 +10,12 @@ from textual.app import App
 from textual.widgets import Input, Button, TextArea, Static, ListView, Switch
 from textual.containers import Container, Horizontal, VerticalScroll
 
+from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, TabState
+from tldw_chatbook.Widgets.enhanced_settings_sidebar import EnhancedSettingsSidebar
+
 
 @pytest.fixture
 def mock_app():
@@ -82,19 +88,19 @@ class TestChatWindowFileAttachmentUI:
         mock_chat_window.attachment_indicator.update("3 files attached")
     
     @pytest.mark.asyncio
-    async def test_file_picker_dialog_integration(self, mock_app, mock_chat_window):
-        """Test file picker dialog integration."""
-        # Mock file picker dialog
-        with patch('tldw_chatbook.Widgets.enhanced_file_picker.EnhancedFilePickerDialog') as MockPicker:
-            mock_dialog = Mock()
-            mock_dialog.show = AsyncMock()
-            MockPicker.return_value = mock_dialog
-            
-            # Simulate attach button click
-            await mock_chat_window.on_button_pressed(Mock(button=mock_chat_window.attach_button))
-            
-            # Verify dialog was shown
-            mock_dialog.show.assert_called_once()
+    async def test_attach_image_press_handler_delegates_to_attachment_handler(self, mock_app, mock_chat_window):
+        """Test the attach-image press handler delegates to the attachment handler."""
+        mock_chat_window.attachment_handler = Mock()
+        mock_chat_window.attachment_handler.handle_attach_image_button = AsyncMock()
+
+        event = Mock()
+        event.stop = Mock()
+        event.button = Mock(id="attach-image")
+
+        await ChatWindowEnhanced.handle_attach_image_press(mock_chat_window, event)
+
+        event.stop.assert_called_once()
+        mock_chat_window.attachment_handler.handle_attach_image_button.assert_awaited_once_with(event)
     
     def test_attachment_preview_panel(self, mock_app, mock_chat_window):
         """Test attachment preview panel displays attached files."""
@@ -146,20 +152,32 @@ class TestChatWindowRAGUI:
         rag_panel.collapsed = True
         assert rag_panel.collapsed is True
     
-    def test_rag_preset_selection(self, mock_app, mock_chat_window):
-        """Test RAG preset selection updates UI."""
-        rag_preset_select = Mock()
-        
-        # Test preset changes
-        presets = ["none", "light", "full", "custom"]
-        for preset in presets:
-            rag_preset_select.value = preset
-            assert rag_preset_select.value == preset
-            
-            # Verify UI updates based on preset
-            if preset == "custom":
-                # Custom preset should show advanced options
-                assert mock_chat_window.sidebar.query_one("#chat-advanced-rag").collapsed is False
+    def test_rag_preset_selection(self):
+        """Test the current preset seam updates RAG-related settings."""
+        sidebar = EnhancedSettingsSidebar(id_prefix="chat", config={})
+        sidebar._set_setting_value = Mock()
+        sidebar._update_preset_buttons = Mock()
+
+        sidebar._apply_preset("research")
+
+        assert sidebar.active_preset == "research"
+        sidebar._set_setting_value.assert_has_calls([
+            call("temperature", 0.3),
+            call("streaming", True),
+            call("rag_enable", True),
+            call("rag_preset", "high_accuracy"),
+            call("max_tokens", 4096),
+        ])
+        sidebar._update_preset_buttons.assert_called_once()
+
+        sidebar._set_setting_value.reset_mock()
+        sidebar._update_preset_buttons.reset_mock()
+
+        sidebar._apply_preset("custom")
+
+        assert sidebar.active_preset == "custom"
+        sidebar._set_setting_value.assert_not_called()
+        sidebar._update_preset_buttons.assert_called_once()
     
     def test_rag_search_scope_checkboxes(self, mock_app, mock_chat_window):
         """Test RAG search scope checkboxes."""
@@ -306,6 +324,92 @@ class TestChatWindowTabIntegration:
         
         # Verify contexts are separate
         assert mock_app.chat_attached_files["tab1"] != mock_app.chat_attached_files["tab2"]
+
+
+class TestChatScreenConversationParity:
+    """Test focused chat screen parity save/restore behavior."""
+
+    def test_save_tab_sessions_preserves_assistant_scope_contract(self, mock_app):
+        """Saving tab sessions preserves assistant identity and scope metadata."""
+        screen = ChatScreen(mock_app)
+        screen.chat_state = ChatScreenState()
+
+        session = Mock()
+        session.session_data = ChatSessionData(
+            tab_id="tab-1",
+            title="Persona Session",
+            conversation_id="conv-1",
+            character_id=7,
+            character_name="Navigator",
+            assistant_kind="persona",
+            assistant_id="planner",
+            persona_memory_mode="workspace",
+            scope_type="workspace",
+            workspace_id="workspace-123",
+            is_ephemeral=False,
+        )
+        session.query_one = Mock(side_effect=Exception("no widget"))
+
+        tab_container = Mock()
+        tab_container.sessions = {"tab-1": session}
+        tab_container.active_session_id = "tab-1"
+
+        screen._save_tab_sessions(tab_container)
+
+        saved_tab = screen.chat_state.get_tab_by_id("tab-1")
+        assert saved_tab is not None
+        assert saved_tab.assistant_kind == "persona"
+        assert saved_tab.assistant_id == "planner"
+        assert saved_tab.persona_memory_mode == "workspace"
+        assert saved_tab.scope_type == "workspace"
+        assert saved_tab.workspace_id == "workspace-123"
+
+    @pytest.mark.asyncio
+    async def test_restore_tab_sessions_preserves_assistant_scope_contract(self, mock_app):
+        """Restoring tab sessions reapplies assistant identity and scope metadata to live sessions."""
+        screen = ChatScreen(mock_app)
+        screen.chat_state = ChatScreenState(
+            tabs=[
+                TabState(
+                    tab_id="saved-tab",
+                    title="",
+                    conversation_id="conv-2",
+                    character_id=11,
+                    character_name="Scout",
+                    assistant_kind="character",
+                    assistant_id="char-11",
+                    persona_memory_mode="read_only",
+                    scope_type="workspace",
+                    workspace_id="workspace-999",
+                    is_ephemeral=False,
+                    has_unsaved_changes=True,
+                )
+            ],
+            active_tab_id="saved-tab",
+            tab_order=["saved-tab"],
+        )
+
+        restored_session = Mock()
+        restored_session.session_data = ChatSessionData(tab_id="restored-tab", title="placeholder")
+
+        async def fake_create_new_tab(title=None, session_data=None):
+            tab_container.sessions["restored-tab"] = restored_session
+            if session_data is not None:
+                restored_session.session_data = session_data
+            return "restored-tab"
+
+        tab_container = Mock()
+        tab_container.sessions = {}
+        tab_container.create_new_tab = AsyncMock(side_effect=fake_create_new_tab)
+
+        await screen._restore_tab_sessions(tab_container)
+
+        assert restored_session.session_data.assistant_kind == "character"
+        assert restored_session.session_data.assistant_id == "char-11"
+        assert restored_session.session_data.persona_memory_mode == "read_only"
+        assert restored_session.session_data.scope_type == "workspace"
+        assert restored_session.session_data.workspace_id == "workspace-999"
+        assert restored_session.session_data.title == "Chat with Scout"
 
 
 class TestChatWindowStreamingUI:

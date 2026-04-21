@@ -109,24 +109,24 @@ class EvalNavigationBar(Container):
     
     .status-indicator.idle {
         color: $text-muted;
-        border-color: $primary-background;
+        border: round $primary-background;
     }
     
     .status-indicator.running {
         color: $warning;
-        border-color: $warning;
+        border: round $warning;
         text-style: bold blink;
     }
     
     .status-indicator.error {
         color: $error;
-        border-color: $error;
+        border: round $error;
         text-style: bold;
     }
     
     .status-indicator.success {
         color: $success;
-        border-color: $success;
+        border: round $success;
         text-style: bold;
     }
     """

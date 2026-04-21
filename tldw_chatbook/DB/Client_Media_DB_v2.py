@@ -98,7 +98,7 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 2  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 3  # Define the version this code supports
     
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
@@ -112,11 +112,16 @@ class MediaDatabase:
             'function': '_apply_migration_v1_to_v2',
             'description': 'Add chunking configuration support'
         },
+        2: {
+            'to_version': 3,
+            'function': '_apply_migration_v2_to_v3',
+            'description': 'Add local reading progress store'
+        },
         # Future migrations: just add new entries here
-        # 2: {
-        #     'to_version': 3,
-        #     'function': '_apply_migration_v2_to_v3',
-        #     'description': 'Description of v3 changes'
+        # 3: {
+        #     'to_version': 4,
+        #     'function': '_apply_migration_v3_to_v4',
+        #     'description': 'Description of v4 changes'
         # },
     }
 
@@ -417,6 +422,15 @@ class MediaDatabase:
         keyword,
         content='Keywords',    -- Keep reference to source table
         content_rowid='id'  -- Link to Keywords.id
+    );
+    """
+
+    _READING_PROGRESS_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS ReadingProgress (
+        media_id INTEGER PRIMARY KEY,
+        progress_json TEXT NOT NULL,
+        last_modified DATETIME NOT NULL,
+        FOREIGN KEY (media_id) REFERENCES Media(id) ON DELETE CASCADE
     );
     """
 
@@ -957,6 +971,26 @@ class MediaDatabase:
         except Exception as e:
             logging.error(f"[Migration v1->v2] Unexpected error during migration: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during migration v1->v2: {e}") from e
+
+    def _apply_migration_v2_to_v3(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 2 to version 3 (adds local reading progress)."""
+        logging.info(f"Applying migration from version 2 to 3 (reading progress store) to DB: {self.db_path_str}...")
+        try:
+            migration_sql = f"""
+            {self._READING_PROGRESS_TABLE_SQL}
+            UPDATE schema_version SET version = 3;
+            """
+
+            with self.transaction():
+                logging.debug("[Migration v2->v3] Creating ReadingProgress table...")
+                conn.executescript(migration_sql)
+                logging.info("[Migration v2->v3] ReadingProgress migration applied successfully.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v2->v3] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v2->v3 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v2->v3] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v2->v3: {e}") from e
 
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
@@ -1981,6 +2015,73 @@ class MediaDatabase:
         except Exception as e:
             logger.error(f"Unexpected error deleting sync log entries before {change_id_threshold} from DB '{self.db_path_str}': {e}")
             raise DatabaseError(f"Unexpected error deleting sync log entries before threshold: {e}") from e
+
+    def get_reading_progress(self, media_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch the local-only reading progress row for a media item."""
+        try:
+            cursor = self.execute_query(
+                "SELECT media_id, progress_json, last_modified FROM ReadingProgress WHERE media_id = ?",
+                (media_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            progress_data = json.loads(row["progress_json"]) if row["progress_json"] else {}
+            if not isinstance(progress_data, dict):
+                progress_data = {"value": progress_data}
+
+            result = dict(progress_data)
+            result["media_id"] = row["media_id"]
+            result["last_modified"] = row["last_modified"]
+            return result
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode reading progress for media_id={media_id}: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to decode reading progress for media_id {media_id}: {e}") from e
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching reading progress for media_id={media_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to fetch reading progress for media_id {media_id}") from e
+
+    def upsert_reading_progress(self, media_id: int, progress_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Insert or replace the local-only reading progress row for a media item."""
+        if not isinstance(progress_data, dict):
+            raise InputError("progress_data must be a dictionary.")
+
+        current_time = self._get_current_utc_timestamp_str()
+        progress_json = json.dumps(progress_data, separators=(',', ':'), cls=DateTimeEncoder)
+
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO ReadingProgress (media_id, progress_json, last_modified)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(media_id) DO UPDATE SET
+                        progress_json = excluded.progress_json,
+                        last_modified = excluded.last_modified
+                    """,
+                    (media_id, progress_json, current_time),
+                )
+            fetched = self.get_reading_progress(media_id)
+            if fetched is not None:
+                return fetched
+            result = dict(progress_data)
+            result["media_id"] = media_id
+            result["last_modified"] = current_time
+            return result
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error upserting reading progress for media_id={media_id} in DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to upsert reading progress for media_id {media_id}") from e
+
+    def delete_reading_progress(self, media_id: int) -> bool:
+        """Delete the local-only reading progress row for a media item."""
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute("DELETE FROM ReadingProgress WHERE media_id = ?", (media_id,))
+                return cursor.rowcount > 0
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error deleting reading progress for media_id={media_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to delete reading progress for media_id {media_id}") from e
 
     def soft_delete_media(self, media_id: int, cascade: bool = True) -> bool:
         """
