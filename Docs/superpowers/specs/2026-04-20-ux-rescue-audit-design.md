@@ -138,6 +138,20 @@ The header should contain:
 
 `Workspaces` should be treated as a global context selector, not as a secondary module. The selected workspace should scope Chat, Library, and Study and should remain visible in the shell at all times.
 
+### Workspace Scope Rules
+
+Workspace behavior must be explicit and consistent across destinations.
+
+- `Chat`: mixed scope, but always visibly labeled. The active workspace is the default context, and any repo, branch, or execution-scope override must be shown inline.
+- `Library`: workspace-scoped by default. Any global search or cross-workspace mode must be an explicit toggle with a visible label.
+- `Study`: workspace-scoped by default.
+- `Characters`: mixed scope. Characters, personas, prompts, and dictionaries may be workspace-bound or global, but every object must visibly indicate its scope.
+- `Models & Tools`: global by default, with workspace-specific overrides shown only when relevant.
+- `Automation / Feeds`: mixed scope. Automations and feeds must clearly show whether they are global, workspace-specific, or attached to the current chat session.
+- `Settings`: global only.
+
+Any object or view that is not workspace-scoped should display a visible `Global` marker or equivalent scope label.
+
 ### Top-Level Destinations
 
 The recommended top-level destinations are:
@@ -153,6 +167,16 @@ The recommended top-level destinations are:
 These labels should remain stable across the application. No legacy aliases or internal tab IDs should leak into the user-facing model.
 
 `Chat` should also be the default landing destination and the place users return to after most major actions.
+
+### Migration Decisions
+
+The redesign must explicitly resolve the current split between `Chat` and the separate coding surface.
+
+- `Chat` becomes the only primary runtime surface for agentic programming and control.
+- The existing standalone `Coding` destination should be deprecated as a top-level destination during the shell rescue.
+- Current coding-specific tools such as code map, repo inspection, step-by-step helpers, and repo copy or paste workflows should be migrated into Chat as contextual tools, drawers, inspectors, or launchable panels.
+- `Models & Tools` may still contain coding-related configuration or utility access points, but it must not become a second primary place where users conduct agentic work.
+- If temporary migration overlap is required, the standalone coding surface should be marked as transitional and removed from primary navigation once Chat reaches functional parity for core workflows.
 
 ### Destination Roles
 
@@ -283,6 +307,15 @@ Recommended structure:
 - Optional right inspector: model, tools, retrieval context, persona, repo context, prompt settings, and task details
 - Fixed bottom composer with attachments, quick actions, and send state
 
+Chat at-rest layout:
+
+- Always visible: screen header, current chat thread, composer, current workspace, and current repo or execution scope when relevant
+- Visible on demand: left rail for sessions or recent tasks, right inspector for settings and task details
+- Collapsed by default: detailed tool traces, diffs, deep model settings, and advanced repo context
+- Blocking inline cards: approvals, destructive confirmations, and active task failures
+- At most one secondary side panel should be open at a time during normal use
+- The default state should read as `conversation-first`, not `control panel first`
+
 Rules:
 
 - Workspace and persona must be visible as context chips near the screen header
@@ -337,6 +370,12 @@ Recommended behavior:
 - Flashcards and quizzes should switch into focused single-task layouts once entered
 - Flashcards and quizzes should be presented as sibling sections even if implementation maturity differs
 
+Quiz scope rule:
+
+- `Quizzes` must be visible in the Study IA from the start of the shell redesign.
+- Phase 3 does not require a fully mature quiz platform. The minimum acceptable quiz deliverable is a visible section, a coherent entry flow, a focused quiz session layout, and a clear path to generate or launch quizzes from selected content.
+- Advanced quiz authoring, adaptation, or analytics can remain post-Phase-3 work.
+
 ### Characters
 
 `Characters` should use a `Browser + Editor` model.
@@ -372,7 +411,6 @@ Potential sections:
 - Speech
 - Evals
 - Tools
-- Coding
 
 Rules:
 
@@ -398,6 +436,25 @@ Required visible fields:
 - Errors or failures
 
 This area should read like an operational list + detail surface, not like a settings dump.
+
+## Cross-Surface Handoffs
+
+Because the product is chat-first, supporting destinations must have explicit handoffs into Chat and back out again.
+
+Required handoff patterns:
+
+- `Library -> Chat`: `Use in Chat` sends the selected note, media item, search result, or package context into the active chat session or a new session with visible confirmation.
+- `Study -> Chat`: `Ask agent`, `Explain this`, or `Generate from selected material` uses current study context without forcing the user to rebuild scope manually.
+- `Characters -> Chat`: `Use persona in current chat` applies the selected character or persona to the active session with a visible scope change.
+- `Chat -> Library`: users can save outputs, attach generated artifacts, or package selected content into Library destinations without losing conversation state.
+- `Chat -> Models & Tools`: deep configuration opens as a temporary panel or modal and returns users to the active chat context after completion.
+
+Rules:
+
+- Cross-surface actions should preserve the current session whenever possible.
+- Handoff actions must show what context was transferred.
+- Returning to Chat should preserve the active conversation, task state, and execution context.
+- Supporting destinations should feel like structured context providers for Chat, not detached products.
 
 ## Interaction Model
 
@@ -431,6 +488,51 @@ Users should always be able to answer:
 - What mode am I in?
 
 The UI should make these answers visible through labels, chips, and stable screen framing rather than requiring recall.
+
+### Approvals And Safety UX
+
+Approvals are a core part of the chat-first agentic model and should be designed as first-class interactions rather than treated as generic errors or logs.
+
+Required approval card content:
+
+- Requested action summary
+- Why approval is needed
+- Affected scope such as files, commands, repo, or system resource
+- Risk level or destructive-action indicator
+- Clear action choices
+
+Default approval actions:
+
+- `Allow once`
+- `Allow for this session` when appropriate
+- `Deny`
+- `Review details`
+
+Rules:
+
+- Approval requests appear inline in Chat when Chat is the active working surface.
+- Destructive or high-risk actions require stronger copy and, when appropriate, a second confirmation step.
+- Users must be able to understand what will happen before granting approval.
+- After approval or denial, the result should be recorded inline with the task state so the conversation remains comprehensible.
+
+### Task Continuity And Resume
+
+Agentic work is often long-running or interruptible. The UI should preserve enough state that users can leave and return without reconstructing context manually.
+
+Required resume state:
+
+- Current task summary
+- Last completed step or tool action
+- Pending approval state, if any
+- Recent file changes or diff summary, if any
+- Current workspace, repo, branch, and execution scope
+- Recommended next action
+
+Rules:
+
+- Recent task history should be accessible from Chat.
+- Resuming a task should restore visible execution context.
+- Suspended or failed tasks should remain understandable without requiring users to read raw logs.
 
 ## Error Handling And Recovery
 
@@ -488,6 +590,7 @@ Changes:
 - Promote Study to top-level
 - Remove overlapping navigation patterns
 - Normalize labels and destinations
+- Remove or demote the standalone Coding destination from primary navigation in favor of chat-first agentic flow
 
 Outcome:
 
@@ -526,6 +629,12 @@ Why:
 
 - They represent the highest-frequency and highest-value user jobs
 - They demonstrate the new shell and screen model most clearly
+
+Minimum acceptable outputs:
+
+- `Chat`: can start and manage agentic programming tasks, approvals, diffs, and task resume without forcing a destination change to a separate coding screen
+- `Library`: can ingest, find, inspect, and send content into Chat with visible context transfer
+- `Study`: can expose dashboard, flashcards, and quiz entry flow, with quizzes at least available as a coherent focused flow even if advanced features remain deferred
 
 ### Phase 4: Add expert acceleration
 
@@ -571,6 +680,11 @@ The redesign should be considered successful when the product meets these condit
 - Advanced controls are progressively disclosed
 - No duplicate navigation chrome remains
 - No blank or silent empty states remain
+- No separate top-level coding destination remains in the primary navigation after Chat reaches core parity
+- Every workspace-scoped or global object shows visible scope labeling
+- Every long-running action in Chat, Library, and Study exposes inline progress and terminal state
+- A first-time evaluator can start a core agentic task from Chat using only visible on-screen cues in 60 seconds or less
+- Core workflows should require no more than one top-level destination change after landing in Chat
 
 ## Validation Model
 
@@ -578,7 +692,7 @@ The redesign should be considered successful when the product meets these condit
 
 For each top-level destination, confirm:
 
-- A user can identify the purpose of the screen quickly
+- A user can identify the purpose of the screen within 5 seconds
 - The primary action is obvious
 - The current context is visible
 - Advanced controls are separated from routine ones
@@ -597,11 +711,11 @@ Test at least these workflows:
 
 Expected outcomes:
 
-- Fewer wrong turns between destinations
-- Fewer "where is this?" moments
-- Less visual competition on each screen
-- Faster completion on common tasks
-- Clearer recovery when something fails
+- No more than one top-level navigation change for the listed core workflows after arriving in Chat
+- No unlabeled workspace or global scope transitions during the listed workflows
+- Less visual competition on each screen, measured by one clearly dominant task region and no duplicate navigation chrome
+- Faster completion on common tasks, including first-run start of an agentic programming task from Chat in 60 seconds or less
+- Clearer recovery when something fails, including inline error or approval state within the active region for all long-running actions
 
 ## What Not To Do
 
