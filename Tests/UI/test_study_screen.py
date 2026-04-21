@@ -7,8 +7,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from tldw_chatbook.UI.Study_Modules.flashcards_handler import StudyFlashcardsController
-from tldw_chatbook.UI.Study_Modules.quizzes_handler import StudyQuizzesController
 from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Screens.notes_scope_models import WorkspaceSubview
 
@@ -31,17 +29,6 @@ def _build_window():
         flashcards_controller=SimpleNamespace(handle_scope_changed=Mock()),
         quizzes_controller=SimpleNamespace(handle_scope_changed=Mock()),
     )
-
-
-def _build_real_controller_window(app_instance):
-    window = SimpleNamespace(
-        app_instance=app_instance,
-        runtime_backend=getattr(app_instance, "runtime_backend", None),
-        query_one=Mock(),
-    )
-    window.flashcards_controller = StudyFlashcardsController(window)
-    window.quizzes_controller = StudyQuizzesController(window)
-    return window
 
 
 @pytest.mark.asyncio
@@ -162,7 +149,7 @@ async def test_pending_scope_is_applied_before_initialize_on_mount():
 
 
 @pytest.mark.asyncio
-async def test_scope_change_path_invokes_real_controller_seams():
+async def test_scope_change_path_attaches_and_invokes_controller_seams():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
         pending_study_scope_context=StudyScopeContext(
@@ -175,32 +162,42 @@ async def test_scope_change_path_invokes_real_controller_seams():
         notify=Mock(),
     )
     screen = StudyScreen(app_instance=app_instance)
-    window = _build_real_controller_window(app_instance)
+    flashcards_controller = SimpleNamespace(
+        current_review_card={"id": "card-1"},
+        current_review_session_id=41,
+        current_decks=[{"id": "deck-1"}],
+        current_cards=[{"id": "card-1"}],
+        selected_deck_record={"id": "deck-1"},
+        selected_card_record={"id": "card-1"},
+        has_decks=True,
+    )
+    quizzes_controller = SimpleNamespace(
+        current_attempt_id="attempt-1",
+        current_attempt_questions=[{"id": "q-1"}],
+        current_attempt_answers=[{"id": "a-1"}],
+        current_question_index=3,
+        current_quiz_questions=[{"id": "q-1"}],
+        current_attempt_history=[{"id": "attempt-1"}],
+        has_quizzes=True,
+    )
+    window = SimpleNamespace(
+        app_instance=app_instance,
+        runtime_backend=getattr(app_instance, "runtime_backend", None),
+        query_one=Mock(),
+        flashcards_controller=flashcards_controller,
+        quizzes_controller=quizzes_controller,
+    )
     window.load_saved_sessions = AsyncMock()
     window.initialize = AsyncMock()
     window._schedule_flashcards_refresh = Mock()
     window._schedule_quizzes_refresh = Mock()
 
-    window.flashcards_controller.current_review_card = {"id": "card-1"}
-    window.flashcards_controller.current_review_session_id = 41
-    window.flashcards_controller.current_decks = [{"id": "deck-1"}]
-    window.flashcards_controller.current_cards = [{"id": "card-1"}]
-    window.flashcards_controller.selected_deck_record = {"id": "deck-1"}
-    window.flashcards_controller.selected_card_record = {"id": "card-1"}
-    window.flashcards_controller.has_decks = True
-
-    window.quizzes_controller.current_attempt_id = "attempt-1"
-    window.quizzes_controller.current_attempt_questions = [{"id": "q-1"}]
-    window.quizzes_controller.current_attempt_answers = [{"id": "a-1"}]
-    window.quizzes_controller.current_question_index = 3
-    window.quizzes_controller.current_quiz_questions = [{"id": "q-1"}]
-    window.quizzes_controller.current_attempt_history = [{"id": "attempt-1"}]
-    window.quizzes_controller.has_quizzes = True
-
     screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
 
     await screen.on_mount()
 
+    assert callable(window.flashcards_controller.handle_scope_changed)
+    assert callable(window.quizzes_controller.handle_scope_changed)
     assert window.flashcards_controller.current_review_card is None
     assert window.flashcards_controller.current_review_session_id is None
     assert window.flashcards_controller.current_decks == []

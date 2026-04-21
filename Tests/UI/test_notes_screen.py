@@ -221,6 +221,34 @@ class TestNotesScreenMethods:
         assert mock_app_instance.pending_notes_workspace_context is None
         screen.refresh_current_scope.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_on_screen_resume_consumes_pending_workspace_return_context(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.restore_state(
+            {
+                "notes_state": {
+                    "scope_type": ScopeType.LOCAL_NOTE.value,
+                    "workspace_subview": WorkspaceSubview.NOTES.value,
+                    "selected_note_id": 11,
+                    "selected_workspace_id": None,
+                }
+            }
+        )
+        mock_app_instance.pending_notes_workspace_context = {
+            "workspace_id": "ws-12",
+            "subview": WorkspaceSubview.DETAILS,
+        }
+        screen.refresh_current_scope = AsyncMock()  # type: ignore[method-assign]
+        screen._update_scope_context_ui = Mock()  # type: ignore[method-assign]
+
+        await screen.on_screen_resume()
+
+        assert screen.state.scope_type == ScopeType.WORKSPACE
+        assert screen.state.workspace_subview == WorkspaceSubview.DETAILS
+        assert screen.state.selected_workspace_id == "ws-12"
+        assert mock_app_instance.pending_notes_workspace_context is None
+        screen.refresh_current_scope.assert_awaited_once()
+
     def test_switching_scope_with_unsaved_changes_requires_decision(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
         screen.state = NotesScreenState(

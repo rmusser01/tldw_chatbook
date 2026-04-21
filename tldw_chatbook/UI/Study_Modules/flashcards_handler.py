@@ -127,16 +127,6 @@ class StudyFlashcardsController:
         if selected_card_deck_record_id != live_deck_record_id:
             self.selected_card_record = None
 
-    def handle_scope_changed(self) -> None:
-        """Reset controller-local state before scoped study data reloads."""
-        self.current_review_card = None
-        self.current_review_session_id = None
-        self.current_decks = []
-        self.current_cards = []
-        self.selected_deck_record = None
-        self.selected_card_record = None
-        self.has_decks = False
-
     @staticmethod
     def _card_row_index_from_widget(widget: ListItem) -> Optional[int]:
         widget_id = str(widget.id or "")

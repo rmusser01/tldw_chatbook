@@ -88,7 +88,7 @@ class StudyScreen(BaseAppScreen):
     def _current_scope_context(self) -> StudyScopeContext:
         return self.scope_state.as_context()
 
-    def _hard_reset_controller(self, controller: Any) -> None:
+    def _reset_controller_state(self, controller: Any) -> None:
         for attribute, value in (
             ("current_review_card", None),
             ("current_review_session_id", None),
@@ -108,11 +108,19 @@ class StudyScreen(BaseAppScreen):
             if hasattr(controller, attribute):
                 setattr(controller, attribute, value)
 
-    def _hard_reset_study_controllers(self, study_window: Any) -> None:
-        for controller_name in ("flashcards_controller", "quizzes_controller"):
-            controller = getattr(study_window, controller_name, None)
-            if controller is not None:
-                self._hard_reset_controller(controller)
+    def _ensure_scope_change_handler(self, controller: Any) -> Optional[Any]:
+        if controller is None:
+            return None
+
+        handler = getattr(controller, "handle_scope_changed", None)
+        if callable(handler):
+            return handler
+
+        def _fallback_handler() -> None:
+            self._reset_controller_state(controller)
+
+        controller.handle_scope_changed = _fallback_handler
+        return controller.handle_scope_changed
 
     async def _reload_scoped_study_data(self, study_window: Any) -> None:
         for scheduler_name in ("_schedule_flashcards_refresh", "_schedule_quizzes_refresh"):
@@ -132,12 +140,9 @@ class StudyScreen(BaseAppScreen):
         if previous_key == next_key:
             return
 
-        if backend_changed:
-            self._hard_reset_study_controllers(study_window)
-
         for controller_name in ("flashcards_controller", "quizzes_controller"):
             controller = getattr(study_window, controller_name, None)
-            handler = getattr(controller, "handle_scope_changed", None)
+            handler = self._ensure_scope_change_handler(controller)
             if callable(handler):
                 handler()
 
