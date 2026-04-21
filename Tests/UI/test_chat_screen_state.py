@@ -2,6 +2,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual.widgets import Input, Select
 
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
@@ -325,3 +326,143 @@ class TestChatScreenShellBarSync:
         assert shell_bar.context.scope_label == "Workspace: workspace-42"
         assert shell_bar.context.assistant_label == "Persona: study.coach"
         assert shell_bar.context.session_label == "Session: Live Persona Session"
+
+    @pytest.mark.asyncio
+    async def test_perform_state_restoration_uses_async_tab_switch(self):
+        mock_app = Mock()
+        mock_app.chat_sidebar_collapsed = False
+        mock_app.chat_right_sidebar_collapsed = False
+
+        screen = ChatScreen(mock_app)
+        shell_bar = ChatShellBar(session_data=ChatSessionData(tab_id="placeholder"))
+        chat_window = Mock()
+        chat_window.get_shell_bar = Mock(return_value=shell_bar)
+        screen.chat_window = chat_window
+        screen.chat_state = ChatScreenState(
+            tabs=[TabState(tab_id="tab-1", title="Restored Session")],
+            active_tab_id="tab-1",
+            tab_order=["tab-1"],
+        )
+
+        tab_container = Mock()
+        tab_container.switch_to_tab = Mock()
+        tab_container.switch_to_tab_async = AsyncMock()
+
+        screen._get_tab_container = Mock(return_value=tab_container)
+        screen._restore_tab_sessions = AsyncMock()
+        screen._restore_input_text = AsyncMock()
+        screen._restore_sidebar_settings = AsyncMock()
+        screen._restore_scroll_positions = AsyncMock()
+        screen._restore_attachments = AsyncMock()
+        screen._restore_messages = AsyncMock()
+
+        await screen._perform_state_restoration()
+
+        tab_container.switch_to_tab_async.assert_awaited_once_with("tab-1")
+
+    @pytest.mark.asyncio
+    async def test_provider_change_syncs_compact_shell_controls(self):
+        mock_app = Mock()
+        screen = ChatScreen(mock_app)
+        screen.chat_window = Mock()
+
+        model_select = Mock()
+        model_select.value = Select.BLANK
+        model_select.set_options = Mock()
+        screen.chat_window.query_one = Mock(return_value=model_select)
+
+        compact_bar = Mock()
+        screen._get_compact_model_bar = Mock(return_value=compact_bar)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "tldw_chatbook.config.get_cli_providers_and_models",
+                lambda: {"openai": ["gpt-4o-mini"], "anthropic": ["claude-3-haiku"]},
+            )
+
+            event = Mock()
+            event.value = "anthropic"
+
+            await screen.handle_provider_change(event)
+
+        compact_bar.sync_from_sidebar.assert_called_once_with(
+            provider="anthropic",
+            model="claude-3-haiku",
+        )
+
+    @pytest.mark.asyncio
+    async def test_restore_sidebar_settings_syncs_compact_shell_controls(self):
+        mock_app = Mock()
+        screen = ChatScreen(mock_app)
+        screen.chat_state = ChatScreenState(
+            tabs=[
+                TabState(
+                    tab_id="tab-1",
+                    title="Restored Session",
+                    system_prompt_override="Stay concise",
+                    temperature_override=0.9,
+                )
+            ],
+            active_tab_id="tab-1",
+            tab_order=["tab-1"],
+        )
+
+        system_prompt = Mock()
+        provider_select = Mock()
+        provider_select.value = "openai"
+        model_select = Mock()
+        model_select.value = "gpt-4o-mini"
+        temperature_input = Mock()
+        temperature_input.value = ""
+
+        def query_one(selector, *_args, **_kwargs):
+            widget_map = {
+                "#chat-system-prompt": system_prompt,
+                "#chat-api-provider": provider_select,
+                "#chat-api-model": model_select,
+                "#chat-temperature": temperature_input,
+            }
+            if selector in widget_map:
+                return widget_map[selector]
+            raise LookupError(selector)
+
+        screen.chat_window = Mock()
+        screen.chat_window.query_one = Mock(side_effect=query_one)
+
+        compact_bar = Mock()
+        screen._get_compact_model_bar = Mock(return_value=compact_bar)
+
+        await screen._restore_sidebar_settings()
+
+        assert temperature_input.value == "0.9"
+        compact_bar.sync_from_sidebar.assert_called_once_with(
+            provider="openai",
+            model="gpt-4o-mini",
+            temperature="0.9",
+        )
+
+    def test_model_change_syncs_compact_shell_controls(self):
+        mock_app = Mock()
+        screen = ChatScreen(mock_app)
+        compact_bar = Mock()
+        screen._get_compact_model_bar = Mock(return_value=compact_bar)
+
+        event = Mock()
+        event.value = "gpt-4o"
+
+        screen.on_chat_api_model_changed(event)
+
+        compact_bar.sync_from_sidebar.assert_called_once_with(model="gpt-4o")
+
+    def test_temperature_change_syncs_compact_shell_controls(self):
+        mock_app = Mock()
+        screen = ChatScreen(mock_app)
+        compact_bar = Mock()
+        screen._get_compact_model_bar = Mock(return_value=compact_bar)
+
+        event = Mock()
+        event.value = "0.9"
+
+        screen.on_chat_temperature_changed(event)
+
+        compact_bar.sync_from_sidebar.assert_called_once_with(temperature="0.9")
