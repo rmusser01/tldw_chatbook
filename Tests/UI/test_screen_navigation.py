@@ -227,3 +227,33 @@ async def test_main_navigation_route_ids_remain_intact():
             "nav-coding",
         ]
         assert set(actual_route_ids) == expected_route_ids
+
+
+@pytest.mark.asyncio
+async def test_screen_navigation_routes_reach_real_app_handler():
+    app = _build_test_app()
+    captured_destinations = []
+
+    async def fake_switch_screen(screen):
+        captured_destinations.append(type(screen).__name__)
+
+    app.switch_screen = fake_switch_screen
+
+    cases = [
+        ("chatbooks", "ChatbooksScreen"),
+        ("subscriptions", "SubscriptionScreen"),
+        ("study", "StudyScreen"),
+        ("stts", "STTSScreen"),
+    ]
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+
+        for route, expected_screen_class in cases:
+            captured_destinations.clear()
+
+            await app.handle_screen_navigation(NavigateToScreen(route))
+            await pilot.pause(0.05)
+
+            assert app.current_tab == route
+            assert captured_destinations == [expected_screen_class]
