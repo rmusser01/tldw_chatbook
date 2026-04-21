@@ -8,7 +8,6 @@
 
 ## Contract-Maturity Holds
 
-- `Study Packs`: the server surface is still schema-backed and nested in `core/StudyPacks` plus `ChaChaNotes_DB`; there is no dedicated endpoint family yet, so keep the client contract on hold until a direct API surface appears.
 - `Research Search / Provider Surfaces`: the visible route family is legacy and deprecated in `research.py`, while provider behavior is split across core third-party modules; keep the client contract on hold as present but low-confidence.
 - `Remote MCP Control Plane / Governance`: the surface is admin-heavy and the current evidence only confirms backend governance plumbing, not a clearly client-scoped governance contract; keep it on hold until the client-facing boundary is clearer.
 
