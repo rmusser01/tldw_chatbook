@@ -2830,151 +2830,33 @@ UPDATE db_schema_version
                     raise SchemaError(
                         f"Database schema '{self._SCHEMA_NAME}' version ({current_db_version}) is newer than supported by code ({target_version}). Aborting.")
 
+                migration_steps = {
+                    4: self._migrate_from_v4_to_v5,
+                    5: self._migrate_from_v5_to_v6,
+                    6: self._migrate_from_v6_to_v7,
+                    7: self._migrate_from_v7_to_v8,
+                    8: self._migrate_from_v8_to_v9,
+                    9: self._migrate_from_v9_to_v10,
+                    10: self._migrate_from_v10_to_v11,
+                    11: self._migrate_from_v11_to_v12,
+                    12: self._migrate_from_v12_to_v13,
+                    13: self._migrate_from_v13_to_v14,
+                    14: self._migrate_from_v14_to_v15,
+                }
+
                 if current_db_version == 0:
-                    self._apply_schema_v4(conn) # This will apply version 4
-                    current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 4 and target_version > 4:
-                        self._migrate_from_v4_to_v5(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 5 and target_version > 5:
-                        self._migrate_from_v5_to_v6(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 6 and target_version > 6:
-                        self._migrate_from_v6_to_v7(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 7 and target_version > 7:
-                        self._migrate_from_v7_to_v8(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 8 and target_version > 8:
-                        self._migrate_from_v8_to_v9(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 9 and target_version > 9:
-                        self._migrate_from_v9_to_v10(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 10 and target_version > 10:
-                        self._migrate_from_v10_to_v11(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 11 and target_version > 11:
-                        self._migrate_from_v11_to_v12(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 12 and target_version > 12:
-                        self._migrate_from_v12_to_v13(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 13 and target_version > 13:
-                        self._migrate_from_v13_to_v14(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 14 and target_version > 14:
-                        self._migrate_from_v14_to_v15(conn)
-                elif current_db_version == 4 and target_version >= 5:
-                    self._migrate_from_v4_to_v5(conn)
-                    current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 5 and target_version > 5:
-                        self._migrate_from_v5_to_v6(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 6 and target_version > 6:
-                        self._migrate_from_v6_to_v7(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 7 and target_version > 7:
-                        self._migrate_from_v7_to_v8(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 8 and target_version > 8:
-                        self._migrate_from_v8_to_v9(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 9 and target_version > 9:
-                        self._migrate_from_v9_to_v10(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 10 and target_version > 10:
-                        self._migrate_from_v10_to_v11(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 11 and target_version > 11:
-                        self._migrate_from_v11_to_v12(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 12 and target_version > 12:
-                        self._migrate_from_v12_to_v13(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 13 and target_version > 13:
-                        self._migrate_from_v13_to_v14(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 14 and target_version > 14:
-                        self._migrate_from_v14_to_v15(conn)
-                elif current_db_version == 5 and target_version >= 6:
-                    self._migrate_from_v5_to_v6(conn)
-                    current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 6 and target_version > 6:
-                        self._migrate_from_v6_to_v7(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 7 and target_version > 7:
-                        self._migrate_from_v7_to_v8(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 8 and target_version > 8:
-                        self._migrate_from_v8_to_v9(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 9 and target_version > 9:
-                        self._migrate_from_v9_to_v10(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 10 and target_version > 10:
-                        self._migrate_from_v10_to_v11(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 11 and target_version > 11:
-                        self._migrate_from_v11_to_v12(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 12 and target_version > 12:
-                        self._migrate_from_v12_to_v13(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 13 and target_version > 13:
-                        self._migrate_from_v13_to_v14(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 14 and target_version > 14:
-                        self._migrate_from_v14_to_v15(conn)
-                elif current_db_version == 6 and target_version >= 7:
-                    self._migrate_from_v6_to_v7(conn)
-                    current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 7 and target_version > 7:
-                        self._migrate_from_v7_to_v8(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 8 and target_version > 8:
-                        self._migrate_from_v8_to_v9(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 9 and target_version > 9:
-                        self._migrate_from_v9_to_v10(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 10 and target_version > 10:
-                        self._migrate_from_v10_to_v11(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 11 and target_version > 11:
-                        self._migrate_from_v11_to_v12(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 12 and target_version > 12:
-                        self._migrate_from_v12_to_v13(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 13 and target_version > 13:
-                        self._migrate_from_v13_to_v14(conn)
-                        current_db_version = self._get_db_version(conn) # Refresh version
-                    if current_db_version == 14 and target_version > 14:
-                        self._migrate_from_v14_to_v15(conn)
-                elif current_db_version == 7 and target_version == 8:
-                    self._migrate_from_v7_to_v8(conn)
-                elif current_db_version == 8 and target_version == 9:
-                    self._migrate_from_v8_to_v9(conn)
-                elif current_db_version == 9 and target_version == 10:
-                    self._migrate_from_v9_to_v10(conn)
-                elif current_db_version == 10 and target_version == 11:
-                    self._migrate_from_v10_to_v11(conn)
-                elif current_db_version == 11 and target_version == 12:
-                    self._migrate_from_v11_to_v12(conn)
-                elif current_db_version == 12 and target_version == 13:
-                    self._migrate_from_v12_to_v13(conn)
-                elif current_db_version == 13 and target_version == 14:
-                    self._migrate_from_v13_to_v14(conn)
-                elif current_db_version == 14 and target_version == 15:
-                    self._migrate_from_v14_to_v15(conn)
-                elif current_initial_version < target_version: # An older schema exists
-                    # For versions older than 4, we don't have a migration path
-                    raise SchemaError(
-                        f"Migration path undefined for '{self._SCHEMA_NAME}' from version {current_initial_version} to {target_version}. "
-                        f"Manual migration or a new database may be required.")
-                else: # Should not be reached due to prior checks
-                    raise SchemaError(f"Unexpected schema state: current {current_initial_version}, target {target_version}")
+                    self._apply_schema_v4(conn)
+                    current_db_version = self._get_db_version(conn)
+
+                while current_db_version < target_version:
+                    migration = migration_steps.get(current_db_version)
+                    if migration is None:
+                        raise SchemaError(
+                            f"Migration path undefined for '{self._SCHEMA_NAME}' from version {current_initial_version} to {target_version}. "
+                            f"Manual migration or a new database may be required."
+                        )
+                    migration(conn)
+                    current_db_version = self._get_db_version(conn)
 
                 final_version_check = self._get_db_version(conn)
                 if final_version_check != target_version:

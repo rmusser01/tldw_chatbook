@@ -497,7 +497,7 @@ class TestDatabaseCRUDAndSync:
 
         conn = sqlite3.connect(temp_db_path)
         try:
-            conn.execute("DROP TABLE IF EXISTS ReadingProgress")
+            conn.execute("DROP TABLE IF EXISTS MediaReadingProgress")
             conn.execute("UPDATE schema_version SET version = 2")
             conn.commit()
         finally:
