@@ -133,13 +133,20 @@ Important rules:
 
 The registry is the authoritative capability map for the app. It is action-level and code-defined.
 
-Registry entries should be keyed by stable ids such as:
+Registry entries should be keyed by stable source-specific action ids such as:
 
 - `chat.create.local`
 - `chat.create.server`
 - `notes.update.local`
 - `workflows.launch.server`
 - `watchlists.observe.local`
+
+Canonical representation rule:
+
+- each registry row represents exactly one action on exactly one source
+- source is therefore encoded in the action id itself
+- the registry does not use a multi-source `allowed_sources` list on those rows
+- if both local and server variants exist, they are separate rows with separate policy data
 
 Each entry should define:
 
@@ -153,7 +160,7 @@ Each entry should define:
   - `delete`
   - `launch`
   - `observe`
-- allowed sources
+- required source
 - offline policy
 - authority owner
 - optional feature flag or maturity marker
@@ -187,6 +194,7 @@ The initial fixed reason-code set should cover at least:
 - `wrong_source`
 - `offline_unavailable`
 - `server_not_configured`
+- `server_unreachable`
 - `capability_disabled`
 - `authority_denied`
 
@@ -201,8 +209,10 @@ Shared service/client boundaries are the correctness seam.
 Representative initial hard-stop integration points:
 
 - `Notes/notes_scope_service.py`
+- `Notes/server_notes_workspace_service.py`
 - `Media/media_reading_scope_service.py`
 - `Study_Interop/study_scope_service.py`
+- `Study_Interop/quiz_scope_service.py`
 - `Evaluations_Interop/evaluation_scope_service.py`
 - `RAG_Admin/rag_admin_scope_service.py`
 - `Character_Chat/character_persona_scope_service.py`
@@ -212,6 +222,7 @@ Rules:
 - service calls must reject invalid source/authority operations even if a UI caller forgot to preflight
 - service responses should preserve the fixed reason-code contract
 - the service layer must not silently coerce source, auto-switch mode, or invent fallback authority
+- Tranche 0 cannot claim central day-one blocking unless all currently live domain call paths route through one of these enforced seams or receive equivalent direct enforcement before shipping
 
 ### UI Preflight
 
