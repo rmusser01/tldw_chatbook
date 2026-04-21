@@ -13,6 +13,8 @@ Define a top-down UX rescue plan for `tldw_chatbook` that makes the product usab
 
 This is not a visual refresh. It is a product-structure and interaction-model redesign.
 
+The redesign should also reposition `tldw_chatbook` as a chat-first agentic workspace for programming and control, with a product model closer to tools such as Claude Code, Codex, or Gemini CLI than to a collection of unrelated utility tabs.
+
 ## Problem Statement
 
 The current UI should be treated as structurally broken rather than locally rough. Based on repo reconnaissance, existing docs, and the current screen/navigation architecture, the main issue is not lack of features but lack of a coherent operating model.
@@ -50,6 +52,19 @@ Reference:
 - The app should become more mouse-friendly, not more keyboard-exclusive.
 - Power-user needs still matter, but expert acceleration should sit on top of a clean base rather than replace clarity.
 - Existing domains such as workspaces, personas, flashcards, and quizzes should be integrated into the architecture rather than treated as afterthoughts.
+- `Chat` should become the main interface for agentic programming and control, not just one module among many.
+
+## Product Positioning
+
+The product should be reframed as a `chat-first agentic console`.
+
+That means:
+
+- `Chat` is the default home and primary operating surface
+- programming, repo control, tool execution, approvals, and agent progress should happen primarily through Chat
+- other destinations support the chat-led workflow by organizing assets, context, study outputs, reusable behavior, and system configuration
+
+The product should therefore feel closer to a Textual-native agentic coding console than to a tabbed multipurpose workstation.
 
 ## Recommended Approach
 
@@ -88,6 +103,7 @@ Why recommended:
 ## Design Principles
 
 - One product shell, not a collection of tools
+- Chat is the main operating surface for agentic work
 - One naming system for destinations and sections
 - One screen contract per destination
 - One dominant task per screen
@@ -136,13 +152,15 @@ The recommended top-level destinations are:
 
 These labels should remain stable across the application. No legacy aliases or internal tab IDs should leak into the user-facing model.
 
+`Chat` should also be the default landing destination and the place users return to after most major actions.
+
 ### Destination Roles
 
-- `Chat`: active thinking and interaction
+- `Chat`: primary command surface for agentic programming, control, and interaction
 - `Library`: source material management, search, ingest, packaging
 - `Study`: review, reinforcement, flashcards, quizzes, guides, learning structures
 - `Characters`: reusable behavior shaping
-- `Models & Tools`: model, speech, eval, tooling, and coding operations
+- `Models & Tools`: engine configuration, speech, evals, tooling setup, and observability
 - `Automation / Feeds`: recurring inputs and monitored sources
 - `Settings`: app-level preferences only
 
@@ -256,20 +274,23 @@ Structure:
 
 Primary job:
 
-- Talk, inspect context, iterate quickly
+- Talk to the agent, run programming and control tasks, inspect context, and iterate quickly
 
 Recommended structure:
 
-- Center: conversation thread and composer
-- Optional left rail: sessions, conversations, characters
-- Optional right inspector: model, tools, retrieval context, persona, prompt settings
-- Fixed bottom composer with attachments and send state
+- Center: conversation thread, task plan state, tool calls, approvals, diffs, and results
+- Optional left rail: sessions, recent tasks, workspaces, repositories, and reusable contexts
+- Optional right inspector: model, tools, retrieval context, persona, repo context, prompt settings, and task details
+- Fixed bottom composer with attachments, quick actions, and send state
 
 Rules:
 
 - Workspace and persona must be visible as context chips near the screen header
+- Current repository, branch, working directory, or execution scope should be visible whenever agentic programming is active
 - Model and tool configuration are secondary controls and should be collapsed by default
-- Streaming, token, retrieval, and tool state should be visible inline in the active conversation area
+- Streaming, token, retrieval, tool state, command execution, file changes, and approval requests should be visible inline in the active conversation area
+- Users should not need to leave Chat to perform core agentic programming work
+- Existing coding-specific utilities should be reframed as contextual panels, inspectors, or sub-tools launched from Chat rather than as a competing primary workflow
 
 ### Library
 
@@ -358,6 +379,7 @@ Rules:
 - Separate run-time controls from deep configuration
 - Frequent, low-risk controls should live close to the workflow or in light inspectors
 - Rare, risky, or advanced controls should live deeper in this area
+- This area should configure the engine, not compete with Chat as the place where agentic work happens
 
 ### Automation / Feeds
 
@@ -540,6 +562,7 @@ Targets:
 
 The redesign should be considered successful when the product meets these conditions:
 
+- Chat is the default home and primary agentic control surface
 - One shell navigation model only
 - One screen contract per destination
 - Study is top-level and visibly contains flashcards and quizzes
@@ -565,6 +588,7 @@ For each top-level destination, confirm:
 
 Test at least these workflows:
 
+- Start an agentic programming task from Chat in the correct workspace or repository and understand the current execution context
 - Start a chat in the correct workspace with the intended persona
 - Ingest new content and verify where it landed
 - Find an existing note or media item from Library
@@ -585,6 +609,7 @@ Expected outcomes:
 - Do not add more shortcuts before fixing architecture
 - Do not optimize every module equally at the start
 - Do not preserve top-level destinations only because implementation history created them
+- Do not preserve a separate primary coding destination if it competes with Chat as the main agentic workspace
 
 ## Immediate Planning Implications
 
