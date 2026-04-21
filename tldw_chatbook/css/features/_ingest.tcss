@@ -127,6 +127,13 @@
     margin-bottom: 1;
     background: $surface;
 }
+.LocalIngestionPanel .file-selection-container {
+    height: 1fr;
+    min-height: 15;
+    border: solid $primary;
+    margin-bottom: 1;
+    padding: 1;
+}
 .ingest-preview-area {
     height: 1fr;
     min-height: 10;
@@ -257,6 +264,13 @@ VerticalScroll.ingest-form-scrollable {
 }
 
 .title-author-row {
+    margin-bottom: 1;
+}
+
+/* Ensure title/author input boxes are visible */
+.title-author-row Input {
+    height: 3;
+    width: 100%;
     margin-bottom: 1;
 }
 
@@ -414,13 +428,32 @@ IngestWindowTabbed {
 
 /* Status section at top of forms */
 .status-dashboard {
-    dock: top;
+    width: 100%;
     height: auto;
+    max-height: 8;      /* Prevent status from taking too much space */
     min-height: 3;
     background: $surface;
     border: round $primary;
     padding: 1;
     margin-bottom: 1;
+}
+
+/* Mode-specific visibility controls */
+.simple-mode .advanced-only {
+    display: none !important;
+}
+
+.advanced-mode .advanced-only {
+    display: block !important;
+}
+
+/* URL input always visible */
+.url-input-section {
+    display: block;
+    margin-top: 1;
+    padding: 1;
+    border: round $primary;
+    background: $surface;
 }
 
 /* Simplified form sections */

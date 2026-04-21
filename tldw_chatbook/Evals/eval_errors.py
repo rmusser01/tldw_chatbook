@@ -10,12 +10,17 @@ Provides comprehensive error handling for the evaluation system with:
 - User-friendly error messages
 - Recovery suggestions
 - Error context preservation
+- Retry logic with exponential backoff
+- Budget monitoring
 """
 
-from typing import Dict, Any, Optional, List
+import asyncio
+from typing import Dict, Any, Optional, List, Callable, Tuple
 from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime
+from functools import wraps
+from loguru import logger
 
 class ErrorSeverity(Enum):
     """Error severity levels for UI display."""
@@ -419,6 +424,210 @@ class ErrorHandler:
     def clear_history(self):
         """Clear error history."""
         self.error_history.clear()
+    
+    async def retry_with_backoff(
+        self,
+        func: Callable,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        *args,
+        **kwargs
+    ) -> Any:
+        """
+        Execute function with exponential backoff retry.
+        
+        Args:
+            func: Async function to execute
+            max_retries: Maximum number of retries
+            base_delay: Initial delay between retries
+            max_delay: Maximum delay between retries
+            *args: Positional arguments for func
+            **kwargs: Keyword arguments for func
+            
+        Returns:
+            Result from func
+            
+        Raises:
+            Last exception if all retries fail
+        """
+        retry_count = 0
+        last_error = None
+        
+        while retry_count <= max_retries:
+            try:
+                if asyncio.iscoroutinefunction(func):
+                    return await func(*args, **kwargs)
+                else:
+                    return func(*args, **kwargs)
+            
+            except Exception as e:
+                last_error = e
+                context = {
+                    'retry_count': retry_count,
+                    'function': func.__name__ if hasattr(func, '__name__') else 'unknown',
+                    **kwargs.get('context', {})
+                }
+                
+                # Convert to EvaluationError if needed
+                if isinstance(e, EvaluationError):
+                    eval_error = e
+                else:
+                    eval_error = self._map_exception_to_context(e, context)
+                    eval_error = EvaluationError(eval_error, e)
+                
+                # Check if retryable
+                if not eval_error.context.is_retryable or retry_count >= max_retries:
+                    logger.error(f"Operation failed after {retry_count + 1} attempts: {eval_error.context.message}")
+                    raise eval_error
+                
+                # Calculate delay with exponential backoff
+                delay = min(
+                    base_delay * (2 ** retry_count),
+                    max_delay
+                )
+                
+                # Use retry_after if specified
+                if eval_error.context.retry_after:
+                    delay = eval_error.context.retry_after
+                
+                logger.info(
+                    f"Retrying {context['function']} after {delay}s "
+                    f"(attempt {retry_count + 1}/{max_retries})"
+                )
+                
+                await asyncio.sleep(delay)
+                retry_count += 1
+        
+        # All retries exhausted
+        raise last_error
+
+
+class BudgetMonitor:
+    """Monitors evaluation costs against budget limits."""
+    
+    def __init__(
+        self,
+        budget_limit: float,
+        warning_threshold: float = 0.8,
+        callback: Optional[Callable[[ErrorContext], None]] = None
+    ):
+        """
+        Initialize budget monitor.
+        
+        Args:
+            budget_limit: Maximum budget in dollars
+            warning_threshold: Threshold for warnings (0.0-1.0)
+            callback: Optional callback for budget events
+        """
+        self.budget_limit = budget_limit
+        self.warning_threshold = warning_threshold
+        self.callback = callback
+        self.current_cost = 0.0
+        self._warning_sent = False
+    
+    def update_cost(self, additional_cost: float) -> None:
+        """
+        Update current cost and check budget.
+        
+        Args:
+            additional_cost: Cost to add to current total
+            
+        Raises:
+            EvaluationError: If budget is exceeded
+        """
+        self.current_cost += additional_cost
+        
+        if self.budget_limit <= 0:
+            return  # No budget limit set
+        
+        percentage = self.current_cost / self.budget_limit
+        
+        # Check for budget exceeded
+        if percentage >= 1.0:
+            context = ErrorContext(
+                category=ErrorCategory.RESOURCE_EXHAUSTION,
+                severity=ErrorSeverity.CRITICAL,
+                message=f"Budget limit of ${self.budget_limit:.2f} exceeded. Current cost: ${self.current_cost:.2f}",
+                suggestion="Increase budget limit or stop evaluation",
+                is_retryable=False
+            )
+            
+            if self.callback:
+                self.callback(context)
+            
+            raise EvaluationError(context)
+        
+        # Check for warning threshold
+        elif percentage >= self.warning_threshold and not self._warning_sent:
+            self._warning_sent = True
+            context = ErrorContext(
+                category=ErrorCategory.RESOURCE_EXHAUSTION,
+                severity=ErrorSeverity.WARNING,
+                message=f"Approaching budget limit: ${self.current_cost:.2f} of ${self.budget_limit:.2f} ({percentage*100:.1f}%)",
+                suggestion="Consider stopping evaluation if not critical",
+                is_retryable=True
+            )
+            
+            if self.callback:
+                self.callback(context)
+            
+            logger.warning(context.message)
+    
+    def get_remaining_budget(self) -> float:
+        """Get remaining budget."""
+        return max(0, self.budget_limit - self.current_cost)
+    
+    def reset(self) -> None:
+        """Reset cost tracking."""
+        self.current_cost = 0.0
+        self._warning_sent = False
+
+
+def with_error_handling(
+    error_types: Optional[List[type]] = None,
+    max_retries: int = 3,
+    recoverable: bool = True
+):
+    """
+    Decorator for adding error handling to async functions.
+    
+    Args:
+        error_types: List of exception types to handle
+        max_retries: Maximum number of retries
+        recoverable: Whether errors are recoverable by default
+    """
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            handler = ErrorHandler()
+            
+            try:
+                return await handler.retry_with_backoff(
+                    func,
+                    max_retries=max_retries,
+                    *args,
+                    **kwargs
+                )
+            except Exception as e:
+                # Re-raise if not in handled types
+                if error_types and not any(isinstance(e, t) for t in error_types):
+                    raise
+                
+                # Convert and re-raise
+                if not isinstance(e, EvaluationError):
+                    context = ErrorContext(
+                        category=ErrorCategory.UNKNOWN,
+                        severity=ErrorSeverity.ERROR,
+                        message=str(e),
+                        is_retryable=recoverable
+                    )
+                    raise EvaluationError(context, e)
+                raise
+        
+        return wrapper
+    return decorator
+
 
 # Global error handler instance
 _error_handler = None

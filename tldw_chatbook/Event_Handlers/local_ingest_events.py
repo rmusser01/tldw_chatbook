@@ -10,7 +10,7 @@ from loguru import logger
 from textual.css.query import QueryError
 
 # Local Imports
-from ..UI.Ingest_Window import IngestWindow
+from ..UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as IngestWindow
 
 if TYPE_CHECKING:
     from ..app import TldwCli

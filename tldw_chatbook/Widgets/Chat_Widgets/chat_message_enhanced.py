@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 # 3rd-party Libraries
 from PIL import Image as PILImage
@@ -27,8 +27,9 @@ from textual.widgets import Button, Label, Static, Markdown
 try:
     from textual_image.widget import Image as TextualImage
     TEXTUAL_IMAGE_AVAILABLE = True
-except ImportError:
+except (ImportError, TypeError, Exception):
     TEXTUAL_IMAGE_AVAILABLE = False
+    TextualImage = Any
     logging.info("textual-image not available, will use rich-pixels fallback")
 
 #

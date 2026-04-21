@@ -33,7 +33,7 @@ class EmbeddingConfig:
 @dataclass
 class VectorStoreConfig:
     """Configuration for vector storage."""
-    type: str = "chroma"  # "chroma" or "memory"
+    type: str = "memory"  # default to in-memory; set to "chroma" when persistence is configured
     persist_directory: Optional[Path] = None
     collection_name: str = "default"
     distance_metric: str = "cosine"  # "cosine", "l2", "ip"

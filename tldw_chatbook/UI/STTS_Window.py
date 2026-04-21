@@ -1418,7 +1418,7 @@ class TTSPlaygroundWidget(Widget):
         
         self.app.push_screen(file_picker, self._handle_audio_export)
     
-    def _handle_audio_export(self, path: str | None) -> None:
+    def _handle_audio_export(self, path: Optional[str]) -> None:
         """Handle audio file export"""
         if not path or not self.current_audio_file:
             return
@@ -1462,7 +1462,7 @@ class TTSPlaygroundWidget(Widget):
         # Mount the file picker
         self.app.push_screen(file_picker, self._handle_reference_audio_selection)
     
-    def _handle_reference_audio_selection(self, path: str | None) -> None:
+    def _handle_reference_audio_selection(self, path: Optional[str]) -> None:
         """Handle reference audio file selection"""
         if path:
             self.reference_audio_path = path
@@ -2901,7 +2901,7 @@ class TTSSettingsWidget(Widget):
             logger.error(f"Failed to show import dialog: {e}")
             self.app.notify(f"Error showing import dialog: {e}", severity="error")
     
-    def _handle_import_file(self, path: str | None) -> None:
+    def _handle_import_file(self, path: Optional[str]) -> None:
         """Handle the imported file"""
         if not path:
             return
@@ -2979,7 +2979,7 @@ class TTSSettingsWidget(Widget):
             logger.error(f"Failed to export voice blends: {e}")
             self.app.notify(f"Error exporting voice blends: {e}", severity="error")
     
-    def _handle_export_file(self, path: str | None) -> None:
+    def _handle_export_file(self, path: Optional[str]) -> None:
         """Handle the export file location"""
         if not path or not hasattr(self, '_export_blends'):
             return
@@ -3025,7 +3025,7 @@ class TTSSettingsWidget(Widget):
         # Mount the file picker
         self.app.push_screen(file_picker, self._handle_kokoro_model_selection)
     
-    def _handle_kokoro_model_selection(self, path: Path | None) -> None:
+    def _handle_kokoro_model_selection(self, path: Optional[Path]) -> None:
         """Handle Kokoro model file selection"""
         if path:
             # Update the stored path
@@ -3056,7 +3056,7 @@ class TTSSettingsWidget(Widget):
         # Mount the file picker
         self.app.push_screen(file_picker, self._handle_kokoro_voices_selection)
     
-    def _handle_kokoro_voices_selection(self, path: Path | None) -> None:
+    def _handle_kokoro_voices_selection(self, path: Optional[Path]) -> None:
         """Handle Kokoro voices file selection"""
         if path:
             # Update the stored path
@@ -3092,7 +3092,7 @@ class TTSSettingsWidget(Widget):
         # Mount the file picker
         self.app.push_screen(file_picker, self._handle_chatterbox_voice_dir_selection)
     
-    def _handle_chatterbox_voice_dir_selection(self, path: Path | None) -> None:
+    def _handle_chatterbox_voice_dir_selection(self, path: Optional[Path]) -> None:
         """Handle Chatterbox voice directory selection"""
         if path:
             # Get the directory from the selected path
@@ -3524,7 +3524,7 @@ class AudioBookGenerationWidget(Widget):
             # Fallback to simple file input
             self.app.notify("File picker not available. Please paste your text instead.", severity="warning")
     
-    def _handle_file_selection(self, path: str | None) -> None:
+    def _handle_file_selection(self, path: Optional[str]) -> None:
         """Handle file selection for audiobook content"""
         if not path:
             return
@@ -3993,7 +3993,7 @@ class AudioBookGenerationWidget(Widget):
             # Fallback
             self.app.notify(f"AudioBook saved to: {self.generated_audiobook_path}", severity="information")
     
-    def _handle_export_location(self, path: str | None) -> None:
+    def _handle_export_location(self, path: Optional[str]) -> None:
         """Handle export location selection"""
         if not path or not self.generated_audiobook_path:
             return

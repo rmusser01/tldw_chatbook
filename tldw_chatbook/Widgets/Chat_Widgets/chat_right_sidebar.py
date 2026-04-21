@@ -15,7 +15,7 @@ from tldw_chatbook.config import settings
 
 #
 # Local Imports
-# (Add any necessary local imports here if needed for actual content later)
+from ..Media_Creation.swarmui_widget import SwarmUIWidget
 #
 #######################################################################################################################
 #

@@ -5,7 +5,8 @@ Tests instruction_adherence, format_compliance, coherence_score, and dialogue_qu
 import pytest
 from unittest.mock import Mock, patch
 
-from tldw_chatbook.Evals.eval_runner import BaseEvalRunner, EvalSample, TaskConfig, EvalSampleResult
+from tldw_chatbook.Evals.eval_runner import BaseEvalRunner, EvalSample, EvalSampleResult
+from tldw_chatbook.Evals.task_loader import TaskConfig
 
 
 class TestRunner(BaseEvalRunner):
@@ -33,18 +34,14 @@ class TestEvaluationMetrics:
             description="Test task for metrics",
             task_type="custom",
             dataset_name="test_dataset",
-            metric="custom",
-            generation_kwargs={}
+            split="test",
+            metric="custom"
         )
         model_config = {"provider": "test", "model_id": "test-model"}
         
-        # Create concrete runner for testing with mocked LLMInterface
-        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLM:
-            mock_llm = Mock()
-            # Mock chat_api_call to return expected responses
-            MockLLM.return_value = mock_llm
-            runner = TestRunner(task_config, model_config)
-            return runner
+        # Create concrete runner for testing
+        runner = TestRunner(task_config, model_config)
+        return runner
     
     def test_instruction_adherence_basic(self, runner):
         """Test basic instruction adherence calculation."""

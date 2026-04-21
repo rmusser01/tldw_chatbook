@@ -293,11 +293,13 @@ def _lazy_import_sklearn():
             from sklearn.cluster import SpectralClustering, AgglomerativeClustering
             from sklearn.preprocessing import normalize
             from sklearn.metrics import silhouette_score
+            from sklearn.metrics.pairwise import cosine_similarity
             _sklearn_modules = {
                 'SpectralClustering': SpectralClustering,
                 'AgglomerativeClustering': AgglomerativeClustering,
                 'normalize': normalize,
-                'silhouette_score': silhouette_score
+                'silhouette_score': silhouette_score,
+                'cosine_similarity': cosine_similarity
             }
         except ImportError as e:
             logger.warning(f"Failed to import sklearn modules: {e}")
@@ -559,14 +561,9 @@ class DiarizationService:
                     if not model or not utils:
                         raise DiarizationError("Silero VAD model or utilities not available")
                     
-                    # Validate that we have the expected utilities
-                    # Silero returns (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks)
-                    # but this order is not guaranteed and can break between versions
-                    if not isinstance(utils, (list, tuple)) or len(utils) < 5:
-                        raise DiarizationError(
-                            f"Unexpected Silero VAD utils format. Expected tuple/list with 5+ items, "
-                            f"got {type(utils).__name__} with {len(utils) if hasattr(utils, '__len__') else 'unknown'} items"
-                        )
+                    # Basic validation - detailed validation already done in _lazy_import_silero_vad
+                    if not utils:
+                        raise DiarizationError("Silero VAD utilities not available")
                     
                     # Store model
                     self._vad_model = model
@@ -644,7 +641,9 @@ class DiarizationService:
         Perform speaker diarization on audio file.
         
         Args:
-            audio_path: Path to audio file (should be WAV format, 16kHz)
+            audio_path: Path to audio file. For best performance, provide a
+                        16kHz mono WAV file, though the service will attempt to
+                        convert other common audio formats
             transcription_segments: Optional transcription segments to align with
             num_speakers: Optional number of speakers (if known)
             progress_callback: Optional callback for progress updates
@@ -1398,8 +1397,7 @@ class DiarizationService:
         self, 
         segments: List[Dict], 
         embeddings: "np.ndarray",
-        primary_labels: "np.ndarray",
-        confidence_threshold: float = 0.7
+        primary_labels: "np.ndarray"
     ) -> List[Dict]:
         """Detect potential overlapping speech in segments.
         
@@ -1407,39 +1405,27 @@ class DiarizationService:
             segments: List of segment dictionaries
             embeddings: Speaker embeddings for each segment
             primary_labels: Primary speaker labels from clustering
-            confidence_threshold: Minimum confidence for primary speaker
             
         Returns:
             Updated segments with overlap information
         """
+        # Get threshold from config
+        confidence_threshold = self.config.get('overlap_confidence_threshold', 0.7)
+        
+        # Import required modules
+        np = _lazy_import_numpy()
+        if not np:
+            logger.warning("NumPy not available for overlap detection")
+            return segments
+        
         sklearn_modules = _lazy_import_sklearn()
         if not sklearn_modules:
             logger.warning("scikit-learn not available for overlap detection")
             return segments
         
         try:
-            # Get clustering model used
-            if self.config['clustering_method'] == ClusteringMethod.SPECTRAL.value:
-                SpectralClustering = sklearn_modules['SpectralClustering']
-                clustering = SpectralClustering(
-                    n_clusters=len(set(primary_labels)),
-                    affinity='cosine',
-                    assign_labels='kmeans',
-                    random_state=42
-                )
-            else:
-                AgglomerativeClustering = sklearn_modules['AgglomerativeClustering']
-                clustering = AgglomerativeClustering(
-                    n_clusters=len(set(primary_labels)),
-                    affinity='cosine',
-                    linkage='average'
-                )
-            
-            # Fit clustering to get affinity matrix
-            clustering.fit(embeddings)
-            
-            # Calculate distances to all cluster centers
-            from sklearn.metrics.pairwise import cosine_similarity
+            # Get cosine_similarity function
+            cosine_similarity = sklearn_modules['cosine_similarity']
             
             # Get cluster centers (mean of embeddings per cluster)
             unique_labels = sorted(set(primary_labels))

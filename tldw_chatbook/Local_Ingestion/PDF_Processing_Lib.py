@@ -295,7 +295,7 @@ def process_pdf(
     ocr_language: str = "en",  # NEW: OCR language code
     ocr_backend: str = "auto",  # NEW: OCR backend selection
     # write_to_temp_file: bool = False # This param seems unused/obsolete now
-) -> dict[str, Any] | None:
+) -> Optional[Dict[str, Any]]:
     """
     Processes a single PDF (from path or bytes): extracts text & metadata, chunks, summarizes.
     Returns a dictionary with processed data, status, and errors. *No DB interaction.*

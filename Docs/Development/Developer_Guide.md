@@ -2,11 +2,19 @@
 
 All below LLM Generated:
 
-This guide provides a more in-depth look into the architecture and development aspects of `tldw_chatbook`. It's intended for developers who want to contribute to the project or understand its internals.
+This document provides a comprehensive overview of the `tldw_chatbook` architecture, components, and development workflows.
+
+> [!TIP]
+> New to the project? Check out the [Onboarding Guide](Onboarding_Guide.md) for a quick start.
+
+## Table of Contents
 
 ## Project Architecture
 
 `tldw_chatbook` is built using the [Textual](https://textual.textualize.io/) framework for its Terminal User Interface (TUI). The project follows a modular structure to separate concerns.
+
+- **Navigation**: The application uses a **Screen-based navigation** architecture. The main `App` class manages switching between different `Screen` instances (e.g., Chat, CCP, Notes).
+    - *Note*: A previous initiative to move to Tab-based navigation has been rejected.
 
 ### Core Components:
 

@@ -3,6 +3,7 @@
 Cancel confirmation dialog for media ingestion processes.
 """
 
+from typing import Optional
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Container
 from textual.screen import ModalScreen
@@ -56,9 +57,9 @@ class CancelConfirmationDialog(ModalScreen[bool]):
         message: str = "Are you sure you want to cancel the transcription?\nAlready processed files will be kept.",
         confirm_text: str = "Yes, Cancel",
         cancel_text: str = "Continue Processing",
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        name: Optional[str] = None,
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
     ) -> None:
         """Initialize the cancel confirmation dialog.
         

@@ -7,10 +7,10 @@ This is a refactored version that uses the new component-based architecture.
 from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container
+from textual.containers import Horizontal, Vertical, Container
 from textual.css.query import QueryError
 from textual.reactive import reactive
-from textual.widgets import Button, Markdown
+from textual.widgets import Button, Markdown, Label
 from loguru import logger
 
 # Import media components
@@ -99,6 +99,26 @@ class MediaWindow(Container):
         height: 100%;
         overflow: hidden;
     }
+    
+    #media-viewer-panel.hidden {
+        display: none;
+    }
+    
+    #media-empty-state {
+        width: 1fr;
+        height: 100%;
+        align: center middle;
+        background: $surface;
+        color: $text-muted;
+    }
+    
+    #media-empty-state.hidden {
+        display: none;
+    }
+    
+    #empty-state-label {
+        text-style: italic;
+    }
     """
     
     # Reactive properties
@@ -152,12 +172,36 @@ class MediaWindow(Container):
                     id="media-viewer-panel"
                 )
                 yield self.viewer_panel
+                
+                # Empty state placeholder (initially hidden or shown based on selection)
+                yield Container(
+                    Label("Select a media item to view details", id="empty-state-label"),
+                    id="media-empty-state",
+                    classes="hidden"
+                )
     
     def on_mount(self) -> None:
         """Called when the MediaWindow is mounted."""
         logger.info("MediaWindow v2 mounted")
         
         # Don't activate initial view here - let activate_initial_view handle it
+        
+        # Check initial size for responsiveness
+        self.call_after_refresh(self.check_responsive_layout)
+
+    def on_resize(self, event) -> None:
+        """Handle resize events for responsive layout."""
+        self.check_responsive_layout()
+        
+    def check_responsive_layout(self) -> None:
+        """Check window size and adjust layout accordingly."""
+        if self.size.width < 100 and not self.sidebar_collapsed:
+            self.sidebar_collapsed = True
+            self.notify("Sidebar collapsed for small screen", severity="information")
+        elif self.size.width >= 120 and self.sidebar_collapsed:
+            # Optional: auto-expand on very wide screens? 
+            # Let's keep it manual expansion to avoid annoyance
+            pass
     
     def watch_sidebar_collapsed(self, collapsed: bool) -> None:
         """React to sidebar collapse changes."""
@@ -222,6 +266,10 @@ class MediaWindow(Container):
         else:
             # No database available, use partial data
             self.viewer_panel.load_media(event.media_data)
+            
+        # Hide empty state, show viewer
+        self.query_one("#media-empty-state").add_class("hidden")
+        self.viewer_panel.remove_class("hidden")
     
     @on(MediaMetadataUpdateEvent)
     async def handle_metadata_update(self, event: MediaMetadataUpdateEvent) -> None:
@@ -282,6 +330,9 @@ class MediaWindow(Container):
                     if self.selected_media_id == event.media_id:
                         self.selected_media_id = None
                         self.viewer_panel.clear_display()
+                        # Show empty state
+                        self.query_one("#media-empty-state").remove_class("hidden")
+                        self.viewer_panel.add_class("hidden")
                 else:
                     self.app_instance.notify(f"Failed to delete '{event.media_title}'", severity="error")
         else:
@@ -710,6 +761,13 @@ class MediaWindow(Container):
         
         # Clear viewer
         self.viewer_panel.clear_display()
+        
+        # Show empty state
+        try:
+            self.query_one("#media-empty-state").remove_class("hidden")
+            self.viewer_panel.add_class("hidden")
+        except Exception:
+            pass
         
         # Reset page to 1 when switching types
         self.list_panel.current_page = 1

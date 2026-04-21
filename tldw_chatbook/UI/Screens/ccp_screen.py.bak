@@ -1,0 +1,1138 @@
+"""Conversations, Characters & Prompts (CCP) Screen.
+
+This screen provides a unified interface for managing conversations, characters,
+prompts, and dictionaries following Textual best practices with Screen-based architecture.
+"""
+
+from typing import TYPE_CHECKING, Optional, Dict, Any, List
+from dataclasses import dataclass, field
+from loguru import logger
+from textual.app import ComposeResult
+from textual.containers import Container, VerticalScroll, Horizontal
+from textual.widgets import Static, Button, Input, ListView, Select, Collapsible, Label, TextArea, Checkbox
+from textual.reactive import reactive
+from textual import on, work
+from textual.css.query import NoMatches
+from textual.message import Message
+
+from ..Navigation.base_app_screen import BaseAppScreen
+from ...Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
+
+# Import widget components
+from ...Widgets.CCP_Widgets import (
+    CCPSidebarWidget,
+    ConversationSearchRequested,
+    ConversationLoadRequested,
+    CharacterLoadRequested,
+    PromptLoadRequested,
+    DictionaryLoadRequested,
+    ImportRequested,
+    CreateRequested,
+    RefreshRequested,
+)
+
+# Import modular handlers and enhancements
+from ..CCP_Modules import (
+    CCPConversationHandler,
+    CCPCharacterHandler,
+    CCPPromptHandler,
+    CCPDictionaryHandler,
+    CCPMessageManager,
+    CCPSidebarHandler,
+    ConversationMessage,
+    CharacterMessage,
+    PromptMessage,
+    DictionaryMessage,
+    ViewChangeMessage,
+    SidebarMessage,
+    LoadingManager,
+    setup_ccp_enhancements
+)
+
+if TYPE_CHECKING:
+    from ...app import TldwCli
+
+logger = logger.bind(module="CCPScreen")
+
+
+# ========== Custom Messages ==========
+
+class ConversationSelected(Message):
+    """Message sent when a conversation is selected."""
+    def __init__(self, conversation_id: int, title: str) -> None:
+        super().__init__()
+        self.conversation_id = conversation_id
+        self.title = title
+
+
+class CharacterSelected(Message):
+    """Message sent when a character is selected."""
+    def __init__(self, character_id: int, name: str) -> None:
+        super().__init__()
+        self.character_id = character_id
+        self.name = name
+
+
+class PromptSelected(Message):
+    """Message sent when a prompt is selected."""
+    def __init__(self, prompt_id: int, name: str) -> None:
+        super().__init__()
+        self.prompt_id = prompt_id
+        self.name = name
+
+
+class DictionarySelected(Message):
+    """Message sent when a dictionary is selected."""
+    def __init__(self, dictionary_id: int, name: str) -> None:
+        super().__init__()
+        self.dictionary_id = dictionary_id
+        self.name = name
+
+
+class ViewSwitchRequested(Message):
+    """Message sent when a view switch is requested."""
+    def __init__(self, view_name: str) -> None:
+        super().__init__()
+        self.view_name = view_name
+
+
+# ========== State Management ==========
+
+@dataclass
+class CCPScreenState:
+    """Encapsulates all state for the CCP screen.
+    
+    This dataclass centralizes all state management for the Conversations,
+    Characters & Prompts screen, following Textual best practices.
+    """
+    
+    # Current view
+    active_view: str = "conversations"  # conversations, character_card, character_editor, etc.
+    
+    # Selected items
+    selected_conversation_id: Optional[int] = None
+    selected_conversation_title: str = ""
+    selected_conversation_messages: List[Dict[str, Any]] = field(default_factory=list)
+    
+    selected_character_id: Optional[int] = None
+    selected_character_name: str = ""
+    selected_character_data: Dict[str, Any] = field(default_factory=dict)
+    is_editing_character: bool = False
+    
+    selected_prompt_id: Optional[int] = None
+    selected_prompt_name: str = ""
+    selected_prompt_data: Dict[str, Any] = field(default_factory=dict)
+    is_editing_prompt: bool = False
+    
+    selected_dictionary_id: Optional[int] = None
+    selected_dictionary_name: str = ""
+    selected_dictionary_data: Dict[str, Any] = field(default_factory=dict)
+    is_editing_dictionary: bool = False
+    
+    # Search state
+    conversation_search_term: str = ""
+    conversation_search_type: str = "title"  # title, content, tags
+    conversation_search_results: List[Dict[str, Any]] = field(default_factory=list)
+    include_character_chats: bool = True
+    search_all_characters: bool = True
+    
+    prompt_search_term: str = ""
+    prompt_search_results: List[Dict[str, Any]] = field(default_factory=list)
+    
+    worldbook_search_term: str = ""
+    worldbook_search_results: List[Dict[str, Any]] = field(default_factory=list)
+    
+    # UI state
+    sidebar_collapsed: bool = False
+    conversation_details_visible: bool = False
+    character_actions_visible: bool = False
+    prompt_actions_visible: bool = False
+    dictionary_actions_visible: bool = False
+    
+    # Lists cache
+    character_list: List[Dict[str, Any]] = field(default_factory=list)
+    dictionary_list: List[Dict[str, Any]] = field(default_factory=list)
+    worldbook_list: List[Dict[str, Any]] = field(default_factory=list)
+    
+    # Loading states
+    is_loading_conversation: bool = False
+    is_loading_character: bool = False
+    is_loading_prompt: bool = False
+    is_loading_dictionary: bool = False
+    is_saving: bool = False
+    
+    # Validation flags
+    has_unsaved_changes: bool = False
+    validation_errors: Dict[str, str] = field(default_factory=dict)
+
+
+class CCPScreen(BaseAppScreen):
+    """
+    Screen for the Conversations, Characters & Prompts (CCP) interface.
+    
+    This screen follows Textual best practices:
+    - Extends BaseAppScreen for proper screen management
+    - Uses reactive properties for state management
+    - Implements modern event handling with @on decorators
+    - Utilizes message system for inter-component communication
+    - Employs modular handlers for separation of concerns
+    """
+    
+    # CSS embedded directly
+    DEFAULT_CSS = """
+    /* CCP Screen Styles */
+    #ccp-main-container {
+        layout: horizontal;
+        height: 100%;
+    }
+    
+    /* Sidebar Styling */
+    .ccp-sidebar {
+        width: 30%;
+        min-width: 25;
+        max-width: 40%;
+        height: 100%;
+        background: $boost;
+        padding: 1;
+        border-right: thick $background-darken-1;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+    
+    .ccp-sidebar.collapsed {
+        width: 0 !important;
+        min-width: 0 !important;
+        border-right: none !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        display: none !important;
+    }
+    
+    .ccp-sidebar-toggle-button {
+        width: 3;
+        height: 100%;
+        min-width: 3;
+        border: none;
+        background: $surface-darken-1;
+        color: $text;
+        dock: left;
+    }
+    
+    .ccp-sidebar-toggle-button:hover {
+        background: $surface;
+    }
+    
+    /* Content Area */
+    .ccp-content-area {
+        width: 1fr;
+        height: 100%;
+        padding: 1;
+        overflow-y: auto;
+    }
+    
+    .ccp-view-area {
+        width: 100%;
+        height: 100%;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 1;
+    }
+    
+    .ccp-view-area.hidden {
+        display: none !important;
+    }
+    
+    .hidden {
+        display: none !important;
+    }
+    
+    /* Titles and Labels */
+    .pane-title {
+        text-style: bold;
+        margin-bottom: 1;
+        text-align: center;
+        width: 100%;
+        background: $primary-background-darken-1;
+        padding: 0 1;
+        height: 3;
+    }
+    
+    .sidebar-title {
+        text-style: bold;
+        margin-bottom: 1;
+        text-align: center;
+        color: $primary;
+    }
+    
+    .sidebar-label {
+        margin-top: 1;
+        margin-bottom: 0;
+        color: $text-muted;
+    }
+    
+    .field-label {
+        margin-top: 1;
+        margin-bottom: 0;
+        color: $text-muted;
+        text-style: bold;
+    }
+    
+    .field-value {
+        margin-bottom: 1;
+        padding: 0 1;
+    }
+    
+    /* Input Components */
+    .sidebar-input {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    .sidebar-textarea {
+        width: 100%;
+        height: 5;
+        margin-bottom: 1;
+        border: round $surface;
+    }
+    
+    .sidebar-textarea.small {
+        height: 3;
+    }
+    
+    .sidebar-button {
+        width: 100%;
+        margin-bottom: 1;
+        height: 3;
+    }
+    
+    .sidebar-button.small {
+        width: 45%;
+        margin-right: 1;
+    }
+    
+    .sidebar-button.danger {
+        background: $error-darken-1;
+    }
+    
+    .sidebar-button.danger:hover {
+        background: $error;
+    }
+    
+    .sidebar-listview {
+        height: 10;
+        margin-bottom: 1;
+        border: round $surface;
+    }
+    
+    /* Editor Components */
+    .editor-scroll {
+        width: 100%;
+        height: 1fr;
+        overflow-y: auto;
+        padding: 1;
+    }
+    
+    .editor-input {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    .editor-textarea {
+        width: 100%;
+        height: 10;
+        margin-bottom: 1;
+        border: round $surface;
+    }
+    
+    .editor-textarea.small {
+        height: 5;
+    }
+    
+    .field-textarea {
+        width: 100%;
+        height: 8;
+        margin-bottom: 1;
+        border: round $surface;
+    }
+    
+    /* AI Generation */
+    .field-with-ai {
+        layout: horizontal;
+        height: auto;
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    .field-with-ai TextArea {
+        width: 85%;
+        margin-right: 1;
+    }
+    
+    .ai-generate-button {
+        width: 12%;
+        height: 3;
+        margin-top: 0;
+        background: $primary;
+    }
+    
+    .ai-generate-button:hover {
+        background: $primary-lighten-1;
+    }
+    
+    .ai-generate-button.full-width {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    /* Action Buttons */
+    .editor-actions {
+        layout: horizontal;
+        height: 3;
+        width: 100%;
+        margin-top: 2;
+        margin-bottom: 1;
+    }
+    
+    .editor-actions Button {
+        width: 1fr;
+        margin-right: 1;
+    }
+    
+    .editor-actions Button:last-child {
+        margin-right: 0;
+    }
+    
+    .primary-button {
+        background: $success;
+    }
+    
+    .primary-button:hover {
+        background: $success-lighten-1;
+    }
+    
+    .secondary-button {
+        background: $surface;
+    }
+    
+    .secondary-button:hover {
+        background: $surface-lighten-1;
+    }
+    
+    /* Export buttons */
+    .export-buttons {
+        layout: horizontal;
+        height: 3;
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    .export-buttons Button {
+        width: 1fr;
+        margin-right: 1;
+    }
+    
+    .export-buttons Button:last-child {
+        margin-right: 0;
+    }
+    
+    /* Image controls */
+    .image-controls {
+        layout: horizontal;
+        height: 3;
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    .image-controls Button {
+        width: 1fr;
+        margin-right: 1;
+    }
+    
+    .image-controls Button:last-child {
+        margin-right: 0;
+    }
+    
+    .image-status {
+        margin-bottom: 1;
+        padding: 0 1;
+        color: $text-muted;
+    }
+    
+    .character-image {
+        width: 100%;
+        height: 15;
+        border: round $surface;
+        margin-bottom: 1;
+        align: center middle;
+        background: $surface-darken-1;
+    }
+    
+    /* Dictionary styles */
+    .dict-entries-list {
+        height: 12;
+        margin-bottom: 1;
+        border: round $surface;
+    }
+    
+    .dict-entry-controls {
+        layout: horizontal;
+        height: 3;
+        width: 100%;
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+    
+    .dict-entry-controls Button {
+        width: 1fr;
+        margin-right: 1;
+    }
+    
+    .dict-entry-controls Button:last-child {
+        margin-right: 0;
+    }
+    """
+    
+    # Reactive state using proper Textual patterns
+    state: reactive[CCPScreenState] = reactive(CCPScreenState)
+    
+    # Cached widget references
+    _sidebar: Optional[Container] = None
+    _content_area: Optional[Container] = None
+    _message_area: Optional[Container] = None
+
+    def __init__(self, app_instance: 'TldwCli', **kwargs):
+        """Initialize the CCP Screen with modular handlers.
+        
+        Args:
+            app_instance: Reference to the main application instance
+            **kwargs: Additional keyword arguments for Screen
+        """
+        super().__init__(app_instance, "ccp", **kwargs)
+        
+        # Initialize state with a fresh instance
+        self.state = CCPScreenState()
+        
+        # Initialize modular handlers
+        self.conversation_handler = CCPConversationHandler(self)
+        self.character_handler = CCPCharacterHandler(self)
+        self.prompt_handler = CCPPromptHandler(self)
+        self.dictionary_handler = CCPDictionaryHandler(self)
+        self.message_manager = CCPMessageManager(self)
+        self.sidebar_handler = CCPSidebarHandler(self)
+        
+        # Initialize loading manager for async operation feedback
+        self.loading_manager = LoadingManager(self)
+        
+        # Setup enhancements (validation, loading indicators)
+        setup_ccp_enhancements(self)
+        
+        logger.debug("CCPScreen initialized with reactive state and modular handlers")
+
+    def compose_content(self) -> ComposeResult:
+        """Compose the CCP UI with modular widget components.
+        
+        This overrides the base class method to provide CCP-specific content
+        using focused, reusable widget components following Textual best practices.
+        
+        Yields:
+            The widgets that make up the CCP interface
+        """
+        logger.debug("Composing CCPScreen UI with widget components")
+        
+        # Import our widget components
+        from ...Widgets.CCP_Widgets import (
+            CCPConversationViewWidget,
+            CCPCharacterCardWidget,
+            CCPCharacterEditorWidget,
+            CCPPromptEditorWidget,
+            CCPDictionaryEditorWidget,
+        )
+        
+        # Main container for CCP content
+        with Container(id="ccp-main-container", classes="ccp-main-container"):
+            # Sidebar toggle button
+            yield Button(
+                get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
+                id="toggle-ccp-sidebar",
+                classes="ccp-sidebar-toggle-button",
+                tooltip="Toggle sidebar (Ctrl+[)"
+            )
+            
+            # Yield the sidebar widget
+            yield CCPSidebarWidget(parent_screen=self)
+
+            # Main Content Area with all view widgets
+            with Container(id="ccp-content-area", classes="ccp-content-area"):
+                # Conversation messages view widget
+                yield CCPConversationViewWidget(parent_screen=self)
+                
+                # Character card display widget
+                yield CCPCharacterCardWidget(parent_screen=self)
+                
+                # Character editor widget
+                yield CCPCharacterEditorWidget(parent_screen=self)
+                
+                # Prompt editor widget
+                yield CCPPromptEditorWidget(parent_screen=self)
+                
+                # Dictionary editor widget
+                yield CCPDictionaryEditorWidget(parent_screen=self)
+
+    async def on_mount(self) -> None:
+        """Handle post-composition setup."""
+        super().on_mount()  # Don't await - parent's on_mount is not async
+        
+        # Cache widget references
+        self._cache_widget_references()
+        
+        # Setup loading manager widget
+        await self.loading_manager.setup()
+        
+        # Initialize UI state
+        await self._initialize_ui_state()
+        
+        logger.debug("CCPScreen mounted and initialized with enhancements")
+                        yield Input(id="ccp-editor-char-name-input", placeholder="Character name...", 
+                                  classes="editor-input")
+                        yield Button("✨ Generate All Fields", id="ccp-generate-all-button", 
+                                   classes="ai-generate-button full-width")
+                        
+                        # Image controls
+                        yield Label("Character Image:", classes="field-label")
+                        with Horizontal(classes="image-controls"):
+                            yield Button("Choose Image", id="ccp-editor-char-image-button", 
+                                       classes="sidebar-button")
+                            yield Button("Clear Image", id="ccp-editor-char-clear-image-button", 
+                                       classes="sidebar-button")
+                        yield Static("No image selected", id="ccp-editor-char-image-status", 
+                                   classes="image-status")
+                        yield Label("Image URL (optional):", classes="field-label")
+                        yield Input(id="ccp-editor-char-avatar-input", placeholder="URL to avatar image...", 
+                                  classes="editor-input")
+                        
+                        # Character fields with AI generation
+                        yield Label("Description:", classes="field-label")
+                        with Horizontal(classes="field-with-ai"):
+                            yield TextArea(id="ccp-editor-char-description-textarea", classes="editor-textarea")
+                            yield Button("✨", id="ccp-generate-description-button", 
+                                       classes="ai-generate-button")
+                        
+                        yield Label("Personality:", classes="field-label")
+                        with Horizontal(classes="field-with-ai"):
+                            yield TextArea(id="ccp-editor-char-personality-textarea", classes="editor-textarea")
+                            yield Button("✨", id="ccp-generate-personality-button", 
+                                       classes="ai-generate-button")
+                        
+                        yield Label("Scenario:", classes="field-label")
+                        with Horizontal(classes="field-with-ai"):
+                            yield TextArea(id="ccp-editor-char-scenario-textarea", classes="editor-textarea")
+                            yield Button("✨", id="ccp-generate-scenario-button", 
+                                       classes="ai-generate-button")
+                        
+                        yield Label("First Message:", classes="field-label")
+                        with Horizontal(classes="field-with-ai"):
+                            yield TextArea(id="ccp-editor-char-first-message-textarea", 
+                                         classes="editor-textarea")
+                            yield Button("✨", id="ccp-generate-first-message-button", 
+                                       classes="ai-generate-button")
+                        
+                        # Additional fields
+                        yield Label("Keywords (comma-separated):", classes="field-label")
+                        yield TextArea(id="ccp-editor-char-keywords-textarea", classes="editor-textarea small")
+                        
+                        # V2 fields
+                        yield Label("Creator Notes:", classes="field-label")
+                        yield TextArea(id="ccp-editor-char-creator-notes-textarea", classes="editor-textarea")
+                        
+                        yield Label("System Prompt:", classes="field-label")
+                        with Horizontal(classes="field-with-ai"):
+                            yield TextArea(id="ccp-editor-char-system-prompt-textarea", 
+                                         classes="editor-textarea")
+                            yield Button("✨", id="ccp-generate-system-prompt-button", 
+                                       classes="ai-generate-button")
+                        
+                        yield Label("Post History Instructions:", classes="field-label")
+                        yield TextArea(id="ccp-editor-char-post-history-instructions-textarea", 
+                                     classes="editor-textarea")
+                        
+                        yield Label("Alternate Greetings (one per line):", classes="field-label")
+                        yield TextArea(id="ccp-editor-char-alternate-greetings-textarea", 
+                                     classes="editor-textarea")
+                        
+                        yield Label("Tags (comma-separated):", classes="field-label")
+                        yield Input(id="ccp-editor-char-tags-input", placeholder="e.g., fantasy, anime", 
+                                  classes="editor-input")
+                        
+                        yield Label("Creator:", classes="field-label")
+                        yield Input(id="ccp-editor-char-creator-input", placeholder="Creator name", 
+                                  classes="editor-input")
+                        
+                        yield Label("Character Version:", classes="field-label")
+                        yield Input(id="ccp-editor-char-version-input", placeholder="e.g., 1.0", 
+                                  classes="editor-input")
+                        
+                        # Action buttons
+                        with Horizontal(classes="editor-actions"):
+                            yield Button("Save Character", id="ccp-editor-char-save-button", 
+                                       classes="primary-button")
+                            yield Button("Cancel", id="ccp-editor-char-cancel-button", 
+                                       classes="secondary-button")
+                
+                # Container for prompt editor
+                with Container(id="ccp-prompt-editor-view", classes="ccp-view-area hidden"):
+                    yield Static("Prompt Editor", classes="pane-title")
+                    with VerticalScroll(classes="editor-scroll"):
+                        yield Label("Prompt Name:", classes="field-label")
+                        yield Input(id="ccp-editor-prompt-name-input", placeholder="Unique prompt name...", 
+                                  classes="editor-input")
+                        yield Label("Author:", classes="field-label")
+                        yield Input(id="ccp-editor-prompt-author-input", placeholder="Author name...", 
+                                  classes="editor-input")
+                        yield Label("Details/Description:", classes="field-label")
+                        yield TextArea(id="ccp-editor-prompt-description-textarea", classes="editor-textarea")
+                        yield Label("System Prompt:", classes="field-label")
+                        yield TextArea(id="ccp-editor-prompt-system-textarea", classes="editor-textarea")
+                        yield Label("User Prompt (Template):", classes="field-label")
+                        yield TextArea(id="ccp-editor-prompt-user-textarea", classes="editor-textarea")
+                        yield Label("Keywords (comma-separated):", classes="field-label")
+                        yield TextArea(id="ccp-editor-prompt-keywords-textarea", classes="editor-textarea small")
+                        
+                        # Action buttons
+                        with Horizontal(classes="editor-actions"):
+                            yield Button("Save Prompt", id="ccp-editor-prompt-save-button", 
+                                       classes="primary-button")
+                            yield Button("Cancel", id="ccp-editor-prompt-cancel-button", 
+                                       classes="secondary-button")
+                
+                # Container for dictionary view
+                with Container(id="ccp-dictionary-view", classes="ccp-view-area hidden"):
+                    yield Static("Chat Dictionary", classes="pane-title")
+                    yield Label("Dictionary Name:", classes="field-label")
+                    yield Static(id="ccp-dict-name-display", classes="field-value")
+                    yield Label("Description:", classes="field-label")
+                    yield TextArea(id="ccp-dict-description-display", read_only=True, classes="field-textarea")
+                    yield Label("Strategy:", classes="field-label")
+                    yield Static(id="ccp-dict-strategy-display", classes="field-value")
+                    yield Label("Max Tokens:", classes="field-label")
+                    yield Static(id="ccp-dict-max-tokens-display", classes="field-value")
+                    yield Label("Entries:", classes="field-label")
+                    yield ListView(id="ccp-dict-entries-list", classes="dict-entries-list")
+                
+                # Container for dictionary editor
+                with Container(id="ccp-dictionary-editor-view", classes="ccp-view-area hidden"):
+                    yield Static("Dictionary Editor", classes="pane-title")
+                    with VerticalScroll(classes="editor-scroll"):
+                        yield Label("Dictionary Name:", classes="field-label")
+                        yield Input(id="ccp-editor-dict-name-input", placeholder="Dictionary name...", 
+                                  classes="editor-input")
+                        yield Label("Description:", classes="field-label")
+                        yield TextArea(id="ccp-editor-dict-description-textarea", classes="editor-textarea")
+                        yield Label("Replacement Strategy:", classes="field-label")
+                        yield Select([
+                            ("sorted_evenly", "sorted_evenly"),
+                            ("character_lore_first", "character_lore_first"),
+                            ("global_lore_first", "global_lore_first")
+                        ], value="sorted_evenly", id="ccp-editor-dict-strategy-select")
+                        yield Label("Max Tokens:", classes="field-label")
+                        yield Input(id="ccp-editor-dict-max-tokens-input", placeholder="1000", value="1000", 
+                                  classes="editor-input")
+                        
+                        yield Label("Dictionary Entries:", classes="field-label")
+                        yield ListView(id="ccp-editor-dict-entries-list", classes="dict-entries-list")
+                        
+                        with Horizontal(classes="dict-entry-controls"):
+                            yield Button("Add Entry", id="ccp-dict-add-entry-button", 
+                                       classes="sidebar-button")
+                            yield Button("Remove Entry", id="ccp-dict-remove-entry-button", 
+                                       classes="sidebar-button")
+                        
+                        yield Label("Entry Key/Pattern:", classes="field-label")
+                        yield Input(id="ccp-dict-entry-key-input", placeholder="Key or /regex/flags", 
+                                  classes="editor-input")
+                        yield Label("Entry Value:", classes="field-label")
+                        yield TextArea(id="ccp-dict-entry-value-textarea", classes="editor-textarea small")
+                        yield Label("Group (optional):", classes="field-label")
+                        yield Input(id="ccp-dict-entry-group-input", placeholder="e.g., character, global", 
+                                  classes="editor-input")
+                        yield Label("Probability (0-100):", classes="field-label")
+                        yield Input(id="ccp-dict-entry-probability-input", placeholder="100", value="100", 
+                                  classes="editor-input")
+                        
+                        # Action buttons
+                        with Horizontal(classes="editor-actions"):
+                            yield Button("Save Dictionary", id="ccp-editor-dict-save-button", 
+                                       classes="primary-button")
+                            yield Button("Cancel", id="ccp-editor-dict-cancel-button", 
+
+    def _cache_widget_references(self) -> None:
+        """Cache frequently accessed widgets."""
+        try:
+            self._sidebar = self.query_one("#ccp-sidebar")
+            self._content_area = self.query_one("#ccp-content-area")
+            self._message_area = self.query_one("#ccp-conversation-messages-view")
+        except NoMatches as e:
+            logger.error(f"Failed to cache widget: {e}")
+
+    async def _initialize_ui_state(self) -> None:
+        """Initialize the UI state."""
+        # Refresh lists
+        await self.character_handler.refresh_character_list()
+        await self.dictionary_handler.refresh_dictionary_list()
+        
+        # Set initial view
+        new_state = self.state
+        new_state.active_view = "conversations"
+        self.state = new_state
+
+    # ===== Event Handlers using @on decorators =====
+    
+    @on(Button.Pressed, "#toggle-ccp-sidebar")
+    async def handle_sidebar_toggle(self, event: Button.Pressed) -> None:
+        """Handle sidebar toggle button press."""
+        event.stop()
+        
+        # Update state
+        new_state = self.state
+        new_state.sidebar_collapsed = not new_state.sidebar_collapsed
+        self.state = new_state
+        
+        # Let the handler do any additional work
+        await self.sidebar_handler.toggle_sidebar()
+    
+    # Note: These button handlers are now handled by the sidebar widget
+    # The sidebar widget posts messages that we handle in the message handlers above
+    
+    # Editor button handlers - these remain here as they're part of the main content area
+    @on(Button.Pressed, "#ccp-editor-char-save-button")
+    async def handle_save_character(self, event: Button.Pressed) -> None:
+        """Handle saving character from editor."""
+        event.stop()
+        await self.character_handler.handle_save_character()
+    
+    @on(Button.Pressed, "#ccp-editor-prompt-save-button")
+    async def handle_save_prompt(self, event: Button.Pressed) -> None:
+        """Handle saving prompt from editor."""
+        event.stop()
+        await self.prompt_handler.handle_save_prompt()
+    
+    @on(Button.Pressed, "#ccp-editor-dict-save-button")
+    async def handle_save_dictionary(self, event: Button.Pressed) -> None:
+        """Handle saving dictionary from editor."""
+        event.stop()
+        await self.dictionary_handler.handle_save_dictionary()
+    
+    # Note: Input change handlers are now handled by the sidebar widget
+    # which posts messages that we handle above
+    
+    # ===== Message Handlers =====
+    
+    async def on_view_change_message_requested(self, message: ViewChangeMessage.Requested) -> None:
+        """Handle view change requests."""
+        await self._switch_view(message.view_name)
+    
+    # ===== Sidebar Widget Message Handlers =====
+    
+    async def on_conversation_search_requested(self, message: ConversationSearchRequested) -> None:
+        """Handle conversation search request from sidebar."""
+        await self.conversation_handler.handle_search(message.search_term, message.search_type)
+    
+    async def on_conversation_load_requested(self, message: ConversationLoadRequested) -> None:
+        """Handle conversation load request from sidebar."""
+        if message.conversation_id:
+            await self.conversation_handler.load_conversation(message.conversation_id)
+        else:
+            await self.conversation_handler.handle_load_selected()
+    
+    async def on_character_load_requested(self, message: CharacterLoadRequested) -> None:
+        """Handle character load request from sidebar."""
+        if message.character_id:
+            await self.character_handler.load_character(message.character_id)
+        else:
+            await self.character_handler.handle_load_character()
+    
+    async def on_prompt_load_requested(self, message: PromptLoadRequested) -> None:
+        """Handle prompt load request from sidebar."""
+        if message.prompt_id:
+            await self.prompt_handler.load_prompt(message.prompt_id)
+        else:
+            await self.prompt_handler.handle_load_selected()
+    
+    async def on_dictionary_load_requested(self, message: DictionaryLoadRequested) -> None:
+        """Handle dictionary load request from sidebar."""
+        if message.dictionary_id:
+            await self.dictionary_handler.load_dictionary(message.dictionary_id)
+        else:
+            await self.dictionary_handler.handle_load_dictionary()
+    
+    async def on_import_requested(self, message: ImportRequested) -> None:
+        """Handle import request from sidebar."""
+        if message.item_type == "conversation":
+            await self.conversation_handler.handle_import()
+        elif message.item_type == "character":
+            await self.character_handler.handle_import()
+        elif message.item_type == "prompt":
+            await self.prompt_handler.handle_import()
+        elif message.item_type == "dictionary":
+            await self.dictionary_handler.handle_import()
+        elif message.item_type == "worldbook":
+            # Handle worldbook import
+            pass
+    
+    async def on_create_requested(self, message: CreateRequested) -> None:
+        """Handle create request from sidebar."""
+        if message.item_type == "character":
+            await self.character_handler.handle_create()
+        elif message.item_type == "prompt":
+            await self.prompt_handler.handle_create()
+        elif message.item_type == "dictionary":
+            await self.dictionary_handler.handle_create()
+        elif message.item_type == "worldbook":
+            # Handle worldbook creation
+            pass
+    
+    async def on_refresh_requested(self, message: RefreshRequested) -> None:
+        """Handle refresh request from sidebar."""
+        if message.list_type == "character":
+            await self.character_handler.refresh_character_list()
+        elif message.list_type == "dictionary":
+            await self.dictionary_handler.refresh_dictionary_list()
+        elif message.list_type == "worldbook":
+            # Handle worldbook refresh
+            pass
+    
+    async def on_conversation_message_loaded(self, message: ConversationMessage.Loaded) -> None:
+        """Handle conversation loaded message."""
+        # Update state with loaded conversation
+        new_state = self.state
+        new_state.selected_conversation_id = message.conversation_id
+        new_state.conversation_details_visible = True
+        self.state = new_state
+        
+        await self.message_manager.load_conversation_messages(message.conversation_id)
+        
+        # Show conversation details section
+        try:
+            details_container = self.query_one("#conv-details-container")
+            details_container.remove_class("hidden")
+        except NoMatches:
+            pass
+    
+    async def on_character_message_loaded(self, message: CharacterMessage.Loaded) -> None:
+        """Handle character loaded message."""
+        # Update state with loaded character
+        new_state = self.state
+        new_state.selected_character_id = message.character_id
+        new_state.selected_character_data = message.card_data
+        new_state.character_actions_visible = True
+        self.state = new_state
+        
+        # Show character actions
+        try:
+            actions_container = self.query_one("#char-actions-container")
+            actions_container.remove_class("hidden")
+        except NoMatches:
+            pass
+    
+    async def on_prompt_message_loaded(self, message: PromptMessage.Loaded) -> None:
+        """Handle prompt loaded message."""
+        # Update state with loaded prompt
+        new_state = self.state
+        new_state.selected_prompt_id = message.prompt_id
+        new_state.prompt_actions_visible = True
+        self.state = new_state
+        
+        # Show prompt actions
+        try:
+            actions_container = self.query_one("#prompt-actions-container")
+            actions_container.remove_class("hidden")
+        except NoMatches:
+            pass
+    
+    async def on_dictionary_message_loaded(self, message: DictionaryMessage.Loaded) -> None:
+        """Handle dictionary loaded message."""
+        # Update state with loaded dictionary
+        new_state = self.state
+        new_state.selected_dictionary_id = message.dictionary_id
+        new_state.dictionary_actions_visible = True
+        self.state = new_state
+        
+        # Show dictionary actions
+        try:
+            actions_container = self.query_one("#dict-actions-container")
+            actions_container.remove_class("hidden")
+        except NoMatches:
+            pass
+    
+    # ===== Reactive Watchers =====
+    
+    def watch_state(self, old_state: CCPScreenState, new_state: CCPScreenState) -> None:
+        """Watch for state changes and update UI accordingly."""
+        # Check for active view change
+        if old_state.active_view != new_state.active_view:
+            logger.debug(f"Active view changed from {old_state.active_view} to {new_state.active_view}")
+            self.post_message(ViewChangeMessage.Changed(old_state.active_view, new_state.active_view))
+            self._update_view_visibility(new_state.active_view)
+        
+        # Check for sidebar collapse change
+        if old_state.sidebar_collapsed != new_state.sidebar_collapsed:
+            logger.debug(f"Sidebar collapsed: {new_state.sidebar_collapsed}")
+            self._update_sidebar_visibility(new_state.sidebar_collapsed)
+        
+        # Check for loading state changes
+        if old_state.is_loading_conversation != new_state.is_loading_conversation:
+            self._update_loading_indicator("conversation", new_state.is_loading_conversation)
+        
+        if old_state.is_loading_character != new_state.is_loading_character:
+            self._update_loading_indicator("character", new_state.is_loading_character)
+    
+    def validate_state(self, state: CCPScreenState) -> CCPScreenState:
+        """Validate state changes."""
+        # Ensure active view is valid
+        valid_views = [
+            "conversations", "conversation_messages", "character_card", 
+            "character_editor", "prompt_editor", "dictionary_view", 
+            "dictionary_editor"
+        ]
+        if state.active_view not in valid_views:
+            state.active_view = "conversations"
+        
+        return state
+    
+    # ===== Private Helper Methods =====
+    
+    async def _switch_view(self, view_name: str) -> None:
+        """Switch the active view in the content area.
+        
+        Args:
+            view_name: Name of the view to switch to
+        """
+        try:
+            # Hide all views
+            view_containers = [
+                "#ccp-conversation-messages-view",
+                "#ccp-character-card-view",
+                "#ccp-character-editor-view",
+                "#ccp-prompt-editor-view",
+                "#ccp-dictionary-view",
+                "#ccp-dictionary-editor-view"
+            ]
+            
+            for container_id in view_containers:
+                try:
+                    container = self.query_one(container_id)
+                    container.add_class("hidden")
+                except NoMatches:
+                    continue
+            
+            # Show the requested view
+            view_map = {
+                "conversations": "#ccp-conversation-messages-view",
+                "conversation_messages": "#ccp-conversation-messages-view",
+                "character_card": "#ccp-character-card-view",
+                "character_editor": "#ccp-character-editor-view",
+                "prompt_editor": "#ccp-prompt-editor-view",
+                "dictionary_view": "#ccp-dictionary-view",
+                "dictionary_editor": "#ccp-dictionary-editor-view"
+            }
+            
+            target_id = view_map.get(view_name)
+            if target_id:
+                target_view = self.query_one(target_id)
+                target_view.remove_class("hidden")
+                
+                # Update state with new view
+                new_state = self.state
+                new_state.active_view = view_name
+                self.state = new_state
+                
+                logger.info(f"Switched to view: {view_name}")
+            else:
+                logger.warning(f"Unknown view requested: {view_name}")
+                
+        except Exception as e:
+            logger.error(f"Error switching view: {e}", exc_info=True)
+    
+    def _update_view_visibility(self, view_name: str) -> None:
+        """Update view visibility based on active view.
+        
+        This is called from the state watcher to ensure UI stays in sync.
+        
+        Args:
+            view_name: Name of the view to show
+        """
+        # This will be handled by the _switch_view method
+        # We just need to ensure it's called when state changes
+        pass
+    
+    def _update_sidebar_visibility(self, collapsed: bool) -> None:
+        """Update sidebar visibility based on collapsed state.
+        
+        Args:
+            collapsed: Whether the sidebar should be collapsed
+        """
+        try:
+            sidebar = self.query_one("#ccp-sidebar")
+            if collapsed:
+                sidebar.add_class("collapsed")
+            else:
+                sidebar.remove_class("collapsed")
+        except NoMatches:
+            logger.warning("Sidebar not found for visibility update")
+    
+    def _update_loading_indicator(self, component: str, is_loading: bool) -> None:
+        """Update loading indicator for a component.
+        
+        Args:
+            component: Name of the component (conversation, character, etc.)
+            is_loading: Whether the component is loading
+        """
+        # This will be implemented when we have proper loading indicators
+        # For now, just log the state change
+        logger.debug(f"Loading state for {component}: {is_loading}")
+    
+    # ===== State Management (Override from BaseAppScreen) =====
+    
+    def save_state(self) -> Dict[str, Any]:
+        """Save the current state of the CCP screen."""
+        return {
+            "ccp_state": {
+                "active_view": self.state.active_view,
+                "selected_character_id": self.state.selected_character_id,
+                "selected_conversation_id": self.state.selected_conversation_id,
+                "selected_prompt_id": self.state.selected_prompt_id,
+                "selected_dictionary_id": self.state.selected_dictionary_id,
+                "sidebar_collapsed": self.state.sidebar_collapsed,
+                "conversation_search_term": self.state.conversation_search_term,
+                "conversation_search_type": self.state.conversation_search_type,
+                "include_character_chats": self.state.include_character_chats,
+                "search_all_characters": self.state.search_all_characters,
+            }
+        }
+    
+    def restore_state(self, state: Dict[str, Any]) -> None:
+        """Restore a previously saved state."""
+        if "ccp_state" in state:
+            ccp_state = state["ccp_state"]
+            
+            # Create new state instance with restored values
+            new_state = CCPScreenState(
+                active_view=ccp_state.get("active_view", "conversations"),
+                selected_character_id=ccp_state.get("selected_character_id"),
+                selected_conversation_id=ccp_state.get("selected_conversation_id"),
+                selected_prompt_id=ccp_state.get("selected_prompt_id"),
+                selected_dictionary_id=ccp_state.get("selected_dictionary_id"),
+                sidebar_collapsed=ccp_state.get("sidebar_collapsed", False),
+                conversation_search_term=ccp_state.get("conversation_search_term", ""),
+                conversation_search_type=ccp_state.get("conversation_search_type", "title"),
+                include_character_chats=ccp_state.get("include_character_chats", True),
+                search_all_characters=ccp_state.get("search_all_characters", True),
+            )
+            self.state = new_state
+            
+            # Reload selected items if needed
+            if self.state.selected_conversation_id:
+                logger.debug(f"Restoring conversation {self.state.selected_conversation_id}")
+                # Use call_after_refresh to properly await the async method
+                async def load_restored_conversation():
+                    await self.conversation_handler.load_conversation(self.state.selected_conversation_id)
+                self.call_after_refresh(load_restored_conversation)

@@ -455,7 +455,7 @@ class EmojiPickerScreen(ModalScreen[str]):
 
     # Removed: search_results: reactive[List[ProcessedEmoji] | None] = reactive(None)
 
-    def __init__(self, name: str | None = None, id: str | None = None, classes: str | None = None) -> None:
+    def __init__(self, name: Optional[str] = None, id: Optional[str] = None, classes: Optional[str] = None) -> None:
         super().__init__(name, id, classes)
         # Load emoji data lazily
         all_emojis, categorized_emojis, category_names = get_emoji_data()

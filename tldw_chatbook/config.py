@@ -150,7 +150,7 @@ DEFAULT_RAG_SEARCH_CONFIG = {
 
 DEFAULT_MEDIA_INGESTION_CONFIG = {
     # UI Configuration for all media types
-    "ui_style": "simplified",  # Options: "simplified", "grid", "wizard", "split"
+    "ui_style": "default",  # Options: "default", "redesigned", "new", "grid", "wizard", "split"
     "pdf": {
         "chunk_method": "semantic",
         "chunk_size": 500,
@@ -304,18 +304,42 @@ DEFAULT_DIARIZATION_CONFIG = {
 }
 
 def load_openai_mappings() -> Dict:
-    current_file_path = Path(__file__).resolve()
-    api_component_root = current_file_path.parent.parent.parent
-    mapping_path = api_component_root / "Config_Files" / "openai_tts_mappings.json"
-    logger.info(f"Attempting to load OpenAI TTS mappings from: {str(mapping_path)}")
+    """Load OpenAI TTS mappings from packaged resources.
+
+    Prefer importlib.resources so this works when installed as a package.
+    Fallback to a file path inside the package directory if needed.
+    """
+    from importlib import resources as importlib_resources
+    package = "tldw_chatbook.Config_Files"
+    resource_name = "openai_tts_mappings.json"
+
+    # Try importlib.resources first (works in wheels and editable installs)
     try:
-        with open(mapping_path, "r") as f:
+        mapping_path = importlib_resources.files(package).joinpath(resource_name)
+        logger.info(f"Attempting to load OpenAI TTS mappings from resource: {mapping_path}")
+        with mapping_path.open("r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load OpenAI TTS mappings from {mapping_path}: {e}", exc_info=True)
+    except Exception as e_res:
+        logger.error(
+            f"Failed to load OpenAI TTS mappings via importlib.resources: {e_res}",
+            exc_info=True,
+        )
+
+    # Fallback: direct path within the installed package directory
+    try:
+        current_file_path = Path(__file__).resolve()
+        mapping_path_fs = current_file_path.parent / "Config_Files" / resource_name
+        logger.info(f"Attempting to load OpenAI TTS mappings from filesystem: {mapping_path_fs}")
+        with open(mapping_path_fs, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e_fs:
+        logger.error(
+            f"Failed to load OpenAI TTS mappings from filesystem: {e_fs}",
+            exc_info=True,
+        )
         return {
             "models": {"tts-1": "openai_official_tts-1"},
-            "voices": {"alloy": "alloy"}
+            "voices": {"alloy": "alloy"},
         }
 
 _openai_mappings = load_openai_mappings()
@@ -2845,13 +2869,13 @@ def get_ingest_ui_style() -> str:
     media_ingestion_config = config.get("media_ingestion", {})
     
     # Get UI style from config, fall back to default
-    ui_style = media_ingestion_config.get("ui_style", DEFAULT_MEDIA_INGESTION_CONFIG.get("ui_style", "simplified"))
+    ui_style = media_ingestion_config.get("ui_style", DEFAULT_MEDIA_INGESTION_CONFIG.get("ui_style", "default"))
     
     # Validate the UI style
-    valid_styles = ["simplified", "grid", "wizard", "split"]
+    valid_styles = ["default", "redesigned", "new", "grid", "wizard", "split"]
     if ui_style not in valid_styles:
-        logger.warning(f"Invalid ingest UI style '{ui_style}', falling back to 'simplified'")
-        return "simplified"
+        logger.warning(f"Invalid ingest UI style '{ui_style}', falling back to 'default'")
+        return "default"
     
     return ui_style
 
