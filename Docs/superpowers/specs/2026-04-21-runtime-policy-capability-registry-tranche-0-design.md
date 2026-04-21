@@ -122,6 +122,8 @@ It should contain:
 - `server_configured`: bool
 - `server_reachability`: `unknown`, `reachable`, or `unreachable`
 - `server_reachability_checked_at`: optional UTC timestamp
+- `server_auth_state`: `unknown`, `authenticated`, `auth_required`, or `session_invalid`
+- `server_auth_checked_at`: optional UTC timestamp
 - `last_known_server_label`: optional string
 
 Important rules:
@@ -129,11 +131,17 @@ Important rules:
 - `active_source` is the source of truth for app mode, not screen-local copies.
 - `active_server_id` exists now even though only one active slot is supported, so later switching adds orchestration rather than a schema rewrite.
 - reachability is runtime state, not a substitute for configuration
+- authentication state is runtime state, not a substitute for request-time authorization
 - `server_reachability` is a best-effort centrally refreshed health signal, not a permanent truth value
+- `server_auth_state` is a best-effort centrally refreshed auth/session signal, not a permanent truth value
 - a centrally defined freshness window determines whether `server_reachability_checked_at` is still trustworthy for UI preflight
+- a centrally defined freshness window determines whether `server_auth_checked_at` is still trustworthy for UI preflight
 - if no timestamp exists or the freshness window has expired, reachability must be treated as `unknown` by policy consumers
+- if no timestamp exists or the freshness window has expired, auth/session readiness must be treated as `unknown` by policy consumers
 - UI preflight may use fresh `server_reachability` for early feedback, but service hard stops must still be able to return `server_unreachable` based on real request-time failure rather than trusting a cached signal
+- UI preflight may use fresh `server_auth_state` for early feedback, but service hard stops must still classify real request-time auth/session failures rather than trusting a cached signal
 - stale reachability state must never grant authority that a real request would deny
+- stale auth/session state must never grant authority that a real request would deny
 
 ### CapabilityRegistry
 
@@ -187,7 +195,7 @@ Missing-registry-entry rule:
 - runtime source state
 - capability registry entry
 - connectivity
-- optional context such as workspace scope or server readiness
+- optional context such as workspace scope, server readiness, and request-time auth/session classification
 
 It returns a structured `PolicyDecision`.
 
@@ -207,6 +215,8 @@ The initial fixed reason-code set should cover at least:
 - `offline_unavailable`
 - `server_not_configured`
 - `server_unreachable`
+- `server_auth_required`
+- `server_session_invalid`
 - `capability_disabled`
 - `authority_denied`
 
@@ -243,6 +253,9 @@ Rules:
 - service calls must reject invalid source/authority operations even if a UI caller forgot to preflight
 - service responses should preserve the fixed reason-code contract
 - the service layer must not silently coerce source, auto-switch mode, or invent fallback authority
+- request-time `401` responses must map to `server_auth_required` or `server_session_invalid` when enough evidence exists to distinguish them
+- request-time `403` or equivalent tenant/feature/policy denials map to `authority_denied` in Tranche 0 unless a later tranche introduces finer-grained fixed codes
+- raw `TLDWAPIClient` or `ServerChatbookService` construction must be confined to approved bootstrap/factory/adapter boundaries rather than screen, event-handler, or wizard call sites
 - Tranche 0 cannot claim central day-one blocking unless all currently live domain call paths route through one of these enforced seams or receive equivalent direct enforcement before shipping
 
 ### Phase-One Adoption Boundary
@@ -356,6 +369,16 @@ Add hard-stop policy checks to the shared scope services listed above.
 3. capability registry is initialized
 4. app state exposes both to downstream consumers
 
+### State Restore Precedence
+
+1. runtime-policy bootstrap restores authoritative `RuntimeSourceState` before any screen or tab state restoration runs
+2. screen and tab state may retain source-scoped metadata for identity and restoration context, but they must not overwrite `active_source` or `active_server_id`
+3. if restored screen state conflicts with authoritative runtime source or active server:
+   - generic source-scoped screens must rebind to the authoritative runtime source
+   - incompatible saved selections must be dropped rather than silently switching app mode
+4. chat/session tabs may preserve their own source metadata as conversation identity, but that metadata is non-authoritative and must not auto-switch the app's runtime source during restore
+5. activating or resuming off-source or wrong-server saved state requires explicit user source/server change or a later deliberate handoff flow, not silent reconciliation
+
 ### UI preflight path
 
 1. user triggers an action
@@ -382,6 +405,7 @@ Add hard-stop policy checks to the shared scope services listed above.
 - service/client hard stops must preserve fixed reason codes
 - UI copy may vary, but reason codes must not
 - server-unconfigured and server-unreachable are different states and must not collapse into one generic error
+- server-auth-required and server-session-invalid are different states and must not collapse into one generic error when the server response provides enough evidence to distinguish them
 - offline behavior must preserve local authority for local-first domains and explicit unavailable state for remote-only domains
 
 ## Testing Strategy
@@ -395,6 +419,8 @@ Add hard-stop policy checks to the shared scope services listed above.
   - wrong source
   - server not configured
   - server unreachable
+  - stale reachability downgraded to `unknown`
+  - stale auth/session readiness downgraded to `unknown`
   - offline remote-only action
   - capability disabled
 
@@ -402,18 +428,28 @@ Add hard-stop policy checks to the shared scope services listed above.
 
 - runtime source state persists across restart
 - single active server slot shape remains intact
+- restored screen state cannot overwrite authoritative `active_source` or `active_server_id`
+- off-source or wrong-server saved state is reconciled or dropped according to the restore-precedence rules rather than silently switching app mode
 
 ### Service-Level Tests
 
 - invalid actions are blocked centrally at scope-service boundaries
 - service failures return fixed reason codes
 - services do not silently coerce source
+- request-time auth/session failures classify to the fixed auth reason codes
+
+### Boundary Guard Tests
+
+- regression checks fail if new raw `TLDWAPIClient` or `ServerChatbookService` constructions appear outside an explicit allowlist of approved bootstrap/factory/adapter modules
+- phase-one enforcement coverage remains enumerated and test-backed so later code cannot reintroduce bypass paths accidentally
 
 ### UI-Level Tests
 
 - representative mode-sensitive screens perform preflight checks
 - denied actions produce early feedback
 - UI and service agree on the same reason codes
+- stale cached reachability/auth state is treated as `unknown` by preflight consumers
+- restore flows do not let saved screen/tab state silently reassert incompatible runtime source selection
 
 ### Regression Goal
 
