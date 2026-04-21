@@ -4,6 +4,7 @@ Focused tests for the scope-aware NotesScreen state and routing hooks.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -203,8 +204,18 @@ class TestNotesScreenMethods:
                     "workspace_subview": WorkspaceSubview.NOTES.value,
                     "selected_note_id": 11,
                     "selected_workspace_id": None,
+                    "has_unsaved_changes": True,
                 }
             }
+        )
+        screen.state = replace(
+            screen.state,
+            has_unsaved_changes=True,
+            pending_navigation=PendingNavigation(
+                target_scope=ScopeType.SERVER_NOTE,
+                target_id="server-note-7",
+                requires_confirmation=True,
+            ),
         )
         mock_app_instance.pending_notes_workspace_context = {
             "workspace_id": "ws-9",
@@ -218,6 +229,8 @@ class TestNotesScreenMethods:
         assert screen.state.scope_type == ScopeType.WORKSPACE
         assert screen.state.workspace_subview == WorkspaceSubview.DETAILS
         assert screen.state.selected_workspace_id == "ws-9"
+        assert screen.state.has_unsaved_changes is False
+        assert screen.state.pending_navigation is None
         assert mock_app_instance.pending_notes_workspace_context is None
         screen.refresh_current_scope.assert_awaited_once()
 
@@ -231,8 +244,18 @@ class TestNotesScreenMethods:
                     "workspace_subview": WorkspaceSubview.NOTES.value,
                     "selected_note_id": 11,
                     "selected_workspace_id": None,
+                    "has_unsaved_changes": True,
                 }
             }
+        )
+        screen.state = replace(
+            screen.state,
+            has_unsaved_changes=True,
+            pending_navigation=PendingNavigation(
+                target_scope=ScopeType.SERVER_NOTE,
+                target_id="server-note-8",
+                requires_confirmation=True,
+            ),
         )
         mock_app_instance.pending_notes_workspace_context = {
             "workspace_id": "ws-12",
@@ -246,6 +269,8 @@ class TestNotesScreenMethods:
         assert screen.state.scope_type == ScopeType.WORKSPACE
         assert screen.state.workspace_subview == WorkspaceSubview.DETAILS
         assert screen.state.selected_workspace_id == "ws-12"
+        assert screen.state.has_unsaved_changes is False
+        assert screen.state.pending_navigation is None
         assert mock_app_instance.pending_notes_workspace_context is None
         screen.refresh_current_scope.assert_awaited_once()
 

@@ -1739,25 +1739,14 @@ class NotesScreen(BaseAppScreen):
         else:
             subview = WorkspaceSubview(str(raw_subview))
 
-        self._set_state(
-            scope_type=ScopeType.WORKSPACE,
-            workspace_subview=subview,
-            selected_note_id=None,
-            selected_note_version=None,
-            selected_note_title="",
-            selected_note_content="",
-            selected_local_note_id=None,
-            selected_local_note_version=None,
-            selected_server_note_id=None,
-            selected_server_note_version=None,
-            selected_workspace_id=pending_context.get("workspace_id"),
-            selected_workspace_note_id=None,
-            selected_workspace_note_version=None,
-            selected_workspace_source_id=None,
-            selected_workspace_source_version=None,
-            selected_workspace_artifact_id=None,
-            selected_workspace_artifact_version=None,
+        self._apply_navigation_target(
+            PendingNavigation(
+                target_scope=ScopeType.WORKSPACE,
+                target_workspace_id=pending_context.get("workspace_id"),
+                target_workspace_subview=subview,
+            )
         )
+        self._set_state(has_unsaved_changes=False, pending_navigation=None)
         return True
 
     async def on_mount(self) -> None:

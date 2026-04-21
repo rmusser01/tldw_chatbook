@@ -123,8 +123,13 @@ class StudyScreen(BaseAppScreen):
         return controller.handle_scope_changed
 
     async def _reload_scoped_study_data(self, study_window: Any) -> None:
-        for scheduler_name in ("_schedule_flashcards_refresh", "_schedule_quizzes_refresh"):
-            scheduler = getattr(study_window, scheduler_name, None)
+        current_view = str(getattr(study_window, "current_view", "") or "")
+        if current_view == "flashcards":
+            scheduler = getattr(study_window, "_schedule_flashcards_refresh", None)
+            if callable(scheduler):
+                scheduler()
+        elif current_view == "quizzes":
+            scheduler = getattr(study_window, "_schedule_quizzes_refresh", None)
             if callable(scheduler):
                 scheduler()
 
@@ -132,7 +137,6 @@ class StudyScreen(BaseAppScreen):
         next_state = self._derive_scope_state(scope_context)
         previous_key = self._effective_scope_key
         next_key = self._scope_key(next_state)
-        backend_changed = previous_key[2:] != next_key[2:]
 
         self.scope_state = next_state
         self._effective_scope_key = next_key
@@ -142,6 +146,10 @@ class StudyScreen(BaseAppScreen):
 
         for controller_name in ("flashcards_controller", "quizzes_controller"):
             controller = getattr(study_window, controller_name, None)
+            if controller_name == "flashcards_controller":
+                end_review_session = getattr(controller, "end_review_session_if_needed", None)
+                if callable(end_review_session):
+                    await end_review_session()
             handler = self._ensure_scope_change_handler(controller)
             if callable(handler):
                 handler()

@@ -1347,6 +1347,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 return normalized
         return "local"
 
+    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+        normalized_backend = str(runtime_backend or "").strip().lower()
+        if normalized_backend in {"local", "server"}:
+            self.current_runtime_backend = normalized_backend
+            self.runtime_backend = normalized_backend
+        active_screen = getattr(self, "screen", None)
+        callback = getattr(active_screen, "handle_runtime_backend_changed", None)
+        if callable(callback):
+            await callback(normalized_backend)
+
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:
         """Initialize notes service - for parallel execution."""

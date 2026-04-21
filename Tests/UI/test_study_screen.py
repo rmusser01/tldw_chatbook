@@ -6,8 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual.app import App
 
 from tldw_chatbook.UI.Study_Modules.flashcards_handler import StudyFlashcardsController
+from tldw_chatbook.UI.Study_Window import StudyWindow
 from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Screens.notes_scope_models import WorkspaceSubview
 
@@ -30,6 +32,15 @@ def _build_window():
         flashcards_controller=SimpleNamespace(handle_scope_changed=Mock()),
         quizzes_controller=SimpleNamespace(handle_scope_changed=Mock()),
     )
+
+
+class StudyScreenMountTestApp(App[None]):
+    def __init__(self, screen: StudyScreen):
+        super().__init__()
+        self.screen_under_test = screen
+
+    async def on_mount(self) -> None:
+        await self.push_screen(self.screen_under_test)
 
 
 def test_flashcards_controller_handle_scope_changed_resets_local_state():
@@ -167,8 +178,6 @@ async def test_pending_scope_is_applied_before_initialize_on_mount():
 
     assert call_order.index("flashcards_scope_changed") < call_order.index("initialize")
     assert call_order.index("quizzes_scope_changed") < call_order.index("initialize")
-    assert call_order.index("schedule_flashcards") < call_order.index("initialize")
-    assert call_order.index("schedule_quizzes") < call_order.index("initialize")
 
 
 @pytest.mark.asyncio
@@ -206,6 +215,7 @@ async def test_scope_change_path_attaches_and_invokes_controller_seams():
     window = SimpleNamespace(
         app_instance=app_instance,
         runtime_backend=getattr(app_instance, "runtime_backend", None),
+        current_view="flashcards",
         query_one=Mock(),
         flashcards_controller=flashcards_controller,
         quizzes_controller=quizzes_controller,
@@ -238,7 +248,88 @@ async def test_scope_change_path_attaches_and_invokes_controller_seams():
     assert window.quizzes_controller.has_quizzes is False
 
     window._schedule_flashcards_refresh.assert_called_once_with()
-    window._schedule_quizzes_refresh.assert_called_once_with()
+    window._schedule_quizzes_refresh.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_workspace_scope_mount_does_not_refresh_hidden_views(monkeypatch):
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    call_order: list[str] = []
+
+    def record_flashcards_refresh(self):
+        call_order.append(f"flashcards:{self.current_view}")
+
+    def record_quizzes_refresh(self):
+        call_order.append(f"quizzes:{self.current_view}")
+
+    monkeypatch.setattr(StudyWindow, "_schedule_flashcards_refresh", record_flashcards_refresh)
+    monkeypatch.setattr(StudyWindow, "_schedule_quizzes_refresh", record_quizzes_refresh)
+
+    app_instance = SimpleNamespace(
+        pending_study_scope_context=StudyScopeContext(
+            scope_type=StudyScopeType.WORKSPACE,
+            workspace_id="workspace-9",
+            workspace_name="Biology",
+        ),
+        current_runtime_backend="server",
+        runtime_backend="server",
+        notify=Mock(),
+        study_scope_service=SimpleNamespace(),
+        study_quiz_scope_service=SimpleNamespace(),
+        app_config={},
+    )
+    screen = StudyScreen(app_instance=app_instance)
+    app = StudyScreenMountTestApp(screen)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        window = app.screen.query_one(StudyWindow)
+        assert window.current_view == "structured_learning"
+
+    assert call_order == []
+
+
+@pytest.mark.asyncio
+async def test_scope_change_awaits_end_review_session_before_reset():
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        pending_study_scope_context=StudyScopeContext(
+            scope_type=StudyScopeType.WORKSPACE,
+            workspace_id="workspace-9",
+            workspace_name="Biology",
+        ),
+        current_runtime_backend="server",
+        runtime_backend="server",
+        notify=Mock(),
+    )
+    screen = StudyScreen(app_instance=app_instance)
+    call_order: list[str] = []
+
+    async def end_review_session_if_needed():
+        call_order.append("end_review_session")
+
+    def flashcards_scope_changed():
+        call_order.append("flashcards_scope_changed")
+
+    window = SimpleNamespace(
+        load_saved_sessions=AsyncMock(),
+        initialize=AsyncMock(),
+        flashcards_controller=SimpleNamespace(
+            end_review_session_if_needed=end_review_session_if_needed,
+            handle_scope_changed=flashcards_scope_changed,
+        ),
+        quizzes_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")),
+        _schedule_flashcards_refresh=lambda: call_order.append("schedule_flashcards"),
+        _schedule_quizzes_refresh=lambda: call_order.append("schedule_quizzes"),
+    )
+    screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
+
+    await screen.on_mount()
+    call_order.clear()
+
+    await screen.handle_runtime_backend_changed("local")
+
+    assert call_order.index("end_review_session") < call_order.index("flashcards_scope_changed")
 
 
 @pytest.mark.asyncio
@@ -259,6 +350,7 @@ async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state()
     window = SimpleNamespace(
         load_saved_sessions=AsyncMock(),
         initialize=AsyncMock(),
+        current_view="flashcards",
         flashcards_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("flashcards_scope_changed")),
         quizzes_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")),
         _schedule_flashcards_refresh=lambda: call_order.append("schedule_flashcards"),
@@ -280,7 +372,29 @@ async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state()
     assert "flashcards_scope_changed" in call_order
     assert "quizzes_scope_changed" in call_order
     assert "schedule_flashcards" in call_order
-    assert "schedule_quizzes" in call_order
+    assert "schedule_quizzes" not in call_order
+
+
+@pytest.mark.asyncio
+async def test_app_level_runtime_backend_callback_updates_backend_and_forwards():
+    from tldw_chatbook.app import TldwCli
+
+    forwarded = []
+
+    async def screen_callback(runtime_backend: str) -> None:
+        forwarded.append(runtime_backend)
+
+    app_like = SimpleNamespace(
+        current_runtime_backend="server",
+        runtime_backend="server",
+        screen=SimpleNamespace(handle_runtime_backend_changed=screen_callback),
+    )
+
+    await TldwCli.handle_runtime_backend_changed(app_like, "local")
+
+    assert app_like.current_runtime_backend == "local"
+    assert app_like.runtime_backend == "local"
+    assert forwarded == ["local"]
 
 
 def test_return_to_workspace_routes_to_notes_details():
