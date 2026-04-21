@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from tldw_chatbook.UI.Study_Modules.flashcards_handler import StudyFlashcardsController
 from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Screens.notes_scope_models import WorkspaceSubview
 
@@ -29,6 +30,28 @@ def _build_window():
         flashcards_controller=SimpleNamespace(handle_scope_changed=Mock()),
         quizzes_controller=SimpleNamespace(handle_scope_changed=Mock()),
     )
+
+
+def test_flashcards_controller_handle_scope_changed_resets_local_state():
+    window = SimpleNamespace(app_instance=SimpleNamespace(), runtime_backend="server")
+    controller = StudyFlashcardsController(window)
+    controller.current_review_card = {"id": "card-1"}
+    controller.current_review_session_id = 41
+    controller.current_decks = [{"id": "deck-1"}]
+    controller.current_cards = [{"id": "card-1"}]
+    controller.selected_deck_record = {"id": "deck-1"}
+    controller.selected_card_record = {"id": "card-1"}
+    controller.has_decks = True
+
+    controller.handle_scope_changed()
+
+    assert controller.current_review_card is None
+    assert controller.current_review_session_id is None
+    assert controller.current_decks == []
+    assert controller.current_cards == []
+    assert controller.selected_deck_record is None
+    assert controller.selected_card_record is None
+    assert controller.has_decks is False
 
 
 @pytest.mark.asyncio
