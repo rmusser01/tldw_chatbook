@@ -931,7 +931,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     _token_count_update_timer: Optional[Timer] = None
 
     # Reactives for sidebar
-    chat_sidebar_collapsed: reactive[bool] = reactive(False)
+    chat_sidebar_collapsed: reactive[bool] = reactive(True)
     chat_right_sidebar_collapsed: reactive[bool] = reactive(False)  # For character sidebar
     # Load saved width from config, default to 25% if not set
     _saved_width = settings.get("chat_defaults", {}).get("right_sidebar_width", 25)
@@ -1846,6 +1846,23 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         break
         except Exception as e:
             self.loguru_logger.error(f"Error updating TTS progress: {e}")
+
+    @on(ToolsSettingsWindow.IngestUiStyleChanged)
+    async def handle_ingest_ui_style_changed(
+        self,
+        event: ToolsSettingsWindow.IngestUiStyleChanged,
+    ) -> None:
+        """Refresh the active ingest view after a style change from Tools & Settings."""
+        try:
+            ingest_window = self.query_one("#ingest-window")
+            ingest_window.refresh(recompose=True)
+            self.loguru_logger.info(
+                f"Requested recompose for ingest window after UI style change to {event.new_style}"
+            )
+        except QueryError:
+            self.loguru_logger.debug(
+                "Ingest window not found during UI style refresh; the new style will apply when it is opened"
+            )
 
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:

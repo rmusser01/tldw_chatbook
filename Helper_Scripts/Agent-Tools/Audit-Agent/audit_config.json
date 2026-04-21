@@ -69,7 +69,7 @@
       ]
     },
     "projectSpecific": {
-      "tldw_server": {
+      "tldw_chatbook": {
         "requireTypeHints": true,
         "requireDocstrings": true,
         "testCoverage": {
@@ -84,7 +84,7 @@
         },
         "preCommitChecks": [
           "python -m ruff check .",
-          "python -m pytest tldw_Server_API/tests/ -x --tb=short"
+          "python -m pytest Tests/tldw_api/ -x --tb=short"
         ]
       }
     }

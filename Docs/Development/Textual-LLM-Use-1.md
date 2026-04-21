@@ -1258,6 +1258,8 @@ class DataView(Widget):
 
 #### Form Handling with Validation
 ```python
+from pydantic import BaseModel, EmailStr, Field, ValidationError
+
 class FormData(BaseModel):
     """Pydantic model for form validation."""
     name: str

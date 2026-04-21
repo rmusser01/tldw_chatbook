@@ -496,7 +496,7 @@ Customizable splash screens with 50+ animation effects:
 - **Configuration**: Via `[splash_screen]` section in config.toml
 - **Performance**: Async rendering with configurable duration
 
-For detailed customization, see the [Splash Screen Guide](Docs/Development/SplashScreen s/SPLASH_SCREEN_GUIDE.md).
+For detailed customization, see the [Splash Screen Guide](Docs/Development/SplashScreens/SPLASH_SCREEN_GUIDE.md).
 
 ### Coding Assistant
 - **AI-powered code assistance**: In dedicated coding tab

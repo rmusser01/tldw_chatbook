@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./tldw_chatbook/.claude/audit_system.sh post",
+            "command": "PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$PROJECT_ROOT/Helper_Scripts/Agent-Tools/Audit-Agent/audit_agent.sh\"",
             "description": "Analyze file modifications after operation",
             "timeout": 5000,
             "continueOnError": true
@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./tldw_chatbook/.claude/audit_system.sh pre",
+            "command": "mkdir -p \"$HOME/.claude/audit_logs\" && echo '[Audit] File modification starting: {{file_path}}' >> \"$HOME/.claude/audit_logs/activity.log\"",
             "description": "Capture state before file modification",
             "timeout": 200,
             "continueOnError": true
@@ -37,7 +37,6 @@
       "Bash(python test:*)",
       "Bash(awk:*)",
       "Bash(source:*)",
-      "Bash(pytest:*)",
       "Bash(pytest:*)",
       "Bash(mkdir:*)",
       "Bash(python -m pytest Tests/RAG/test_rag_properties.py::TestChunkingServiceProperties::test_chunk_by_sentences_preserves_boundaries -xvs)",
@@ -58,7 +57,6 @@
       "Bash(PYTHONPATH=. pytest Tests/Widgets/test_chat_message_enhanced.py -v --tb=short -k \"test_button_action_events or test_toggle_image_mode\")",
       "Bash(PYTHONPATH=. pytest Tests/Widgets/test_chat_message_enhanced.py::TestChatMessageEnhancedInteractions::test_toggle_image_mode -v --tb=short)",
       "Bash(python -m pytest Tests/ChaChaNotesDB/ -v)",
-      "Bash(python -m pytest /Users/appledev/Working/tldw_chatbook_dev/Tests/ChaChaNotesDB/ -v)",
       "Bash(python -m pytest Tests/Chat/test_chat_sidebar_media_search.py::test_media_search_functionality -xvs)",
       "Bash(python -m pytest Tests/Chat/test_chat_sidebar_media_search.py::test_media_review_clearing_on_new_empty_search -xvs)",
       "Bash(python -m pytest Tests/Chat/test_chat_sidebar_media_search.py::test_media_search_functionality Tests/Chat/test_chat_sidebar_media_search.py::test_media_load_for_review Tests/Chat/test_chat_sidebar_media_search.py::test_media_review_clearing_on_new_empty_search -xvs)",

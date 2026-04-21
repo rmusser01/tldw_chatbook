@@ -32,7 +32,7 @@ This document outlines the comprehensive refactoring plan to align the tldw_chat
 
 ### 1.2 Impact Analysis
 
-```
+```text
 Current Performance Impact:
 - 6,000+ DOM queries per session
 - 300ms+ UI update delays on complex operations
@@ -55,7 +55,7 @@ Current Performance Impact:
 **Goal:** Restore full keyboard navigation visibility
 
 #### 1.1 Files to Modify
-```
+```text
 tldw_chatbook/css/core/_reset.tcss
 tldw_chatbook/css/tldw_cli_modular.tcss
 ```
@@ -101,11 +101,11 @@ tldw_chatbook/css/tldw_cli_modular.tcss
 - **Goal**: Decide on and implement a single navigation pattern.
 - **Current State**: Hybrid of `TabbedContent` and `Screen` switching. `app.py` has a flag `_use_screen_navigation`.
 - **Recommendation**: Move to **Pure Tab-based Navigation** for the main interface.
-    - **Why**: Textual's `TabbedContent` is more efficient for keeping state alive (e.g., chat history) without complex state restoration logic needed for Screens.
-    - **Action**:
-        1.  Remove `_use_screen_navigation` flag (or set to False permanently).
-        2.  Refactor `app.py` to use a main `TabbedContent` widget.
-        3.  Convert `ChatWindow`, `CCPWindow`, etc., to be yielded within `TabPane`s.
+  - **Why**: Textual's `TabbedContent` is more efficient for keeping state alive (e.g., chat history) without complex state restoration logic needed for Screens.
+  - **Action**:
+    1.  Remove `_use_screen_navigation` flag (or set to False permanently).
+    2.  Refactor `app.py` to use a main `TabbedContent` widget.
+    3.  Convert `ChatWindow`, `CCPWindow`, etc., to be yielded within `TabPane`s.
 - **Success Metric**: Navigation is consistent; no "reloading" flicker when switching main views. user experience significantly
 
 #### 2.2 Implementation Plan (Tab-Based)
@@ -130,7 +130,7 @@ tldw_chatbook/css/tldw_cli_modular.tcss
 
 #### 3.2 Refactoring Templates
 
-**Template 1: List Management**
+#### Template 1: List Management
 ```python
 # ❌ BEFORE (Anti-pattern)
 class ConversationList(Container):
@@ -154,7 +154,7 @@ class ConversationList(Container):
         self.conversations = conversations  # Triggers recompose
 ```
 
-**Template 2: Dynamic Content**
+#### Template 2: Dynamic Content
 ```python
 # ❌ BEFORE (Anti-pattern)
 class ChatLog(Container):
@@ -181,7 +181,7 @@ class ChatLog(Container):
         self.query_one("#chat-scroll").scroll_end()
 ```
 
-**Template 3: Conditional Rendering**
+#### Template 3: Conditional Rendering
 ```python
 # ❌ BEFORE (Anti-pattern)
 class SettingsPanel(Container):
@@ -300,7 +300,7 @@ class ChatWindow(Container):
 
 #### 5.1 File Organization
 
-```
+```text
 css/
 ├── components/
 │   ├── chat/

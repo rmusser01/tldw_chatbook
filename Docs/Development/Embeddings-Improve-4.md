@@ -1,327 +1,324 @@
-UI Building Flow - Step by Step
+# Embeddings UI Rebuild Guide
 
-  1. Entry Point
+## Current UI Flow
 
-  - User clicks "Ingest Content" tab in main app
-  - app.py line 1575 loads: ("ingest", IngestWindow, "ingest-window")
+### 1. Entry Point
 
-  2. IngestWindow Layout
+- The user clicks the "Ingest Content" tab in the main app.
+- `app.py` line 1575 loads `("ingest", IngestWindow, "ingest-window")`.
 
-  - Ingest_Window.py line 348: compose() creates left sidebar with navigation buttons
-  - Line 362: Creates "Video (Local)" button with ID ingest-nav-local-video
+### 2. `IngestWindow` Layout
 
-  3. Video Button Click
+- `Ingest_Window.py` line 348: `compose()` creates the left sidebar with navigation buttons.
+- Line 362: Creates the "Video (Local)" button with ID `ingest-nav-local-video`.
 
-  - When user clicks "Video (Local)" button
-  - Event handler calls compose_local_video_tab() (line 792-798)
-  - This calls: window = create_ingest_ui(self.app_instance, media_type="video")
+### 3. Video Button Click
 
-  4. Factory Creates UI
+- When the user clicks "Video (Local)", the event handler calls `compose_local_video_tab()` around lines 792-798.
+- That handler calls `create_ingest_ui(self.app_instance, media_type="video")`.
 
-  - IngestUIFactory.py line 42-43:
-  if media_type == "video":
-      return VideoIngestWindowRedesigned(app_instance)
+### 4. Factory Creates the UI
 
-  5. VideoIngestWindowRedesigned
+`IngestUIFactory.py` lines 42-43:
 
-  - This is in Ingest_Local_Video_Window.py (the file we've been working on)
-  - Inherits from BaseMediaIngestWindow
-  - Has all the advanced features we added
+```python
+if media_type == "video":
+    return VideoIngestWindowRedesigned(app_instance)
+```
 
-  6. BaseMediaIngestWindow Structure
+### 5. `VideoIngestWindowRedesigned`
 
-  - base_media_ingest_window.py line 105-125: compose() method builds:
-  with VerticalScroll(classes="ingest-main-scroll"):
-      yield from self.create_status_dashboard()     # Status at top
-      yield from self.create_mode_toggle()          # Simple/Advanced toggle
-      with Container(classes="essential-section"):  # Basic fields
-          yield from self.create_file_selector()
-          yield from self.create_basic_metadata()
-      with Container(classes="media-options-section"):  # Video-specific options
-          yield from self.create_media_specific_options()
-      yield from self.create_process_button()       # Submit button at bottom
+- Lives in `Ingest_Local_Video_Window.py`.
+- Inherits from `BaseMediaIngestWindow`.
+- Owns the advanced video-ingestion features currently wired into the ingest flow.
 
-  7. Video-Specific Options
+### 6. `BaseMediaIngestWindow` Structure
 
-  - Ingest_Local_Video_Window.py line 94-147: create_media_specific_options() creates:
-    - Video Processing Options (extract audio, download video, time range)
-    - Transcription Options (provider, model, language, diarization, VAD, timestamps)
-    - Analysis Options (enable analysis, prompts, user/system prompts)
-    - Chunking Options (method, size, overlap)
+`base_media_ingest_window.py` lines 105-125 build the main layout:
 
-  The Problem
+```python
+with VerticalScroll(classes="ingest-main-scroll"):
+    yield from self.create_status_dashboard()
+    yield from self.create_mode_toggle()
+    with Container(classes="essential-section"):
+        yield from self.create_file_selector()
+        yield from self.create_basic_metadata()
+    with Container(classes="media-options-section"):
+        yield from self.create_media_specific_options()
+    yield from self.create_process_button()
+```
 
-  The issue is that when you click "Video (Local)" in the sidebar, you're seeing broken UI because:
+### 7. Video-Specific Options
 
-  1. CSS isn't loading properly - The status dashboard and mode toggle are rendering as empty boxes
-  2. Mode toggle might not be working - Advanced sections may be hidden when they should be visible
-  3. Container sizing issues - Empty boxes taking up too much space
+`Ingest_Local_Video_Window.py` lines 94-147 create:
 
-  Manual Fix Steps
+- Video processing options such as extract audio, download video, and time range.
+- Transcription options such as provider, model, language, diarization, VAD, and timestamps.
+- Analysis options such as enable analysis, prompts, and user/system prompts.
+- Chunking options such as method, size, and overlap.
 
-  Here's what you need to manually check/fix:
+## Problem Summary
 
-  Step 1: Verify the Factory is Working
+The broken "Video (Local)" UI is most likely caused by one or more of these issues:
 
-  # Check if VideoIngestWindowRedesigned is actually being imported/created
-  grep -n "VideoIngestWindowRedesigned" tldw_chatbook/Widgets/Media_Ingest/IngestUIFactory.py
+1. CSS is not loading correctly, so the status dashboard and mode toggle render as empty boxes.
+2. The mode toggle is not driving visibility correctly, so advanced sections stay hidden when they should be shown.
+3. Containers mount but size incorrectly, leaving large empty regions in the layout.
 
-  Step 2: Check CSS is Loading
+## Manual Validation Steps
 
-  # Rebuild CSS to ensure changes are applied
-  ./build_css.sh
+### Step 1: Verify the Factory Wiring
 
-  Step 3: Test the UI Creation
+```bash
+grep -n "VideoIngestWindowRedesigned" tldw_chatbook/Widgets/Media_Ingest/IngestUIFactory.py
+```
 
-  Create a simple test script:
-  # test_video_ui.py
-  from tldw_chatbook.Widgets.Media_Ingest.IngestUIFactory import IngestUIFactory
+### Step 2: Rebuild CSS
 
-  class MockApp:
-      def __init__(self):
-          self.app_config = {"api_settings": {}}
+```bash
+./build_css.sh
+```
 
-  app = MockApp()
-  widget = IngestUIFactory.create_ui(app, "video")
-  print(f"Created widget: {widget}")
-  print(f"Widget class: {widget.__class__.__name__}")
+### Step 3: Smoke-Test UI Creation
 
-  Step 4: Check Container Visibility
+```python
+from tldw_chatbook.Widgets.Media_Ingest.IngestUIFactory import IngestUIFactory
 
-  The issue might be the status dashboard and mode toggle sections are:
-  1. Rendering but invisible (CSS display: none)
-  2. Taking up space but empty (height issues)
-  3. Not mounting properly (widget composition errors)
 
-  Would you like me to help you debug any specific part of this flow, or do you want to start by running one of these diagnostic steps?
+class MockApp:
+    def __init__(self):
+        self.app_config = {"api_settings": {}}
 
-> No, I'm going to rebuild the UI and need to understand how to do so
 
-⏺ Got it! Let me walk you through how to build a new ingestion UI from scratch and where to put the files.
+app = MockApp()
+widget = IngestUIFactory.create_ui(app, "video")
+print(f"Created widget: {widget}")
+print(f"Widget class: {widget.__class__.__name__}")
+```
 
-  UI Architecture Overview
-
-  File Structure
-
-  tldw_chatbook/
-  ├── UI/
-  │   └── Ingest_Window.py           # Main ingest window with sidebar nav
-  ├── Widgets/Media_Ingest/
-  │   ├── IngestUIFactory.py         # Factory that chooses which UI to use
-  │   ├── base_media_ingest_window.py # Base class with common functionality
-  │   ├── Ingest_Local_Video_Window.py # VideoIngestWindowRedesigned class
-  │   └── [other media types...]
-  └── css/
-      ├── components/_forms.tcss      # Form styling
-      ├── features/_ingest.tcss       # Ingest-specific styling
-      └── tldw_cli_modular.tcss      # Built CSS file
-
-  Step 1: Create Your New Video Ingestion UI
-
-  Option A: Replace Existing File
-
-  Edit tldw_chatbook/Widgets/Media_Ingest/Ingest_Local_Video_Window.py
-
-  Option B: Create New File
-
-  Create tldw_chatbook/Widgets/Media_Ingest/MyVideoIngestWindow.py
-
-  Step 2: Basic UI Class Structure
-
-  # MyVideoIngestWindow.py
-  from typing import TYPE_CHECKING
-  from textual.app import ComposeResult
-  from textual.containers import Container, VerticalScroll, Horizontal
-  from textual.widgets import Static, Button, Input, Label, Select, Checkbox, TextArea
-  from textual import on
-
-  if TYPE_CHECKING:
-      from tldw_chatbook.app import TldwCli
-
-  class MyVideoIngestWindow(Container):
-      """Your custom video ingestion window."""
-
-      def __init__(self, app_instance: 'TldwCli', **kwargs):
-          super().__init__(**kwargs)
-          self.app_instance = app_instance
-
-      def compose(self) -> ComposeResult:
-          """Build your UI here."""
-          with VerticalScroll(classes="my-video-ingest-scroll"):
-              # Your UI elements go here
-              yield Static("Video Ingestion", classes="title")
-
-              # File selection
-              with Container(classes="file-section"):
-                  yield Label("Select Video Files:")
-                  yield Button("Browse Files", id="browse-files")
-                  yield Container(id="file-list")  # Will show selected files
-
-              # URL input
-              with Container(classes="url-section"):
-                  yield Label("Or Enter URLs:")
-                  yield TextArea(
-                      text="# Enter video URLs here...",
-                      id="url-input",
-                      classes="url-textarea"
-                  )
-
-              # Advanced options
-              with Container(classes="options-section"):
-                  yield Label("Transcription Options:")
-                  yield Checkbox("Enable Speaker Diarization", id="diarization")
-                  yield Checkbox("Enable VAD", id="vad")
-                  yield Checkbox("Include Timestamps", value=True, id="timestamps")
-
-                  yield Label("Analysis Options:")
-                  yield Checkbox("Enable Analysis", id="enable-analysis")
-                  yield TextArea(
-                      text="# User prompt for analysis...",
-                      id="user-prompt",
-                      classes="prompt-textarea"
-                  )
-                  yield TextArea(
-                      text="# System prompt for analysis...",
-                      id="system-prompt",
-                      classes="prompt-textarea"
-                  )
-
-              # Process button
-              yield Button("Process Video", id="process-video", variant="primary")
-
-      @on(Button.Pressed, "#browse-files")
-      async def handle_browse_files(self):
-          """Handle file selection."""
-          # Your file selection logic
-          pass
-
-      @on(Button.Pressed, "#process-video")
-      async def handle_process(self):
-          """Handle video processing."""
-          # Your processing logic
-          pass
-
-  Step 3: Register Your UI in the Factory
-
-  Edit tldw_chatbook/Widgets/Media_Ingest/IngestUIFactory.py:
-
-  # Add your import at the top
-  from .MyVideoIngestWindow import MyVideoIngestWindow
-
-  class IngestUIFactory:
-      @staticmethod
-      def create_ui(app_instance: 'TldwCli', media_type: str = "video") -> Container:
-          # Replace the video case
-          if media_type == "video":
-              return MyVideoIngestWindow(app_instance)  # <-- Use your class
-          elif media_type == "audio":
-              # ... other cases unchanged
-
-  Step 4: Add CSS Styling
-
-  Create your styles in tldw_chatbook/css/components/_forms.tcss:
-
-  /* Your custom video ingestion styles */
-  .my-video-ingest-scroll {
-      height: 100%;
-      width: 100%;
-      padding: 2;
-  }
-
-  .title {
-      text-style: bold;
-      color: $primary;
-      margin-bottom: 2;
-      text-align: center;
-  }
-
-  .file-section, .url-section, .options-section {
-      margin-bottom: 2;
-      padding: 1;
-      border: round $primary;
-      background: $surface;
-  }
-
-  .url-textarea, .prompt-textarea {
-      min-height: 5;
-      max-height: 10;
-      margin-bottom: 1;
-      border: solid $primary;
-      padding: 1;
-  }
-
-  .url-textarea:focus, .prompt-textarea:focus {
-      border: solid $accent;
-      background: $accent 10%;
-  }
-
-  /* Make checkboxes more visible */
-  Checkbox {
-      margin: 1 0;
-  }
-
-  /* Style the process button */
-  Button#process-video {
-      width: 100%;
-      height: 3;
-      margin-top: 2;
-      text-style: bold;
-  }
-
-  Build the CSS:
-
-  ./build_css.sh
-
-  Step 5: Test Your UI
-
-  Quick Test Script:
-
-  # test_my_ui.py
-  from textual.app import App
-  from tldw_chatbook.Widgets.Media_Ingest.IngestUIFactory import IngestUIFactory
-
-  class TestApp(App):
-      def __init__(self):
-          super().__init__()
-          self.app_config = {"api_settings": {}}
-
-      def compose(self):
-          yield IngestUIFactory.create_ui(self, "video")
-
-  if __name__ == "__main__":
-      app = TestApp()
-      app.run()
-
-  Run it:
-  python test_my_ui.py
-
-  Step 6: Alternative - Bypass the Factory Entirely
-
-  If you want to completely bypass the existing system:
-
-  Edit tldw_chatbook/UI/Ingest_Window.py
-
-  Find the compose_local_video_tab method around line 792:
-
-  def compose_local_video_tab(self) -> ComposeResult:
-      """Composes the Video tab content for local media ingestion."""
-      # REPLACE this line:
-      # window = create_ingest_ui(self.app_instance, media_type="video")
-
-      # WITH direct instantiation of your class:
-      from ..Widgets.Media_Ingest.MyVideoIngestWindow import MyVideoIngestWindow
-      window = MyVideoIngestWindow(self.app_instance)
-
-      self._local_video_window = window
-      yield window
-
-  Key Points:
-
-  1. All UI elements must be yielded in the compose() method
-  2. Event handlers use @on decorator with CSS selectors
-  3. CSS classes are applied with classes="my-class-name"
-  4. Factory pattern lets you swap UIs without changing core code
-  5. Always rebuild CSS after making style changes
-  6. Test incrementally - start simple and add features
-
-  This gives you complete control to build exactly what you want. Start with the basic structure above and add features one by one. Want me to explain any specific part in more detail?
+### Step 4: Check Visibility and Layout
+
+Inspect the status dashboard and mode-toggle sections for these failure modes:
+
+1. They render but remain invisible because of CSS visibility or display rules.
+2. They occupy space but appear empty because the container height is wrong.
+3. They fail to mount because composition or child-widget creation throws an error.
+
+## Rebuilding the UI
+
+### File Structure
+
+```text
+tldw_chatbook/
+├── UI/
+│   └── Ingest_Window.py             # Main ingest window with sidebar navigation
+├── Widgets/Media_Ingest/
+│   ├── IngestUIFactory.py           # Factory that chooses which ingest UI to use
+│   ├── base_media_ingest_window.py  # Base class with shared functionality
+│   ├── Ingest_Local_Video_Window.py # Existing video ingest implementation
+│   └── [other media types...]
+└── css/
+    ├── components/_forms.tcss       # Form styling
+    ├── features/_ingest.tcss        # Ingest-specific styling
+    └── tldw_cli_modular.tcss        # Built stylesheet
+```
+
+### Step 1: Decide Where the New Widget Lives
+
+- Option A: Replace the existing implementation in `tldw_chatbook/Widgets/Media_Ingest/Ingest_Local_Video_Window.py`.
+- Option B: Create a new widget such as `tldw_chatbook/Widgets/Media_Ingest/MyVideoIngestWindow.py`.
+
+### Step 2: Build the New Widget Class
+
+```python
+from typing import TYPE_CHECKING
+
+from textual import on
+from textual.app import ComposeResult
+from textual.containers import Container, VerticalScroll
+from textual.widgets import Button, Checkbox, Label, Static, TextArea
+
+if TYPE_CHECKING:
+    from tldw_chatbook.app import TldwCli
+
+
+class MyVideoIngestWindow(Container):
+    """Custom video-ingestion window."""
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
+        super().__init__(**kwargs)
+        self.app_instance = app_instance
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(classes="my-video-ingest-scroll"):
+            yield Static("Video Ingestion", classes="title")
+
+            with Container(classes="file-section"):
+                yield Label("Select Video Files:")
+                yield Button("Browse Files", id="browse-files")
+                yield Container(id="file-list")
+
+            with Container(classes="url-section"):
+                yield Label("Or Enter URLs:")
+                yield TextArea(
+                    text="# Enter video URLs here...",
+                    id="url-input",
+                    classes="url-textarea",
+                )
+
+            with Container(classes="options-section"):
+                yield Label("Transcription Options:")
+                yield Checkbox("Enable Speaker Diarization", id="diarization")
+                yield Checkbox("Enable VAD", id="vad")
+                yield Checkbox("Include Timestamps", value=True, id="timestamps")
+
+                yield Label("Analysis Options:")
+                yield Checkbox("Enable Analysis", id="enable-analysis")
+                yield TextArea(
+                    text="# User prompt for analysis...",
+                    id="user-prompt",
+                    classes="prompt-textarea",
+                )
+                yield TextArea(
+                    text="# System prompt for analysis...",
+                    id="system-prompt",
+                    classes="prompt-textarea",
+                )
+
+            yield Button("Process Video", id="process-video", variant="primary")
+
+    @on(Button.Pressed, "#browse-files")
+    async def handle_browse_files(self) -> None:
+        """Handle file selection."""
+        pass
+
+    @on(Button.Pressed, "#process-video")
+    async def handle_process(self) -> None:
+        """Handle video processing."""
+        pass
+```
+
+### Step 3: Register the Widget in the Factory
+
+```python
+from .MyVideoIngestWindow import MyVideoIngestWindow
+
+
+class IngestUIFactory:
+    @staticmethod
+    def create_ui(app_instance: "TldwCli", media_type: str = "video") -> Container:
+        if media_type == "video":
+            return MyVideoIngestWindow(app_instance)
+        elif media_type == "audio":
+            ...
+```
+
+### Step 4: Add Styling
+
+Create styles in `tldw_chatbook/css/components/_forms.tcss`:
+
+```css
+.my-video-ingest-scroll {
+    height: 100%;
+    width: 100%;
+    padding: 2;
+}
+
+.title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 2;
+    text-align: center;
+}
+
+.file-section,
+.url-section,
+.options-section {
+    margin-bottom: 2;
+    padding: 1;
+    border: round $primary;
+    background: $surface;
+}
+
+.url-textarea,
+.prompt-textarea {
+    min-height: 5;
+    max-height: 10;
+    margin-bottom: 1;
+    border: solid $primary;
+    padding: 1;
+}
+
+.url-textarea:focus,
+.prompt-textarea:focus {
+    border: solid $accent;
+    background: $accent 10%;
+}
+
+Checkbox {
+    margin: 1 0;
+}
+
+Button#process-video {
+    width: 100%;
+    height: 3;
+    margin-top: 2;
+    text-style: bold;
+}
+```
+
+Rebuild the stylesheet after editing:
+
+```bash
+./build_css.sh
+```
+
+### Step 5: Test the Widget in Isolation
+
+```python
+from textual.app import App
+
+from tldw_chatbook.Widgets.Media_Ingest.IngestUIFactory import IngestUIFactory
+
+
+class TestApp(App):
+    def __init__(self):
+        super().__init__()
+        self.app_config = {"api_settings": {}}
+
+    def compose(self):
+        yield IngestUIFactory.create_ui(self, "video")
+
+
+if __name__ == "__main__":
+    app = TestApp()
+    app.run()
+```
+
+Run it with:
+
+```bash
+python test_my_ui.py
+```
+
+### Step 6: Bypass the Factory Entirely
+
+If you want to wire the widget directly instead of going through the factory, update `tldw_chatbook/UI/Ingest_Window.py`:
+
+```python
+def compose_local_video_tab(self) -> ComposeResult:
+    """Compose the local video tab."""
+    from ..Widgets.Media_Ingest.MyVideoIngestWindow import MyVideoIngestWindow
+
+    window = MyVideoIngestWindow(self.app_instance)
+    self._local_video_window = window
+    yield window
+```
+
+## Key Points
+
+1. Build every UI element in `compose()` so layout and state stay predictable.
+2. Use `@on(...)` handlers plus CSS selectors for event wiring.
+3. Apply reusable styling with `classes="..."` and rebuild CSS after style changes.
+4. Keep the factory path when you want swap-in flexibility without changing the rest of the ingest flow.
+5. Start with a minimal widget, verify layout, and then add advanced sections incrementally.
