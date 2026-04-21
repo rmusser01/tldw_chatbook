@@ -20,6 +20,7 @@ from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_models import ChatSessionData
 from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...state.ui_state import UIState
+from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 
 # Import the existing chat window to reuse its functionality
 from ..Chat_Window_Enhanced import ChatWindowEnhanced
@@ -329,6 +330,32 @@ class ChatScreen(BaseAppScreen):
             logger.debug(f"Synced shell bar from active tab {active_tab.tab_id}")
         except Exception as e:
             logger.error(f"Failed to sync shell bar from state: {e}", exc_info=True)
+
+    def sync_shell_bar_from_session_data(self, session_data: Optional[ChatSessionData]) -> None:
+        """Push the live active session contract into the mounted shell bar."""
+        shell_bar = self._get_shell_bar()
+        if not shell_bar:
+            logger.debug("No shell bar available for live session sync")
+            return
+
+        try:
+            shell_bar.sync_from_session_data(session_data)
+            if session_data is None:
+                logger.debug("Synced shell bar from cleared live session")
+            else:
+                logger.debug(
+                    "Synced shell bar from live session {}",
+                    getattr(session_data, "tab_id", None),
+                )
+        except Exception as e:
+            logger.error(f"Failed to sync shell bar from live session: {e}", exc_info=True)
+
+    def on_chat_tab_container_active_session_changed(
+        self,
+        message: ChatTabContainer.ActiveSessionChanged,
+    ) -> None:
+        """Update the shell bar when the live active tab changes."""
+        self.sync_shell_bar_from_session_data(message.session_data)
     
     def _save_tab_sessions(self, tab_container) -> None:
         """Save all tab session states."""

@@ -8,6 +8,7 @@ from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, MessageData, TabState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import ChatShellBar
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 
 
 class TestChatSessionDataSerialization:
@@ -296,3 +297,31 @@ class TestChatScreenShellBarSync:
         assert shell_bar.context.scope_label == "Workspace: workspace-42"
         assert shell_bar.context.assistant_label == "Character: Navigator"
         assert shell_bar.context.session_label == "Session: Restored Session"
+
+    def test_active_session_changed_message_syncs_live_session_metadata(self):
+        mock_app = Mock()
+        screen = ChatScreen(mock_app)
+
+        shell_bar = ChatShellBar(session_data=ChatSessionData(tab_id="placeholder"))
+        chat_window = Mock()
+        chat_window.get_shell_bar = Mock(return_value=shell_bar)
+        screen.chat_window = chat_window
+
+        message = ChatTabContainer.ActiveSessionChanged(
+            ChatSessionData(
+                tab_id="live-tab",
+                title="Live Persona Session",
+                runtime_backend="server",
+                assistant_kind="persona",
+                assistant_id="study.coach",
+                scope_type="workspace",
+                workspace_id="workspace-42",
+            )
+        )
+
+        screen.on_chat_tab_container_active_session_changed(message)
+
+        assert shell_bar.context.backend_label == "Server"
+        assert shell_bar.context.scope_label == "Workspace: workspace-42"
+        assert shell_bar.context.assistant_label == "Persona: study.coach"
+        assert shell_bar.context.session_label == "Session: Live Persona Session"
