@@ -89,7 +89,10 @@ run_project_checks() {
             if command -v npm >/dev/null 2>&1; then
                 # Try to run eslint if available
                 if npm list eslint >/dev/null 2>&1; then
-                    cd "$project_root"
+                    cd "$project_root" || {
+                        log_message "ERROR" "Failed to change directory to $project_root"
+                        return 1
+                    }
                     npm run lint -- "$file_path" 2>&1 | head -5 >> "$LOG_FILE"
                 fi
             fi
@@ -178,9 +181,14 @@ if [[ -p /dev/stdin ]]; then
     # Read JSON input
     input=$(cat)
     
-    # Extract relevant fields (basic parsing - could use jq if available)
-    tool_name=$(echo "$input" | grep -o '"tool"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
-    file_path=$(echo "$input" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+    # Extract relevant fields. Prefer jq when available and fall back to basic parsing.
+    if command -v jq >/dev/null 2>&1; then
+        tool_name=$(printf '%s' "$input" | jq -r '.tool // empty')
+        file_path=$(printf '%s' "$input" | jq -r '.file_path // empty')
+    else
+        tool_name=$(printf '%s' "$input" | grep -o '"tool"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+        file_path=$(printf '%s' "$input" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
+    fi
     
     # If we have the required information, run the audit
     if [[ -n "$tool_name" && -n "$file_path" ]]; then

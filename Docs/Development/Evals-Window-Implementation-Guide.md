@@ -25,7 +25,7 @@ This guide provides a comprehensive blueprint for implementing the Evals (Evalua
 
 The Evals system follows a modular architecture with clear separation of concerns:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                     Evals Window (UI)                       │
 │  ┌─────────────┬──────────────┬──────────────┬──────────┐ │

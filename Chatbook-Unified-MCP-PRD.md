@@ -54,6 +54,7 @@ This PRD unifies Chatbook’s MCP integration around Unified MCP while preservin
   - Claude Desktop (stdio) supported via bridge.
   - Other clients (WS/HTTP) can connect directly.
 - Local, single‑user mode acceptable by default; JWT/RBAC configurable for advanced users.
+- Module maturity: core modules required for Chatbook workflows should be treated as stable for integration, while experimental Unified MCP modules remain opt-in in the generated `mcp_modules.yaml`.
 
 
 ## Architecture
@@ -103,12 +104,13 @@ Deployment notes:
 - No wildcard CORS by default; WS allowed origins restricted to localhost.
 
 6) Observability
-- Surface `/api/v1/mcp/status` in UI. Optionally enable `/metrics` (admin only toggle).
+- Surface `/api/v1/mcp/status` in UI. Optionally enable `/metrics` (admin-only toggle).
 - Minimal log viewer to tail MCP server logs within Chatbook.
 
 7) Compatibility
 - Claude Desktop integration documented via the stdio bridge command.
 - Keep `tldw_chatbook/MCP/server.py` as fallback during beta; prefer Unified MCP for WS/HTTP.
+- Use the fallback when Unified MCP is disabled explicitly, fails to start within the configured timeout, or does not pass the initial health check.
 
 
 ## Non‑Functional Requirements
@@ -254,4 +256,3 @@ python -m tldw_chatbook.MCP --stdio-bridge \
 - Unified MCP server: `../tldw_server2/tldw_server_API/app/core/MCP_Unified/server.py`
 - Unified MCP endpoints: `../tldw_server2/tldw_server_API/app/api/v1/endpoints/mcp_unified_endpoint.py`
 - Unified MCP README: `../tldw_server2/tldw_server_API/app/core/MCP_Unified/README.md`
-

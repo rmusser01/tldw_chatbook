@@ -36,6 +36,15 @@ Welcome to the `tldw_chatbook` project! This guide is designed to help you get u
     pip install -e .
     ```
 
+5.  **Configure provider credentials**:
+    ```bash
+    mkdir -p ~/.config/tldw_cli
+    ```
+    Add the API keys and provider settings you plan to use under `[API]` in `~/.config/tldw_cli/config.toml`, or export them as environment variables before launching the app. Environment variables override config file values.
+
+6.  **Initialize local state on first run**:
+    The application creates its SQLite databases and local storage directories automatically the first time it starts, so no separate database bootstrap step is required.
+
 ## 🏃‍♂️ Running the Application
 
 To start the application, simply run:
@@ -80,4 +89,9 @@ For a more detailed deep dive, please refer to the [Developer Guide](Developer_G
 
 ## 🆘 Getting Help
 
-If you get stuck, check the `Docs/` directory or reach out to the team.
+If you get stuck:
+
+- Check the main [README](../../README.md) for run commands and feature overview.
+- Read the [Developer Guide](Developer_Guide.md) and the rest of the `Docs/` directory for architecture details.
+- Search or open issues in the [GitHub issue tracker](https://github.com/rmusser01/tldw_chatbook/issues).
+- Use the [Textual documentation](https://textual.textualize.io/) for framework-specific questions.

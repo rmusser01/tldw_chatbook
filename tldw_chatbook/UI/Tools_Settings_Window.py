@@ -16,6 +16,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
 from textual.css.query import QueryError
 from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher, Collapsible, ListView, ListItem
+from textual.message import Message
 from textual.screen import Screen
 from textual.worker import Worker
 from textual.widgets import Markdown
@@ -48,6 +49,14 @@ class ToolsSettingsWindow(Container):
     """
     Container for the Tools & Settings Tab's UI.
     """
+
+    class IngestUiStyleChanged(Message):
+        """Request that the app refresh the active ingest view after a style change."""
+
+        def __init__(self, new_style: str) -> None:
+            super().__init__()
+            self.new_style = new_style
+
     DEFAULT_CSS = """
     ToolsSettingsWindow {
         layout: horizontal;
@@ -2996,17 +3005,12 @@ Thank you for using tldw-chatbook! 🎉
             old_ui_style = self.config_data.get("media_ingestion", {}).get("ui_style", "simplified")
             if save_setting_to_cli_config("media_ingestion", "ui_style", ingest_ui_style):
                 saved_count += 1
-                # If the UI style changed, refresh the IngestWindow if it exists
+                # Notify the app so it can refresh the active ingest view without a direct dependency.
                 if ingest_ui_style != old_ui_style:
-                    try:
-                        from ..UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as IngestWindow
-                        ingest_window = self.app_instance.query_one("#ingest-window", IngestWindow)
-                        await ingest_window.refresh_ui_style()
-                        logger.info(f"Refreshed IngestWindow UI style from {old_ui_style} to {ingest_ui_style}")
-                    except QueryError:
-                        # Window doesn't exist yet, will use new style when created
-                        logger.debug("IngestWindow not found, will use new style when created")
-                        pass
+                    await self.post_message(self.IngestUiStyleChanged(str(ingest_ui_style)))
+                    logger.info(
+                        f"Requested ingest UI style refresh from {old_ui_style} to {ingest_ui_style}"
+                    )
             
             # Log Level
             if save_setting_to_cli_config("general", "log_level", self.query_one("#general-log-level", Select).value):

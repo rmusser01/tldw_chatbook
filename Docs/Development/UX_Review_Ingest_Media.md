@@ -18,7 +18,7 @@ This review analyzes the user experience (UX) and user interface (UI) design of 
 ### Issues & Observations
 1.  **Metadata Ambiguity (Local)**: The "Metadata (Optional)" section (Title, Author) sits below the file selection. If a user selects multiple files, it's unclear if this metadata applies to *all* selected files (batch tagging) or if it's intended for single-file ingestion.
     -   *Risk*: User accidentally renames 10 files to the same title.
-2.  **Vertical Space Efficiency**: The `DirectoryTree` in "Local Files" has a fixed height constraint in CSS (`height: 100%` of its container, but container has `height: 15`). On larger screens, this feels cramped while leaving empty space elsewhere.
+2.  **Vertical Space Efficiency**: The `DirectoryTree` in "Local Files" has a fixed height constraint in CSS (`height: 100%` of its container, but container has `height: 15`). On larger screens, this feels cramped while leaving space elsewhere.
 3.  **Feedback Visibility**: The `IngestionResultsPanel` is at the bottom. If the user is focused on the top (selecting files), they might miss error messages appearing below the fold if the window is small.
 4.  **Dynamic Options (Remote)**: While the dynamic options are good, the "Process" button location might jump around as options appear/disappear, potentially causing mis-clicks.
 
@@ -27,6 +27,12 @@ This review analyzes the user experience (UX) and user interface (UI) design of 
 -   **[Medium] Flexible Sizing**: Allow the `DirectoryTree` container to grow with vertical space (`flex: 1`) rather than having a hardcoded height, or use a split-pane that the user can resize.
 -   **[Medium] Progress Indication**: Replace or augment the `RichLog` with a `ProgressBar` widget during active processing, especially for batch operations.
 -   **[Low] Unified "Process" Button**: Consider placing the primary action button in a consistent "Footer" area or a fixed location so it doesn't move.
+
+#### Definition of Done
+- The metadata section makes it explicit when values apply to every selected local file.
+- The directory tree expands with available height instead of being capped by a fixed 15-row container.
+- Active ingestion shows visible progress states for idle, running, success, and failure without requiring the user to scroll to discover them.
+- The primary ingest action remains in a stable visual location while remote options expand or collapse.
 
 ---
 
@@ -54,17 +60,22 @@ This review analyzes the user experience (UX) and user interface (UI) design of 
 -   **[Medium] Global vs. Local Search**: Explicitly label the search bar (e.g., "Search Videos..." vs "Search All Media") based on the active tab to clarify scope.
 -   **[Low] Empty State Illustrations**: Use ASCII art or centered text in the Viewer pane when no item is selected to guide the user.
 
+#### Definition of Done
+- At widths below 100 columns, the layout switches to a mode that preserves readable detail content without squeezing the viewer pane.
+- The search field label reflects whether search is scoped to the active media type or all media.
+- The viewer renders a clear placeholder when nothing is selected instead of a blank pane.
+
 ---
 
 ## 3. General Accessibility & Consistency
 
 ### Focus & Navigation
 -   **Tab Order**: Ensure the "Tab" key flows logically:
-    -   *Ingest*: Tree -> Metadata inputs -> Process Button.
-    -   *Media*: Nav Pane -> Search -> List -> Viewer.
+  -   *Ingest*: Tree -> Metadata inputs -> Process Button.
+  -   *Media*: Nav Pane -> Search -> List -> Viewer.
 -   **Keyboard Shortcuts**: Power users need shortcuts.
-    -   `Ctrl+Enter` to trigger "Process" in forms.
-    -   `j`/`k` or `Up`/`Down` to navigate lists without focusing them explicitly.
+  -   `Ctrl+Enter` to trigger "Process" in forms.
+  -   `j`/`k` or `Up`/`Down` to navigate lists without focusing them explicitly.
 
 ### Visual Hierarchy
 -   **Headings**: Use bold/colored labels consistently for section headers (e.g., "Metadata", "Options").
