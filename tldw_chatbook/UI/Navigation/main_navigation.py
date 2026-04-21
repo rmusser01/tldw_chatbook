@@ -73,26 +73,37 @@ class MainNavigationBar(Container):
     }
     """
     
+    NAV_GROUPS = [
+        ("Work", [("chat", "Chat"), ("chatbooks", "Chatbooks")]),
+        (
+            "Content",
+            [
+                ("notes", "Notes"),
+                ("media", "Media"),
+                ("ingest", "Ingest"),
+                ("search", "Search"),
+                ("subscriptions", "Subscriptions"),
+            ],
+        ),
+        ("Library", [("ccp", "Library"), ("study", "Study")]),
+        ("AI", [("llm", "LLM"), ("stts", "S/TT/S"), ("evals", "Evals")]),
+        (
+            "System",
+            [
+                ("tools_settings", "Settings"),
+                ("customize", "Customize"),
+                ("logs", "Logs"),
+                ("stats", "Stats"),
+                ("coding", "Coding"),
+            ],
+        ),
+    ]
+    
     def __init__(self, active: str = "chat", **kwargs):
         super().__init__(**kwargs)
         self.active_screen = active
         
-        # Define the navigation items
-        self.nav_items = [
-            ("chat", "Chat"),
-            ("ccp", "Conv/Char"),
-            ("notes", "Notes"),
-            ("media", "Media"),
-            ("search", "Search"),
-            ("ingest", "Ingest"),
-            ("tools_settings", "Settings"),
-            ("llm", "LLM"),
-            ("customize", "Customize"),
-            ("logs", "Logs"),
-            ("coding", "Coding"),
-            ("stats", "Stats"),
-            ("evals", "Evals"),
-        ]
+        self.nav_items = [item for _, group in self.NAV_GROUPS for item in group]
     
     def compose(self) -> ComposeResult:
         """Compose the navigation bar."""
