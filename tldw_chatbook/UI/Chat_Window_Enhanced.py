@@ -19,6 +19,7 @@ from textual.css.query import NoMatches
 from ..Widgets.enhanced_settings_sidebar import EnhancedSettingsSidebar
 # Right sidebar removed - functionality moved to settings_sidebar
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
+from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import ChatShellBar
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ..Widgets.voice_input_widget import VoiceInputWidget, VoiceInputMessage
 from ..config import get_cli_setting
@@ -83,6 +84,7 @@ class ChatWindowEnhanced(Container):
     _send_button: Optional[Button] = None
     _attachment_indicator: Optional[Static] = None
     _tab_container: Optional['ChatTabContainer'] = None
+    _shell_bar: Optional[ChatShellBar] = None
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the chat window with modular handlers.
@@ -202,6 +204,11 @@ class ChatWindowEnhanced(Container):
             self._attachment_indicator = self.query_one("#image-attachment-indicator", Static)
         except NoMatches:
             self._attachment_indicator = None
+
+        try:
+            self._shell_bar = self.query_one("#chat-shell-bar", ChatShellBar)
+        except NoMatches:
+            self._shell_bar = None
         
         if get_cli_setting("chat_defaults", "enable_tabs", False):
             try:
@@ -257,6 +264,17 @@ class ChatWindowEnhanced(Container):
             The attachment indicator widget or None if not found
         """
         return self._attachment_indicator
+
+    def get_shell_bar(self) -> Optional[ChatShellBar]:
+        """Get the mounted combined chat shell bar if it exists."""
+        if self._shell_bar is not None:
+            return self._shell_bar
+
+        try:
+            self._shell_bar = self.query_one("#chat-shell-bar", ChatShellBar)
+        except NoMatches:
+            self._shell_bar = None
+        return self._shell_bar
     
     def _get_tab_container(self) -> Optional['ChatTabContainer']:
         """Get the cached tab container if tabs are enabled.
@@ -330,22 +348,25 @@ class ChatWindowEnhanced(Container):
         logger.info(f"Sidebar toggle button pressed: {button_id}")
         
         if button_id == "toggle-chat-left-sidebar":
-            # Toggle our local state
-            self._sidebar_collapsed = not self._sidebar_collapsed
-            logger.info(f"Toggled sidebar state to: collapsed={self._sidebar_collapsed}")
-            
-            # Update the app state
-            self.app_instance.chat_sidebar_collapsed = self._sidebar_collapsed
-            
-            # Update the sidebar visibility immediately
-            # When collapsed=True, display should be False (hidden)
-            # When collapsed=False, display should be True (visible)
-            try:
-                sidebar = self.query_one("#chat-left-sidebar")
-                sidebar.display = not self._sidebar_collapsed  # If collapsed, hide; if not collapsed, show
-                logger.info(f"Left sidebar display set to {sidebar.display} (collapsed={self._sidebar_collapsed})")
-            except Exception as e:
-                logger.error(f"Failed to update left sidebar: {e}")
+            self._toggle_chat_left_sidebar()
+
+    def _toggle_chat_left_sidebar(self) -> None:
+        """Toggle the chat left sidebar and keep app state in sync."""
+        self._sidebar_collapsed = not self._sidebar_collapsed
+        logger.info(f"Toggled sidebar state to: collapsed={self._sidebar_collapsed}")
+
+        self.app_instance.chat_sidebar_collapsed = self._sidebar_collapsed
+
+        try:
+            sidebar = self.query_one("#chat-left-sidebar")
+            sidebar.display = not self._sidebar_collapsed
+            logger.info(f"Left sidebar display set to {sidebar.display} (collapsed={self._sidebar_collapsed})")
+        except Exception as e:
+            logger.error(f"Failed to update left sidebar: {e}")
+
+    def handle_shell_sidebar_toggle_requested(self) -> None:
+        """Host callback used by the combined shell bar to toggle the sidebar."""
+        self._toggle_chat_left_sidebar()
     
     # Legacy button handler for buttons not yet migrated to @on decorators
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -669,6 +690,13 @@ class ChatWindowEnhanced(Container):
 
         # Main Chat Content Area
         with Container(id="chat-main-content"):
+            self._shell_bar = ChatShellBar(
+                app_instance=self.app_instance,
+                id="chat-shell-bar",
+                on_sidebar_toggle_requested=self.handle_shell_sidebar_toggle_requested,
+            )
+            yield self._shell_bar
+
             # Check if tabs are enabled
             enable_tabs = get_cli_setting("chat_defaults", "enable_tabs", False)
             

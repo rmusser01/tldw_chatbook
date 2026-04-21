@@ -7,6 +7,7 @@ from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, MessageData, TabState
+from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import ChatShellBar
 
 
 class TestChatSessionDataSerialization:
@@ -262,3 +263,36 @@ class TestChatScreenRestore:
         assert restored_session.session_data.conversation_id == "conv-restore"
         assert restored_session.session_data.runtime_backend == "server"
         assert screen.chat_state.active_tab_id == "live-tab-1"
+
+
+class TestChatScreenShellBarSync:
+    def test_sync_shell_bar_from_state_pushes_active_tab_metadata(self):
+        mock_app = Mock()
+        screen = ChatScreen(mock_app)
+
+        shell_bar = ChatShellBar(session_data=ChatSessionData(tab_id="placeholder"))
+        chat_window = Mock()
+        chat_window.get_shell_bar = Mock(return_value=shell_bar)
+        screen.chat_window = chat_window
+        screen.chat_state = ChatScreenState(
+            tabs=[
+                TabState(
+                    tab_id="tab-shell",
+                    title="Restored Session",
+                    runtime_backend="server",
+                    assistant_kind="character",
+                    character_name="Navigator",
+                    scope_type="workspace",
+                    workspace_id="workspace-42",
+                )
+            ],
+            active_tab_id="tab-shell",
+            tab_order=["tab-shell"],
+        )
+
+        screen.sync_shell_bar_from_state()
+
+        assert shell_bar.context.backend_label == "Server"
+        assert shell_bar.context.scope_label == "Workspace: workspace-42"
+        assert shell_bar.context.assistant_label == "Character: Navigator"
+        assert shell_bar.context.session_label == "Session: Restored Session"

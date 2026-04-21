@@ -14,6 +14,8 @@ from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, TabState
+from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import ChatShellBar
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from tldw_chatbook.Widgets.enhanced_settings_sidebar import EnhancedSettingsSidebar
 
 
@@ -324,6 +326,70 @@ class TestChatWindowTabIntegration:
         
         # Verify contexts are separate
         assert mock_app.chat_attached_files["tab1"] != mock_app.chat_attached_files["tab2"]
+
+
+class _ShellBarMountTestApp(App):
+    def __init__(self, *, enable_tabs: bool) -> None:
+        super().__init__()
+        self.app_config = {
+            "chat_defaults": {
+                "enable_tabs": enable_tabs,
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "temperature": 0.3,
+            },
+            "chat.voice": {"show_mic_button": True},
+            "chat.images": {"show_attach_button": True},
+        }
+        self.chat_sidebar_collapsed = False
+        self.chat_right_sidebar_collapsed = False
+        self.current_chat_is_ephemeral = False
+
+    def compose(self):
+        yield ChatWindowEnhanced(self, id="chat-window")
+
+
+class TestChatWindowShellBarMounting:
+    @pytest.mark.asyncio
+    async def test_shell_bar_mounted_above_single_session_content(self):
+        app = _ShellBarMountTestApp(enable_tabs=False)
+
+        with patch("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", return_value=False), patch(
+            "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ), patch(
+            "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ):
+            async with app.run_test(size=(120, 40)):
+                chat_window = app.query_one(ChatWindowEnhanced)
+                main_content = chat_window.query_one("#chat-main-content", Container)
+                shell_bar = chat_window.get_shell_bar()
+
+                assert shell_bar is main_content.query_one("#chat-shell-bar", ChatShellBar)
+                assert main_content.children[0].id == "chat-shell-bar"
+                assert main_content.children[1].id == "chat-log"
+
+    @pytest.mark.asyncio
+    async def test_shell_bar_mounted_above_tabbed_content(self):
+        app = _ShellBarMountTestApp(enable_tabs=True)
+
+        with patch("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", return_value=True), patch(
+            "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ), patch(
+            "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ):
+            async with app.run_test(size=(120, 40)):
+                chat_window = app.query_one(ChatWindowEnhanced)
+                main_content = chat_window.query_one("#chat-main-content", Container)
+                tab_container = main_content.query_one(ChatTabContainer)
+                shell_bar = chat_window.get_shell_bar()
+
+                assert shell_bar is main_content.query_one("#chat-shell-bar", ChatShellBar)
+                assert main_content.children[0].id == "chat-shell-bar"
+                assert main_content.children[1] is tab_container
 
 
 class TestChatScreenConversationParity:

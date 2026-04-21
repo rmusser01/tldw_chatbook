@@ -276,6 +276,8 @@ class ChatScreen(BaseAppScreen):
             
             # Restore conversation messages
             await self._restore_messages()
+
+            self.sync_shell_bar_from_state()
             
             logger.info("Chat state restoration complete")
             
@@ -290,6 +292,43 @@ class ChatScreen(BaseAppScreen):
             return self.chat_window.query_one("ChatTabContainer")
         except:
             return None
+
+    def _get_shell_bar(self):
+        """Get the mounted combined chat shell bar."""
+        if not self.chat_window:
+            return None
+
+        if hasattr(self.chat_window, "get_shell_bar"):
+            try:
+                return self.chat_window.get_shell_bar()
+            except Exception:
+                logger.debug("Chat window shell bar seam was unavailable")
+
+        try:
+            return self.chat_window.query_one("#chat-shell-bar")
+        except Exception:
+            return None
+
+    def sync_shell_bar_from_state(self) -> None:
+        """Push the restored active tab state into the mounted shell bar."""
+        shell_bar = self._get_shell_bar()
+        if not shell_bar:
+            logger.debug("No shell bar available for state sync")
+            return
+
+        active_tab = self.chat_state.get_active_tab()
+        if active_tab is None and self.chat_state.tabs:
+            active_tab = self.chat_state.tabs[0]
+
+        if active_tab is None:
+            logger.debug("No active tab available for shell bar sync")
+            return
+
+        try:
+            shell_bar.sync_from_tab_state(active_tab)
+            logger.debug(f"Synced shell bar from active tab {active_tab.tab_id}")
+        except Exception as e:
+            logger.error(f"Failed to sync shell bar from state: {e}", exc_info=True)
     
     def _save_tab_sessions(self, tab_container) -> None:
         """Save all tab session states."""
