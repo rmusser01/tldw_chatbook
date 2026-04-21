@@ -241,6 +241,48 @@ async def test_scope_change_path_attaches_and_invokes_controller_seams():
     window._schedule_quizzes_refresh.assert_called_once_with()
 
 
+@pytest.mark.asyncio
+async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state():
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        pending_study_scope_context=StudyScopeContext(
+            scope_type=StudyScopeType.WORKSPACE,
+            workspace_id="workspace-9",
+            workspace_name="Biology",
+        ),
+        current_runtime_backend="server",
+        runtime_backend="server",
+        notify=Mock(),
+    )
+    screen = StudyScreen(app_instance=app_instance)
+    call_order: list[str] = []
+    window = SimpleNamespace(
+        load_saved_sessions=AsyncMock(),
+        initialize=AsyncMock(),
+        flashcards_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("flashcards_scope_changed")),
+        quizzes_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")),
+        _schedule_flashcards_refresh=lambda: call_order.append("schedule_flashcards"),
+        _schedule_quizzes_refresh=lambda: call_order.append("schedule_quizzes"),
+    )
+    screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
+
+    await screen.on_mount()
+    call_order.clear()
+
+    await screen.handle_runtime_backend_changed("local")
+
+    assert app_instance.current_runtime_backend == "local"
+    assert screen.current_scope.scope_type == StudyScopeType.WORKSPACE
+    assert screen.current_scope.backend == "local"
+    assert screen.current_scope.workspace_scope_available is False
+    assert screen.current_scope.error_message is not None
+    assert "server" in screen.current_scope.error_message.lower()
+    assert "flashcards_scope_changed" in call_order
+    assert "quizzes_scope_changed" in call_order
+    assert "schedule_flashcards" in call_order
+    assert "schedule_quizzes" in call_order
+
+
 def test_return_to_workspace_routes_to_notes_details():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(

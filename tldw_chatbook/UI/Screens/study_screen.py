@@ -188,6 +188,13 @@ class StudyScreen(BaseAppScreen):
             if hasattr(study_window, 'restore_session'):
                 await study_window.restore_session(self.current_study_session)
 
+    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+        normalized_backend = str(runtime_backend or "").strip().lower()
+        if normalized_backend in {"local", "server"}:
+            self.app_instance.current_runtime_backend = normalized_backend
+        study_window = self.query_one(StudyWindow)
+        await self._apply_scope_context(self._current_scope_context(), study_window=study_window)
+
     def save_state(self) -> dict[str, Any]:
         state = super().save_state()
         state.update(
