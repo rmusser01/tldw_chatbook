@@ -1,275 +1,87 @@
 # Navigation Architecture Analysis
-## tldw_chatbook Application - Migration to Screen-Based Navigation
+## tldw_chatbook Screen Shell, April 21, 2026
 
-**Date:** August 15, 2025  
-**Status:** In Migration from Tab-based to Screen-based
+## Current Direction
 
----
+tldw_chatbook now defaults to screen-based navigation. The main architectural question is no longer whether the app should use screens or tabs; it is how to make the screen shell read as one coherent product instead of a stack of disconnected legacy modules.
 
-## Current State: Migrating to Screen-Based Navigation
+The approved direction is chat-first:
 
-The application is **actively being migrated from tab-based to screen-based navigation**. The screen-based system is partially implemented and needs completion.
+- `Chat` is the default landing destination.
+- Secondary destinations exist to browse, author, study, ingest, or configure supporting artifacts.
+- Agentic programming/control belongs in Chat, with approvals, progress, failures, and resume state rendered inline.
 
-### Why Screen-Based Navigation?
+## Current Shell Contract
 
-**Textual Best Practice:** Screen-based navigation is the recommended pattern for Textual applications because:
-1. **Memory efficiency** - Only active screens consume memory
-2. **Better isolation** - Each screen manages its own state
-3. **Cleaner architecture** - Follows Textual's design patterns
-4. **Performance** - Faster switching, lazy loading built-in
-5. **Stack management** - Push/pop navigation with history
+The shared contract is now in place:
 
----
+- `BaseAppScreen` provides the common wrapper, destination shell, and state save/restore seam.
+- `NavigateToScreen` is the routing message used by the main navigation system.
+- `MainNavigationBar` preserves stable route IDs while presenting updated user-facing labels and cluster order.
+- The user-facing `ccp` label is now `Library`.
+- The legacy `coding` route remains reachable for compatibility but is visually demoted out of the primary work cluster.
 
-## Migration Status
+This is enough infrastructure to support the new IA without introducing another navigation system.
 
-### ✅ Completed Infrastructure
+## Information Architecture Rules
 
-1. **Screen Classes Created (13/17):**
-   - ✅ ChatScreen
-   - ✅ MediaIngestScreen  
-   - ✅ CodingScreen
-   - ✅ ConversationScreen
-   - ✅ MediaScreen
-   - ✅ NotesScreen
-   - ✅ SearchScreen
-   - ✅ EvalsScreen
-   - ✅ ToolsSettingsScreen
-   - ✅ LLMScreen
-   - ✅ CustomizeScreen
-   - ✅ LogsScreen
-   - ✅ StatsScreen
+The shell should follow a few strict rules:
 
-2. **Navigation System:**
-   - ✅ NavigateToScreen message defined
-   - ✅ handle_screen_navigation handler (line 1784)
-   - ✅ Config flag `use_screen_navigation`
-   - ✅ Initial screen push logic
+- Only one top-level navigation system should be visible at a time.
+- Destination shells may include local section switchers, but those switchers should not masquerade as global navigation.
+- Cross-shell handoffs must preserve user intent: assistant identity, persona choice, runtime backend, workspace scope, and conversation continuity.
+- Workspace/global transitions must be visible at the shell level, not buried inside embedded modules.
+- Legacy route IDs may remain stable while user-facing labels and grouping evolve.
 
-### ❌ Missing Screens (4/17)
+## Chat-First Product Model
 
-Need screen implementations for:
-1. **STTSScreen** - For TAB_STTS
-2. **StudyScreen** - For TAB_STUDY  
-3. **ChatbooksScreen** - For TAB_CHATBOOKS
-4. **SubscriptionScreen** - For TAB_SUBSCRIPTIONS
+Chat is now the primary work surface for:
 
-### ⚠️ Incomplete Navigation Handler
+- general conversation
+- persona-guided assistance
+- agentic programming and control
+- inline approvals for privileged actions
+- task continuity and resume state
 
-Current handler at line 1810 logs warnings for missing screens:
-```python
-logger.warning(f"Screen not yet implemented: {screen_name}")
-```
+That means the old dedicated `coding` destination should be treated as a compatibility surface, not the long-term primary entry point for programming workflows. New design and implementation work should prefer Chat-centered flows and reuse sessions instead of sending users into parallel control surfaces.
 
----
+## Implemented Shell Outcomes
 
-## What Needs to Be Done
+The current branch ships the first shared shell slice:
 
-### 1. Complete Missing Screens (Priority 1)
+- `Library` replaces internal `ccp`-style copy in primary navigation while keeping the `ccp` route stable.
+- `Coding` stays routable but is grouped with system/utility destinations instead of the primary work cluster.
+- Chat mounts a combined shell bar above active chat content in both single-session and tabbed modes.
+- The shell bar surfaces backend, scope, assistant identity, and session title from restored session state and from live tab lifecycle changes.
+- The compact model/runtime controls remain embedded in the shell bar and still sync through the chat host.
 
-Create the 4 missing screen classes following this pattern:
+## Migration Risks
 
-```python
-# Example: UI/Screens/stts_screen.py
-from textual.screen import Screen
-from textual.app import ComposeResult
-from ..STTS_Window import STTSWindow
+The biggest UX risks in this migration are predictable:
 
-class STTSScreen(Screen):
-    """Screen wrapper for STTS functionality."""
-    
-    def compose(self) -> ComposeResult:
-        """Compose the STTS screen."""
-        yield STTSWindow()
-    
-    async def on_mount(self) -> None:
-        """Initialize screen when mounted."""
-        # Any screen-specific initialization
-        pass
-```
+- surfacing both global navigation and local module navigation at the same visual level
+- losing workspace or persona context during `Use in Chat` handoffs
+- leaving Chat visually empty while critical approvals or task status are hidden elsewhere
+- preserving legacy routes but letting legacy labels dominate the information architecture
 
-### 2. Update Navigation Handler (Priority 2)
+The current branch reduces those risks for Chat, but the same discipline still needs to be applied to the rest of the shells.
 
-Complete the screen mapping in `handle_screen_navigation`:
+## Remaining Cleanup
 
-```python
-SCREEN_MAP = {
-    "chat": ChatScreen,
-    "media_ingest": MediaIngestScreen,
-    "coding": CodingScreen,
-    "conversation": ConversationScreen,
-    "media": MediaScreen,
-    "notes": NotesScreen,
-    "search": SearchScreen,
-    "evals": EvalsScreen,
-    "tools_settings": ToolsSettingsScreen,
-    "llm": LLMScreen,
-    "customize": CustomizeScreen,
-    "logs": LogsScreen,
-    "stats": StatsScreen,
-    "stts": STTSScreen,  # Add these
-    "study": StudyScreen,
-    "chatbooks": ChatbooksScreen,
-    "subscription": SubscriptionScreen,
-}
-```
+The highest-value cleanup items after this branch are:
 
-### 3. Migrate Tab Bar to Screen Navigation (Priority 3)
+- add one end-to-end mounted Textual test for the live `ActiveSessionChanged` bubble path
+- continue normalizing shell-level scope summaries across Notes, Study, Media, and future Chat handoff entry points
+- keep route IDs stable while tightening labels, grouping, and destination ownership
 
-Update TabBar to emit NavigateToScreen messages instead of switching tabs:
+## Verification Hooks
 
-```python
-# In TabBar widget
-def on_button_pressed(self, event: Button.Pressed) -> None:
-    tab_id = event.button.id
-    # Instead of: self.app.switch_tab(tab_id)
-    self.post_message(NavigateToScreen(screen_name=tab_id))
-```
+The architecture should stay grounded in focused verification:
 
-### 4. Clean Up Tab-Based Code (Priority 4)
-
-Once screen navigation is working:
-- Remove the massive `compose()` method that loads all windows
-- Remove 65 reactive attributes from app class
-- Remove `switch_tab()` method
-- Remove visibility-based tab switching logic
-
-### 5. State Management Migration (Priority 5)
-
-Move state from app class to individual screens:
-- Each screen owns its state
-- Use messages for cross-screen communication
-- Implement screen lifecycle methods for state preservation
-
----
-
-## Migration Checklist
-
-### Phase 1: Complete Screen Infrastructure
-- [ ] Create STTSScreen class
-- [ ] Create StudyScreen class  
-- [ ] Create ChatbooksScreen class
-- [ ] Create SubscriptionScreen class
-- [ ] Update SCREEN_MAP with all screens
-- [ ] Test each screen loads correctly
-
-### Phase 2: Navigation System
-- [ ] Update TabBar to use NavigateToScreen
-- [ ] Implement screen stack management
-- [ ] Add navigation history
-- [ ] Handle back navigation
-- [ ] Add screen transition animations
-
-### Phase 3: State Migration
-- [ ] Move chat state to ChatScreen
-- [ ] Move notes state to NotesScreen
-- [ ] Move media state to MediaScreen
-- [ ] Create message-based state sharing
-- [ ] Implement screen state persistence
-
-### Phase 4: Cleanup
-- [ ] Remove tab-based compose() logic
-- [ ] Remove reactive attributes from app
-- [ ] Remove switch_tab() method
-- [ ] Delete unused Window classes (after screens work)
-- [ ] Update all event handlers for screen context
-
-### Phase 5: Optimization
-- [ ] Implement screen caching strategy
-- [ ] Add loading indicators
-- [ ] Optimize screen mounting/unmounting
-- [ ] Profile memory usage
-- [ ] Add screen preloading for common transitions
-
----
-
-## Benefits After Migration
-
-| Aspect | Tab-Based (Current) | Screen-Based (Target) |
-|--------|-------------------|---------------------|
-| Memory Usage | ~500MB (all loaded) | ~150MB (active only) |
-| Startup Time | 3-5 seconds | < 1 second |
-| Code Organization | Monolithic app class | Modular screens |
-| State Management | 65 reactive attrs | Isolated per screen |
-| Navigation | Visibility toggling | Clean push/pop stack |
-| Testing | Complex mocking | Simple screen tests |
-| Maintenance | Difficult | Straightforward |
-
----
-
-## Code Examples for Migration
-
-### Creating a Missing Screen
-
-```python
-# UI/Screens/stts_screen.py
-from textual.screen import Screen
-from textual.app import ComposeResult
-from textual.reactive import reactive
-from ..STTS_Window import STTSWindow
-
-class STTSScreen(Screen):
-    """Speech-to-Text/Text-to-Speech screen."""
-    
-    # Screen-specific state
-    current_model = reactive("")
-    is_processing = reactive(False)
-    
-    def compose(self) -> ComposeResult:
-        """Compose the STTS interface."""
-        yield STTSWindow()
-    
-    async def on_mount(self) -> None:
-        """Initialize STTS services."""
-        window = self.query_one(STTSWindow)
-        await window.initialize_services()
-```
-
-### Updating Navigation
-
-```python
-# In app.py handle_screen_navigation
-async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
-    """Handle navigation to a different screen."""
-    screen_name = message.screen_name
-    
-    # Map of screen names to screen classes
-    screen_map = {
-        "stts": STTSScreen,
-        "study": StudyScreen,
-        "chatbooks": ChatbooksScreen,
-        "subscription": SubscriptionScreen,
-        # ... existing screens
-    }
-    
-    screen_class = screen_map.get(screen_name)
-    if screen_class:
-        # Pop current screen if not the base
-        if len(self.screen_stack) > 1:
-            await self.pop_screen()
-        
-        # Push new screen
-        new_screen = screen_class()
-        await self.push_screen(new_screen)
-        
-        # Update any navigation indicators
-        self.current_screen = screen_name
-    else:
-        logger.error(f"Unknown screen: {screen_name}")
-```
-
----
-
-## Next Steps
-
-1. **Immediate:** Create the 4 missing screen classes
-2. **This Week:** Complete navigation handler and test all screens
-3. **Next Week:** Migrate TabBar to screen navigation
-4. **Following Week:** Begin state migration from app to screens
-
-The migration to screen-based navigation will significantly improve the application's performance, maintainability, and adherence to Textual best practices.
-
----
-
-*Updated: August 15, 2025*  
-*Status: Migration in progress - 76% complete (13/17 screens)*
+- [Tests/UI/test_screen_navigation.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_screen_navigation.py) for routing and navigation clustering
+- [Tests/UI/test_chat_shell_bar.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_chat_shell_bar.py) for shell-bar context, truncation, and compact control behavior
+- [Tests/UI/test_chat_window_enhanced.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_chat_window_enhanced.py) for shell-bar mount position in the current chat UI
+- [Tests/UI/test_chat_screen_state.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_chat_screen_state.py) for restore-time and live screen-side shell sync
+- [Tests/UI/test_chat_tab_container.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_chat_tab_container.py) for tab reuse, switch, close-next, and close-last lifecycle publishing
+- [Tests/UI/test_study_dashboard.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_study_dashboard.py) for shell-level study behavior
+- [Tests/UI/test_notes_screen.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_notes_screen.py), [Tests/UI/test_search_rag_window.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_search_rag_window.py), [Tests/UI/test_media_window_v88_textual.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_media_window_v88_textual.py), and [Tests/UI/test_ingestion_ui_redesigned.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_ingestion_ui_redesigned.py) for wrapped destination shells
