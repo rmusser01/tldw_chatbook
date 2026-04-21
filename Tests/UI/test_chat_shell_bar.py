@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Select
+from textual.widgets import Static
 
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.UI.Screens.chat_screen_state import TabState
@@ -16,6 +17,7 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import (
     ChatShellContext,
     ChatShellLabelResolver,
 )
+from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
 @dataclass
@@ -30,6 +32,8 @@ class ShellBarTestApp(App):
     def __init__(self, fixture: _ShellBarFixture) -> None:
         super().__init__()
         self.fixture = fixture
+        self.sidebar_toggle_requests = 0
+        self.chat_sidebar_collapsed = False
         self.app_config = {
             "chat_defaults": {
                 "provider": "openai",
@@ -38,10 +42,15 @@ class ShellBarTestApp(App):
             }
         }
 
+    def handle_sidebar_toggle_requested(self) -> None:
+        self.sidebar_toggle_requests += 1
+        self.chat_sidebar_collapsed = not self.chat_sidebar_collapsed
+
     def compose(self) -> ComposeResult:
         yield ChatShellBar(
             session_data=self.fixture.session_data,
             resolver=self.fixture.resolver,
+            on_sidebar_toggle_requested=self.handle_sidebar_toggle_requested,
             id="chat-shell-bar",
         )
         yield Input(id="after-shell-input")
@@ -52,6 +61,10 @@ def _focused_widget_id(app: App) -> str | None:
         if widget.has_focus:
             return widget.id
     return None
+
+
+def _static_text(widget: Static) -> str:
+    return str(widget.render())
 
 
 def test_chat_shell_context_defaults_from_none() -> None:
@@ -161,3 +174,99 @@ async def test_chat_shell_bar_keyboard_traversal_reaches_embedded_controls() -> 
             assert "compact-temperature" in observed_focus
             assert "compact-sidebar-toggle" in observed_focus
             assert "after-shell-input" in observed_focus
+
+
+@pytest.mark.asyncio
+async def test_compact_model_bar_syncs_provider_model_and_temperature_deterministically() -> None:
+    fixture = _ShellBarFixture(session_data=ChatSessionData(tab_id="tab-a"))
+    app = ShellBarTestApp(fixture)
+
+    with patch(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+        return_value={
+            "openai": ["gpt-4o-mini", "gpt-4o"],
+            "anthropic": ["claude-3.5-sonnet", "claude-3-haiku"],
+        },
+    ):
+        async with app.run_test(size=(120, 20)) as pilot:
+            compact_bar = app.query_one(CompactModelBar)
+            compact_bar.sync_from_sidebar(
+                provider="anthropic",
+                model="claude-3.5-sonnet",
+                temperature="0.9",
+            )
+            await pilot.pause()
+
+            provider_select = app.query_one("#compact-api-provider", Select)
+            model_select = app.query_one("#compact-api-model", Select)
+            temperature_input = app.query_one("#compact-temperature", Input)
+            model_values = [
+                value
+                for _, value in model_select._options
+                if isinstance(value, str)
+            ]
+
+            assert provider_select.value == "anthropic"
+            assert model_values == [
+                "claude-3.5-sonnet",
+                "claude-3-haiku",
+            ]
+            assert model_select.value == "claude-3.5-sonnet"
+            assert temperature_input.value == "0.9"
+
+
+@pytest.mark.asyncio
+async def test_chat_shell_bar_emits_host_sidebar_toggle_intent() -> None:
+    fixture = _ShellBarFixture(session_data=ChatSessionData(tab_id="tab-a"))
+    app = ShellBarTestApp(fixture)
+
+    with patch(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+        return_value={"openai": ["gpt-4o-mini", "gpt-4o"]},
+    ):
+        async with app.run_test(size=(120, 20)) as pilot:
+            app.query_one("#compact-sidebar-toggle", Button).press()
+            await pilot.pause()
+
+            assert app.sidebar_toggle_requests == 1
+            assert app.chat_sidebar_collapsed is True
+
+
+@pytest.mark.asyncio
+async def test_chat_shell_bar_refreshes_label_on_session_sync_and_resize() -> None:
+    fixture = _ShellBarFixture(
+        session_data=ChatSessionData(
+            tab_id="tab-a",
+            title="One",
+        ),
+    )
+    app = ShellBarTestApp(fixture)
+
+    with patch(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+        return_value={"openai": ["gpt-4o-mini", "gpt-4o"]},
+    ):
+        async with app.run_test(size=(400, 20)) as pilot:
+            shell_bar = app.query_one(ChatShellBar)
+            label = app.query_one("#chat-shell-context", Static)
+
+            initial_text = _static_text(label)
+
+            shell_bar.sync_from_session_data(
+                ChatSessionData(
+                    tab_id="tab-a",
+                    title="A refreshed chat title that should still fit after syncing",
+                )
+            )
+            await pilot.pause()
+
+            synced_text = _static_text(label)
+            assert "A refreshed chat title" in synced_text
+            assert synced_text != initial_text
+
+            await pilot.resize_terminal(100, 20)
+            await pilot.pause()
+
+            resized_text = _static_text(label)
+            assert len(resized_text) <= len(synced_text)
+            assert resized_text != synced_text

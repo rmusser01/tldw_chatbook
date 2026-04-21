@@ -5,15 +5,15 @@
 # Imports
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+import inspect
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
-from textual.reactive import reactive
-from textual.widgets import Button, Input, Label, Select, Static
+from textual.widgets import Button, Input, Label, Select
 
 from ..config import get_cli_providers_and_models
 
@@ -32,9 +32,15 @@ class CompactModelBar(Horizontal):
     with sidebar widgets (chat-api-provider, chat-api-model).
     """
 
-    def __init__(self, app_instance: "TldwCli | None" = None, **kwargs):
+    def __init__(
+        self,
+        app_instance: "TldwCli | None" = None,
+        on_sidebar_toggle_requested: Optional[Callable[[], Any]] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.on_sidebar_toggle_requested = on_sidebar_toggle_requested
 
     def _resolve_app(self):
         if self.app_instance is not None:
@@ -43,6 +49,33 @@ class CompactModelBar(Horizontal):
             return self.app
         except Exception:
             return None
+
+    def _sync_compact_provider_model(
+        self,
+        provider: str,
+        selected_model: Optional[str] = None,
+    ) -> None:
+        providers_models = get_cli_providers_and_models()
+        available_models = providers_models.get(provider, [])
+
+        compact_model = self.query_one("#compact-api-model", Select)
+        current_model = None if compact_model.value == Select.BLANK else str(compact_model.value)
+
+        new_options = [(m, m) for m in available_models]
+        compact_model.set_options(new_options)
+
+        desired_model = selected_model if selected_model in available_models else None
+        if desired_model is None and current_model in available_models:
+            desired_model = current_model
+        if desired_model is None and available_models:
+            desired_model = available_models[0]
+
+        compact_model.value = desired_model if desired_model is not None else Select.BLANK
+
+    def _set_provider_value(self, provider: str) -> None:
+        compact_provider = self.query_one("#compact-api-provider", Select)
+        if compact_provider.value != provider:
+            compact_provider.value = provider
 
     def compose(self) -> ComposeResult:
         """Compose the compact model bar."""
@@ -97,22 +130,17 @@ class CompactModelBar(Horizontal):
         providers_models = get_cli_providers_and_models()
         available_providers = list(providers_models.keys())
         default_provider = defaults.get("provider", available_providers[0] if available_providers else "")
-        # Set provider
+
         try:
-            provider_select = self.query_one("#compact-api-provider", Select)
             if default_provider in available_providers:
-                provider_select.value = default_provider
+                self._sync_compact_provider_model(default_provider, defaults.get("model", ""))
+                self._set_provider_value(default_provider)
         except NoMatches:
             pass
-        # Set model
-        initial_models = providers_models.get(default_provider, [])
-        default_model = defaults.get("model", "")
+
         try:
-            model_select = self.query_one("#compact-api-model", Select)
-            if default_model in initial_models:
-                model_select.value = default_model
-            elif initial_models:
-                model_select.value = initial_models[0]
+            temperature_input = self.query_one("#compact-temperature", Input)
+            temperature_input.value = str(defaults.get("temperature", 0.7))
         except NoMatches:
             pass
 
@@ -122,18 +150,8 @@ class CompactModelBar(Horizontal):
         new_provider = str(event.value)
         logger.info(f"Compact bar: provider changed to {new_provider}")
 
-        providers_models = get_cli_providers_and_models()
-        available_models = providers_models.get(new_provider, [])
-
-        # Update compact model select
         try:
-            compact_model = self.query_one("#compact-api-model", Select)
-            new_options = [(m, m) for m in available_models]
-            compact_model.set_options(new_options)
-            if available_models:
-                compact_model.value = available_models[0]
-            else:
-                compact_model.value = Select.BLANK
+            self._sync_compact_provider_model(new_provider)
         except NoMatches:
             pass
 
@@ -172,34 +190,29 @@ class CompactModelBar(Horizontal):
     async def handle_sidebar_toggle(self, event: Button.Pressed) -> None:
         """Toggle the settings sidebar."""
         event.stop()
-        app = self._resolve_app()
-        if app is None:
+        callback = self.on_sidebar_toggle_requested
+        if callback is None:
+            logger.debug("Sidebar toggle requested but no host callback is configured")
             return
         try:
-            from ..UI.Chat_Window_Enhanced import ChatWindowEnhanced
-
-            chat_window = self.ancestors_with_self
-            for ancestor in chat_window:
-                if isinstance(ancestor, ChatWindowEnhanced):
-                    ancestor._sidebar_collapsed = not ancestor._sidebar_collapsed
-                    ancestor.app_instance.chat_sidebar_collapsed = ancestor._sidebar_collapsed
-                    try:
-                        sidebar = ancestor.query_one("#chat-left-sidebar")
-                        sidebar.display = not ancestor._sidebar_collapsed
-                    except NoMatches:
-                        pass
-                    break
+            result = callback()
+            if inspect.isawaitable(result):
+                await result
         except Exception as e:
-            logger.error(f"Error toggling sidebar from compact bar: {e}")
+            logger.error(f"Error handling sidebar toggle request from compact bar: {e}")
 
-    def sync_from_sidebar(self, provider: str = None, model: str = None, temperature: str = None) -> None:
+    def sync_from_sidebar(
+        self,
+        provider: str = None,
+        model: str = None,
+        temperature: str = None,
+    ) -> None:
         """Sync values from sidebar to compact bar (called when sidebar values change)."""
         try:
             if provider is not None:
-                compact_provider = self.query_one("#compact-api-provider", Select)
-                if compact_provider.value != provider:
-                    compact_provider.value = provider
-            if model is not None:
+                self._sync_compact_provider_model(provider, model)
+                self._set_provider_value(provider)
+            elif model is not None:
                 compact_model = self.query_one("#compact-api-model", Select)
                 if compact_model.value != model:
                     compact_model.value = model
@@ -214,4 +227,3 @@ class CompactModelBar(Horizontal):
 #
 # End of compact_model_bar.py
 #######################################################################################################################
-

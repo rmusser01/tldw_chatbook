@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Container
+from textual.css.query import NoMatches
 from textual.widgets import Static
 
 
@@ -88,8 +89,26 @@ class ChatShellContext:
         return " | ".join(self.prioritized_segments(max_width))
 
 
-class ChatShellBar(Horizontal):
+class ChatShellBar(Container):
     """Container for the session labels and embedded compact controls."""
+
+    DEFAULT_CSS = """
+    ChatShellBar {
+        width: 100%;
+        layout: grid;
+        grid-size: 2 1;
+        grid-columns: 1fr auto;
+    }
+
+    #chat-shell-context {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .chat-shell-controls {
+        width: auto;
+    }
+    """
 
     def __init__(
         self,
@@ -98,21 +117,67 @@ class ChatShellBar(Horizontal):
         tab_state: Any = None,
         resolver: Optional[ChatShellLabelResolver] = None,
         app_instance: Any = None,
+        on_sidebar_toggle_requested: Callable[[], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.session_data = session_data if session_data is not None else tab_state
         self.resolver = resolver
         self.app_instance = app_instance
+        self.on_sidebar_toggle_requested = on_sidebar_toggle_requested
         self.context = ChatShellContext.from_session_data(self.session_data, resolver=resolver)
 
     def compose(self) -> ComposeResult:
         from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
         yield Static(
-            self.context.format(120),
+            self.context.session_label,
             id="chat-shell-context",
             classes="chat-shell-context",
+            expand=True,
+            shrink=True,
         )
-        yield CompactModelBar(self.app_instance, classes="chat-shell-controls")
+        yield CompactModelBar(
+            self.app_instance,
+            on_sidebar_toggle_requested=self.on_sidebar_toggle_requested,
+            classes="chat-shell-controls",
+        )
 
+    def on_mount(self) -> None:
+        self.call_after_refresh(self.refresh_context_label)
+
+    def on_resize(self, event: Any) -> None:
+        self.call_after_refresh(self.refresh_context_label)
+
+    def sync_from_session_data(
+        self,
+        session_data: Any,
+        resolver: Optional[ChatShellLabelResolver] = None,
+    ) -> None:
+        self.session_data = session_data
+        if resolver is not None:
+            self.resolver = resolver
+        self.context = ChatShellContext.from_session_data(self.session_data, resolver=self.resolver)
+        self.refresh_context_label()
+
+    def sync_from_tab_state(
+        self,
+        tab_state: Any,
+        resolver: Optional[ChatShellLabelResolver] = None,
+    ) -> None:
+        self.session_data = tab_state
+        if resolver is not None:
+            self.resolver = resolver
+        self.context = ChatShellContext.from_tab_state(self.session_data, resolver=self.resolver)
+        self.refresh_context_label()
+
+    def refresh_context_label(self) -> None:
+        try:
+            label = self.query_one("#chat-shell-context", Static)
+        except NoMatches:
+            return
+
+        available_width = label.size.width or self.size.width
+        if available_width <= 0:
+            return
+        label.update(self.context.format(available_width))
