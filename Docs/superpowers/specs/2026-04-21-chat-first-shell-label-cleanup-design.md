@@ -36,6 +36,8 @@ The implemented shell is covered by the branch-local focused suite:
 - [Tests/UI/test_chat_screen_state.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_chat_screen_state.py)
 - [Tests/UI/test_chat_tab_container.py](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-chat-first-shell-label-cleanup/Tests/UI/test_chat_tab_container.py)
 
+This now includes a mounted Textual test that drives the real `ActiveSessionChanged` message through the Chat screen tree and verifies the shell bar updates from live session context, not just from isolated helper seams.
+
 ## Acceptance Snapshot
 
 The branch satisfies the shell-level intent of the original design:
@@ -50,6 +52,5 @@ The branch satisfies the shell-level intent of the original design:
 
 The next UX slices remain intentionally separate from this branch:
 
-- add one end-to-end mounted Textual test for the live active-session bubble path
 - promote more `Use in Chat` handoffs into reused chat sessions
 - continue normalizing shell-level scope summaries across Notes, Study, Media, and future workspace-scoped shells

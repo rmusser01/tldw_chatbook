@@ -349,6 +349,33 @@ class _ShellBarMountTestApp(App):
         yield ChatWindowEnhanced(self, id="chat-window")
 
 
+class _ChatScreenShellSyncTestApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.app_config = {
+            "chat_defaults": {
+                "enable_tabs": True,
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "temperature": 0.3,
+            },
+            "chat.voice": {"show_mic_button": True},
+            "chat.images": {"show_attach_button": True},
+        }
+        self.chat_sidebar_collapsed = False
+        self.chat_right_sidebar_collapsed = False
+        self.current_chat_is_ephemeral = False
+        self.chat_attached_files = {}
+        self.notify = Mock()
+        self.loguru_logger = Mock()
+        self.run_worker = Mock()
+        self.bell = Mock()
+        self.screen_under_test = ChatScreen(self)
+
+    async def on_mount(self) -> None:
+        await self.push_screen(self.screen_under_test)
+
+
 class TestChatWindowShellBarMounting:
     @pytest.mark.asyncio
     async def test_shell_bar_mounted_above_single_session_content(self):
@@ -390,6 +417,61 @@ class TestChatWindowShellBarMounting:
                 assert shell_bar is main_content.query_one("#chat-shell-bar", ChatShellBar)
                 assert main_content.children[0].id == "chat-shell-bar"
                 assert main_content.children[1] is tab_container
+
+    @pytest.mark.asyncio
+    async def test_chat_screen_receives_live_active_session_message_in_mounted_tree(self):
+        app = _ChatScreenShellSyncTestApp()
+
+        with patch.object(ChatScreen, "_load_sidebar_state", lambda self: None), patch.object(
+            ChatScreen,
+            "_restore_collapsible_states",
+            lambda self: None,
+        ), patch.object(ChatScreen, "_run_diagnostic", lambda self: None), patch(
+            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
+            return_value=True,
+        ), patch(
+            "tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.get_cli_setting",
+            return_value=10,
+        ), patch(
+            "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ), patch(
+            "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ):
+            async with app.run_test(size=(200, 40)) as pilot:
+                await pilot.pause()
+
+                screen = pilot.app.screen
+                chat_window = screen.query_one(ChatWindowEnhanced)
+                tab_container = chat_window.query_one(ChatTabContainer)
+                shell_bar = chat_window.get_shell_bar()
+                shell_label = chat_window.query_one("#chat-shell-context", Static)
+
+                tab_container._publish_active_session_changed(
+                    ChatSessionData(
+                        tab_id="live-tab",
+                        title="Live Persona Session",
+                        runtime_backend="server",
+                        assistant_kind="persona",
+                        assistant_id="study.coach",
+                        scope_type="workspace",
+                        workspace_id="workspace-42",
+                    )
+                )
+                await pilot.pause()
+
+                rendered_label = str(shell_label.render())
+
+                assert shell_bar is not None
+                assert shell_bar.context.backend_label == "Server"
+                assert shell_bar.context.scope_label == "Workspace: workspace-42"
+                assert shell_bar.context.assistant_label == "Persona: study.coach"
+                assert shell_bar.context.session_label == "Session: Live Persona Session"
+                assert "Server" in rendered_label
+                assert "Workspace: workspace-42" in rendered_label
+                assert "Persona: study.coach" in rendered_label
+                assert "Session: Live Persona Session" in rendered_label
 
 
 class TestChatScreenConversationParity:
