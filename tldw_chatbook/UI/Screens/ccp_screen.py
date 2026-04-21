@@ -25,9 +25,11 @@ from ...Widgets.CCP_Widgets import (
     ConversationSearchRequested,
     ConversationLoadRequested,
     CharacterLoadRequested,
+    StartChatRequested,
     EditPersonaRequested,
     PersonaLoadRequested,
     PersonaSaveRequested,
+    StartPersonaChatRequested,
     PromptLoadRequested,
     DictionaryLoadRequested,
     ImportRequested,
@@ -756,6 +758,14 @@ class CCPScreen(BaseAppScreen):
         """Handle persona edit requests from the persona card."""
         await self.persona_handler.handle_edit_persona(message.persona_id)
 
+    async def on_start_chat_requested(self, message: StartChatRequested) -> None:
+        """Launch a new character-backed chat session in main chat."""
+        await self._launch_character_in_chat(message.character_id)
+
+    async def on_start_persona_chat_requested(self, message: StartPersonaChatRequested) -> None:
+        """Launch a new persona-backed chat session in main chat."""
+        await self._launch_persona_in_chat(message.persona_id)
+
     async def on_persona_save_requested(self, message: PersonaSaveRequested) -> None:
         """Handle persona save requests from the persona editor."""
         await self.persona_handler.save_persona(message.persona_data)
@@ -798,6 +808,7 @@ class CCPScreen(BaseAppScreen):
         new_state.selected_character_id = message.character_id
         new_state.selected_persona_id = None
         new_state.selected_character_data = message.card_data
+        new_state.selected_character_name = message.card_data.get("name", "")
         new_state.character_actions_visible = True
         self.state = new_state
         
@@ -1067,20 +1078,132 @@ class CCPScreen(BaseAppScreen):
 
         return None
 
+    def _current_runtime_backend(self) -> str:
+        """Resolve the active runtime backend for CCP-launched chats."""
+        candidates = (
+            getattr(getattr(self, "state", None), "runtime_backend", None),
+            getattr(self, "runtime_backend", None),
+            getattr(self.app_instance, "runtime_backend", None),
+            getattr(self.app_instance, "current_runtime_backend", None),
+        )
+        for candidate in candidates:
+            if candidate in {"local", "server"}:
+                return candidate
+        return "local"
+
+    async def _launch_chat_session(self, session_contract, conversation_id: Optional[str] = None) -> None:
+        """Open a new or existing CCP-backed session in the main chat UI."""
+        from ...Event_Handlers.Chat_Events.chat_events_tabs import display_conversation_in_chat_tab_ui_with_tabs
+
+        tab_container = self._get_chat_tab_container()
+        if tab_container is None:
+            self.notify("Main chat tabs are not available right now.", severity="warning")
+            return
+
+        existing_tab_ids = set(getattr(tab_container, "sessions", {}).keys())
+        tab_id = await tab_container.create_new_tab(session_data=session_contract)
+        if not tab_id:
+            return
+
+        if hasattr(tab_container, "switch_to_tab_async"):
+            await tab_container.switch_to_tab_async(tab_id)
+
+        if not conversation_id or tab_id in existing_tab_ids:
+            return
+
+        sessions = getattr(tab_container, "sessions", {})
+        session = sessions.get(tab_id)
+        session_data = session.session_data if session is not None else session_contract
+        await display_conversation_in_chat_tab_ui_with_tabs(
+            self.app_instance,
+            conversation_id,
+            session_data=session_data,
+        )
+
+    async def _launch_character_in_chat(self, character_id: Any) -> None:
+        """Open a new character-backed main chat tab from the CCP screen."""
+        from ...Chat.chat_models import ChatSessionData
+
+        raw_character_id = character_id
+        if raw_character_id in {None, ""}:
+            raw_character_id = self.state.selected_character_id
+        if raw_character_id in {None, ""}:
+            raw_character_id = getattr(self.character_handler, "current_character_id", None)
+        if raw_character_id in {None, ""}:
+            self.notify("Load a character before starting chat.", severity="warning")
+            return
+
+        character_data = self.state.selected_character_data or getattr(self.character_handler, "current_character_data", {}) or {}
+        character_name = (
+            self.state.selected_character_name
+            or character_data.get("name")
+            or str(raw_character_id)
+        )
+        try:
+            normalized_character_id = int(raw_character_id)
+        except (TypeError, ValueError):
+            normalized_character_id = None
+        canonical_id = str(raw_character_id)
+
+        session_contract = ChatSessionData(
+            tab_id="ccp-character-launch",
+            title=f"Chat with {character_name}",
+            conversation_id=None,
+            is_ephemeral=True,
+            runtime_backend=self._current_runtime_backend(),
+            discovery_owner="ccp_character",
+            discovery_entity_id=canonical_id,
+            character_id=normalized_character_id,
+            character_name=character_name,
+            assistant_kind="character",
+            assistant_id=canonical_id,
+        )
+        await self._launch_chat_session(session_contract)
+
+    async def _launch_persona_in_chat(self, persona_id: Any) -> None:
+        """Open a new persona-backed main chat tab from the CCP screen."""
+        from ...Chat.chat_models import ChatSessionData
+
+        raw_persona_id = persona_id
+        if raw_persona_id in {None, ""}:
+            raw_persona_id = self.state.selected_persona_id
+        if raw_persona_id in {None, ""}:
+            raw_persona_id = getattr(self.persona_handler, "current_persona_id", None)
+        if raw_persona_id in {None, ""}:
+            self.notify("Load a persona before starting chat.", severity="warning")
+            return
+
+        persona_data = getattr(self.persona_handler, "current_persona_data", {}) or {}
+        persona_name = (
+            self.state.selected_character_name
+            or persona_data.get("name")
+            or str(raw_persona_id)
+        )
+        canonical_id = str(raw_persona_id)
+
+        session_contract = ChatSessionData(
+            tab_id="ccp-persona-launch",
+            title=f"Chat with {persona_name}",
+            conversation_id=None,
+            is_ephemeral=True,
+            runtime_backend=self._current_runtime_backend(),
+            discovery_owner="ccp_persona",
+            discovery_entity_id=canonical_id,
+            character_id=None,
+            character_name=persona_name,
+            assistant_kind="persona",
+            assistant_id=canonical_id,
+        )
+        await self._launch_chat_session(session_contract)
+
     async def _launch_selected_conversation_in_chat(self) -> None:
         """Open the currently selected CCP conversation in the main chat UI."""
         from ...Chat.chat_models import ChatSessionData
-        from ...Event_Handlers.Chat_Events.chat_events_tabs import display_conversation_in_chat_tab_ui_with_tabs
 
         contract = self.conversation_handler.get_conversation_contract(self.state.selected_conversation_id)
         conversation_id = contract.get("id")
         if not conversation_id:
             self.notify("Load a conversation before continuing it in chat.", severity="warning")
-            return
-
-        tab_container = self._get_chat_tab_container()
-        if tab_container is None:
-            self.notify("Main chat tabs are not available right now.", severity="warning")
             return
 
         session_contract = ChatSessionData(
@@ -1099,21 +1222,4 @@ class CCPScreen(BaseAppScreen):
             scope_type=contract.get("scope_type"),
             workspace_id=contract.get("workspace_id"),
         )
-
-        existing_tab_ids = set(getattr(tab_container, "sessions", {}).keys())
-        tab_id = await tab_container.create_new_tab(session_data=session_contract)
-        if not tab_id:
-            return
-
-        if hasattr(tab_container, "switch_to_tab_async"):
-            await tab_container.switch_to_tab_async(tab_id)
-
-        sessions = getattr(tab_container, "sessions", {})
-        session = sessions.get(tab_id)
-        session_data = session.session_data if session is not None else session_contract
-        if tab_id not in existing_tab_ids:
-            await display_conversation_in_chat_tab_ui_with_tabs(
-                self.app_instance,
-                conversation_id,
-                session_data=session_data,
-            )
+        await self._launch_chat_session(session_contract, conversation_id=conversation_id)

@@ -420,6 +420,73 @@ class TestChatHistorySaving:
         messages = db_instance.get_messages_for_conversation(conversation_id)
         assert [message["content"] for message in messages] == ["Generic message"]
 
+    def test_save_chat_history_creates_persona_backed_conversation_when_metadata_is_explicit(self, db_instance: CharactersRAGDB):
+        conversation_id, status = save_chat_history_to_db_wrapper(
+            db=db_instance,
+            chatbot_history=[
+                {"role": "user", "content": "Hello persona"},
+                {"role": "assistant", "content": "Hello human"},
+            ],
+            conversation_id=None,
+            media_content_for_char_assoc=None,
+            character_name_for_chat=None,
+            assistant_kind="persona",
+            assistant_id="persona.local.alice",
+            persona_memory_mode="read_write",
+            runtime_backend="server",
+            discovery_owner="ccp_persona",
+            discovery_entity_id="persona.local.alice",
+        )
+
+        assert "success" in status.lower()
+        assert conversation_id is not None
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["character_id"] is None
+        assert conversation["assistant_kind"] == "persona"
+        assert conversation["assistant_id"] == "persona.local.alice"
+        assert conversation["persona_memory_mode"] == "read_write"
+        assert conversation["runtime_backend"] == "server"
+        assert conversation["discovery_owner"] == "ccp_persona"
+        assert conversation["discovery_entity_id"] == "persona.local.alice"
+        assert conversation["title"] == "Chat with persona.local.alice"
+
+    def test_resave_chat_history_preserves_existing_persona_metadata(self, db_instance: CharactersRAGDB):
+        conversation_id = db_instance.add_conversation(
+            {
+                "assistant_kind": "persona",
+                "assistant_id": "persona.local.alice",
+                "persona_memory_mode": "read_only",
+                "runtime_backend": "server",
+                "discovery_owner": "ccp_persona",
+                "discovery_entity_id": "persona.local.alice",
+                "title": "Chat with persona.local.alice",
+                "client_id": db_instance.client_id,
+            }
+        )
+
+        resave_id, status = save_chat_history_to_db_wrapper(
+            db=db_instance,
+            chatbot_history=[
+                {"role": "user", "content": "Persona conversation"},
+                {"role": "assistant", "content": "Persona reply"},
+            ],
+            conversation_id=conversation_id,
+            media_content_for_char_assoc=None,
+            character_name_for_chat=None,
+        )
+
+        assert "success" in status.lower()
+        assert resave_id == conversation_id
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["assistant_kind"] == "persona"
+        assert conversation["assistant_id"] == "persona.local.alice"
+        assert conversation["persona_memory_mode"] == "read_only"
+        assert conversation["runtime_backend"] == "server"
+        assert conversation["discovery_owner"] == "ccp_persona"
+        assert conversation["discovery_entity_id"] == "persona.local.alice"
+
 
 @pytest.mark.integration
 class TestCharacterManagement:

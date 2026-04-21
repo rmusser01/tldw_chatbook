@@ -9,6 +9,19 @@ class FakeLocalNotes:
         self.update_calls = []
         self.delete_calls = []
         self.search_calls = []
+        self.link_calls = []
+        self.unlink_calls = []
+        self.add_keyword_calls = []
+        self.keyword_rows = {
+            "existing": {"id": 1, "keyword": "existing"},
+            "stale": {"id": 2, "keyword": "stale"},
+        }
+        self.note_keywords = {
+            "local-1": [
+                {"id": 1, "keyword": "existing"},
+                {"id": 2, "keyword": "stale"},
+            ]
+        }
 
     def add_note(self, user_id, title, content, note_id=None):
         self.add_calls.append(
@@ -51,6 +64,38 @@ class FakeLocalNotes:
             }
         )
         return [{"id": "local-1", "title": "Local"}]
+
+    def get_keywords_for_note(self, user_id, note_id):
+        return list(self.note_keywords.get(note_id, []))
+
+    def get_keyword_by_text(self, user_id, keyword_text):
+        return self.keyword_rows.get(keyword_text)
+
+    def add_keyword(self, user_id, keyword_text):
+        self.add_keyword_calls.append((user_id, keyword_text))
+        new_id = len(self.keyword_rows) + 1
+        self.keyword_rows[keyword_text] = {"id": new_id, "keyword": keyword_text}
+        return new_id
+
+    def link_note_to_keyword(self, user_id, note_id, keyword_id):
+        self.link_calls.append(
+            {
+                "user_id": user_id,
+                "note_id": note_id,
+                "keyword_id": keyword_id,
+            }
+        )
+        return True
+
+    def unlink_note_from_keyword(self, user_id, note_id, keyword_id):
+        self.unlink_calls.append(
+            {
+                "user_id": user_id,
+                "note_id": note_id,
+                "keyword_id": keyword_id,
+            }
+        )
+        return True
 
 
 class FakeServerNotes:
@@ -154,6 +199,48 @@ async def test_scope_service_routes_local_note_save_to_local_service():
             "expected_version": 3,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_note_keywords_through_local_service():
+    local = FakeLocalNotes()
+    scope_service = NotesScopeService(
+        local_notes_service=local,
+        server_service=FakeServerNotes(),
+    )
+
+    result = await scope_service.save_note(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        note_id="local-1",
+        title="Local",
+        content="Body",
+        version=3,
+        keywords=["existing", "fresh"],
+    )
+
+    assert result == {
+        "id": "local-1",
+        "version": 4,
+        "title": "Local",
+        "content": "Body",
+        "keywords": ["existing", "fresh"],
+    }
+    assert local.link_calls == [
+        {
+            "user_id": "user-1",
+            "note_id": "local-1",
+            "keyword_id": 3,
+        }
+    ]
+    assert local.unlink_calls == [
+        {
+            "user_id": "user-1",
+            "note_id": "local-1",
+            "keyword_id": 2,
+        }
+    ]
+    assert local.add_keyword_calls == [("user-1", "fresh")]
 
 
 @pytest.mark.asyncio

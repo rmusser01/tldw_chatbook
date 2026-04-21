@@ -36,6 +36,67 @@ class NotesScopeService:
             raise ValueError("workspace_id is required for workspace note operations.")
         return workspace_id
 
+    @staticmethod
+    def _normalize_keywords(keywords: Optional[Sequence[str]]) -> list[str]:
+        if keywords is None:
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in keywords:
+            text = str(item).strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(text)
+        return normalized
+
+    def _sync_local_note_keywords(
+        self,
+        *,
+        user_id: str,
+        note_id: Any,
+        keywords: Optional[Sequence[str]],
+    ) -> list[str]:
+        normalized_keywords = self._normalize_keywords(keywords)
+        service = self.local_notes_service
+        required_methods = (
+            "get_keywords_for_note",
+            "get_keyword_by_text",
+            "add_keyword",
+            "link_note_to_keyword",
+            "unlink_note_from_keyword",
+        )
+        if service is None or not all(hasattr(service, name) for name in required_methods):
+            return normalized_keywords
+
+        requested_keyword_map = {keyword.lower(): keyword for keyword in normalized_keywords}
+        existing_keyword_rows = service.get_keywords_for_note(user_id, note_id) or []
+        existing_keyword_map = {
+            str(row.get("keyword", "")).strip().lower(): row.get("id")
+            for row in existing_keyword_rows
+            if row.get("id") is not None and str(row.get("keyword", "")).strip()
+        }
+
+        for keyword_key, keyword_text in requested_keyword_map.items():
+            if keyword_key in existing_keyword_map:
+                continue
+            keyword_row = service.get_keyword_by_text(user_id, keyword_key)
+            keyword_id = keyword_row.get("id") if isinstance(keyword_row, dict) else None
+            if keyword_id is None:
+                keyword_id = service.add_keyword(user_id, keyword_key)
+            if keyword_id is not None:
+                service.link_note_to_keyword(user_id, note_id, keyword_id)
+
+        for existing_keyword_key, existing_keyword_id in existing_keyword_map.items():
+            if existing_keyword_key in requested_keyword_map:
+                continue
+            service.unlink_note_from_keyword(user_id, note_id, existing_keyword_id)
+
+        return normalized_keywords
+
     async def save_note(
         self,
         *,
@@ -52,18 +113,46 @@ class NotesScopeService:
         if normalized_scope == ScopeType.LOCAL_NOTE:
             local_user_id = self._require_user_id(user_id)
             if note_id:
-                return self.local_notes_service.update_note(
+                updated = self.local_notes_service.update_note(
                     local_user_id,
                     note_id,
                     {"title": title, "content": content},
                     version,
                 )
-            return self.local_notes_service.add_note(
+                if keywords is None:
+                    return updated
+                if not updated:
+                    return False
+                return {
+                    "id": note_id,
+                    "version": (version + 1) if version is not None else None,
+                    "title": title,
+                    "content": content,
+                    "keywords": self._sync_local_note_keywords(
+                        user_id=local_user_id,
+                        note_id=note_id,
+                        keywords=keywords,
+                    ),
+                }
+            created_note_id = self.local_notes_service.add_note(
                 local_user_id,
                 title,
                 content,
                 note_id=note_id,
             )
+            if keywords is None:
+                return created_note_id
+            return {
+                "id": created_note_id,
+                "version": 1,
+                "title": title,
+                "content": content,
+                "keywords": self._sync_local_note_keywords(
+                    user_id=local_user_id,
+                    note_id=created_note_id,
+                    keywords=keywords,
+                ),
+            }
 
         if normalized_scope == ScopeType.SERVER_NOTE:
             return await self.server_service.save_server_note(

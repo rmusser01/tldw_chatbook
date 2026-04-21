@@ -82,6 +82,7 @@ def mock_window():
     window.post_message = Mock()
     window.notify = Mock()
     window.query_one = Mock()
+    window.call_from_thread = Mock()
     return window
 
 
@@ -98,6 +99,34 @@ class TestCCPConversationHandler:
         call_args = mock_window.run_worker.call_args
         assert call_args[0][0] == handler._load_conversation_sync
         assert call_args[0][1] == "conv-1"
+
+    def test_search_excludes_workspace_scoped_conversations_from_general_results(self, mock_window):
+        class FakeConversationDb:
+            def search_conversations_by_title(self, title_query, limit=100):
+                return [
+                    {
+                        "id": "conv-global-1",
+                        "title": "Alpha",
+                        "discovery_owner": "general_chat",
+                        "scope_type": "global",
+                    },
+                    {
+                        "id": "conv-ws-1",
+                        "title": "Alpha",
+                        "discovery_owner": "general_chat",
+                        "scope_type": "workspace",
+                        "workspace_id": "ws-9",
+                    },
+                ]
+
+        mock_window.app_instance.chachanotes_db = FakeConversationDb()
+        mock_window.state.selected_character_id = None
+        mock_window.state.selected_persona_id = None
+        handler = CCPConversationHandler(mock_window)
+
+        CCPConversationHandler._search_conversations_sync.__wrapped__(handler, "Alpha", "title")
+
+        assert [row["id"] for row in handler.search_results] == ["conv-global-1"]
 
 
 class TestCCPCharacterHandler:

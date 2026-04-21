@@ -29,6 +29,8 @@ def normalize_conversation_row(row: Dict[str, Any]) -> Dict[str, Any]:
     normalized["title"] = normalized.get("title") or normalized.get("name") or "Untitled"
     normalized["runtime_backend"] = normalized.get("runtime_backend") or "local"
     normalized["discovery_owner"] = normalized.get("discovery_owner") or "general_chat"
+    normalized["scope_type"] = normalized.get("scope_type") or "global"
+    normalized["workspace_id"] = normalized.get("workspace_id")
     return normalized
 
 
@@ -69,6 +71,8 @@ class CCPConversationHandler:
         """Return True when a conversation belongs in the current CCP scope."""
         owner, entity_id = self._current_scope()
         normalized = normalize_conversation_row(conversation)
+        if normalized.get("scope_type") == "workspace":
+            return False
         conversation_owner = normalized.get("discovery_owner", "general_chat")
         if owner == "general_chat":
             return conversation_owner == "general_chat"

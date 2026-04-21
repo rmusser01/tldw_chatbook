@@ -1400,7 +1400,16 @@ def save_chat_history_to_db_wrapper(
     # not for the content of the messages themselves.
     media_content_for_char_assoc: Optional[Dict[str, Any]],
     media_name_for_char_assoc: Optional[str] = None,
-    character_name_for_chat: Optional[str] = None
+    character_name_for_chat: Optional[str] = None,
+    *,
+    assistant_kind: Optional[str] = None,
+    assistant_id: Optional[str] = None,
+    persona_memory_mode: Optional[str] = None,
+    runtime_backend: Optional[str] = None,
+    discovery_owner: Optional[str] = None,
+    discovery_entity_id: Optional[str] = None,
+    scope_type: Optional[str] = None,
+    workspace_id: Optional[str] = None,
 ) -> Tuple[Optional[str], str]:
     """
     Saves or updates a chat conversation in the database.
@@ -1451,51 +1460,99 @@ def save_chat_history_to_db_wrapper(
         final_character_name_for_title: Optional[str] = None
         conversation_assistant_kind: Optional[str] = None
         conversation_assistant_id: Optional[str] = None
-        conversation_runtime_backend: Optional[str] = "local"
-        conversation_discovery_owner: Optional[str] = "general_chat"
-        conversation_discovery_entity_id: Optional[str] = None
+        conversation_persona_memory_mode: Optional[str] = None
+        conversation_runtime_backend: Optional[str] = runtime_backend or "local"
+        conversation_discovery_owner: Optional[str] = discovery_owner or "general_chat"
+        conversation_discovery_entity_id: Optional[str] = discovery_entity_id
+        conversation_scope_type: Optional[str] = scope_type
+        conversation_workspace_id: Optional[str] = workspace_id
         persistence_service = ChatPersistenceService(db)
+        explicit_assistant_kind = str(assistant_kind).strip().lower() if assistant_kind else None
+        explicit_assistant_id = str(assistant_id).strip() if assistant_id else None
+        explicit_persona_memory_mode = str(persona_memory_mode).strip() if persona_memory_mode else None
 
         # --- Character Association Logic (largely same as your provided version) ---
-        char_lookup_name = character_name_for_chat
-        if not char_lookup_name and media_name_for_char_assoc:
-            char_lookup_name = media_name_for_char_assoc
-
-        # Fallback to media_content_for_char_assoc to derive char_lookup_name if others are None
-        if not char_lookup_name and media_content_for_char_assoc:
-            content_details = media_content_for_char_assoc.get('content')
-            if isinstance(content_details, str):
-                try: content_details = json.loads(content_details)
-                except json.JSONDecodeError: content_details = {}
-            if isinstance(content_details, dict):
-                char_lookup_name = content_details.get('title')
-
-        if char_lookup_name:
-            try:
-                character = db.get_character_card_by_name(char_lookup_name)
-                if character:
-                    associated_character_id = character['id']
-                    final_character_name_for_title = character['name']
-                    conversation_assistant_kind = "character"
-                    conversation_assistant_id = str(character['id'])
-                    conversation_discovery_owner = "ccp_character"
-                    conversation_discovery_entity_id = str(character['id'])
-                    logging.info(f"Chat will be associated with specific character '{final_character_name_for_title}' (ID: {associated_character_id}).")
-                else:
-                    logging.error(f"Intended specific character '{char_lookup_name}' not found in DB. Chat save aborted.")
-                    return conversation_id, f"Error: Specific character '{char_lookup_name}' intended for this chat was not found. Cannot save chat."
-            except CharactersRAGDBError as e:
-                logging.error(f"DB error looking up specific character '{char_lookup_name}': {e}")
-                return conversation_id, f"DB error finding specific character: {e}"
-        else:
-            logging.info("No specific character resolved for chat. Creating a generic local conversation.")
-
-        # --- End Character Association ---
-
         current_conversation_id = conversation_id
         is_new_conversation = not current_conversation_id
 
         # --- Create or Prepare Conversation ---
+        existing_conv_details = None
+        existing_assistant_kind = None
+        existing_assistant_id = None
+        if not is_new_conversation:
+            try:
+                existing_conv_details = db.get_conversation_by_id(current_conversation_id)
+                if not existing_conv_details:
+                    logging.error(f"Cannot resave: Conversation {current_conversation_id} not found.")
+                    return current_conversation_id, f"Error: Conversation {current_conversation_id} not found for resaving."
+                existing_assistant_kind = existing_conv_details.get("assistant_kind")
+                existing_assistant_id = existing_conv_details.get("assistant_id")
+            except (InputError, ConflictError, CharactersRAGDBError) as e:
+                logging.error(f"Error preparing existing conversation {current_conversation_id} for resave: {e}", exc_info=True)
+                return current_conversation_id, f"Error during resave prep: {e}"
+
+        if explicit_assistant_kind == "persona":
+            if not explicit_assistant_id:
+                return conversation_id, "Error: Persona conversations require an assistant_id."
+            conversation_assistant_kind = "persona"
+            conversation_assistant_id = explicit_assistant_id
+            conversation_persona_memory_mode = explicit_persona_memory_mode
+            conversation_runtime_backend = runtime_backend or (existing_conv_details.get("runtime_backend") if existing_conv_details else "local") or "local"
+            conversation_discovery_owner = discovery_owner or "ccp_persona"
+            conversation_discovery_entity_id = discovery_entity_id or explicit_assistant_id
+            if conversation_scope_type is None and existing_conv_details:
+                conversation_scope_type = existing_conv_details.get("scope_type")
+            if conversation_workspace_id is None and existing_conv_details:
+                conversation_workspace_id = existing_conv_details.get("workspace_id")
+            final_character_name_for_title = explicit_assistant_id
+        else:
+            char_lookup_name = character_name_for_chat
+            if not char_lookup_name and media_name_for_char_assoc:
+                char_lookup_name = media_name_for_char_assoc
+
+            if not char_lookup_name and media_content_for_char_assoc:
+                content_details = media_content_for_char_assoc.get('content')
+                if isinstance(content_details, str):
+                    try:
+                        content_details = json.loads(content_details)
+                    except json.JSONDecodeError:
+                        content_details = {}
+                if isinstance(content_details, dict):
+                    char_lookup_name = content_details.get('title')
+
+            if char_lookup_name:
+                try:
+                    character = db.get_character_card_by_name(char_lookup_name)
+                    if character:
+                        associated_character_id = character['id']
+                        final_character_name_for_title = character['name']
+                        conversation_assistant_kind = "character"
+                        conversation_assistant_id = str(character['id'])
+                        conversation_discovery_owner = discovery_owner or "ccp_character"
+                        conversation_discovery_entity_id = discovery_entity_id or str(character['id'])
+                        conversation_runtime_backend = runtime_backend or "local"
+                        logging.info(
+                            f"Chat will be associated with specific character '{final_character_name_for_title}' (ID: {associated_character_id})."
+                        )
+                    else:
+                        logging.error(f"Intended specific character '{char_lookup_name}' not found in DB. Chat save aborted.")
+                        return conversation_id, f"Error: Specific character '{char_lookup_name}' intended for this chat was not found. Cannot save chat."
+                except CharactersRAGDBError as e:
+                    logging.error(f"DB error looking up specific character '{char_lookup_name}': {e}")
+                    return conversation_id, f"DB error finding specific character: {e}"
+            elif existing_assistant_kind == "persona" and existing_assistant_id:
+                conversation_assistant_kind = "persona"
+                conversation_assistant_id = str(existing_assistant_id)
+                conversation_persona_memory_mode = existing_conv_details.get("persona_memory_mode")
+                conversation_runtime_backend = existing_conv_details.get("runtime_backend") or "local"
+                conversation_discovery_owner = existing_conv_details.get("discovery_owner") or "ccp_persona"
+                conversation_discovery_entity_id = existing_conv_details.get("discovery_entity_id") or str(existing_assistant_id)
+                conversation_scope_type = existing_conv_details.get("scope_type")
+                conversation_workspace_id = existing_conv_details.get("workspace_id")
+                final_character_name_for_title = str(existing_assistant_id)
+            else:
+                logging.info("No specific character resolved for chat. Creating a generic local conversation.")
+
         if is_new_conversation:
             try:
                 current_conversation_id = persistence_service.create_conversation(
@@ -1503,9 +1560,12 @@ def save_chat_history_to_db_wrapper(
                     character_name=final_character_name_for_title,
                     assistant_kind=conversation_assistant_kind,
                     assistant_id=conversation_assistant_id,
+                    persona_memory_mode=conversation_persona_memory_mode,
                     runtime_backend=conversation_runtime_backend,
                     discovery_owner=conversation_discovery_owner,
                     discovery_entity_id=conversation_discovery_entity_id,
+                    scope_type=conversation_scope_type,
+                    workspace_id=conversation_workspace_id,
                 )
                 if not current_conversation_id:  # Should not happen if add_conversation raises on failure
                     return None, "Failed to create new conversation in DB."
@@ -1516,17 +1576,26 @@ def save_chat_history_to_db_wrapper(
         else: # Resaving existing conversation
             logging.info(f"Resaving history for existing conv ID: {current_conversation_id}. Char context ID: {associated_character_id} ('{final_character_name_for_title}')")
             try:
-                existing_conv_details = db.get_conversation_by_id(current_conversation_id)
-                if not existing_conv_details:
-                    logging.error(f"Cannot resave: Conversation {current_conversation_id} not found.")
-                    return current_conversation_id, f"Error: Conversation {current_conversation_id} not found for resaving."
-
                 existing_character_id = existing_conv_details.get('character_id')
-                if existing_character_id != associated_character_id:
-                    existing_char_of_conv = db.get_character_card_by_id(existing_character_id)
-                    existing_char_name = existing_char_of_conv['name'] if existing_char_of_conv else "ID "+str(existing_character_id)
-                    logging.error(f"Cannot resave: Conversation {current_conversation_id} (for char '{existing_char_name}') does not match current character context '{final_character_name_for_title}' (ID: {associated_character_id}).")
-                    return current_conversation_id, "Error: Mismatch in character association for resaving chat. The conversation belongs to a different character."
+                if existing_assistant_kind == "character":
+                    if existing_character_id != associated_character_id:
+                        existing_char_of_conv = db.get_character_card_by_id(existing_character_id)
+                        existing_char_name = existing_char_of_conv['name'] if existing_char_of_conv else "ID "+str(existing_character_id)
+                        logging.error(
+                            f"Cannot resave: Conversation {current_conversation_id} (for char '{existing_char_name}') does not match current character context '{final_character_name_for_title}' (ID: {associated_character_id})."
+                        )
+                        return current_conversation_id, "Error: Mismatch in character association for resaving chat. The conversation belongs to a different character."
+                elif existing_assistant_kind == "persona":
+                    if conversation_assistant_kind != "persona" or conversation_assistant_id != existing_assistant_id:
+                        logging.error(
+                            f"Cannot resave: Conversation {current_conversation_id} belongs to persona '{existing_assistant_id}', but the current context resolves to '{conversation_assistant_id}'."
+                        )
+                        return current_conversation_id, "Error: Mismatch in persona association for resaving chat. The conversation belongs to a different persona."
+                elif conversation_assistant_kind in {"character", "persona"}:
+                    logging.error(
+                        f"Cannot resave: Conversation {current_conversation_id} is generic but current context resolves to {conversation_assistant_kind}."
+                    )
+                    return current_conversation_id, "Error: Mismatch in assistant association for resaving chat. The conversation belongs to a different context."
             except (InputError, ConflictError, CharactersRAGDBError) as e:
                 logging.error(f"Error preparing existing conversation {current_conversation_id} for resave: {e}", exc_info=True)
                 return current_conversation_id, f"Error during resave prep: {e}"
@@ -1547,11 +1616,15 @@ def save_chat_history_to_db_wrapper(
                         current_conversation_id,
                         {
                             'title': conv_details_for_update.get('title'),
+                            'character_id': associated_character_id,
                             'assistant_kind': conversation_assistant_kind,
                             'assistant_id': conversation_assistant_id,
+                            'persona_memory_mode': conversation_persona_memory_mode,
                             'runtime_backend': conversation_runtime_backend,
                             'discovery_owner': conversation_discovery_owner,
                             'discovery_entity_id': conversation_discovery_entity_id,
+                            'scope_type': conversation_scope_type,
+                            'workspace_id': conversation_workspace_id,
                         },
                         conv_details_for_update['version']
                     )
