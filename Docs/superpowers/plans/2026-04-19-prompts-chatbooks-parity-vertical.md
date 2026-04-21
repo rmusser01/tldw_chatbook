@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3, Textual, httpx, SQLite, pytest
 
+**Path Placeholders:** Use `"<path-to-tldw_chatbook-repo>"` for the main repository checkout and `"<path-to-prompts-chatbooks-worktree>"` for the dedicated worktree path used throughout this plan.
+
 ---
 
 ## File Map
@@ -53,10 +55,10 @@
 Run:
 
 ```bash
-git -C /Users/macbook-dev/Documents/GitHub/tldw_chatbook worktree add /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity -b codex-prompts-chatbooks-parity dev
+git -C "<path-to-tldw_chatbook-repo>" worktree add "<path-to-prompts-chatbooks-worktree>" -b codex-prompts-chatbooks-parity dev
 ```
 
-Expected: a clean worktree at `/Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity`.
+Expected: a clean worktree at `"<path-to-prompts-chatbooks-worktree>"`.
 
 - [ ] **Step 2: Write the failing schema tests**
 
@@ -114,7 +116,7 @@ async def test_client_create_prompt_posts_to_prompts_endpoint(monkeypatch):
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/tldw_api/test_prompt_chatbook_schemas.py Tests/tldw_api/test_prompt_chatbook_client.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/tldw_api/test_prompt_chatbook_schemas.py Tests/tldw_api/test_prompt_chatbook_client.py -q
 ```
 
 Expected: FAIL on missing imports or missing client methods.
@@ -158,7 +160,7 @@ async def get_chatbook_import_job(self, job_id: str) -> dict: ...
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/tldw_api/test_prompt_chatbook_schemas.py Tests/tldw_api/test_prompt_chatbook_client.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/tldw_api/test_prompt_chatbook_schemas.py Tests/tldw_api/test_prompt_chatbook_client.py -q
 ```
 
 Expected: PASS.
@@ -166,7 +168,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit the API contract layer**
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && git add Tests/tldw_api/test_prompt_chatbook_schemas.py Tests/tldw_api/test_prompt_chatbook_client.py tldw_chatbook/tldw_api/prompt_chatbook_schemas.py tldw_chatbook/tldw_api/client.py tldw_chatbook/tldw_api/__init__.py && git commit -m "feat: add prompt and chatbook API contracts"
+cd "<path-to-prompts-chatbooks-worktree>" && git add Tests/tldw_api/test_prompt_chatbook_schemas.py Tests/tldw_api/test_prompt_chatbook_client.py tldw_chatbook/tldw_api/prompt_chatbook_schemas.py tldw_chatbook/tldw_api/client.py tldw_chatbook/tldw_api/__init__.py && git commit -m "feat: add prompt and chatbook API contracts"
 ```
 
 ### Task 2: Upgrade Local Prompt Storage For Structured Server Prompts
@@ -209,7 +211,7 @@ def test_prompt_db_persists_structured_prompt_metadata():
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/Prompts_DB/test_prompts_db_server_parity.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/Prompts_DB/test_prompts_db_server_parity.py -q
 ```
 
 Expected: FAIL on missing columns or missing returned fields.
@@ -240,7 +242,7 @@ Preserve `system_prompt` and `user_prompt` for legacy compatibility.
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/Prompts_DB/test_prompts_db_server_parity.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/Prompts_DB/test_prompts_db_server_parity.py -q
 ```
 
 Expected: PASS.
@@ -248,7 +250,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit the prompt DB migration**
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && git add Tests/Prompts_DB/test_prompts_db_server_parity.py tldw_chatbook/DB/Prompts_DB.py tldw_chatbook/Prompt_Management/Prompts_Interop.py && git commit -m "feat: store structured prompt metadata locally"
+cd "<path-to-prompts-chatbooks-worktree>" && git add Tests/Prompts_DB/test_prompts_db_server_parity.py tldw_chatbook/DB/Prompts_DB.py tldw_chatbook/Prompt_Management/Prompts_Interop.py && git commit -m "feat: store structured prompt metadata locally"
 ```
 
 ### Task 3: Add Prompt Round-Trip Adapters And Interop Helpers
@@ -296,7 +298,7 @@ def test_local_prompt_to_server_payload_keeps_legacy_snapshot():
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/Prompt_Management/test_server_prompt_adapter.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/Prompt_Management/test_server_prompt_adapter.py -q
 ```
 
 Expected: FAIL on missing adapter module/functions.
@@ -323,7 +325,7 @@ def apply_server_prompt_version(prompt_id_or_uuid: int | str, payload: dict) -> 
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/Prompt_Management/test_server_prompt_adapter.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/Prompt_Management/test_server_prompt_adapter.py -q
 ```
 
 Expected: PASS.
@@ -331,7 +333,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit the prompt adapter layer**
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && git add Tests/Prompt_Management/test_server_prompt_adapter.py tldw_chatbook/Prompt_Management/server_prompt_adapter.py tldw_chatbook/Prompt_Management/Prompts_Interop.py && git commit -m "feat: add server prompt round-trip adapters"
+cd "<path-to-prompts-chatbooks-worktree>" && git add Tests/Prompt_Management/test_server_prompt_adapter.py tldw_chatbook/Prompt_Management/server_prompt_adapter.py tldw_chatbook/Prompt_Management/Prompts_Interop.py && git commit -m "feat: add server prompt round-trip adapters"
 ```
 
 ### Task 4: Add The Server Chatbook Service And Wizard Modes
@@ -370,7 +372,7 @@ def test_service_normalizes_export_selection_keys():
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/Chatbooks/test_server_chatbook_service.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/Chatbooks/test_server_chatbook_service.py -q
 ```
 
 Expected: FAIL on missing service module or methods.
@@ -398,7 +400,7 @@ The wizards should:
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/Chatbooks/test_server_chatbook_service.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/Chatbooks/test_server_chatbook_service.py -q
 ```
 
 Expected: PASS.
@@ -406,7 +408,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit the chatbook service and wizard wiring**
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && git add Tests/Chatbooks/test_server_chatbook_service.py tldw_chatbook/Chatbooks/server_chatbook_service.py tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py tldw_chatbook/UI/Wizards/ChatbookImportWizard.py && git commit -m "feat: add server-backed chatbook import export flows"
+cd "<path-to-prompts-chatbooks-worktree>" && git add Tests/Chatbooks/test_server_chatbook_service.py tldw_chatbook/Chatbooks/server_chatbook_service.py tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py tldw_chatbook/UI/Wizards/ChatbookImportWizard.py && git commit -m "feat: add server-backed chatbook import export flows"
 ```
 
 ### Task 5: Consolidate The Chatbooks Screen On The Improved UI
@@ -457,7 +459,7 @@ async def test_chatbooks_screen_uses_improved_window(mock_app_instance):
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/UI/test_chatbooks_screen_server_actions.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/UI/test_chatbooks_screen_server_actions.py -q
 ```
 
 Expected: FAIL because `ChatbooksScreen` still mounts the legacy `ChatbooksWindow`.
@@ -478,7 +480,7 @@ Do not remove `ChatbooksWindow.py` in this vertical. Leave it as a legacy shell 
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/UI/test_chatbooks_screen_server_actions.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/UI/test_chatbooks_screen_server_actions.py -q
 ```
 
 Expected: PASS.
@@ -486,7 +488,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit the chatbooks UI consolidation**
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && git add Tests/UI/test_chatbooks_screen_server_actions.py tldw_chatbook/UI/Screens/chatbooks_screen.py tldw_chatbook/UI/Chatbooks_Window_Improved.py && git commit -m "feat: consolidate chatbooks screen on improved UI"
+cd "<path-to-prompts-chatbooks-worktree>" && git add Tests/UI/test_chatbooks_screen_server_actions.py tldw_chatbook/UI/Screens/chatbooks_screen.py tldw_chatbook/UI/Chatbooks_Window_Improved.py && git commit -m "feat: consolidate chatbooks screen on improved UI"
 ```
 
 ### Task 6: Verify The Vertical End-To-End And Update Docs
@@ -516,7 +518,7 @@ Document:
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/tldw_api/test_prompt_chatbook_schemas.py Tests/tldw_api/test_prompt_chatbook_client.py Tests/Prompts_DB/test_prompts_db_server_parity.py Tests/Prompt_Management/test_server_prompt_adapter.py Tests/Chatbooks/test_server_chatbook_service.py Tests/UI/test_chatbooks_screen_server_actions.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/tldw_api/test_prompt_chatbook_schemas.py Tests/tldw_api/test_prompt_chatbook_client.py Tests/Prompts_DB/test_prompts_db_server_parity.py Tests/Prompt_Management/test_server_prompt_adapter.py Tests/Chatbooks/test_server_chatbook_service.py Tests/UI/test_chatbooks_screen_server_actions.py -q
 ```
 
 Expected: PASS.
@@ -526,7 +528,7 @@ Expected: PASS.
 Run:
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && pytest Tests/Chatbooks/test_chatbook_importer.py Tests/Chatbooks/test_chatbook_creator.py Tests/Prompts_DB/test_prompts_db_pytest.py -q
+cd "<path-to-prompts-chatbooks-worktree>" && pytest Tests/Chatbooks/test_chatbook_importer.py Tests/Chatbooks/test_chatbook_creator.py Tests/Prompts_DB/test_prompts_db_pytest.py -q
 ```
 
 Expected: PASS.
@@ -534,5 +536,5 @@ Expected: PASS.
 - [ ] **Step 4: Commit the verified vertical**
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook-prompts-chatbooks-parity && git add tldw_chatbook/tldw_api/README.md Docs/Parity/2026-04-19-data-compatibility-map.md Docs/Parity/2026-04-19-rollout-backlog.md && git commit -m "docs: finalize prompts and chatbooks parity vertical"
+cd "<path-to-prompts-chatbooks-worktree>" && git add tldw_chatbook/tldw_api/README.md Docs/Parity/2026-04-19-data-compatibility-map.md Docs/Parity/2026-04-19-rollout-backlog.md && git commit -m "docs: finalize prompts and chatbooks parity vertical"
 ```

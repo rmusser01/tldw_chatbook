@@ -8,6 +8,8 @@
 
 **Tech Stack:** Markdown, git, shell utilities (`rg`, `find`, `sed`), Python/Textual repo structure, FastAPI endpoint inventory
 
+**Path Placeholder:** Use `"<path-to-tldw_server-repo>"` anywhere a command below needs the local checkout of the `tldw_server` repository.
+
 ---
 
 ### Task 1: Create The Audit Workspace
@@ -68,7 +70,7 @@ git commit -m "docs: add parity audit artifact skeletons"
 Run:
 
 ```bash
-find /Users/macbook-dev/Documents/GitHub/tldw_server/tldw_Server_API/app/api/v1/endpoints -maxdepth 2 -type f | sed -n '1,200p'
+find "<path-to-tldw_server-repo>"/tldw_Server_API/app/api/v1/endpoints -maxdepth 2 -type f | sed -n '1,200p'
 ```
 
 Expected: endpoint files grouped enough to identify chat, characters, notes/workspaces, prompts/chatbooks, media/files, RAG, evals/study, MCP/tools/skills, and companion/persona domains.
