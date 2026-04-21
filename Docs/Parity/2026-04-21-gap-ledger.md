@@ -1,5 +1,9 @@
 # Chatbook Server Parity Gap Ledger
 
+Audit date: 2026-04-21
+
+Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parity-audit-design.md`
+
 ## Critical Gaps
 
 ### Collections: Reading List / Read-it-later: Saved reading collection and read-later item flows
@@ -121,24 +125,6 @@
 - Recommended tranche: Tranche 1
 - Notes: Priority 63. Strong existing seams keep this below the most urgent standalone gaps.
 
-### Study Packs: Study-pack generation jobs and pack materialization
-- Requirement class: Remote parity required, local parity assessed explicitly
-- Client obligation: Discover / Trigger / Observe
-- Current state: Chatbook has no dedicated study-pack discovery, launch, or job-status surface today, and only adjacent local study-core helpers exist.
-- Gap: The server study-pack contract is explicit, but Chatbook still lacks the remote discovery, launch, and observe layer for it.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/flashcards.py`, `../tldw_server/tldw_Server_API/app/core/StudyPacks/jobs.py`, `../tldw_server/tldw_Server_API/app/core/StudyPacks/generation_service.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/study_packs.py`; Chatbook: adjacent local study helpers in `tldw_chatbook/tldw_api/client.py` and `tldw_chatbook/Study_Interop/`; Verification: stable endpoint-backed study-pack routes exist in `flashcards.py` with job and pack materialization support.
-- Recommended tranche: Tranche 3
-- Notes: Priority 38. This is a real scored gap, but it remains behind the standalone-first study core work because it is remote-first and lower standalone value.
-
-### Study Suggestions: Study-suggestion anchors, snapshots, actions, and refresh jobs
-- Requirement class: Remote parity required, local parity assessed explicitly
-- Client obligation: Discover / Trigger / Observe
-- Current state: Chatbook has no dedicated study-suggestions surface today beyond adjacent next-review helpers.
-- Gap: The server suggestion-anchor, snapshot, and action flows are not yet surfaced in Chatbook.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/study_suggestions.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/flashcards.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/quizzes.py`, `../tldw_server/tldw_Server_API/app/core/StudySuggestions/snapshot_service.py`, `../tldw_server/tldw_Server_API/app/core/StudySuggestions/jobs.py`; Chatbook: adjacent next-review helpers in `tldw_chatbook/tldw_api/client.py` and `tldw_chatbook/Study_Interop/study_scope_service.py`; Verification: dedicated endpoint family plus flashcard/quiz hooks confirm the server study-suggestions contract.
-- Recommended tranche: Tranche 3
-- Notes: Priority 38. This is matrix-aligned as a remote-first scored gap and should stay below the core standalone study surfaces.
-
 ### Collections: Outputs / Templates / Artifacts: Output artifacts, output templates, and render/export jobs
 - Requirement class: Remote parity required, local parity optional
 - Client obligation: Full CRUD
@@ -167,6 +153,24 @@
 - Notes: Priority 62. This is good leverage work, but it still trails the top standalone-first rows.
 
 ## Remote-Only Client Obligations
+
+### Study Packs: Study-pack generation jobs and pack materialization
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Discover / Trigger / Observe
+- Current state: Chatbook has no dedicated study-pack discovery, launch, or job-status surface today, and only adjacent local study-core helpers exist.
+- Gap: The server study-pack contract is explicit, but Chatbook still lacks the remote discovery, launch, and observe layer for it.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/flashcards.py`, `../tldw_server/tldw_Server_API/app/core/StudyPacks/jobs.py`, `../tldw_server/tldw_Server_API/app/core/StudyPacks/generation_service.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/study_packs.py`; Chatbook: adjacent local study helpers in `tldw_chatbook/tldw_api/client.py` and `tldw_chatbook/Study_Interop/`; Verification: stable endpoint-backed study-pack routes exist in `flashcards.py` with job and pack materialization support.
+- Recommended tranche: Tranche 3
+- Notes: Priority 38. This remains a remote-first, later client obligation with fallback to local study-core flows rather than a high-value partial crosswalk.
+
+### Study Suggestions: Study-suggestion anchors, snapshots, actions, and refresh jobs
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Discover / Trigger / Observe
+- Current state: Chatbook has no dedicated study-suggestions surface today beyond adjacent next-review helpers.
+- Gap: The server suggestion-anchor, snapshot, and action flows are not yet surfaced in Chatbook.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/study_suggestions.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/flashcards.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/quizzes.py`, `../tldw_server/tldw_Server_API/app/core/StudySuggestions/snapshot_service.py`, `../tldw_server/tldw_Server_API/app/core/StudySuggestions/jobs.py`; Chatbook: adjacent next-review helpers in `tldw_chatbook/tldw_api/client.py` and `tldw_chatbook/Study_Interop/study_scope_service.py`; Verification: dedicated endpoint family plus flashcard/quiz hooks confirm the server study-suggestions contract.
+- Recommended tranche: Tranche 3
+- Notes: Priority 38. This remains a remote-first, later client obligation with fallback to local study-core flows rather than a high-value partial crosswalk.
 
 ### Server Reminders / Notification Feeds: Server tasks, reminder CRUD, and notification-backed feed views
 - Requirement class: Remote parity required

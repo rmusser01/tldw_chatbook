@@ -1,5 +1,7 @@
 # Chatbook Server Capability Matrix
 
+Audit date: 2026-04-21
+
 Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parity-audit-design.md`
 
 ## Legend

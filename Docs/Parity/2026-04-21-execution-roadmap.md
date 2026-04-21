@@ -1,5 +1,9 @@
 # Chatbook Server Execution Roadmap
 
+Audit date: 2026-04-21
+
+Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parity-audit-design.md`
+
 Tranche ordering follows the capability matrix, gap ledger, and target-state design. The sequence is intentionally standalone-first: lock the runtime-policy and capability-map prerequisites first, strengthen domains that already have partial dual-backend seams next, then add the highest-value missing local and remote surfaces, and only after that spend effort on remote-only convenience layers.
 
 ## Tranche 0: Runtime Policy And Capability Map

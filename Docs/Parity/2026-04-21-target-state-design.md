@@ -1,5 +1,9 @@
 # Chatbook Server Target-State Design
 
+Audit date: 2026-04-21
+
+Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parity-audit-design.md`
+
 ## Operating Rules
 
 - `Separated Local/Server primary UI`: For any domain with both local and server capability, Chatbook treats `Local` and `Server` as separate operating modes. The primary screens, lists, detail views, and actions must stay source-labeled and source-scoped rather than mixing records by default.
@@ -56,11 +60,15 @@ Authored now: notification state for local operations is authored and owned by C
 ### Local MCP Runtime
 Authored now: MCP runtime configuration, approvals, prompts, resources, and execution state are authored locally inside Chatbook. Viewed now: the local MCP catalog and runtime status are viewed as a Chatbook-owned local surface. Local: Chatbook must provide local MCP runtime execution, local approvals, and local governance for offline-capable operations. Remote: Chatbook may later import or reference remote catalogs, but remote governance remains a different surface and must not subsume local control. Offline: local MCP continues to operate without server dependency. Mixed view: deferred.
 
+## Remote-First / Conditional Domains
+
+This section covers domains where the current parity target is primarily remote, while any local-adjacent behavior remains optional, separate, or too low-confidence to treat as a settled local-first domain.
+
 ### Collections: Outputs / Templates / Artifacts
-Authored now: local workspace artifacts remain locally authored when they exist, while managed outputs, templates, and render/export jobs are authored on the server in server mode. Viewed now: local-adjacent artifacts and server-managed outputs stay source-scoped rather than appearing as one merged artifact catalog. Local: Chatbook may continue to expose adjacent local workspace artifacts, but it does not need full local managed-outputs parity now. Remote: Chatbook must support server outputs, templates, and render jobs when connected. Offline: local workspace artifacts can remain visible, but server-managed outputs are unavailable. Mixed view: deferred.
+Authored now: managed outputs, templates, and render/export jobs are authored on the server in server mode, while adjacent local workspace artifacts remain separately local where they exist. Viewed now: server-managed outputs and local-adjacent artifacts stay source-scoped rather than appearing as one merged artifact catalog. Local: Chatbook may continue to expose adjacent local workspace artifacts, but full local managed-outputs parity is optional and not the current target state. Remote: Chatbook must support server outputs, templates, and render jobs when connected. Offline: server-managed outputs are unavailable, while adjacent local artifacts can remain visible. Mixed view: deferred.
 
 ### Research Search / Provider Surfaces
-Authored now: local search settings and provider tools remain locally authored, while the server-side research-provider contract is authored on the server in server mode. Viewed now: local search/provider tools and server provider-backed research actions are shown from the selected source rather than treated as one unified provider surface. Local: Chatbook may keep existing local search and provider tools separate until a clearer parity target exists. Remote: Chatbook must discover, configure, trigger, and observe server provider surfaces when connected as that contract stabilizes. Offline: local search can continue, but server provider surfaces are unavailable. Mixed view: deferred.
+Authored now: the server-side research-provider contract is authored on the server in server mode, while local search settings and provider tools remain separate local-adjacent behavior. Viewed now: local search/provider tools and server provider-backed research actions are shown from the selected source rather than treated as one unified provider surface. Local: Chatbook may keep existing local search and provider tools separate until a clearer parity target exists; local parity is not yet a settled commitment here. Remote: Chatbook must discover, configure, trigger, and observe server provider surfaces when connected as that contract stabilizes. Offline: local search can continue, but server provider surfaces are unavailable. Mixed view: deferred. Confidence note: the server provider contract remains lower-confidence than the core dual-backend and strong local-first domains.
 
 ## Remote-Only Domains
 
@@ -78,8 +86,11 @@ Authored now: chat-workflow definitions and orchestration state are authored on 
 ### Server Reminders / Notification Feeds
 Authored now: reminders, server tasks, and notification-feed state are authored on the server only. Viewed now: these feeds are viewed from server mode and must stay distinct from Chatbook's local notifications. Local: Chatbook does not treat local notifications as a local reminder mirror. Remote: Chatbook must discover, configure, trigger, and observe server reminders and notification feeds when connected. Offline: the reminder/feed surface is explicitly unavailable. Mixed view: deferred.
 
-### Study Packs And Study Suggestions
-Authored now: study-pack jobs, generated packs, suggestion anchors, snapshots, and refresh jobs are authored on the server only. Viewed now: pack status, generated artifacts, and suggestion actions are viewed from server mode. Local: Chatbook falls back to existing local study-core review flows rather than inventing local copies of these server-first features. Remote: Chatbook must discover, launch, and observe these server surfaces when connected. Offline: these domains are unavailable, with fallback to local study-core workflows only. Mixed view: deferred.
+### Study Packs
+Authored now: study-pack jobs and generated packs are authored on the server only. Viewed now: pack status and generated pack artifacts are viewed from server mode. Local: Chatbook falls back to existing local study-core deck, flashcard, and review flows rather than inventing local copies of this server-first feature. Remote: Chatbook must discover, launch, and observe study-pack surfaces when connected. Offline: study packs are unavailable, with fallback to local study-core workflows only. Mixed view: deferred.
+
+### Study Suggestions
+Authored now: suggestion anchors, snapshots, actions, and refresh jobs are authored on the server only. Viewed now: suggestion state and suggestion actions are viewed from server mode. Local: Chatbook falls back to existing local study-core review and next-review flows rather than inventing local copies of this server-first feature. Remote: Chatbook must discover, launch, and observe study-suggestion surfaces when connected. Offline: study suggestions are unavailable, with fallback to local study-core workflows only. Mixed view: deferred.
 
 ### Sharing
 Authored now: share links, permissions, and revocation state are authored on the server only. Viewed now: sharing is discovered and managed from server mode only. Local: Chatbook does not define a local sharing system for this audit. Remote: Chatbook must support share discovery, creation, inspection, and revocation when connected. Offline: sharing is unavailable. Mixed view: deferred.
