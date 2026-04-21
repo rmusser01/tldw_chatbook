@@ -120,7 +120,8 @@ It should contain:
 - `active_source`: `local` or `server`
 - `active_server_id`: nullable string
 - `server_configured`: bool
-- `server_reachable`: bool
+- `server_reachability`: `unknown`, `reachable`, or `unreachable`
+- `server_reachability_checked_at`: optional UTC timestamp
 - `last_known_server_label`: optional string
 
 Important rules:
@@ -128,6 +129,11 @@ Important rules:
 - `active_source` is the source of truth for app mode, not screen-local copies.
 - `active_server_id` exists now even though only one active slot is supported, so later switching adds orchestration rather than a schema rewrite.
 - reachability is runtime state, not a substitute for configuration
+- `server_reachability` is a best-effort centrally refreshed health signal, not a permanent truth value
+- a centrally defined freshness window determines whether `server_reachability_checked_at` is still trustworthy for UI preflight
+- if no timestamp exists or the freshness window has expired, reachability must be treated as `unknown` by policy consumers
+- UI preflight may use fresh `server_reachability` for early feedback, but service hard stops must still be able to return `server_unreachable` based on real request-time failure rather than trusting a cached signal
+- stale reachability state must never grant authority that a real request would deny
 
 ### CapabilityRegistry
 
@@ -167,6 +173,12 @@ Each entry should define:
 - fixed default deny reasons
 
 The registry is seeded from the full 2026-04-21 audited capability set so unsupported and remote-only rows exist as first-class policy data from the start.
+
+Missing-registry-entry rule:
+
+- an unknown action id is a hard failure in development and test
+- production behavior must deny the action explicitly rather than silently allowing it
+- missing action ids must be treated as registry defects to fix, not as caller-defined special cases
 
 ### PolicyEngine
 
@@ -217,12 +229,33 @@ Representative initial hard-stop integration points:
 - `RAG_Admin/rag_admin_scope_service.py`
 - `Character_Chat/character_persona_scope_service.py`
 
+Known live direct-call paths that must either be routed through enforced seams or receive equivalent direct policy enforcement before Tranche 0 is considered complete:
+
+- `UI/Screens/notes_screen.py` paths that call `server_notes_workspace_service` directly
+- `UI/Study_Modules/quizzes_handler.py` paths that instantiate or call quiz services directly
+- `UI/Study_Modules/flashcards_handler.py` paths that instantiate or call study services directly
+- `UI/MediaIngestWindowRebuilt.py` paths that call `TLDWAPIClient` directly
+- `Event_Handlers/tldw_api_events.py` paths that construct `TLDWAPIClient` directly
+- any wizard or import/export path that constructs `ServerChatbookService` or `TLDWAPIClient` without passing through an enforced seam
+
 Rules:
 
 - service calls must reject invalid source/authority operations even if a UI caller forgot to preflight
 - service responses should preserve the fixed reason-code contract
 - the service layer must not silently coerce source, auto-switch mode, or invent fallback authority
 - Tranche 0 cannot claim central day-one blocking unless all currently live domain call paths route through one of these enforced seams or receive equivalent direct enforcement before shipping
+
+### Phase-One Adoption Boundary
+
+Tranche 0 does not need to migrate every screen to the new UI preflight helper before shipping, but it does need an objectively complete hard-stop boundary.
+
+For this tranche to be considered done:
+
+- every currently live local/server action path must either:
+  - flow through an enforced shared seam, or
+  - receive explicit direct policy enforcement before making the local/server call
+- the implementation plan must enumerate the exact callers being covered in phase one
+- any deferred caller must be explicitly excluded from Tranche 0 scope and prevented from bypassing policy in production
 
 ### UI Preflight
 
