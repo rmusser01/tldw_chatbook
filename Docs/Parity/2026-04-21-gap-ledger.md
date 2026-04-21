@@ -4,6 +4,10 @@
 
 ## High-Value Partial Crosswalks
 
+## Local Name Crosswalks
+
+- `Subscriptions` -> likely local precursor for server `Watchlists`
+
 ## Remote-Only Client Obligations
 
 ## Contract-Maturity Holds
