@@ -155,8 +155,7 @@ class ChatShellBar(Container):
         resolver: Optional[ChatShellLabelResolver] = None,
     ) -> None:
         self.session_data = session_data
-        if resolver is not None:
-            self.resolver = resolver
+        self.resolver = resolver
         self.context = ChatShellContext.from_session_data(self.session_data, resolver=self.resolver)
         self.refresh_context_label()
 
@@ -166,8 +165,7 @@ class ChatShellBar(Container):
         resolver: Optional[ChatShellLabelResolver] = None,
     ) -> None:
         self.session_data = tab_state
-        if resolver is not None:
-            self.resolver = resolver
+        self.resolver = resolver
         self.context = ChatShellContext.from_tab_state(self.session_data, resolver=self.resolver)
         self.refresh_context_label()
 

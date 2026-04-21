@@ -270,3 +270,50 @@ async def test_chat_shell_bar_refreshes_label_on_session_sync_and_resize() -> No
             resized_text = _static_text(label)
             assert len(resized_text) <= len(synced_text)
             assert resized_text != synced_text
+
+
+@pytest.mark.asyncio
+async def test_chat_shell_bar_clears_resolver_labels_when_syncing_without_resolver() -> None:
+    fixture = _ShellBarFixture(
+        session_data=ChatSessionData(
+            tab_id="tab-a",
+            title="Initial Session",
+            runtime_backend="server",
+            scope_type="workspace",
+            workspace_id="ws-1",
+            assistant_kind="persona",
+            assistant_id="persona-1",
+        ),
+        resolver=ChatShellLabelResolver(
+            workspace_name="Workspace One",
+            persona_label="Coach One",
+        ),
+    )
+    app = ShellBarTestApp(fixture)
+
+    with patch(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+        return_value={"openai": ["gpt-4o-mini", "gpt-4o"]},
+    ):
+        async with app.run_test(size=(400, 20)) as pilot:
+            shell_bar = app.query_one(ChatShellBar)
+            label = app.query_one("#chat-shell-context", Static)
+
+            shell_bar.sync_from_session_data(
+                ChatSessionData(
+                    tab_id="tab-b",
+                    title="Fallback Session",
+                    runtime_backend="server",
+                    scope_type="workspace",
+                    workspace_id="ws-2",
+                    assistant_kind="persona",
+                    assistant_id="persona-2",
+                )
+            )
+            await pilot.pause()
+
+            synced_text = _static_text(label)
+            assert "Workspace: ws-2" in synced_text
+            assert "Persona: persona-2" in synced_text
+            assert "Workspace One" not in synced_text
+            assert "Coach One" not in synced_text
