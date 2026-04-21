@@ -4,7 +4,7 @@ Date: 2026-04-21
 Status: Approved for spec review
 Primary Repo: `tldw_chatbook`
 Reference Repo: `tldw_server`
-Supersedes: `docs/superpowers/specs/2026-04-19-chatbook-server-parity-audit-design.md`
+Supersedes: `Docs/superpowers/specs/2026-04-19-chatbook-server-parity-audit-design.md`
 
 ## Summary
 
@@ -119,6 +119,18 @@ For every dual-surface capability, the audit must record:
 - whether mixed views are optional later
 - whether the domain is a likely future mirror candidate
 
+### Client Obligation Clarity
+
+Requirement class alone is not precise enough for server-backed capabilities. Every row must also declare the Chatbook client obligation for that capability:
+
+- `Full CRUD`
+- `Discover / Configure / Trigger / Observe`
+- `Discover / Trigger / Observe`
+- `Observe-only`
+- `Unavailable offline with explicit fallback`
+
+This prevents remote-only or server-native capabilities from being treated as if they require full local implementation.
+
 ### Confidence Tracking
 
 Every row should carry a confidence label:
@@ -144,6 +156,7 @@ These policies are already decided and should drive the audit.
 - Local changes default to local persistence.
 - Remote/server mode should operate against the server surface.
 - Sync and mirrored writes are deferred to a later design.
+- Remote-only capabilities must still be discoverable in Chatbook and must present explicit offline/unavailable UX when no server is configured.
 
 ### Special Domain Policies
 
@@ -169,14 +182,14 @@ The coarse domain list should be replaced with the following client-relevant spl
 | Media / Reading / Ingestion Sources | Local parity required + Remote parity required | Includes reading progress and ingestion source CRUD |
 | Prompts / Chatbooks | Local parity required + Remote parity required | Client should remain usable without server |
 | Study Core | Local parity required + Remote parity required | Flashcards, quizzes, study guides |
-| Study Packs | Remote parity required, local parity assessed explicitly | In scope, but likely gap-heavy |
-| Study Suggestions | Remote parity required, local parity assessed explicitly | In scope, but likely gap-heavy |
+| Study Packs | Remote parity required, local parity assessed explicitly | Contract maturity must be verified before scoring as a standalone parity target |
+| Study Suggestions | Remote parity required, local parity assessed explicitly | Contract maturity must be verified before assigning implementation priority |
 | Collections: Reading List / Read-it-later | Local parity required + Remote parity required | Separate from outputs/templates |
 | Collections: Outputs / Templates / Artifacts | Remote parity required, local parity optional | Distinct from reading-list scope |
-| Watchlists | Local parity required + Remote parity required | Includes local-only utility case |
+| Watchlists | Local parity required + Remote parity required | Must be cross-walked against existing local `Subscriptions` capability before severity is assigned |
 | Writing Suite | Local parity required + Remote parity required | Must work standalone, server path audited separately |
 | Research Sessions / Runs | Local parity required + Remote parity required | Session/run UX, not just providers |
-| Research Search / Provider Surfaces | Remote parity required, local parity assessed explicitly | Separate from sessions/runs |
+| Research Search / Provider Surfaces | Remote parity required, local parity assessed explicitly | Separate from sessions/runs; contract maturity and client relevance must be verified first |
 | Client Notifications | Local parity required | Chatbook-owned local eventing/status |
 | Server Reminders / Notification Feeds | Remote parity required | Separate from local notifications |
 | Workflows | Remote-only acceptable | General workflows |
@@ -197,6 +210,7 @@ Each audit row should contain:
 - `Domain`
 - `Capability`
 - `Requirement class`
+- `Client obligation`
 - `Local target state`
 - `Remote target state`
 - `Primary UI mode`
@@ -209,6 +223,8 @@ Each audit row should contain:
 - `Observe/Status coverage`
 - `Server evidence`
 - `Chatbook evidence`
+- `Verification evidence`
+- `User-scope / tenancy fit`
 - `Current gap summary`
 - `Authority policy now`
 - `Mirror/sync relevance later`
@@ -262,7 +278,6 @@ Chatbook appears thinner in:
 - workflows
 - scheduler workflows
 - chat workflows
-- watchlists
 - server reminders / notification feeds
 - sharing
 - web clipper
@@ -271,6 +286,14 @@ Chatbook appears thinner in:
 - remote MCP control plane / governance
 
 These should be treated as likely gap-heavy rows from the start, not neutral unknowns.
+
+### Areas Likely To Be Partially Covered Under Different Local Names
+
+The audit should explicitly test whether existing Chatbook surfaces map onto newer server domains before scoring them as missing. The clearest current example is:
+
+- local `Subscriptions` vs server `Watchlists`
+
+This crosswalk matters because partial local coverage should change both the severity score and the recommended rollout tranche.
 
 ### Areas Requiring Code-First Audit
 
@@ -338,7 +361,9 @@ The audit should produce four concrete artifacts.
   - remote-only
 - specify primary Local/Server UI separation rules where applicable
 
-### Pass 6: Sequence Implementation Tranches
+## Post-Audit Planning Outputs
+
+After the audit passes are complete, the implementation plan should convert the matrix and gap ledger into explicit tranches:
 
 - tranche 0: cross-cutting runtime policy and client capability map
 - tranche 1: strengthen already-partial dual-backend domains
@@ -368,5 +393,5 @@ This design succeeds if it yields:
 
 After user review of this written spec:
 
-- write the implementation plan in `docs/superpowers/plans/2026-04-21-chatbook-server-capability-parity-audit.md`
+- write the implementation plan in `Docs/superpowers/plans/2026-04-21-chatbook-server-capability-parity-audit.md`
 - execute the audit itself before any direct feature work
