@@ -54,6 +54,7 @@ from ..config import get_subscriptions_db_path
 from ..Constants import SUBSCRIPTION_TYPES, SUBSCRIPTION_UPDATE_FREQUENCIES
 from .SiteConfigSettings import SiteConfigSettings
 from .ScraperBuilderWindow import ScraperBuilderWindow
+from .Subscription_Modules import NotificationsInboxController, SubscriptionBackendController
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -192,10 +193,25 @@ class SubscriptionWindow(Container):
         self.scheduler_worker: Optional[SubscriptionSchedulerWorker] = None
         self.briefing_generator: Optional[BriefingGenerator] = None
         self.template_manager: Optional[BriefingTemplateManager] = None
+        self.notifications_store = getattr(app_instance, "client_notifications_db", None)
+        self.watchlist_scope_service = getattr(app_instance, "watchlist_scope_service", None)
+        self.notification_dispatch_service = getattr(app_instance, "notification_dispatch_service", None)
+        self.backend_controller = SubscriptionBackendController(
+            window=self,
+            app_instance=app_instance,
+            scope_service=self.watchlist_scope_service,
+            notification_dispatch_service=self.notification_dispatch_service,
+        )
+        self.notifications_controller = NotificationsInboxController(
+            app_instance=app_instance,
+            store=self.notifications_store,
+        )
         
         # State
-        self.selected_subscription: Optional[int] = None
+        self.selected_subscription: Optional[Union[int, str]] = None
         self.selected_items: List[int] = []
+        self._selected_watch_item: Optional[Dict[str, Any]] = None
+        self._selected_local_subscription_row: Optional[Dict[str, Any]] = None
         self.is_checking = reactive(False)
         self.check_progress = reactive(0.0)
     
@@ -209,6 +225,10 @@ class SubscriptionWindow(Container):
             # Review tab
             with TabPane("Review Items", id="review"):
                 yield from self._compose_review_tab()
+
+            # Notifications tab
+            with TabPane("Notifications", id="notifications"):
+                yield from self._compose_notifications_tab()
             
             # Dashboard tab
             with TabPane("Dashboard", id="dashboard"):
@@ -347,7 +367,11 @@ class SubscriptionWindow(Container):
     
     def _compose_review_tab(self) -> ComposeResult:
         """Compose items review tab."""
-        with Vertical():
+        review_local_only = Static("", id="review-local-only-state")
+        review_local_only.display = False
+        yield review_local_only
+
+        with Vertical(id="review-main"):
             # Action bar
             with Horizontal(classes="review-actions"):
                 yield Button("Check All", id="check-all-btn", classes="primary-button")
@@ -370,6 +394,15 @@ class SubscriptionWindow(Container):
                 with Vertical(classes="item-preview-container"):
                     yield Label("Preview")
                     yield TextArea(id="item-preview", classes="item-preview", read_only=True)
+
+    def _compose_notifications_tab(self) -> ComposeResult:
+        """Compose the client notifications inbox tab."""
+        with Vertical():
+            yield Label("Notifications Inbox")
+            yield ListView(id="notifications-list")
+            with Horizontal():
+                yield Button("Mark Read", id="notification-mark-read-btn")
+                yield Button("Dismiss", id="notification-dismiss-btn")
     
     def _compose_dashboard_tab(self) -> ComposeResult:
         """Compose monitoring dashboard tab."""
@@ -581,24 +614,11 @@ class SubscriptionWindow(Container):
             else:
                 self.briefing_generator = None
                 self.template_manager = None
-            
-            # Initialize scheduler worker
-            self.scheduler_worker = SubscriptionSchedulerWorker(
-                self.app_instance,
-                self.db,
-                max_concurrent=10,
-                check_interval=60
-            )
-            
-            # Load initial data
-            await self.refresh_subscription_list()
+
+            await self.refresh_backend_view()
             await self.refresh_dashboard()
-            await self.load_new_items()
             await self.load_briefing_templates()
-            
-            # Start scheduler if enabled
-            if self.query_one("#enable-scheduler", Checkbox).value:
-                self.run_worker(self.scheduler_worker.start_scheduler())
+            await self.refresh_notifications_inbox()
             
             logger.info("Subscription window initialized")
             
@@ -749,15 +769,244 @@ class SubscriptionWindow(Container):
             
         except Exception as e:
             logger.error(f"Error loading briefing templates: {e}")
+
+    def _runtime_backend(self) -> str:
+        """Resolve the active runtime backend from app-level state."""
+        for candidate in (
+            getattr(self, "runtime_backend", None),
+            getattr(self.app_instance, "current_runtime_backend", None),
+            getattr(self.app_instance, "runtime_backend", None),
+        ):
+            normalized = str(candidate or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
+        return "local"
+
+    def _local_only_selectors(self, tab_id: str) -> Tuple[str, str]:
+        return {
+            "review": ("#review-local-only-state", "#review-main"),
+        }.get(tab_id, ("", ""))
+
+    def _render_local_only_state(self, *, tab_id: str, message: str) -> None:
+        """Show a local-only degradation message for a backend-incompatible tab."""
+        state_selector, main_selector = self._local_only_selectors(tab_id)
+        if not state_selector or not main_selector:
+            return
+        try:
+            state_widget = self.query_one(state_selector, Static)
+            main_widget = self.query_one(main_selector)
+        except (AssertionError, QueryError):
+            return
+        state_widget.update(message)
+        state_widget.display = True
+        main_widget.display = False
+
+    def _clear_local_only_state(self, *, tab_id: str) -> None:
+        """Restore a tab after leaving a degraded backend mode."""
+        state_selector, main_selector = self._local_only_selectors(tab_id)
+        if not state_selector or not main_selector:
+            return
+        try:
+            state_widget = self.query_one(state_selector, Static)
+            main_widget = self.query_one(main_selector)
+        except (AssertionError, QueryError):
+            return
+        state_widget.display = False
+        main_widget.display = True
+
+    async def _render_watch_item_list(self, items: List[Dict[str, Any]]) -> None:
+        """Populate the subscriptions list with normalized watchlist rows."""
+        try:
+            list_view = self.query_one("#subscription-list", ListView)
+        except (AssertionError, QueryError):
+            return
+
+        await list_view.clear()
+        for item in items:
+            label = f"{item.get('title', item.get('name', 'Untitled'))} [{item.get('source_type', item.get('type', 'source'))}]"
+            list_item = ListItem(Static(label, classes="subscription-item"))
+            list_item.data = item
+            await list_view.append(list_item)
+
+    async def refresh_notifications_inbox(self) -> None:
+        """Reload the notifications list from the local client store."""
+        rows = await self.notifications_controller.load_rows()
+        try:
+            list_view = self.query_one("#notifications-list", ListView)
+        except (AssertionError, QueryError):
+            return
+
+        await list_view.clear()
+        for row in rows:
+            status = "Read" if row.get("is_read") else "Unread"
+            label = f"{status}: {row.get('title', 'Notification')}"
+            item = ListItem(Static(label))
+            item.data = row
+            await list_view.append(item)
+
+    def _selected_list_item_data(self, selector: str) -> Optional[Dict[str, Any]]:
+        """Best-effort access to the selected ListView row payload."""
+        try:
+            list_view = self.query_one(selector, ListView)
+        except (AssertionError, QueryError):
+            return None
+
+        highlighted_child = getattr(list_view, "highlighted_child", None)
+        data = getattr(highlighted_child, "data", None)
+        if isinstance(data, dict):
+            return data
+
+        index = getattr(list_view, "index", None)
+        items = getattr(list_view, "children", None) or getattr(list_view, "items", None)
+        if isinstance(index, int) and items is not None:
+            try:
+                selected = list(items)[index]
+            except Exception:
+                return None
+            data = getattr(selected, "data", None)
+            if isinstance(data, dict):
+                return data
+        return None
+
+    def _active_watch_item_id(self) -> Optional[str]:
+        """Return the normalized id for the currently selected watch item."""
+        selected = self._selected_list_item_data("#subscription-list")
+        if not selected and isinstance(self._selected_watch_item, dict):
+            selected = self._selected_watch_item
+        if not selected:
+            if self.selected_subscription in (None, ""):
+                return None
+            return str(self.selected_subscription)
+        item_id = selected.get("id")
+        if item_id not in (None, ""):
+            return str(item_id)
+        source_id = selected.get("source_id")
+        if source_id in (None, ""):
+            return None
+        entity_kind = str(selected.get("entity_kind") or ("subscription" if self._runtime_backend() == "local" else "watchlist_source"))
+        return f"{self._runtime_backend()}:{entity_kind}:{source_id}"
+
+    def _parse_tags_field(self) -> List[str]:
+        return [tag.strip() for tag in self.query_one("#sub-tags", Input).value.split(',') if tag.strip()]
+
+    def _current_watch_item_context(self) -> Dict[str, Any]:
+        current: Dict[str, Any] = {}
+        if isinstance(self._selected_watch_item, dict):
+            current.update(self._selected_watch_item)
+        if current or self.selected_subscription not in (None, ""):
+            selected = self._selected_list_item_data("#subscription-list")
+            if isinstance(selected, dict):
+                current.update(selected)
+        if self.selected_subscription not in (None, "") and "id" not in current:
+            current["id"] = self.selected_subscription
+        return current
+
+    def _watch_item_payload_from_form(self) -> Dict[str, Any]:
+        current = self._current_watch_item_context()
+        payload: Dict[str, Any] = {
+            "name": self.query_one("#sub-name", Input).value.strip(),
+            "url": self.query_one("#sub-url", Input).value.strip(),
+            "source_type": self.query_one("#sub-type", Select).value,
+            "active": bool(current.get("active", True)),
+            "tags": self._parse_tags_field(),
+        }
+        if current.get("id") not in (None, ""):
+            payload["id"] = current["id"]
+        if current.get("settings") is not None:
+            payload["settings"] = current["settings"]
+        return payload
+
+    def _local_form_extras(self) -> Dict[str, Any]:
+        extras: Dict[str, Any] = {
+            "description": self.query_one("#sub-description", TextArea).text.strip() or None,
+            "folder": self.query_one("#sub-folder", Input).value.strip() or None,
+            "priority": int(self.query_one("#sub-priority", Select).value),
+            "check_frequency": int(self.query_one("#sub-frequency", Select).value),
+            "auto_ingest": self.query_one("#sub-auto-ingest", Checkbox).value,
+        }
+
+        auth_type = self.query_one("#sub-auth-type", Select).value
+        extras["auth_config"] = {"type": auth_type} if auth_type != "none" else None
+
+        headers_text = self.query_one("#sub-headers", TextArea).text.strip()
+        extras["custom_headers"] = json.loads(headers_text) if headers_text else None
+        return extras
+
+    def _decode_json_mapping(self, value: Any) -> Dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str) and value.strip():
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            if isinstance(decoded, dict):
+                return decoded
+        return {}
+
+    def _clear_subscription_list_selection(self) -> None:
+        try:
+            list_view = self.query_one("#subscription-list", ListView)
+        except (AssertionError, QueryError):
+            return
+        for attr, value in (("highlighted_child", None), ("index", None)):
+            try:
+                setattr(list_view, attr, value)
+            except Exception:
+                continue
+
+    def _active_notification_id(self) -> Optional[int]:
+        """Return the selected notification inbox row id."""
+        selected = self._selected_list_item_data("#notifications-list")
+        if not selected:
+            return None
+        notification_id = selected.get("id")
+        if notification_id in (None, ""):
+            return None
+        return int(notification_id)
+
+    async def refresh_backend_view(self) -> None:
+        """Refresh the backend-aware subscription/watchlist shell."""
+        runtime_backend = self._runtime_backend()
+        await self.backend_controller.refresh_backend_view(runtime_backend=runtime_backend)
+
+    async def stop_active_backend_workers(self) -> None:
+        """Stop any backend-specific workers owned by the shell."""
+        await self.backend_controller.stop_active_backend_workers()
+
+    async def delete_selected_watch_item(self) -> Dict[str, Any] | None:
+        """Delete the current watch item through the backend controller."""
+        item_id = self._active_watch_item_id()
+        if item_id is None:
+            return None
+        return await self.backend_controller.delete_watch_item(item_id)
+
+    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+        """Refresh window state after a runtime backend switch."""
+        self.runtime_backend = str(runtime_backend or "local").strip().lower() or "local"
+        await self.handle_add_subscription(None)
+        await self.refresh_backend_view()
+        await self.refresh_notifications_inbox()
     
     @on(Button.Pressed, "#add-subscription-btn")
     async def handle_add_subscription(self, event: Button.Pressed) -> None:
         """Handle add subscription button."""
+        del event
         # Clear form
         self.query_one("#sub-name", Input).value = ""
         self.query_one("#sub-url", Input).value = ""
-        self.query_one("#sub-description", TextArea).value = ""
+        self.query_one("#sub-description", TextArea).load_text("")
+        self.query_one("#sub-tags", Input).value = ""
+        self.query_one("#sub-folder", Input).value = ""
+        self.query_one("#sub-priority", Select).value = "3"
+        self.query_one("#sub-frequency", Select).value = "3600"
+        self.query_one("#sub-auto-ingest", Checkbox).value = False
+        self.query_one("#sub-auth-type", Select).value = "none"
+        self.query_one("#sub-headers", TextArea).load_text("")
         self.selected_subscription = None
+        self._selected_watch_item = None
+        self._selected_local_subscription_row = None
+        self._clear_subscription_list_selection()
         
         # Focus name field
         self.query_one("#sub-name", Input).focus()
@@ -774,33 +1023,53 @@ class SubscriptionWindow(Container):
     @on(Button.Pressed, "#save-subscription-btn")
     async def handle_save_subscription(self, event: Button.Pressed) -> None:
         """Handle save subscription."""
+        del event
         try:
             # Validate form
             name = self.query_one("#sub-name", Input).value.strip()
             url = self.query_one("#sub-url", Input).value.strip()
+            runtime_backend = self._runtime_backend()
             
             if not name or not url:
                 self.notify("Name and URL are required", severity="warning")
                 return
             
-            # Gather form data
+            if self.watchlist_scope_service is not None:
+                payload = self._watch_item_payload_from_form()
+                if runtime_backend == "local":
+                    try:
+                        payload.update(self._local_form_extras())
+                    except json.JSONDecodeError:
+                        self.notify("Invalid JSON in custom headers", severity="error")
+                        return
+
+                saved_item = await self.backend_controller.save_watch_item(payload)
+                self._selected_watch_item = dict(saved_item)
+                self.selected_subscription = saved_item.get("id")
+                self.notify(
+                    "Subscription updated" if payload.get("id") else "Subscription created",
+                    severity="information",
+                )
+                await self.refresh_backend_view()
+                return
+
+            # Legacy fallback when the watchlist scope service is unavailable.
             sub_data = {
                 'name': name,
                 'type': self.query_one("#sub-type", Select).value,
                 'source': url,
                 'description': self.query_one("#sub-description", TextArea).text.strip(),
-                'tags': [t.strip() for t in self.query_one("#sub-tags", Input).value.split(',') if t.strip()],
+                'tags': self._parse_tags_field(),
                 'folder': self.query_one("#sub-folder", Input).value.strip() or None,
                 'priority': int(self.query_one("#sub-priority", Select).value),
                 'check_frequency': int(self.query_one("#sub-frequency", Select).value),
                 'auto_ingest': self.query_one("#sub-auto-ingest", Checkbox).value,
             }
-            
-            # Add advanced options if needed
+
             auth_type = self.query_one("#sub-auth-type", Select).value
             if auth_type != "none":
                 sub_data['auth_config'] = {'type': auth_type}
-            
+
             headers_text = self.query_one("#sub-headers", TextArea).text.strip()
             if headers_text:
                 try:
@@ -808,22 +1077,15 @@ class SubscriptionWindow(Container):
                 except json.JSONDecodeError:
                     self.notify("Invalid JSON in custom headers", severity="error")
                     return
-            
-            # Save to database
+
             if self.selected_subscription:
-                # Update existing
                 self.db.update_subscription(self.selected_subscription, **sub_data)
                 self.notify("Subscription updated", severity="information")
             else:
-                # Create new
-                sub_id = self.db.add_subscription(**sub_data)
+                self.db.add_subscription(**sub_data)
                 self.notify("Subscription created", severity="information")
-            
-            # Refresh list
+
             await self.refresh_subscription_list()
-            
-            # Clear form
-            await self.handle_add_subscription(None)
             
         except Exception as e:
             logger.error(f"Error saving subscription: {e}")
@@ -833,25 +1095,55 @@ class SubscriptionWindow(Container):
     async def handle_subscription_selected(self, event: ListView.Selected) -> None:
         """Handle subscription selection."""
         if event.item and event.item.data:
-            sub = event.item.data
-            self.selected_subscription = sub['id']
+            sub = dict(event.item.data)
+            runtime_backend = self._runtime_backend()
+            self._selected_watch_item = sub
+            self.selected_subscription = sub.get('id')
+            self._selected_local_subscription_row = None
+
+            raw_local_row: Dict[str, Any] = {}
+            if runtime_backend == "local" and self.db is not None and sub.get("source_id") not in (None, ""):
+                local_row = self.db.get_subscription(int(sub["source_id"]))
+                if isinstance(local_row, dict):
+                    raw_local_row = dict(local_row)
+                    self._selected_local_subscription_row = raw_local_row
             
             # Load into form
-            self.query_one("#sub-name", Input).value = sub['name']
-            self.query_one("#sub-type", Select).value = sub['type']
-            self.query_one("#sub-url", Input).value = sub['source']
-            self.query_one("#sub-description", TextArea).load_text(sub.get('description', ''))
+            self.query_one("#sub-name", Input).value = sub.get('title', sub.get('name', ''))
+            self.query_one("#sub-type", Select).value = sub.get('source_type', sub.get('type', 'rss'))
+            self.query_one("#sub-url", Input).value = sub.get('url', sub.get('source', ''))
+            self.query_one("#sub-description", TextArea).load_text(raw_local_row.get('description', ''))
             
             # Tags
-            tags = sub.get('tags', [])
+            tags = raw_local_row.get('tags', sub.get('tags', []))
             if isinstance(tags, str):
-                tags = json.loads(tags) if tags else []
+                stripped_tags = tags.strip()
+                if stripped_tags.startswith("["):
+                    tags = json.loads(stripped_tags) if stripped_tags else []
+                else:
+                    tags = [tag.strip() for tag in stripped_tags.split(",") if tag.strip()]
             self.query_one("#sub-tags", Input).value = ', '.join(tags)
             
-            self.query_one("#sub-folder", Input).value = sub.get('folder', '')
-            self.query_one("#sub-priority", Select).value = str(sub.get('priority', 3))
-            self.query_one("#sub-frequency", Select).value = str(sub.get('check_frequency', 3600))
-            self.query_one("#sub-auto-ingest", Checkbox).value = sub.get('auto_ingest', False)
+            self.query_one("#sub-folder", Input).value = raw_local_row.get('folder', '')
+            self.query_one("#sub-priority", Select).value = str(raw_local_row.get('priority', 3))
+            self.query_one("#sub-frequency", Select).value = str(raw_local_row.get('check_frequency', 3600))
+            self.query_one("#sub-auto-ingest", Checkbox).value = bool(raw_local_row.get('auto_ingest', False))
+
+            auth_config = self._decode_json_mapping(raw_local_row.get('auth_config'))
+            self.query_one("#sub-auth-type", Select).value = auth_config.get("type", "none")
+            custom_headers = self._decode_json_mapping(raw_local_row.get('custom_headers'))
+            self.query_one("#sub-headers", TextArea).load_text(
+                json.dumps(custom_headers, indent=2) if custom_headers else ""
+            )
+
+    @on(Button.Pressed, "#delete-subscription-btn")
+    async def handle_delete_subscription(self, event: Button.Pressed) -> None:
+        """Delete the selected watch item through the backend-aware controller."""
+        del event
+        deleted = await self.delete_selected_watch_item()
+        if deleted:
+            await self.handle_add_subscription(None)
+            await self.refresh_backend_view()
     
     @on(Button.Pressed, "#check-all-btn")
     async def handle_check_all(self, event: Button.Pressed) -> None:
@@ -875,6 +1167,26 @@ class SubscriptionWindow(Container):
             self.is_checking = False
             event.button.disabled = False
             event.button.label = "Check All"
+
+    @on(Button.Pressed, "#notification-mark-read-btn")
+    async def handle_mark_notification_read(self, event: Button.Pressed) -> None:
+        """Mark the selected notification as read."""
+        del event
+        notification_id = self._active_notification_id()
+        if notification_id is None:
+            return
+        await self.notifications_controller.mark_read(notification_id, is_read=True)
+        await self.refresh_notifications_inbox()
+
+    @on(Button.Pressed, "#notification-dismiss-btn")
+    async def handle_dismiss_notification(self, event: Button.Pressed) -> None:
+        """Dismiss the selected notification from the inbox."""
+        del event
+        notification_id = self._active_notification_id()
+        if notification_id is None:
+            return
+        await self.notifications_controller.dismiss(notification_id, is_dismissed=True)
+        await self.refresh_notifications_inbox()
     
     @on(Button.Pressed, "#generate-briefing-btn")
     async def handle_generate_briefing(self, event: Button.Pressed) -> None:

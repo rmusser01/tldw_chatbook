@@ -17,6 +17,15 @@ class WatchlistScopeService:
     """Route watchlist actions to the active local/server backend."""
 
     _EDITABLE_SOURCE_FIELDS = ("name", "url", "source_type", "active", "tags")
+    _LOCAL_ONLY_WRITE_FIELDS = (
+        "description",
+        "folder",
+        "priority",
+        "check_frequency",
+        "auto_ingest",
+        "auth_config",
+        "custom_headers",
+    )
 
     def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
         self.local_service = local_service
@@ -93,7 +102,12 @@ class WatchlistScopeService:
         return cleaned
 
     @classmethod
-    def _editable_write_payload(cls, payload: Mapping[str, Any]) -> tuple[dict[str, Any], Any]:
+    def _editable_write_payload(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        mode: WatchlistBackend,
+    ) -> tuple[dict[str, Any], Any]:
         editable: dict[str, Any] = {}
         name = payload.get("name")
         if name in (None, "") and "title" in payload:
@@ -105,7 +119,13 @@ class WatchlistScopeService:
                 continue
             if field in payload:
                 editable[field] = payload[field]
-        existing_settings = payload.get("existing_settings", payload.get("settings"))
+        if mode == WatchlistBackend.LOCAL:
+            for field in cls._LOCAL_ONLY_WRITE_FIELDS:
+                if field in payload:
+                    editable[field] = payload[field]
+            existing_settings = None
+        else:
+            existing_settings = payload.get("existing_settings", payload.get("settings"))
         return editable, existing_settings
 
     async def list_watch_items(
@@ -140,7 +160,7 @@ class WatchlistScopeService:
         service = self._service_for_mode(normalized_mode)
         item_id = cleaned.pop("id", None)
         source_id = cleaned.pop("source_id", None)
-        editable_fields, existing_settings = self._editable_write_payload(cleaned)
+        editable_fields, existing_settings = self._editable_write_payload(cleaned, mode=normalized_mode)
 
         if item_id not in (None, "") or source_id not in (None, ""):
             self._enforce_policy(self._action_id(normalized_mode, "update"))

@@ -12,14 +12,18 @@ Tranche ordering follows the capability matrix, gap ledger, and target-state des
 
 That changes the roadmap in one important way: runtime policy remains a cross-cutting extension surface, but it is no longer the next unresolved blocker. Active execution should now move into the domains that either build directly on the new authority layer or deliver the highest-value standalone-client parity you prioritized.
 
+`Watchlists` plus `Client Notifications` are also now partially landed for their first slice. See [watchlists-notifications-tranche-2.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-watchlists-notifications-vertical/Docs/Development/watchlists-notifications-tranche-2.md) for the verification record and the precise deferred scope.
+
+That means the next unresolved Tranche 2 focus should move to `Local MCP Runtime`, with `Writing Suite` and `Research Sessions / Runs` following after that.
+
 ## Immediate Post-Tranche-0 Order
 
 1. `Media / Reading / Ingestion Sources` plus `Collections: Reading List / Read-it-later`
    This is the cleanest next crosswalk because Chatbook already has landed local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, and server ingestion-source create for `archive_snapshot` and `git_repository`; per-media-type server saved views and sync/mirror semantics remain deferred.
 2. `Watchlists` plus `Client Notifications`
-   Chatbook already has a real local subscriptions stack and toast-like notification plumbing, so this is the strongest local-first bridge into server watchlists, alert rules, and later remote reminder/feed awareness.
+   Partially landed. Chatbook now has a source-aware subscriptions shell, remote watchlist source CRUD, and a persisted local notifications inbox. Remaining work is the broader watchlists execution and control-plane surface plus any later server reminder/feed client.
 3. `Local MCP Runtime`
-   The runtime-policy layer is now in place, and Chatbook already has local MCP modules; the next gap is turning that into a first-class local runtime, approvals, status, and governance surface.
+   Next active Tranche 2 focus. The runtime-policy layer is now in place, and Chatbook already has local MCP modules; the next gap is turning that into a first-class local runtime, approvals, status, and governance surface.
 4. `Writing Suite`
    This remains a high-value standalone gap with a clear server contract and very little existing product surface in Chatbook, so it should follow once the highest-leverage media/watchlist foundations are stable.
 5. `Research Sessions / Runs`
@@ -81,6 +85,7 @@ Domains in this tranche:
 Execution intent for this tranche:
 
 - Crosswalk `Watchlists` onto existing local subscriptions and notification plumbing before inventing a separate remote-first model.
+- Treat the first-slice watchlists source CRUD and client-notifications inbox as landed foundations; keep watchlist groups, jobs, runs, alert rules, restore UX, and server reminder or feed surfaces as later follow-on work.
 - Build `Collections: Reading List / Read-it-later` on top of the existing media and reading seams rather than treating it as a disconnected collection system. Treat local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, and server ingestion-source create as landed foundations; keep per-media-type server saved views and any sync/mirror contract out of scope for this tranche.
 - Add `Writing Suite` and `Research Sessions / Runs` as serious standalone surfaces with matching remote contracts, not as thin shells around server-only functionality.
 - Keep `Client Notifications` and `Local MCP Runtime` Chatbook-owned so offline capability remains credible even as remote interop improves.

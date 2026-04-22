@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import pytest
 
 from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
@@ -157,6 +159,80 @@ class MixedTypeSubscriptionsDB:
         return None
 
 
+class CaptureCreateSubscriptionsDB:
+    def __init__(self) -> None:
+        self.add_calls: list[dict[str, object]] = []
+
+    def add_subscription(self, name, type, source, **kwargs):
+        self.add_calls.append({"name": name, "type": type, "source": source, **kwargs})
+        return 9
+
+    def update_subscription(self, subscription_id, **kwargs):
+        return True
+
+    def get_subscription(self, subscription_id):
+        assert subscription_id == 9
+        return {
+            "id": 9,
+            "name": "Created Local",
+            "type": "url",
+            "source": "https://example.com/local",
+            "is_active": 1,
+            "is_paused": 0,
+            "tags": "docs",
+            "last_checked": "2026-04-21T03:00:00Z",
+            "created_at": "2026-04-20T01:00:00Z",
+            "updated_at": "2026-04-21T02:00:00Z",
+        }
+
+
+class _RecordingCursor:
+    def __init__(self) -> None:
+        self.executed: list[tuple[str, list[object]]] = []
+        self.rowcount = 0
+
+    def execute(self, sql, values):
+        self.executed.append((sql, list(values)))
+        self.rowcount = 1
+
+
+class _RecordingConnection:
+    def __init__(self, cursor: _RecordingCursor) -> None:
+        self._cursor = cursor
+
+    def cursor(self):
+        return self._cursor
+
+
+class AtomicUpdateSubscriptionsDB:
+    def __init__(self) -> None:
+        self.cursor = _RecordingCursor()
+        self.update_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    @contextmanager
+    def transaction(self):
+        yield _RecordingConnection(self.cursor)
+
+    def update_subscription(self, *args, **kwargs):
+        self.update_calls.append((args, kwargs))
+        return True
+
+    def get_subscription(self, subscription_id):
+        assert subscription_id == 7
+        return {
+            "id": 7,
+            "name": "Updated Local",
+            "type": "url",
+            "source": "https://example.com/updated",
+            "is_active": 1,
+            "is_paused": 0,
+            "tags": "docs",
+            "last_checked": "2026-04-21T03:00:00Z",
+            "created_at": "2026-04-20T01:00:00Z",
+            "updated_at": "2026-04-21T02:00:00Z",
+        }
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_local_and_server_actions_with_watchlists_action_ids():
     policy = FakePolicy()
@@ -205,6 +281,44 @@ async def test_scope_service_routes_crud_calls_to_selected_backend():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_forwards_local_only_fields_only_to_local_backend():
+    local = FakeLocalSubscriptions()
+    scope = WatchlistScopeService(local_service=local, server_service=FakeServerWatchlists())
+
+    await scope.save_watch_item(
+        runtime_backend="local",
+        payload={
+            "name": "Local Source",
+            "url": "https://example.com/local",
+            "source_type": "site",
+            "description": "Local description",
+            "folder": "Research",
+            "priority": 1,
+            "check_frequency": 120,
+            "auto_ingest": True,
+            "auth_config": {"type": "basic"},
+            "custom_headers": {"X-Test": "1"},
+        },
+    )
+
+    assert local.calls[0] == (
+        "create_source",
+        {
+            "name": "Local Source",
+            "url": "https://example.com/local",
+            "source_type": "site",
+            "description": "Local description",
+            "folder": "Research",
+            "priority": 1,
+            "check_frequency": 120,
+            "auto_ingest": True,
+            "auth_config": {"type": "basic"},
+            "custom_headers": {"X-Test": "1"},
+        },
+    )
+
+
+@pytest.mark.asyncio
 async def test_scope_service_rejects_invalid_backend_and_malformed_item_ids():
     scope = WatchlistScopeService(
         local_service=FakeLocalSubscriptions(),
@@ -241,6 +355,75 @@ async def test_local_watchlists_service_filters_unsupported_db_types_from_list_a
 
     with pytest.raises(ValueError, match="Unsupported local watchlist source type"):
         await service.get_source_detail(5)
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_passes_local_only_fields_on_create():
+    db = CaptureCreateSubscriptionsDB()
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    await service.create_source(
+        name="Created Local",
+        url="https://example.com/local",
+        source_type="site",
+        description="Local description",
+        folder="Research",
+        priority=1,
+        check_frequency=120,
+        auto_ingest=True,
+        auth_config={"type": "basic"},
+        custom_headers={"X-Test": "1"},
+    )
+
+    assert db.add_calls[0] == {
+        "name": "Created Local",
+        "type": "url",
+        "source": "https://example.com/local",
+        "tags": None,
+        "priority": 1,
+        "folder": "Research",
+        "auth_config": {"type": "basic"},
+        "description": "Local description",
+        "check_frequency": 120,
+        "auto_ingest": True,
+        "custom_headers": {"X-Test": "1"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_updates_core_and_local_fields_in_one_transaction():
+    db = AtomicUpdateSubscriptionsDB()
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    await service.update_source(
+        7,
+        name="Updated Local",
+        url="https://example.com/updated",
+        source_type="site",
+        tags=["docs"],
+        description="Local description",
+        folder="Research",
+        priority=1,
+        check_frequency=120,
+        auto_ingest=True,
+        auth_config={"type": "basic"},
+        custom_headers={"X-Test": "1"},
+    )
+
+    assert db.update_calls == []
+    assert len(db.cursor.executed) == 1
+    sql, values = db.cursor.executed[0]
+    assert "name = ?" in sql
+    assert "source = ?" in sql
+    assert "type = ?" in sql
+    assert "description = ?" in sql
+    assert "folder = ?" in sql
+    assert "priority = ?" in sql
+    assert "check_frequency = ?" in sql
+    assert "auto_ingest = ?" in sql
+    assert "auth_config = ?" in sql
+    assert "custom_headers = ?" in sql
+    assert values[-1] == 7
 
 
 @pytest.mark.asyncio
