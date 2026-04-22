@@ -29,6 +29,15 @@ except ImportError:
     BriefingSchedule = None
     _BRIEFING_AVAILABLE = False
 
+from .local_watchlists_service import LocalWatchlistsService
+from .server_watchlists_service import ServerWatchlistsService
+from .watchlist_normalizers import (
+    build_watchlist_item_id,
+    normalize_local_subscription_row,
+    normalize_server_watchlist_source,
+)
+from .watchlist_scope_service import WatchlistBackend, WatchlistScopeService
+
 __all__ = []
 
 if _CORE_AVAILABLE:
@@ -63,6 +72,16 @@ if _BRIEFING_AVAILABLE:
         'BriefingGenerator',
         'BriefingSchedule',
     ])
+
+__all__.extend([
+    "LocalWatchlistsService",
+    "ServerWatchlistsService",
+    "WatchlistBackend",
+    "WatchlistScopeService",
+    "build_watchlist_item_id",
+    "normalize_local_subscription_row",
+    "normalize_server_watchlist_source",
+])
 
 # Version info
 __version__ = '1.0.0'
