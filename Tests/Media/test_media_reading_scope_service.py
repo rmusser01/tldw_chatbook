@@ -389,6 +389,45 @@ async def test_scope_service_list_read_it_later_normalizes_local_saved_state():
     assert result["items"][0]["read_it_later_saved_at"] == "2026-04-21T10:00:00Z"
 
 
+def test_read_it_later_context_capability_allows_local_any_media_type():
+    scope = MediaReadingScopeService(local_service=object(), server_service=None)
+
+    capability = scope.get_read_it_later_context_capability(
+        mode="local",
+        media_type_slug="article",
+    )
+
+    assert capability.available is True
+    assert capability.aggregate_only is False
+    assert capability.reason is None
+
+
+def test_read_it_later_context_capability_allows_server_all_media_only():
+    scope = MediaReadingScopeService(local_service=None, server_service=object())
+
+    capability = scope.get_read_it_later_context_capability(
+        mode="server",
+        media_type_slug="all-media",
+    )
+
+    assert capability.available is True
+    assert capability.aggregate_only is True
+    assert capability.reason is None
+
+
+def test_read_it_later_context_capability_blocks_server_non_all_media():
+    scope = MediaReadingScopeService(local_service=None, server_service=object())
+
+    capability = scope.get_read_it_later_context_capability(
+        mode="server",
+        media_type_slug="article",
+    )
+
+    assert capability.available is False
+    assert capability.aggregate_only is True
+    assert capability.reason == "Read-it-later is only available in server mode from All Media."
+
+
 @pytest.mark.asyncio
 async def test_scope_service_normalizes_server_detail_and_fetches_progress_by_backing_media_id():
     server = FakeServerMediaService()

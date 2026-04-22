@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping, Optional
 
@@ -22,6 +23,13 @@ class MediaReadingBackend(str, Enum):
     SERVER = "server"
 
 
+@dataclass(frozen=True)
+class ReadItLaterContextCapability:
+    available: bool
+    aggregate_only: bool
+    reason: str | None = None
+
+
 class MediaReadingScopeService:
     """Route media actions to the active local/server backend and normalize outputs."""
 
@@ -39,6 +47,27 @@ class MediaReadingScopeService:
             return MediaReadingBackend(str(mode))
         except ValueError as exc:
             raise ValueError(f"Invalid media backend: {mode}") from exc
+
+    def get_read_it_later_context_capability(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_type_slug: str | None = None,
+    ) -> ReadItLaterContextCapability:
+        normalized_mode = self._normalize_mode(mode)
+        normalized_type = str(media_type_slug or "all-media").strip().lower() or "all-media"
+
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            return ReadItLaterContextCapability(available=True, aggregate_only=False, reason=None)
+
+        if normalized_type == "all-media":
+            return ReadItLaterContextCapability(available=True, aggregate_only=True, reason=None)
+
+        return ReadItLaterContextCapability(
+            available=False,
+            aggregate_only=True,
+            reason="Read-it-later is only available in server mode from All Media.",
+        )
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
