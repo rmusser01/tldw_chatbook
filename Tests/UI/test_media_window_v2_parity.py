@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
+from textual.widgets import Button
 
 from tldw_chatbook.Event_Handlers.media_events import (
     MediaAnalysisSaveEvent,
@@ -52,19 +53,65 @@ def _build_media_window(*, runtime_backend: str = "local", scope_service: Option
     return window, app
 
 
-def test_media_viewer_updates_saved_button_label_from_normalized_record():
-    panel = MediaViewerPanel(Mock())
-    panel.media_data = {
-        "id": "local:media:7",
-        "title": "Saved Item",
-        "supports_read_it_later": True,
-        "is_read_it_later": True,
-    }
-    panel._update_read_it_later_button = Mock()
+@pytest.mark.asyncio
+async def test_media_viewer_updates_saved_button_state_from_normalized_record():
+    class TestMediaViewerPanel(MediaViewerPanel):
+        def populate_providers(self) -> None:
+            pass
 
-    panel.load_media(panel.media_data)
+    class MediaViewerPanelApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield TestMediaViewerPanel(SimpleNamespace())
 
-    panel._update_read_it_later_button.assert_called_once()
+    app = MediaViewerPanelApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one(MediaViewerPanel)
+
+        panel.load_media(
+            {
+                "id": "local:media:7",
+                "source_id": "7",
+                "title": "Saved Item",
+                "supports_read_it_later": True,
+                "is_read_it_later": True,
+            }
+        )
+        await pilot.pause()
+
+        button = panel.query_one("#read-it-later-button", Button)
+        assert button.label == "Remove from Read-it-later"
+        assert button.disabled is False
+        assert button.has_class("hidden") is False
+
+        panel.load_media(
+            {
+                "id": "local:media:7",
+                "source_id": "7",
+                "title": "Unsaved Item",
+                "supports_read_it_later": True,
+                "is_read_it_later": False,
+            }
+        )
+        await pilot.pause()
+
+        assert button.label == "Save for Later"
+        assert button.disabled is False
+        assert button.has_class("hidden") is False
+
+        panel.load_media(
+            {
+                "id": "server:reading_item:118",
+                "source_id": "118",
+                "title": "Unsupported Item",
+                "supports_read_it_later": False,
+                "is_read_it_later": False,
+            }
+        )
+        await pilot.pause()
+
+        assert button.label == "Save for Later"
+        assert button.disabled is True
+        assert button.has_class("hidden") is True
 
 
 @pytest.mark.asyncio
@@ -246,6 +293,53 @@ async def test_media_window_remove_from_saved_view_clears_selection_when_filtere
     )
 
     assert window.runtime_state.selected_record_id is None
+
+
+@pytest.mark.asyncio
+async def test_media_window_toggle_keeps_selection_when_record_still_matches_filter_off_page():
+    async def search_media(**kwargs):
+        media_ids_filter = kwargs.get("media_ids_filter")
+        if media_ids_filter == ["7"]:
+            return {
+                "items": [
+                    {
+                        "id": "local:media:7",
+                        "source_id": "7",
+                        "title": "Saved Item",
+                        "supports_read_it_later": True,
+                        "is_read_it_later": True,
+                    }
+                ],
+                "total": 1,
+            }
+
+        return {
+            "items": [{"id": f"local:media:{index}", "title": f"Other {index}"} for index in range(20, 40)],
+            "total": 25,
+        }
+
+    scope_service = Mock()
+    scope_service.save_to_read_it_later = AsyncMock(
+        return_value={"id": "local:media:7", "source_id": "7", "is_read_it_later": True}
+    )
+    scope_service.search_media = AsyncMock(side_effect=search_media)
+    window, _app = _build_media_window(runtime_backend="local", scope_service=scope_service)
+    window.list_panel.current_page = 2
+    window.runtime_state.selected_record_id = "local:media:7"
+    window.runtime_state.detail_by_record_id["local:media:7"] = {
+        "id": "local:media:7",
+        "source_id": "7",
+        "title": "Saved Item",
+        "supports_read_it_later": True,
+        "is_read_it_later": False,
+    }
+    window.viewer_panel.media_data = dict(window.runtime_state.detail_by_record_id["local:media:7"])
+
+    await window._handle_read_it_later_toggle_async(
+        MediaReadItLaterToggleEvent(record_id="local:media:7", media_id="7", save_for_later=True)
+    )
+
+    assert window.runtime_state.selected_record_id == "local:media:7"
 
 
 @pytest.mark.asyncio

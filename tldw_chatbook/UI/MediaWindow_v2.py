@@ -302,6 +302,106 @@ class MediaWindow(Container):
         self.viewer_panel.clear_display()
         self._show_empty_state()
 
+    def _record_matches_active_filters(self, record: Dict[str, Any]) -> bool:
+        """Evaluate whether a normalized record belongs in the active filtered result set."""
+        if not isinstance(record, dict):
+            return False
+
+        if self._active_browse_subview() == "read-it-later" and not bool(record.get("is_read_it_later")):
+            return False
+
+        type_slug = self.active_media_type or "all-media"
+        if type_slug not in ["all-media", "analysis-review"]:
+            expected_media_type = type_slug.replace("-", "_")
+            actual_media_type = str(record.get("media_type") or "").strip().lower()
+            if actual_media_type != expected_media_type:
+                return False
+
+        if not getattr(self.search_panel, "show_deleted", False):
+            if bool(record.get("deleted") or record.get("is_deleted")):
+                return False
+
+        keyword_filter = str(getattr(self.search_panel, "keyword_filter", "") or "").strip()
+        if keyword_filter:
+            required_keywords = {
+                keyword.strip().lower()
+                for keyword in keyword_filter.split(",")
+                if keyword.strip()
+            }
+            record_keywords = record.get("keywords") or []
+            if not isinstance(record_keywords, (list, tuple, set)):
+                record_keywords = [record_keywords]
+            normalized_keywords = {str(keyword).strip().lower() for keyword in record_keywords if str(keyword).strip()}
+            if not required_keywords.issubset(normalized_keywords):
+                return False
+
+        search_term = str(getattr(self.search_panel, "search_term", "") or "").strip().lower()
+        if search_term:
+            haystack = " ".join(
+                str(record.get(field) or "")
+                for field in ("title", "content", "author", "url", "media_type", "analysis_content")
+            ).lower()
+            if search_term not in haystack:
+                return False
+
+        return True
+
+    async def _record_is_in_active_filtered_set_async(
+        self,
+        record: Dict[str, Any],
+        current_page_results: List[Dict[str, Any]],
+    ) -> bool:
+        """Determine whether a record still belongs to the active filtered result set."""
+        record_id = self._record_id(record)
+        if record_id is not None and any(str(item.get("id")) == record_id for item in current_page_results):
+            return True
+
+        mode = self._record_backend(record)
+        if mode == "local":
+            source_media_id = self._source_media_id(record)
+            if source_media_id not in (None, ""):
+                type_slug = self.active_media_type or "all-media"
+                media_types_filter = None
+                if type_slug not in ["all-media", "analysis-review"]:
+                    media_types_filter = [type_slug.replace("-", "_")]
+
+                keywords_list = None
+                keyword_filter = getattr(self.search_panel, "keyword_filter", "")
+                if keyword_filter:
+                    keywords_list = [keyword.strip() for keyword in keyword_filter.split(",") if keyword.strip()]
+
+                search_filters = {
+                    "sort_by": "last_modified_desc",
+                    "include_deleted": getattr(self.search_panel, "show_deleted", False),
+                    "media_ids_filter": [source_media_id],
+                    "media_types": media_types_filter,
+                    "must_have_keywords": keywords_list,
+                    "fields": ["title", "content", "author", "url", "type", "analysis_content"],
+                    "include_trash": False,
+                }
+
+                scope_service = self._scope_service()
+                if scope_service is not None:
+                    if self._active_browse_subview() == "read-it-later":
+                        payload = await scope_service.list_read_it_later(
+                            mode=mode,
+                            query=getattr(self.search_panel, "search_term", "") or None,
+                            limit=1,
+                            offset=0,
+                            **search_filters,
+                        )
+                    else:
+                        payload = await scope_service.search_media(
+                            mode=mode,
+                            query=getattr(self.search_panel, "search_term", "") or None,
+                            limit=1,
+                            offset=0,
+                            **search_filters,
+                        )
+                    return any(str(item.get("id")) == record_id for item in list(payload.get("items", [])))
+
+        return self._record_matches_active_filters(record)
+
     async def _refresh_current_browse_results_async(self) -> List[Dict[str, Any]]:
         """Refresh current browse results through the active search path."""
         scope_service = self._scope_service()
@@ -804,7 +904,8 @@ class MediaWindow(Container):
             self.app_instance.notify(f"Error loading media: {str(exc)[:100]}", severity="error")
             return
 
-        self._clear_selection_for_filtered_record(record_id, results)
+        if not await self._record_is_in_active_filtered_set_async(merged, results):
+            self._clear_selection_for_filtered_record(record_id, results)
     
     @on(MediaListCollapseEvent)
     def handle_list_collapse(self) -> None:
