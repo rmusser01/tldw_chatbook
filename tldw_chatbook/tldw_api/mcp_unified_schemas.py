@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
 MCPServerScopeKind = Literal["personal", "team", "org", "system_admin"]
+MCPMembershipRole = Literal["owner", "admin", "lead", "member", "viewer", "contributor"]
 
 
 class UnifiedMCPAccessContext(BaseModel):
@@ -27,9 +29,77 @@ class ToolExecutionRequest(BaseModel):
 class CatalogConnectionTestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    catalog_name: Optional[str] = None
-    catalog_id: Optional[int] = None
-    connection: Dict[str, Any] = Field(default_factory=dict)
+    url: str
+    auth_type: str = "none"
+    secret: Optional[str] = None
+    auth_key_name: Optional[str] = None
+
+
+class MCPUserProfileIdentity(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: Optional[int] = None
+    uuid: Optional[str] = None
+    username: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_verified: Optional[bool] = None
+    is_locked: Optional[bool] = None
+    created_at: Optional[datetime] = None
+    last_login: Optional[datetime] = None
+
+
+class MCPUserProfileOrgMembership(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    org_id: int
+    role: Optional[str] = None
+
+
+class MCPUserProfileTeamMembership(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    team_id: int
+    role: Optional[str] = None
+    org_id: Optional[int] = None
+
+
+class MCPUserProfileMemberships(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    orgs: list[MCPUserProfileOrgMembership] = Field(default_factory=list)
+    teams: list[MCPUserProfileTeamMembership] = Field(default_factory=list)
+
+
+class MCPUserProfileResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    profile_version: Optional[datetime] = None
+    catalog_version: Optional[str] = None
+    user: Optional[MCPUserProfileIdentity] = None
+    memberships: Optional[MCPUserProfileMemberships] = None
+
+
+class MCPAccessBootstrapPrincipal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: Optional[int] = None
+    username: Optional[str] = None
+    role: Optional[str] = None
+    is_admin: bool = False
+
+
+class MCPAccessBootstrapResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_version: Optional[datetime] = None
+    catalog_version: Optional[str] = None
+    principal: Optional[MCPAccessBootstrapPrincipal] = None
+    manageable_team_ids: list[int] = Field(default_factory=list)
+    manageable_org_ids: list[int] = Field(default_factory=list)
+    can_use_system_admin_scope: bool = False
+    profile: Optional[MCPUserProfileResponse] = None
 
 
 class MCPPayloadEnvelope(BaseModel):

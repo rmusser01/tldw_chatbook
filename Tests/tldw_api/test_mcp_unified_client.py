@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from unittest.mock import AsyncMock
 
 import pytest
@@ -145,8 +146,10 @@ async def test_test_catalog_connection_posts_to_test_connection_endpoint(monkeyp
 
     await client.test_catalog_connection(
         CatalogConnectionTestRequest(
-            catalog_name="demo",
-            connection={"base_url": "https://catalog.example.com"},
+            url="https://catalog.example.com",
+            auth_type="api_key",
+            secret="top-secret",
+            auth_key_name="X-Test-Key",
         )
     )
 
@@ -155,7 +158,14 @@ async def test_test_catalog_connection_posts_to_test_connection_endpoint(monkeyp
         mocked.await_args,
         "POST",
         "/api/v1/mcp/catalog/test-connection",
-        {"json_data": {"catalog_name": "demo", "connection": {"base_url": "https://catalog.example.com"}}},
+        {
+            "json_data": {
+                "url": "https://catalog.example.com",
+                "auth_type": "api_key",
+                "secret": "top-secret",
+                "auth_key_name": "X-Test-Key",
+            }
+        },
     )
 
 
@@ -176,3 +186,90 @@ def test_access_context_bootstrap_helper_normalizes_scope_options():
     assert explicit.scope_kind == "system_admin"
     assert explicit.scope_ref is None
     assert client.build_access_context_params(team) == {"scope_kind": "team", "scope_ref": "17", "team_id": "17"}
+
+
+def test_package_root_keeps_legacy_and_mcp_exports_lazy():
+    api = importlib.import_module("tldw_chatbook.tldw_api")
+
+    exported_names = set(getattr(api, "__all__", ()))
+
+    assert {"TLDWAPIClient", "SourceResponse", "MCPUnifiedClient"} <= exported_names
+    assert api.SourceResponse.__module__.endswith("watchlists_schemas")
+    assert api.MCPUnifiedClient is MCPUnifiedClient
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_profile_requests_user_and_memberships_sections():
+    root = _DummyRootClient()
+    client = MCPUnifiedClient(root)
+    mocked = AsyncMock(
+        return_value={
+            "user": {
+                "id": 42,
+                "username": "casey",
+                "email": "casey@example.com",
+                "role": "member",
+                "is_active": True,
+                "is_verified": True,
+                "created_at": "2026-04-20T10:00:00Z",
+            },
+            "memberships": {"orgs": [], "teams": []},
+        }
+    )
+    root._request = mocked
+
+    profile = await client.get_current_user_profile()
+
+    mocked.assert_awaited_once()
+    _assert_request_call(
+        mocked.await_args,
+        "GET",
+        "/api/v1/users/me/profile",
+        {"params": {"sections": "user,memberships"}},
+    )
+    assert profile.user is not None
+    assert profile.user.username == "casey"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_access_context_derives_manageable_scopes_and_admin_signal():
+    root = _DummyRootClient()
+    client = MCPUnifiedClient(root)
+    root._request = AsyncMock(
+        return_value={
+            "profile_version": "2026-04-22T01:02:03Z",
+            "catalog_version": "v1",
+            "user": {
+                "id": 7,
+                "username": "operator",
+                "email": "operator@example.com",
+                "role": "admin",
+                "is_active": True,
+                "is_verified": True,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            "memberships": {
+                "orgs": [
+                    {"org_id": 11, "role": "owner"},
+                    {"org_id": 12, "role": "member"},
+                    {"org_id": 13, "role": "lead"},
+                ],
+                "teams": [
+                    {"team_id": 21, "org_id": 11, "role": "admin"},
+                    {"team_id": 22, "org_id": 11, "role": "viewer"},
+                    {"team_id": 23, "org_id": 13, "role": "lead"},
+                ],
+            },
+        }
+    )
+
+    bootstrap = await client.bootstrap_access_context()
+
+    assert bootstrap.principal is not None
+    assert bootstrap.principal.user_id == 7
+    assert bootstrap.principal.username == "operator"
+    assert bootstrap.principal.role == "admin"
+    assert bootstrap.principal.is_admin is True
+    assert bootstrap.manageable_org_ids == [11, 13]
+    assert bootstrap.manageable_team_ids == [21, 23]
+    assert bootstrap.can_use_system_admin_scope is True

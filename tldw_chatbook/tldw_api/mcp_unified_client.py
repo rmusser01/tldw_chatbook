@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional, Union
 
 from .mcp_unified_schemas import (
     CatalogConnectionTestRequest,
+    MCPAccessBootstrapPrincipal,
+    MCPAccessBootstrapResponse,
     MCPCatalogConnectionTestResponse,
     MCPExecuteToolResponse,
     MCPHealthResponse,
@@ -16,9 +18,14 @@ from .mcp_unified_schemas import (
     MCPStatusResponse,
     MCPToolCatalogsResponse,
     MCPToolsResponse,
+    MCPUserProfileIdentity,
+    MCPUserProfileMemberships,
+    MCPUserProfileResponse,
     ToolExecutionRequest,
     UnifiedMCPAccessContext,
 )
+
+_MANAGER_LIKE_ROLES = {"owner", "admin", "lead"}
 
 
 def _coerce_identifier(value: Union[str, int, None]) -> Optional[str]:
@@ -26,6 +33,28 @@ def _coerce_identifier(value: Union[str, int, None]) -> Optional[str]:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _get_entry_value(entry: Any, key: str) -> Any:
+    if isinstance(entry, dict):
+        return entry.get(key)
+    return getattr(entry, key, None)
+
+
+def _coerce_manageable_ids(values: Any, *, id_field: str) -> list[int]:
+    if not isinstance(values, list):
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for entry in values:
+        role = str(_get_entry_value(entry, "role") or "").strip().lower()
+        if role not in _MANAGER_LIKE_ROLES:
+            continue
+        raw_value = _get_entry_value(entry, id_field)
+        if isinstance(raw_value, int) and raw_value not in seen:
+            seen.add(raw_value)
+            out.append(raw_value)
+    return out
 
 
 class MCPUnifiedClient:
@@ -218,3 +247,33 @@ class MCPUnifiedClient:
             json_data=request.model_dump(exclude_none=True),
         )
         return MCPCatalogConnectionTestResponse.from_payload(payload)
+
+    async def get_current_user_profile(self) -> MCPUserProfileResponse:
+        payload = await self.root_client._request(
+            "GET",
+            "/api/v1/users/me/profile",
+            params={"sections": "user,memberships"},
+        )
+        return MCPUserProfileResponse.model_validate(payload)
+
+    async def bootstrap_access_context(self) -> MCPAccessBootstrapResponse:
+        profile = await self.get_current_user_profile()
+        user = profile.user or MCPUserProfileIdentity()
+        memberships = profile.memberships or MCPUserProfileMemberships()
+        manageable_org_ids = _coerce_manageable_ids(memberships.orgs, id_field="org_id")
+        manageable_team_ids = _coerce_manageable_ids(memberships.teams, id_field="team_id")
+        principal = MCPAccessBootstrapPrincipal(
+            user_id=user.id,
+            username=user.username,
+            role=user.role,
+            is_admin=(user.role or "").strip().lower() == "admin",
+        )
+        return MCPAccessBootstrapResponse(
+            profile_version=profile.profile_version,
+            catalog_version=profile.catalog_version,
+            principal=principal,
+            manageable_team_ids=manageable_team_ids,
+            manageable_org_ids=manageable_org_ids,
+            can_use_system_admin_scope=principal.is_admin,
+            profile=profile,
+        )
