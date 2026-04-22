@@ -17,8 +17,8 @@ def test_local_store_profile_crud_persists_env_placeholders_and_safe_literals(tm
         profile_id="profile-a",
         command="python",
         args=("-m", "demo.server"),
-        env={
-            "API_KEY": "${API_KEY}",
+        env_placeholders={"API_KEY": "${API_KEY}"},
+        env_literals={
             "LOG_LEVEL": "debug",
             "FEATURE_FLAG": "enabled",
         },
@@ -29,12 +29,17 @@ def test_local_store_profile_crud_persists_env_placeholders_and_safe_literals(tm
 
     assert saved.profile_id == "profile-a"
     assert list(saved.args) == ["-m", "demo.server"]
+    assert saved.env == {
+        "API_KEY": "${API_KEY}",
+        "LOG_LEVEL": "debug",
+        "FEATURE_FLAG": "enabled",
+    }
     assert restored == saved
     assert store.list_profiles() == [saved]
 
-    raw_payload = (tmp_path / "local_mcp_store.json").read_text(encoding="utf-8")
-    assert "${API_KEY}" in raw_payload
-    assert '"LOG_LEVEL": "debug"' in raw_payload
+    raw_payload = json.loads((tmp_path / "local_mcp_store.json").read_text(encoding="utf-8"))
+    assert raw_payload["profiles"][0]["env_placeholders"]["API_KEY"] == "${API_KEY}"
+    assert raw_payload["profiles"][0]["env_literals"]["LOG_LEVEL"] == "debug"
 
     deleted = store.delete_profile("profile-a")
 
@@ -43,7 +48,7 @@ def test_local_store_profile_crud_persists_env_placeholders_and_safe_literals(tm
     assert store.list_profiles() == []
 
 
-def test_local_store_rejects_raw_secret_like_env_values(tmp_path):
+def test_local_store_rejects_secret_bearing_literal_env_entries(tmp_path):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
 
     with pytest.raises(ValueError):
@@ -51,7 +56,22 @@ def test_local_store_rejects_raw_secret_like_env_values(tmp_path):
             LocalExternalMCPProfile(
                 profile_id="profile-a",
                 command="python",
-                env={"API_KEY": "sk-live-super-secret-value"},
+                env_literals={"API_KEY": "raw-secret-value"},
+            )
+        )
+
+    assert not (tmp_path / "local_mcp_store.json").exists()
+
+
+def test_local_store_rejects_non_placeholder_secret_env_entries_even_when_declared_as_placeholders(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+
+    with pytest.raises(ValueError):
+        store.save_profile(
+            LocalExternalMCPProfile(
+                profile_id="profile-a",
+                command="python",
+                env_placeholders={"API_KEY": "raw-secret-value"},
             )
         )
 

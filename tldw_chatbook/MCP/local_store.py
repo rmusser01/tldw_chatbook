@@ -13,9 +13,6 @@ DEFAULT_LOCAL_MCP_STORE_PATH = DEFAULT_CONFIG_PATH.parent / "local_mcp_store.jso
 
 _ENV_PLACEHOLDER_PATTERN = re.compile(r"^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$")
 _SECRET_KEY_PATTERN = re.compile(r"(secret|token|password|passwd|api[_-]?key|access[_-]?key)", re.IGNORECASE)
-_SECRET_VALUE_PATTERN = re.compile(
-    r"^(?:sk-[A-Za-z0-9_\-]{8,}|ghp_[A-Za-z0-9]{8,}|xox[baprs]-[A-Za-z0-9\-]{8,})$"
-)
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
@@ -62,8 +59,38 @@ def _sanitize_env(env: Mapping[str, Any] | None) -> dict[str, str]:
         if _ENV_PLACEHOLDER_PATTERN.fullmatch(value):
             sanitized[key] = value
             continue
-        if _SECRET_KEY_PATTERN.search(key) or _SECRET_VALUE_PATTERN.fullmatch(value):
-            raise ValueError(f"Refusing to persist raw secret for env key '{key}'")
+        if _SECRET_KEY_PATTERN.search(key):
+            raise ValueError(f"Secret-bearing env key '{key}' must use a placeholder")
+        sanitized[key] = value
+    return sanitized
+
+
+def _is_secret_bearing_env_key(key: str) -> bool:
+    return bool(_SECRET_KEY_PATTERN.search(key))
+
+
+def _sanitize_env_placeholders(env: Mapping[str, Any] | None) -> dict[str, str]:
+    sanitized: dict[str, str] = {}
+    for raw_key, raw_value in (env or {}).items():
+        key = _text(raw_key)
+        value = _text(raw_value)
+        if not key or not value:
+            continue
+        if not _ENV_PLACEHOLDER_PATTERN.fullmatch(value):
+            raise ValueError(f"Env placeholder '{key}' must use $NAME or ${'{'}NAME{'}'} syntax")
+        sanitized[key] = value
+    return sanitized
+
+
+def _sanitize_env_literals(env: Mapping[str, Any] | None) -> dict[str, str]:
+    sanitized: dict[str, str] = {}
+    for raw_key, raw_value in (env or {}).items():
+        key = _text(raw_key)
+        value = _text(raw_value)
+        if not key or not value:
+            continue
+        if _is_secret_bearing_env_key(key):
+            raise ValueError(f"Secret-bearing env key '{key}' cannot be stored as a literal")
         sanitized[key] = value
     return sanitized
 
@@ -73,7 +100,8 @@ class LocalExternalMCPProfile:
     profile_id: str
     command: str
     args: tuple[str, ...] = ()
-    env: dict[str, str] = field(default_factory=dict)
+    env_placeholders: dict[str, str] = field(default_factory=dict)
+    env_literals: dict[str, str] = field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -81,14 +109,39 @@ class LocalExternalMCPProfile:
         object.__setattr__(self, "profile_id", _text(self.profile_id))
         object.__setattr__(self, "command", _text(self.command))
         object.__setattr__(self, "args", tuple(_text(item) for item in self.args if _text(item)))
-        object.__setattr__(self, "env", _sanitize_env(self.env))
+        env_placeholders = _sanitize_env_placeholders(self.env_placeholders)
+        env_literals = _sanitize_env_literals(self.env_literals)
+        duplicate_keys = set(env_placeholders) & set(env_literals)
+        if duplicate_keys:
+            raise ValueError(f"Duplicate env keys across placeholders and literals: {sorted(duplicate_keys)}")
+        object.__setattr__(self, "env_placeholders", env_placeholders)
+        object.__setattr__(self, "env_literals", env_literals)
+
+    @property
+    def env(self) -> dict[str, str]:
+        merged = dict(self.env_literals)
+        merged.update(self.env_placeholders)
+        return merged
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "profile_id": self.profile_id,
             "command": self.command,
             "args": list(self.args),
-            "env": dict(self.env),
+            "env": self.env,
+            "env_placeholders": dict(self.env_placeholders),
+            "env_literals": dict(self.env_literals),
+            "created_at": _datetime_to_iso(self.created_at),
+            "updated_at": _datetime_to_iso(self.updated_at),
+        }
+
+    def to_storage_dict(self) -> dict[str, Any]:
+        return {
+            "profile_id": self.profile_id,
+            "command": self.command,
+            "args": list(self.args),
+            "env_placeholders": dict(self.env_placeholders),
+            "env_literals": dict(self.env_literals),
             "created_at": _datetime_to_iso(self.created_at),
             "updated_at": _datetime_to_iso(self.updated_at),
         }
@@ -99,11 +152,25 @@ class LocalExternalMCPProfile:
             return cls(profile_id="", command="")
         raw_args = data.get("args")
         args = tuple(str(item).strip() for item in raw_args) if isinstance(raw_args, list) else ()
+        raw_env_placeholders = _coerce_mapping(data.get("env_placeholders"))
+        raw_env_literals = _coerce_mapping(data.get("env_literals"))
+        legacy_env = _coerce_mapping(data.get("env"))
+        if legacy_env:
+            for key, value in legacy_env.items():
+                text_key = _text(key)
+                text_value = _text(value)
+                if not text_key or not text_value:
+                    continue
+                if _ENV_PLACEHOLDER_PATTERN.fullmatch(text_value):
+                    raw_env_placeholders[text_key] = text_value
+                else:
+                    raw_env_literals[text_key] = text_value
         return cls(
             profile_id=_text(data.get("profile_id")),
             command=_text(data.get("command")),
             args=args,
-            env=_coerce_mapping(data.get("env")),
+            env_placeholders=raw_env_placeholders,
+            env_literals=raw_env_literals,
             created_at=_iso_to_datetime(data.get("created_at")),
             updated_at=_iso_to_datetime(data.get("updated_at")),
         )
@@ -153,7 +220,7 @@ class LocalMCPStoreState:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "profiles": [profile.to_dict() for profile in self.profiles],
+            "profiles": [profile.to_storage_dict() for profile in self.profiles],
             "discovery_snapshots": {
                 server_id: dict(snapshot)
                 for server_id, snapshot in self.discovery_snapshots.items()
@@ -242,7 +309,8 @@ class LocalMCPStore:
             profile_id=profile.profile_id,
             command=profile.command,
             args=profile.args,
-            env=profile.env,
+            env_placeholders=profile.env_placeholders,
+            env_literals=profile.env_literals,
             created_at=profile.created_at or (existing_profile.created_at if existing_profile else now),
             updated_at=now,
         )

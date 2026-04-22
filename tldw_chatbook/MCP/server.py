@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 MCP Server implementation for tldw_chatbook
 
@@ -6,6 +8,8 @@ through the Model Context Protocol.
 """
 
 import asyncio
+import ast
+import inspect
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
@@ -23,49 +27,114 @@ except ImportError:
 
 from loguru import logger
 
-# Import tldw_chatbook components
-from ..config import get_cli_setting, CLI_APP_CLIENT_ID
-from ..DB.ChaChaNotes_DB import ChaChaNotes_DB
-from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..Chat.Chat_Functions import create_chat_message, save_conversation
-from ..Notes.Notes_Library import NotesInteropService
-from ..Character_Chat.Character_Chat_Lib import CharacterInteropService
-from ..LLM_Calls.LLM_API_Calls import chat_with_provider
+_MODULE_TOOL_METHOD_NAMES = {
+    "chat_with_character": "chat_with_character",
+    "perform_rag_search": "search_rag",
+    "search_conversations": "search_conversations",
+    "list_available_characters": "list_characters",
+    "get_conversation_history": "get_conversation_history",
+    "export_conversation": "export_conversation",
+}
 
-# Import MCP components
-from .tools import MCPTools
-from .resources import MCPResources
-from .prompts import MCPPrompts
-
-
-LOCAL_MCP_TOOL_MANIFEST: tuple[dict[str, Any], ...] = (
-    {"name": "chat_with_llm", "description": "Send a message to an LLM and get a response."},
-    {"name": "chat_with_character", "description": "Chat with a specific character."},
-    {"name": "search_rag", "description": "Search the RAG database for relevant content."},
-    {"name": "search_conversations", "description": "Search conversations by content."},
-    {"name": "create_note", "description": "Create a new note."},
-    {"name": "search_notes", "description": "Search notes by content or title."},
-    {"name": "list_characters", "description": "List all available characters."},
-    {"name": "get_conversation_history", "description": "Get conversation history."},
-    {"name": "export_conversation", "description": "Export a conversation in various formats."},
-    {"name": "ingest_media", "description": "Ingest media from URL or file path."},
+_SERVER_WRAPPER_TOOL_NAMES = (
+    "chat_with_llm",
+    "create_note",
+    "search_notes",
+    "ingest_media",
 )
 
-LOCAL_MCP_RESOURCE_MANIFEST: tuple[dict[str, Any], ...] = (
-    {"uri": "conversation://{conversation_id}", "name": "get_conversation", "description": "Get a conversation by ID."},
-    {"uri": "note://{note_id}", "name": "get_note", "description": "Get a note by ID."},
-    {"uri": "character://{character_id}", "name": "get_character", "description": "Get a character profile by ID."},
-    {"uri": "media://{media_id}", "name": "get_media", "description": "Get media content by ID."},
-    {"uri": "rag-chunk://{chunk_id}", "name": "get_rag_chunk", "description": "Get a RAG chunk by ID."},
-)
+_RESOURCE_METHOD_SPECS = {
+    "get_conversation_resource": {"uri": "conversation://{conversation_id}", "name": "get_conversation"},
+    "get_note_resource": {"uri": "note://{note_id}", "name": "get_note"},
+    "get_character_resource": {"uri": "character://{character_id}", "name": "get_character"},
+    "get_media_resource": {"uri": "media://{media_id}", "name": "get_media"},
+    "get_rag_chunk_resource": {"uri": "rag-chunk://{chunk_id}", "name": "get_rag_chunk"},
+}
 
-LOCAL_MCP_PROMPT_MANIFEST: tuple[dict[str, Any], ...] = (
-    {"name": "summarize_conversation", "description": "Generate a prompt to summarize a conversation."},
-    {"name": "generate_document", "description": "Generate a prompt to create a document from a conversation."},
-    {"name": "analyze_media", "description": "Generate a prompt to analyze ingested media."},
-    {"name": "search_and_synthesize", "description": "Generate a prompt to search RAG and synthesize results."},
-    {"name": "character_writing", "description": "Generate a prompt for character-based writing."},
-)
+
+def _first_doc_line(value: str | None) -> str:
+    if not value:
+        return ""
+    return value.strip().splitlines()[0].strip()
+
+
+def _load_class_method_docs(cls: type) -> dict[str, str]:
+    source_path = inspect.getsourcefile(cls)
+    if not source_path:
+        return {}
+    return _load_class_method_docs_from_path(Path(source_path), cls.__name__)
+
+
+def _load_class_method_docs_from_path(source_path: Path, class_name: str) -> dict[str, str]:
+    if not source_path:
+        return {}
+    module_node = ast.parse(Path(source_path).read_text(encoding="utf-8"))
+    for node in module_node.body:
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            docs: dict[str, str] = {}
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    docs[child.name] = _first_doc_line(ast.get_docstring(child))
+            return docs
+    return {}
+
+
+def _load_nested_register_docs(method_name: str) -> dict[str, str]:
+    source_path = inspect.getsourcefile(TldwMCPServer)
+    if not source_path:
+        return {}
+    module_node = ast.parse(Path(source_path).read_text(encoding="utf-8"))
+    docs: dict[str, str] = {}
+    for node in module_node.body:
+        if isinstance(node, ast.ClassDef) and node.name == TldwMCPServer.__name__:
+            for child in node.body:
+                if isinstance(child, ast.FunctionDef) and child.name == method_name:
+                    for nested in child.body:
+                        if isinstance(nested, ast.AsyncFunctionDef):
+                            docs[nested.name] = _first_doc_line(ast.get_docstring(nested))
+                    return docs
+    return {}
+
+
+def _describe_local_tools() -> list[dict[str, Any]]:
+    tool_docs = _load_class_method_docs_from_path(Path(__file__).with_name("tools.py"), "MCPTools")
+    wrapper_docs = _load_nested_register_docs("_register_tools")
+    entries = []
+    for method_name, tool_name in _MODULE_TOOL_METHOD_NAMES.items():
+        description = tool_docs.get(method_name, "")
+        entries.append({"name": tool_name, "description": description})
+    for tool_name in _SERVER_WRAPPER_TOOL_NAMES:
+        entries.append({"name": tool_name, "description": wrapper_docs.get(tool_name, "")})
+    return entries
+
+
+def _describe_local_resources() -> list[dict[str, Any]]:
+    resource_docs = _load_class_method_docs_from_path(Path(__file__).with_name("resources.py"), "MCPResources")
+    entries = []
+    for method_name, spec in _RESOURCE_METHOD_SPECS.items():
+        entries.append(
+            {
+                "uri": spec["uri"],
+                "name": spec["name"],
+                "description": resource_docs.get(method_name, ""),
+            }
+        )
+    return entries
+
+
+def _describe_local_prompts() -> list[dict[str, Any]]:
+    prompt_docs = _load_class_method_docs_from_path(Path(__file__).with_name("prompts.py"), "MCPPrompts")
+    entries = []
+    for method_name, description in prompt_docs.items():
+        if not method_name.endswith("_prompt"):
+            continue
+        entries.append(
+            {
+                "name": method_name.removesuffix("_prompt"),
+                "description": description,
+            }
+        )
+    return entries
 
 
 def describe_local_mcp_capabilities() -> dict[str, Any]:
@@ -73,9 +142,9 @@ def describe_local_mcp_capabilities() -> dict[str, Any]:
     return {
         "server_id": "local:tldw_chatbook",
         "server_label": "tldw_chatbook local MCP",
-        "tools": [dict(item) for item in LOCAL_MCP_TOOL_MANIFEST],
-        "resources": [dict(item) for item in LOCAL_MCP_RESOURCE_MANIFEST],
-        "prompts": [dict(item) for item in LOCAL_MCP_PROMPT_MANIFEST],
+        "tools": _describe_local_tools(),
+        "resources": _describe_local_resources(),
+        "prompts": _describe_local_prompts(),
     }
 
 
@@ -95,6 +164,10 @@ class TldwMCPServer:
         self._init_databases()
         
         # Initialize MCP components
+        from .tools import MCPTools
+        from .resources import MCPResources
+        from .prompts import MCPPrompts
+
         self.tools = MCPTools(self.chachanotes_db, self.media_db)
         self.resources = MCPResources(self.chachanotes_db, self.media_db)
         self.prompts = MCPPrompts(self.chachanotes_db, self.media_db)
@@ -109,6 +182,12 @@ class TldwMCPServer:
     def _init_databases(self):
         """Initialize database connections."""
         try:
+            from ..config import get_cli_setting, CLI_APP_CLIENT_ID
+            from ..DB.ChaChaNotes_DB import ChaChaNotes_DB
+            from ..DB.Client_Media_DB_v2 import MediaDatabase
+            from ..Notes.Notes_Library import NotesInteropService
+            from ..Character_Chat.Character_Chat_Lib import CharacterInteropService
+
             # Initialize character/chat/notes database
             self.chachanotes_db = ChaChaNotes_DB(
                 db_name="chachanotes_db.sqlite",
@@ -130,6 +209,8 @@ class TldwMCPServer:
     
     def _register_tools(self):
         """Register MCP tools."""
+        from ..config import get_cli_setting
+        from ..LLM_Calls.LLM_API_Calls import chat_with_provider
         
         # Basic chat tool
         @self.mcp.tool()
@@ -460,10 +541,10 @@ class TldwMCPServer:
                 await self.mcp.run(
                     read_stream=read_stream,
                     write_stream=write_stream,
-                    InitializationOptions(
+                    initialization_options=InitializationOptions(
                         server_name=self.name,
                         server_version=self.version
-                    )
+                    ),
                 )
         else:
             # TODO: Implement HTTP transport

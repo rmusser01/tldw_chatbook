@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
-from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalGovernanceRule
+from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile
+from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
 
 
 class FakeLocalStore:
@@ -13,7 +14,8 @@ class FakeLocalStore:
                 profile_id="profile-a",
                 command="python",
                 args=("-m", "demo.server"),
-                env={"API_KEY": "${API_KEY}"},
+                env_placeholders={"API_KEY": "${API_KEY}"},
+                env_literals={"LOG_LEVEL": "debug"},
             )
         }
         self.discovery_snapshots = {}
@@ -84,6 +86,19 @@ def test_local_control_service_builds_inventory_from_local_manifest_without_loop
     assert inventory["prompts"][0]["name"] == "summarize_conversation"
 
 
+def test_local_control_service_uses_real_local_manifest_helper_by_default():
+    service = LocalMCPControlService(store=FakeLocalStore())
+
+    inventory = service.get_inventory()
+    manifest = describe_local_mcp_capabilities()
+
+    assert inventory == manifest
+    assert any(tool["name"] == "search_rag" for tool in inventory["tools"])
+    assert any(tool["description"] == "Perform RAG search across ingested media." for tool in inventory["tools"])
+    assert any(resource["uri"] == "note://{note_id}" for resource in inventory["resources"])
+    assert any(prompt["name"] == "summarize_conversation" for prompt in inventory["prompts"])
+
+
 def test_local_control_service_exposes_overview_external_servers_and_governance():
     store = FakeLocalStore()
     service = LocalMCPControlService(
@@ -113,6 +128,7 @@ def test_local_control_service_exposes_overview_external_servers_and_governance(
     assert overview["governance"]["rules"] == 1
     assert external_servers[0]["profile_id"] == "profile-a"
     assert external_servers[0]["env"]["API_KEY"] == "${API_KEY}"
+    assert external_servers[0]["env"]["LOG_LEVEL"] == "debug"
     assert governance[0]["capability_id"] == "mcp.governance.list.local"
 
 

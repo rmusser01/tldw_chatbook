@@ -45,12 +45,12 @@ class LocalMCPControlService:
 
     def get_inventory(self) -> dict[str, Any]:
         manifest = self.manifest_provider() or {}
-        return {
-            "server_id": manifest.get("server_id", "local:tldw_chatbook"),
-            "tools": list(manifest.get("tools", [])),
-            "resources": list(manifest.get("resources", [])),
-            "prompts": list(manifest.get("prompts", [])),
-        }
+        inventory = dict(manifest)
+        inventory["server_id"] = manifest.get("server_id", "local:tldw_chatbook")
+        inventory["tools"] = list(manifest.get("tools", []))
+        inventory["resources"] = list(manifest.get("resources", []))
+        inventory["prompts"] = list(manifest.get("prompts", []))
+        return inventory
 
     def get_external_servers(self) -> list[dict[str, Any]]:
         servers: list[dict[str, Any]] = []
