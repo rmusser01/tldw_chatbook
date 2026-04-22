@@ -297,7 +297,7 @@ async def test_media_window_remove_from_saved_view_clears_selection_when_filtere
 
 @pytest.mark.asyncio
 async def test_media_window_toggle_keeps_selection_when_record_still_matches_filter_off_page():
-    async def search_media(**kwargs):
+    async def list_read_it_later(**kwargs):
         media_ids_filter = kwargs.get("media_ids_filter")
         if media_ids_filter == ["7"]:
             return {
@@ -322,9 +322,10 @@ async def test_media_window_toggle_keeps_selection_when_record_still_matches_fil
     scope_service.save_to_read_it_later = AsyncMock(
         return_value={"id": "local:media:7", "source_id": "7", "is_read_it_later": True}
     )
-    scope_service.search_media = AsyncMock(side_effect=search_media)
+    scope_service.list_read_it_later = AsyncMock(side_effect=list_read_it_later)
     window, _app = _build_media_window(runtime_backend="local", scope_service=scope_service)
     window.list_panel.current_page = 2
+    window.runtime_state.active_browse_subview = "read-it-later"
     window.runtime_state.selected_record_id = "local:media:7"
     window.runtime_state.detail_by_record_id["local:media:7"] = {
         "id": "local:media:7",
@@ -340,6 +341,8 @@ async def test_media_window_toggle_keeps_selection_when_record_still_matches_fil
     )
 
     assert window.runtime_state.selected_record_id == "local:media:7"
+    scope_service.list_read_it_later.assert_awaited()
+    scope_service.search_media.assert_not_awaited()
 
 
 @pytest.mark.asyncio
