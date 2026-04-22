@@ -13,6 +13,12 @@ DEFAULT_LOCAL_MCP_STORE_PATH = DEFAULT_CONFIG_PATH.parent / "local_mcp_store.jso
 
 _ENV_PLACEHOLDER_PATTERN = re.compile(r"^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$")
 _SECRET_KEY_PATTERN = re.compile(r"(secret|token|password|passwd|api[_-]?key|access[_-]?key)", re.IGNORECASE)
+_SECRET_VALUE_PATTERNS = (
+    re.compile(r"^sk-[A-Za-z0-9._-]{12,}$"),
+    re.compile(r"^gh[pousr]_[A-Za-z0-9]{12,}$"),
+    re.compile(r"^xox[baprs]-[A-Za-z0-9-]{12,}$"),
+    re.compile(r"^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+$"),
+)
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
@@ -69,6 +75,10 @@ def _is_secret_bearing_env_key(key: str) -> bool:
     return bool(_SECRET_KEY_PATTERN.search(key))
 
 
+def _looks_like_raw_secret_value(value: str) -> bool:
+    return any(pattern.fullmatch(value) for pattern in _SECRET_VALUE_PATTERNS)
+
+
 def _sanitize_env_placeholders(env: Mapping[str, Any] | None) -> dict[str, str]:
     sanitized: dict[str, str] = {}
     for raw_key, raw_value in (env or {}).items():
@@ -91,6 +101,8 @@ def _sanitize_env_literals(env: Mapping[str, Any] | None) -> dict[str, str]:
             continue
         if _is_secret_bearing_env_key(key):
             raise ValueError(f"Secret-bearing env key '{key}' cannot be stored as a literal")
+        if _looks_like_raw_secret_value(value):
+            raise ValueError(f"Literal env key '{key}' looks like a raw secret and cannot be persisted")
         sanitized[key] = value
     return sanitized
 
