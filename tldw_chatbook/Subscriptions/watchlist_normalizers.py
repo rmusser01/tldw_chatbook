@@ -95,6 +95,13 @@ def _local_status_summary(row: Mapping[str, Any]) -> str:
     return "active"
 
 
+def _normalize_local_source_type(db_source_type: Any) -> str | None:
+    normalized = str(db_source_type) if db_source_type not in (None, "") else None
+    if normalized == "url":
+        return "site"
+    return normalized
+
+
 def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
     source_id = row["id"]
     return {
@@ -103,7 +110,7 @@ def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "entity_kind": "subscription",
         "source_id": source_id,
         "title": row["name"],
-        "source_type": row["type"],
+        "source_type": _normalize_local_source_type(row.get("type")),
         "url": row["source"],
         "active": bool(row["is_active"]) and not bool(row["is_paused"]),
         "tags": _coerce_tags(row.get("tags")),

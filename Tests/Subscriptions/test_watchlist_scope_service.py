@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistBackend, WatchlistScopeService
 
 
@@ -63,6 +64,40 @@ class FakeServerWatchlists:
         return {"deleted": True, "source_id": source_id}
 
 
+class FakeSubscriptionsDB:
+    def get_all_subscriptions(self, include_inactive=True):
+        assert include_inactive is True
+        return [
+            {
+                "id": 3,
+                "name": "Docs Site",
+                "type": "url",
+                "source": "https://example.com/docs",
+                "is_active": 1,
+                "is_paused": 0,
+                "tags": "docs,reference",
+                "last_checked": "2026-04-21T03:00:00Z",
+                "created_at": "2026-04-20T01:00:00Z",
+                "updated_at": "2026-04-21T02:00:00Z",
+            }
+        ]
+
+    def get_subscription(self, subscription_id):
+        assert subscription_id == 3
+        return {
+            "id": 3,
+            "name": "Docs Site",
+            "type": "url",
+            "source": "https://example.com/docs",
+            "is_active": 1,
+            "is_paused": 0,
+            "tags": "docs,reference",
+            "last_checked": "2026-04-21T03:00:00Z",
+            "created_at": "2026-04-20T01:00:00Z",
+            "updated_at": "2026-04-21T02:00:00Z",
+        }
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_local_and_server_actions_with_watchlists_action_ids():
     policy = FakePolicy()
@@ -122,3 +157,15 @@ async def test_scope_service_rejects_invalid_backend_and_malformed_item_ids():
 
     with pytest.raises(ValueError, match="Invalid watchlist item id"):
         await scope.get_watch_item_detail("bad-id", runtime_backend="server")
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_maps_db_url_type_back_to_site_contract():
+    service = LocalWatchlistsService(db_factory=FakeSubscriptionsDB)
+
+    items = await service.list_sources()
+    detail = await service.get_source_detail(3)
+
+    assert items[0]["source_type"] == "site"
+    assert detail["source_type"] == "site"
+    assert items[0]["tags"] == ["docs", "reference"]
