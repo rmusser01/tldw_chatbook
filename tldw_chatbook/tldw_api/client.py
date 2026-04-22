@@ -55,6 +55,9 @@ from .media_reading_schemas import (
 )
 from .watchlists_schemas import (
     SourceCreateRequest,
+    SourceDeleteResponse,
+    SourceResponse,
+    SourcesListResponse,
     SourceUpdateRequest,
 )
 from .prompt_chatbook_schemas import (
@@ -478,12 +481,13 @@ class TLDWAPIClient:
             params={"hard": str(hard).lower(), "delete_file": str(delete_file).lower()},
         )
 
-    async def create_watchlist_source(self, request_data: SourceCreateRequest) -> Dict[str, Any]:
-        return await self._request(
+    async def create_watchlist_source(self, request_data: SourceCreateRequest) -> SourceResponse:
+        response = await self._request(
             "POST",
             "/api/v1/watchlists/sources",
             json_data=request_data.model_dump(mode="json"),
         )
+        return SourceResponse.model_validate(response)
 
     async def list_watchlist_sources(
         self,
@@ -492,23 +496,26 @@ class TLDWAPIClient:
         tags: list[str] | None = None,
         page: int = 1,
         size: int = 50,
-    ) -> Dict[str, Any]:
+    ) -> SourcesListResponse:
         params = {"q": q, "tags": tags, "page": page, "size": size}
-        return await self._request(
+        response = await self._request(
             "GET",
             "/api/v1/watchlists/sources",
             params={key: value for key, value in params.items() if value is not None},
         )
+        return SourcesListResponse.model_validate(response)
 
-    async def update_watchlist_source(self, source_id: int, request_data: SourceUpdateRequest) -> Dict[str, Any]:
-        return await self._request(
+    async def update_watchlist_source(self, source_id: int, request_data: SourceUpdateRequest) -> SourceResponse:
+        response = await self._request(
             "PATCH",
             f"/api/v1/watchlists/sources/{source_id}",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
+        return SourceResponse.model_validate(response)
 
-    async def delete_watchlist_source(self, source_id: int) -> Dict[str, Any]:
-        return await self._request("DELETE", f"/api/v1/watchlists/sources/{source_id}")
+    async def delete_watchlist_source(self, source_id: int) -> SourceDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/watchlists/sources/{source_id}")
+        return SourceDeleteResponse.model_validate(response)
 
     async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
         response = await self._request(

@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import AnyUrl, BaseModel, Field
+from pydantic import AnyUrl, BaseModel, ConfigDict, Field
 
 
 SourceType = Literal["rss", "site"]
 
 
 class SourceCreateRequest(BaseModel):
-    name: str
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=200)
     url: AnyUrl
     source_type: SourceType
     active: bool = True
@@ -17,7 +19,9 @@ class SourceCreateRequest(BaseModel):
 
 
 class SourceUpdateRequest(BaseModel):
-    name: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
     url: AnyUrl | None = None
     source_type: SourceType | None = None
     active: bool | None = None
@@ -28,11 +32,15 @@ class SourceResponse(BaseModel):
     id: int
     name: str
     url: AnyUrl
-    source_type: str
+    source_type: Literal["rss", "site", "forum"]
     active: bool = True
     tags: list[str] = Field(default_factory=list)
     group_ids: list[int] = Field(default_factory=list)
     settings: dict[str, Any] | None = None
+    last_scraped_at: str | None = None
+    status: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class SourcesListResponse(BaseModel):
