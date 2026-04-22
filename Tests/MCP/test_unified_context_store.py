@@ -45,6 +45,38 @@ def test_unified_mcp_context_store_loads_safe_default_on_invalid_json(tmp_path):
     assert restored == UnifiedMCPContext()
 
 
+def test_unified_mcp_context_store_tolerates_bad_panel_metadata_shape(tmp_path):
+    path = tmp_path / "unified_mcp_context.json"
+    path.write_text(
+        """
+        {
+          "selected_source": "server",
+          "selected_active_server_id": "server-a",
+          "selected_scope": "personal",
+          "selected_section": "overview",
+          "per_server_state": {
+            "server-a": {
+              "server_id": "server-a",
+              "selected_scope": "personal",
+              "selected_section": "inventory",
+              "panel_records": [
+                {
+                  "panel_id": "panel-a",
+                  "metadata": ["not", "a", "mapping"]
+                }
+              ]
+            }
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    restored = UnifiedMCPContextStore(path).load()
+
+    assert restored.per_server_state["server-a"].panel_records[0].metadata == {}
+
+
 def test_unified_mcp_context_store_keeps_destination_local_state_separate_from_runtime_policy(tmp_path):
     store = UnifiedMCPContextStore(tmp_path / "unified_mcp_context.json")
     context = UnifiedMCPContext(

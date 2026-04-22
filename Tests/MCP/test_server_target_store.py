@@ -36,6 +36,22 @@ def test_bootstrap_from_legacy_config_only_when_registry_is_empty(tmp_path):
     assert "super-secret" not in raw_payload
 
 
+def test_bootstrap_from_legacy_config_returns_false_for_malformed_url(tmp_path):
+    store = ConfiguredServerTargetStore(tmp_path / "server_targets.json")
+
+    imported = store.bootstrap_from_legacy_config(
+        {
+            "tldw_api": {
+                "base_url": "https://example.com:bad/api/",
+                "api_key": "super-secret",
+            }
+        }
+    )
+
+    assert imported is False
+    assert store.list_targets() == []
+
+
 def test_legacy_config_does_not_overwrite_existing_registry(tmp_path):
     store = ConfiguredServerTargetStore(tmp_path / "server_targets.json")
     saved_target = ConfiguredServerTarget(
@@ -117,6 +133,29 @@ def test_target_store_updates_status_metadata_without_overwriting_auth_reference
     assert restored.last_known_auth_state == "authenticated"
     assert restored.last_connected_at == datetime(2026, 4, 22, 10, 30, tzinfo=timezone.utc)
     assert restored.updated_at == datetime(2026, 4, 22, 10, 31, tzinfo=timezone.utc)
+
+
+def test_target_store_normalizes_invalid_status_values_before_persisting(tmp_path):
+    store = ConfiguredServerTargetStore(tmp_path / "server_targets.json")
+    target = ConfiguredServerTarget(
+        server_id="server-a",
+        label="Server A",
+        base_url="https://server-a.example/api",
+    )
+    store.save_targets([target])
+
+    updated = store.update_target_status(
+        "server-a",
+        last_known_reachability="BROKEN",
+        last_known_auth_state="INVALID",
+    )
+
+    assert updated.last_known_reachability is None
+    assert updated.last_known_auth_state is None
+
+    restored = store.list_targets()[0]
+    assert restored.last_known_reachability is None
+    assert restored.last_known_auth_state is None
 
 
 def test_target_store_resolves_active_target_by_default_target_and_explicit_server_id(tmp_path):

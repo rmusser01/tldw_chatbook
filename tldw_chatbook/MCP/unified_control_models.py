@@ -59,7 +59,10 @@ def _normalize_server_identity(raw_url: str) -> tuple[str | None, str | None]:
 
     scheme = parsed.scheme.lower()
     hostname = parsed.hostname.lower()
-    port = parsed.port
+    try:
+        port = parsed.port
+    except ValueError:
+        return None, None
     default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
 
     netloc = hostname
@@ -163,13 +166,15 @@ class NormalizedPanelRecord:
     def from_dict(cls, data: Any) -> "NormalizedPanelRecord":
         if not isinstance(data, Mapping):
             return cls(panel_id="")
+        raw_metadata = data.get("metadata")
+        metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
         return cls(
             panel_id=str(data.get("panel_id") or "").strip(),
             section=_text_or_none(data.get("section")),
             title=_text_or_none(data.get("title")),
             is_visible=bool(data.get("is_visible", True)),
             is_enabled=bool(data.get("is_enabled", True)),
-            metadata=dict(data.get("metadata") or {}),
+            metadata=dict(metadata),
         )
 
 

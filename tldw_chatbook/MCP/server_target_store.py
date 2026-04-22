@@ -99,16 +99,26 @@ class ConfiguredServerTargetStore:
                 updated_targets.append(target)
                 continue
 
+            normalized_reachability = _normalize_status_choice(
+                last_known_reachability,
+                valid_values={"unknown", "reachable", "unreachable"},
+            )
+            if last_known_reachability is None:
+                normalized_reachability = target.last_known_reachability
+
+            normalized_auth_state = _normalize_status_choice(
+                last_known_auth_state,
+                valid_values={"unknown", "authenticated", "auth_required", "session_invalid"},
+            )
+            if last_known_auth_state is None:
+                normalized_auth_state = target.last_known_auth_state
+
             status = TargetStatusMetadata(
                 last_known_server_label=last_known_server_label
                 if last_known_server_label is not None
                 else target.last_known_server_label,
-                last_known_reachability=last_known_reachability
-                if last_known_reachability is not None
-                else target.last_known_reachability,
-                last_known_auth_state=last_known_auth_state
-                if last_known_auth_state is not None
-                else target.last_known_auth_state,
+                last_known_reachability=normalized_reachability,
+                last_known_auth_state=normalized_auth_state,
                 last_connected_at=last_connected_at if last_connected_at is not None else target.last_connected_at,
                 updated_at=updated_at if updated_at is not None else target.updated_at,
             )
@@ -161,3 +171,12 @@ def _datetime_to_iso(value: datetime | None) -> str | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_status_choice(value: str | None, *, valid_values: set[str]) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if normalized in valid_values:
+        return normalized
+    return None
