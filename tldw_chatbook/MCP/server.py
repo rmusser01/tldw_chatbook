@@ -38,6 +38,47 @@ from .resources import MCPResources
 from .prompts import MCPPrompts
 
 
+LOCAL_MCP_TOOL_MANIFEST: tuple[dict[str, Any], ...] = (
+    {"name": "chat_with_llm", "description": "Send a message to an LLM and get a response."},
+    {"name": "chat_with_character", "description": "Chat with a specific character."},
+    {"name": "search_rag", "description": "Search the RAG database for relevant content."},
+    {"name": "search_conversations", "description": "Search conversations by content."},
+    {"name": "create_note", "description": "Create a new note."},
+    {"name": "search_notes", "description": "Search notes by content or title."},
+    {"name": "list_characters", "description": "List all available characters."},
+    {"name": "get_conversation_history", "description": "Get conversation history."},
+    {"name": "export_conversation", "description": "Export a conversation in various formats."},
+    {"name": "ingest_media", "description": "Ingest media from URL or file path."},
+)
+
+LOCAL_MCP_RESOURCE_MANIFEST: tuple[dict[str, Any], ...] = (
+    {"uri": "conversation://{conversation_id}", "name": "get_conversation", "description": "Get a conversation by ID."},
+    {"uri": "note://{note_id}", "name": "get_note", "description": "Get a note by ID."},
+    {"uri": "character://{character_id}", "name": "get_character", "description": "Get a character profile by ID."},
+    {"uri": "media://{media_id}", "name": "get_media", "description": "Get media content by ID."},
+    {"uri": "rag-chunk://{chunk_id}", "name": "get_rag_chunk", "description": "Get a RAG chunk by ID."},
+)
+
+LOCAL_MCP_PROMPT_MANIFEST: tuple[dict[str, Any], ...] = (
+    {"name": "summarize_conversation", "description": "Generate a prompt to summarize a conversation."},
+    {"name": "generate_document", "description": "Generate a prompt to create a document from a conversation."},
+    {"name": "analyze_media", "description": "Generate a prompt to analyze ingested media."},
+    {"name": "search_and_synthesize", "description": "Generate a prompt to search RAG and synthesize results."},
+    {"name": "character_writing", "description": "Generate a prompt for character-based writing."},
+)
+
+
+def describe_local_mcp_capabilities() -> dict[str, Any]:
+    """Return a stable local MCP capability manifest without opening a loopback connection."""
+    return {
+        "server_id": "local:tldw_chatbook",
+        "server_label": "tldw_chatbook local MCP",
+        "tools": [dict(item) for item in LOCAL_MCP_TOOL_MANIFEST],
+        "resources": [dict(item) for item in LOCAL_MCP_RESOURCE_MANIFEST],
+        "prompts": [dict(item) for item in LOCAL_MCP_PROMPT_MANIFEST],
+    }
+
+
 class TldwMCPServer:
     """MCP Server for tldw_chatbook"""
     

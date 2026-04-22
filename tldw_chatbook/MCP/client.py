@@ -342,6 +342,22 @@ class MCPClient:
                 ]
             })
         return prompts
+
+    async def describe_server(self, server_id: str) -> Dict[str, Any]:
+        """Describe a connected server using the cached discovery state."""
+        info = self.servers.get(server_id)
+        if info is None:
+            raise KeyError(f"Unknown server_id: {server_id}")
+
+        return {
+            "server_id": server_id,
+            "command": info.get("command"),
+            "args": list(info.get("args") or []),
+            "connected_at": info.get("connected_at"),
+            "tools": self.get_server_tools(server_id),
+            "resources": self.get_server_resources(server_id),
+            "prompts": self.get_server_prompts(server_id),
+        }
     
     async def disconnect_all(self) -> None:
         """Disconnect from all servers."""
