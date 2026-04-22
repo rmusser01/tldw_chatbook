@@ -373,6 +373,10 @@ Rules:
 - the first implementation may bootstrap the initial `ConfiguredServerTarget` from the existing single `tldw_api` config block
 - until a richer multi-target settings surface exists, that bootstrap path is the compatibility bridge for current installs
 - once the dedicated target registry exists, Unified MCP server selection reads from that registry rather than deriving identity directly from one global `tldw_api.base_url`
+- if the target registry is empty and legacy single-target config exists, Chatbook performs a one-time import to seed the default configured target
+- after that import, the configured target registry becomes authoritative for Unified MCP target selection and restore behavior
+- later edits to the legacy single-target config must not silently overwrite existing target records
+- any later sync from legacy config must be an explicit user-directed re-import or refresh action, not an automatic background rewrite
 
 ### 2b. Server Scope Discovery And Reset Contract
 
@@ -387,9 +391,21 @@ Recommended contract:
   - `manageable_team_ids`
   - `manageable_org_ids`
   - `can_use_system_admin_scope`
+  - `section_capabilities`
+  - `endpoint_capabilities`
   - permission/version metadata needed to gate sections
 - the access context may come from claims, dedicated server membership endpoints, or a composed bootstrap call, but the resulting model must be normalized inside Chatbook
 - server scope switch options are derived from the active `ServerAccessContext`, not hard-coded
+- `section_capabilities` must explicitly describe whether the active server target exposes and permits each major section:
+  - `overview`
+  - `inventory`
+  - `catalogs`
+  - `external_servers`
+  - `governance`
+  - `advanced`
+- `endpoint_capabilities` should capture lower-level optional support for endpoint families or mutation classes where the server surface is version- or deployment-dependent
+- Chatbook must not assume every configured server supports the full Unified MCP surface just because one reference server does
+- unsupported sections should be hidden or rendered as explicitly unavailable based on `section_capabilities`, not left to fail only after user interaction
 - when switching `active_server_id`, Chatbook clears loaded records from the previous server immediately, restores the last still-valid state for the new server if one exists, and otherwise falls back to the most specific allowed scope in this order:
   - `Personal`
   - first allowed `Team`
@@ -451,6 +467,8 @@ Responsibilities:
 - translates server responses into destination models
 - never stores server-owned mutable records as authoritative local state
 - keeps only ephemeral or clearly labeled cache state where necessary
+- treats cache policy as section-sensitive rather than one-size-fits-all
+- partitions any cache state by `server_id`, selected scope, and section
 
 ### 4. Local Pane Model
 
@@ -606,6 +624,27 @@ Surface:
 - audit findings browse
 
 This section is still in scope for the vertical. It is just lower-frequency and should not crowd the core inventory/catalog/governance workflows.
+
+### 5g. Server Cache And Authority Contract
+
+Server cache behavior must be explicit because this destination mixes read-heavy browse surfaces with high-risk administration surfaces.
+
+Rules:
+
+- browse-oriented sections may show stale read-only cache when clearly labeled with fetched-at time, `server_id`, and scope:
+  - `Overview`
+  - `Inventory`
+  - `Catalogs`
+- mutation-sensitive sections must default to live authoritative fetches and must not rely on stale local cache as the working source of truth:
+  - `External Servers`
+  - `Governance`
+  - credential/secret management flows
+  - approval and policy mutation flows
+  - mutable paths inside `Advanced`
+- no optimistic local mutation is allowed for server-owned MCP administration records
+- any stale cached browse data must be invalidated on server switch, scope change, auth change, or capability negotiation change
+- after a successful server mutation, the UI should refresh the affected record or list from the server before presenting post-save state as authoritative
+- server-side secret values remain write-only and are never cacheable in readable local form
 
 ### 6. Policy Architecture
 
@@ -789,6 +828,7 @@ Required behavior:
 - missing server configuration disables the server pane with explicit guidance
 - missing server auth or invalid session blocks server mutations explicitly
 - unauthorized scopes are hidden or disabled with clear explanation
+- unsupported server sections or endpoint families degrade cleanly based on negotiated capabilities instead of failing only after entry
 - section-level failures do not destroy the whole destination
 - stale read-only caches, if shown, are clearly labeled as non-authoritative
 - server secret mutations are treated as write-only operations
@@ -801,12 +841,15 @@ Test areas:
 
 - MCP destination source switching independent of global runtime source
 - active server switching and server-specific state partitioning
+- legacy-config bootstrap into configured server targets and post-bootstrap registry precedence
 - server scope switching and entity selection
+- server capability negotiation and unsupported-section gating
 - local pane service behavior
 - server pane client routing by scope
 - unauthorized scope/action blocking
 - local secret-placeholder validation
 - server secret write-only behavior
+- server cache invalidation on server/scope/auth/capability changes
 - catalog CRUD routing for org/team scopes
 - external server registry CRUD routing
 - approval/governance CRUD routing
