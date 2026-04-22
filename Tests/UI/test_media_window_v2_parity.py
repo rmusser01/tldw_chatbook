@@ -24,13 +24,16 @@ def _build_media_window(*, runtime_backend: str = "local", scope_service: Option
     app = SimpleNamespace(
         _media_types_for_ui=["All Media"],
         media_runtime_state=MediaRuntimeState(runtime_backend=runtime_backend),
-        media_reading_scope_service=scope_service or Mock(),
+        media_reading_scope_service=scope_service if scope_service is not None else Mock(),
         notify=Mock(),
         media_db=None,
     )
     window = MediaWindow(app)
     window.runtime_state = app.media_runtime_state
-    if scope_service is None or "get_read_it_later_context_capability" not in app.media_reading_scope_service.__dict__:
+    if scope_service is None or (
+        isinstance(app.media_reading_scope_service, Mock)
+        and "get_read_it_later_context_capability" not in app.media_reading_scope_service.__dict__
+    ):
         def capability_for_context(*, mode=None, media_type_slug=None):
             normalized_mode = str(mode or runtime_backend).strip().lower() or "local"
             normalized_type = str(media_type_slug or window.active_media_type or "all-media").strip().lower() or "all-media"
@@ -391,6 +394,7 @@ async def test_media_window_entry_normalizes_restored_server_saved_context_from_
             aggregate_only=True,
             reason="Read-it-later is only available in server mode from All Media.",
         ),
+        ReadItLaterContextCapability(available=True, aggregate_only=True, reason=None),
         ReadItLaterContextCapability(available=True, aggregate_only=True, reason=None),
     ]
     scope_service.search_media = AsyncMock(
