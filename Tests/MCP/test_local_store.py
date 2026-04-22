@@ -141,14 +141,41 @@ def test_local_store_loads_legacy_env_payload_and_drops_unsafe_entries(tmp_path)
     assert restored.env["LOG_LEVEL"] == "debug"
     assert "API_KEY" not in restored.env
 
-    LocalMCPStore(path).save_profile(restored)
+    saved = LocalMCPStore(path).save_profile(restored)
     round_tripped = LocalMCPStore(path).get_profile("profile-a")
 
+    assert saved.legacy_env_literals == {}
     assert round_tripped is not None
-    assert round_tripped.env["SERVICE_URL"] == "https://api.example.com"
-    assert round_tripped.env["MODEL_NAME"] == "gpt-4o-mini"
-    assert round_tripped.env["SOCKET_PATH"] == "/tmp/mcp-demo.sock"
+    assert "SERVICE_URL" not in round_tripped.env
+    assert "MODEL_NAME" not in round_tripped.env
+    assert "SOCKET_PATH" not in round_tripped.env
     assert "API_KEY" not in round_tripped.env
+
+
+def test_local_store_save_profile_canonicalizes_prebuilt_profiles_and_drops_legacy_env_literals(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    profile = LocalExternalMCPProfile(
+        profile_id="profile-b",
+        command="python",
+        args=("-m", "demo.server"),
+        env_literals={"LOG_LEVEL": "debug"},
+        legacy_env_literals={
+            "SERVICE_ALIAS": "example-service-prod",
+            "MODEL_NAME": "gpt-4o-mini",
+            "SOCKET_PATH": "/tmp/mcp-demo.sock",
+        },
+    )
+
+    saved = store.save_profile(profile)
+    restored = store.get_profile("profile-b")
+
+    assert saved.env["LOG_LEVEL"] == "debug"
+    assert "SERVICE_ALIAS" not in saved.env
+    assert "MODEL_NAME" not in saved.env
+    assert "SOCKET_PATH" not in saved.env
+    assert saved.legacy_env_literals == {}
+    assert restored is not None
+    assert restored.legacy_env_literals == {}
 
 
 def test_local_store_persists_discovery_snapshots_and_governance_updates(tmp_path):

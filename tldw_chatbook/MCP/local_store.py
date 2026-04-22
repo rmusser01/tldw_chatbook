@@ -439,18 +439,19 @@ class LocalMCPStore:
     def save_profile(self, profile: LocalExternalMCPProfile) -> LocalExternalMCPProfile:
         current = self.load()
         now = datetime.now(timezone.utc)
+        canonical_profile = LocalExternalMCPProfile.from_input_dict(profile.to_input_dict())
         existing_profile = next(
-            (item for item in current.profiles if item.profile_id == profile.profile_id),
+            (item for item in current.profiles if item.profile_id == canonical_profile.profile_id),
             None,
         )
         saved_profile = LocalExternalMCPProfile(
-            profile_id=profile.profile_id,
-            command=profile.command,
-            args=profile.args,
-            env_placeholders=profile.env_placeholders,
-            env_literals=profile.env_literals,
-            legacy_env_literals=profile.legacy_env_literals,
-            created_at=profile.created_at or (existing_profile.created_at if existing_profile else now),
+            profile_id=canonical_profile.profile_id,
+            command=canonical_profile.command,
+            args=canonical_profile.args,
+            env_placeholders=canonical_profile.env_placeholders,
+            env_literals=canonical_profile.env_literals,
+            legacy_env_literals={},
+            created_at=canonical_profile.created_at or (existing_profile.created_at if existing_profile else now),
             updated_at=now,
         )
         profiles = [item for item in current.profiles if item.profile_id != saved_profile.profile_id]
