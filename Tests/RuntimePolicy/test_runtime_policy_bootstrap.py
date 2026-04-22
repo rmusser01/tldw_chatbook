@@ -127,6 +127,62 @@ def test_build_server_chatbook_service_wraps_authoritative_client_builder():
     assert service.client.token == "secret-key"
 
 
+@pytest.mark.parametrize(
+    "import_error",
+    [
+        ImportError("no backend client"),
+        ModuleNotFoundError("no backend client"),
+        AttributeError("lazy import failed"),
+        TypeError("python compatibility failure"),
+    ],
+)
+def test_runtime_api_client_class_falls_back_for_compatibility_import_failures(import_error):
+    from tldw_chatbook.runtime_policy import bootstrap
+
+    def failing_import(_module_name: str):
+        raise import_error
+
+    resolved = bootstrap._runtime_api_client_class(module_importer=failing_import)
+
+    assert resolved is bootstrap._CompatibilityRuntimeAPIClient
+
+
+def test_runtime_api_client_class_falls_back_when_symbol_is_missing():
+    from tldw_chatbook.runtime_policy import bootstrap
+
+    resolved = bootstrap._runtime_api_client_class(module_importer=lambda _module_name: SimpleNamespace())
+
+    assert resolved is bootstrap._CompatibilityRuntimeAPIClient
+
+
+@pytest.mark.parametrize(
+    "import_error",
+    [
+        ImportError("no service"),
+        ModuleNotFoundError("no service"),
+        AttributeError("lazy import failed"),
+        TypeError("python compatibility failure"),
+    ],
+)
+def test_server_chatbook_service_class_falls_back_for_compatibility_import_failures(import_error):
+    from tldw_chatbook.runtime_policy import bootstrap
+
+    def failing_import(_module_name: str):
+        raise import_error
+
+    resolved = bootstrap._server_chatbook_service_class(module_importer=failing_import)
+
+    assert resolved is bootstrap._CompatibilityServerChatbookService
+
+
+def test_server_chatbook_service_class_falls_back_when_symbol_is_missing():
+    from tldw_chatbook.runtime_policy import bootstrap
+
+    resolved = bootstrap._server_chatbook_service_class(module_importer=lambda _module_name: SimpleNamespace())
+
+    assert resolved is bootstrap._CompatibilityServerChatbookService
+
+
 def test_load_runtime_policy_for_app_derives_and_persists_authoritative_server_binding_from_app_config(
     tmp_path,
 ):

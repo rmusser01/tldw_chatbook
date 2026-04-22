@@ -9,17 +9,40 @@ from tldw_chatbook.runtime_policy.registry import CAPABILITY_ACTION_MATRIX, CAPA
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 
 
-class AuthenticationError(Exception):
-    def __init__(self, message: str, response_data=None):
-        super().__init__(message)
-        self.response_data = response_data or {}
+def _backend_exception_type(name: str, *, module_name: str):
+    class _BackendError(Exception):
+        pass
+
+    _BackendError.__name__ = name
+    _BackendError.__qualname__ = name
+    _BackendError.__module__ = module_name
+    return _BackendError
 
 
-class APIResponseError(Exception):
-    def __init__(self, status_code: int, message: str, response_data=None):
-        super().__init__(message)
-        self.status_code = status_code
-        self.response_data = response_data or {}
+def _backend_auth_error(
+    *,
+    module_name: str = "tldw_chatbook.tldw_api.exceptions",
+    message: str = "bad credentials",
+    response_data=None,
+):
+    error_type = _backend_exception_type("AuthenticationError", module_name=module_name)
+    error = error_type(message)
+    error.response_data = response_data or {}
+    return error
+
+
+def _backend_response_error(
+    status_code: int,
+    message: str,
+    *,
+    module_name: str = "tldw_chatbook.tldw_api.exceptions",
+    response_data=None,
+):
+    error_type = _backend_exception_type("APIResponseError", module_name=module_name)
+    error = error_type(message)
+    error.status_code = status_code
+    error.response_data = response_data or {}
+    return error
 
 
 def _action_kinds(*kinds: str) -> frozenset[str]:
@@ -832,8 +855,23 @@ def test_runtime_policy_registry_contains_full_audited_rows():
                 f"{sorted(expected_action_kinds.difference(actual_action_kinds_by_source[source]))}"
             )
 
-def test_backend_exception_classifier_handles_authentication_errors():
-    assert classify_backend_exception(AuthenticationError("bad credentials")) == "server_auth_required"
+def test_backend_exception_classifier_prefers_loaded_backend_exception_classes(monkeypatch):
+    from tldw_chatbook.runtime_policy import enforcement
+
+    backend_auth_error_type = _backend_exception_type(
+        "AuthenticationError",
+        module_name="unexpected.module.name",
+    )
+    monkeypatch.setattr(
+        enforcement,
+        "_load_backend_exception_classes",
+        lambda module_importer=None: {"AuthenticationError": backend_auth_error_type},
+    )
+
+    error = backend_auth_error_type("bad credentials")
+    error.response_data = {}
+
+    assert classify_backend_exception(error) == "server_auth_required"
 
 
 def test_service_policy_enforcer_fails_closed_when_runtime_state_is_missing():
@@ -847,16 +885,25 @@ def test_service_policy_enforcer_fails_closed_when_runtime_state_is_missing():
 
 
 def test_backend_exception_classifier_handles_session_invalid_authentication_errors():
-    error = AuthenticationError(
-        "session expired",
+    error = _backend_auth_error(
+        message="session expired",
         response_data={"code": "session_invalid", "detail": "Session expired"},
     )
 
     assert classify_backend_exception(error) == "server_session_invalid"
 
 
+def test_backend_exception_classifier_ignores_same_named_exceptions_from_unrelated_modules():
+    error = _backend_auth_error(
+        module_name="different.vendor.exceptions",
+        message="bad credentials",
+    )
+
+    assert classify_backend_exception(error) is None
+
+
 def test_backend_exception_classifier_handles_session_invalid_401s():
-    error = APIResponseError(
+    error = _backend_response_error(
         401,
         "Unauthorized",
         response_data={"detail": "Session invalid. Please sign in again."},

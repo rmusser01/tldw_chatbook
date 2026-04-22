@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import importlib
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
@@ -42,20 +43,47 @@ class _CompatibilityServerChatbookService:
         self.client = client
 
 
-def _runtime_api_client_class():
-    try:
-        from tldw_chatbook.tldw_api import TLDWAPIClient
-    except TypeError:
-        return _CompatibilityRuntimeAPIClient
-    return TLDWAPIClient
+_COMPAT_IMPORT_FAILURES = (AttributeError, ImportError, ModuleNotFoundError, TypeError)
 
 
-def _server_chatbook_service_class():
+def _resolve_optional_class(
+    module_name: str,
+    attribute_name: str,
+    fallback_class: type[Any],
+    *,
+    module_importer=importlib.import_module,
+) -> type[Any]:
     try:
-        from ..Chatbooks.server_chatbook_service import ServerChatbookService
-    except TypeError:
-        return _CompatibilityServerChatbookService
-    return ServerChatbookService
+        module = module_importer(module_name)
+    except _COMPAT_IMPORT_FAILURES:
+        return fallback_class
+
+    try:
+        resolved_class = getattr(module, attribute_name)
+    except _COMPAT_IMPORT_FAILURES:
+        return fallback_class
+
+    if isinstance(resolved_class, type):
+        return resolved_class
+    return fallback_class
+
+
+def _runtime_api_client_class(*, module_importer=importlib.import_module):
+    return _resolve_optional_class(
+        "tldw_chatbook.tldw_api",
+        "TLDWAPIClient",
+        _CompatibilityRuntimeAPIClient,
+        module_importer=module_importer,
+    )
+
+
+def _server_chatbook_service_class(*, module_importer=importlib.import_module):
+    return _resolve_optional_class(
+        "tldw_chatbook.Chatbooks.server_chatbook_service",
+        "ServerChatbookService",
+        _CompatibilityServerChatbookService,
+        module_importer=module_importer,
+    )
 
 
 def build_runtime_api_client(

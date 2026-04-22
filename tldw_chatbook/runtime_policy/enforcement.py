@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import importlib
 from typing import Any, Callable
 
 from .engine import PolicyEngine
@@ -67,17 +68,15 @@ class ServicePolicyEnforcer:
 
 
 def classify_backend_exception(error: Exception) -> str | None:
-    error_class_name = type(error).__name__
-
-    if error_class_name == "AuthenticationError":
+    if _is_backend_exception(error, "AuthenticationError"):
         if _contains_session_invalid_signal([str(error), getattr(error, "response_data", None)]):
             return "server_session_invalid"
         return "server_auth_required"
 
-    if error_class_name == "APIConnectionError":
+    if _is_backend_exception(error, "APIConnectionError"):
         return "server_unreachable"
 
-    if error_class_name == "APIResponseError":
+    if _is_backend_exception(error, "APIResponseError"):
         status_code = getattr(error, "status_code", None)
         response_data = getattr(error, "response_data", None)
         if status_code == 401:
@@ -89,6 +88,33 @@ def classify_backend_exception(error: Exception) -> str | None:
             return "authority_denied"
 
     return None
+
+
+def _load_backend_exception_classes(*, module_importer=importlib.import_module) -> dict[str, type[Exception]]:
+    try:
+        module = module_importer("tldw_chatbook.tldw_api.exceptions")
+    except (AttributeError, ImportError, ModuleNotFoundError, TypeError):
+        return {}
+
+    resolved: dict[str, type[Exception]] = {}
+    for class_name in ("AuthenticationError", "APIConnectionError", "APIResponseError"):
+        candidate = getattr(module, class_name, None)
+        if isinstance(candidate, type) and issubclass(candidate, Exception):
+            resolved[class_name] = candidate
+    return resolved
+
+
+def _is_backend_exception(error: Exception, class_name: str) -> bool:
+    backend_classes = _load_backend_exception_classes()
+    backend_class = backend_classes.get(class_name)
+    if backend_class is not None:
+        return isinstance(error, backend_class)
+
+    error_type = type(error)
+    return (
+        error_type.__name__ == class_name
+        and error_type.__module__ == "tldw_chatbook.tldw_api.exceptions"
+    )
 
 
 def _contains_session_invalid_signal(values: Iterable[object]) -> bool:
