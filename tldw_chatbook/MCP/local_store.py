@@ -46,6 +46,13 @@ _LEGACY_SAFE_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _LEGACY_SAFE_PATH_PATTERN = re.compile(r"^(?:~|/)[A-Za-z0-9._/@:+-]{1,255}$")
 
 
+class LocalMCPStoreLoadError(RuntimeError):
+    def __init__(self, path: Path, reason: Exception) -> None:
+        self.path = Path(path)
+        self.reason = reason
+        super().__init__(f"Failed to load local MCP store from '{self.path}': {reason}")
+
+
 def _datetime_to_iso(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -456,10 +463,13 @@ class LocalMCPStore:
         )
         profiles = [item for item in current.profiles if item.profile_id != saved_profile.profile_id]
         profiles.append(saved_profile)
+        discovery_snapshots = dict(current.discovery_snapshots)
+        if existing_profile and self._launch_config_changed(existing_profile, saved_profile):
+            discovery_snapshots.pop(saved_profile.profile_id, None)
         self.save(
             LocalMCPStoreState(
                 profiles=tuple(profiles),
-                discovery_snapshots=current.discovery_snapshots,
+                discovery_snapshots=discovery_snapshots,
                 governance_rules=current.governance_rules,
             )
         )
@@ -529,5 +539,22 @@ class LocalMCPStore:
                 return json.load(handle)
         except FileNotFoundError:
             return {}
-        except (OSError, TypeError, ValueError, json.JSONDecodeError):
-            return {}
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise LocalMCPStoreLoadError(self.path, exc) from exc
+
+    def _launch_config_changed(
+        self,
+        existing_profile: LocalExternalMCPProfile,
+        updated_profile: LocalExternalMCPProfile,
+    ) -> bool:
+        return self._launch_config_signature(existing_profile) != self._launch_config_signature(updated_profile)
+
+    def _launch_config_signature(
+        self,
+        profile: LocalExternalMCPProfile,
+    ) -> tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]:
+        return (
+            profile.command,
+            profile.args,
+            tuple(sorted(profile.env.items())),
+        )

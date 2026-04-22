@@ -8,6 +8,19 @@ from .client import MCPClient
 from .local_store import LocalExternalMCPProfile, LocalGovernanceRule, LocalMCPStore
 
 _ENV_PLACEHOLDER_PATTERN = re.compile(r"^\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))$")
+_SPAWN_ENV_BASELINE_KEYS = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+)
 
 
 def _default_manifest_provider() -> dict[str, Any]:
@@ -118,7 +131,11 @@ class LocalMCPControlService:
         return self.client
 
     def _build_spawn_env(self, profile: LocalExternalMCPProfile) -> dict[str, str]:
-        resolved_env = dict(os.environ)
+        resolved_env = {
+            key: value
+            for key in _SPAWN_ENV_BASELINE_KEYS
+            if (value := os.environ.get(key)) not in (None, "")
+        }
         resolved_env.update(profile.legacy_env_literals)
         resolved_env.update(profile.env_literals)
         for key, placeholder in profile.env_placeholders.items():

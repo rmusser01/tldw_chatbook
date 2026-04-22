@@ -7,6 +7,7 @@ import pytest
 from tldw_chatbook.MCP.local_store import (
     LocalExternalMCPProfile,
     LocalGovernanceRule,
+    LocalMCPStoreLoadError,
     LocalMCPStore,
 )
 
@@ -211,3 +212,66 @@ def test_local_store_persists_discovery_snapshots_and_governance_updates(tmp_pat
     raw_payload = json.loads((tmp_path / "local_mcp_store.json").read_text(encoding="utf-8"))
     assert raw_payload["discovery_snapshots"]["profile-a"]["prompts"][0]["name"] == "remote_prompt"
     assert raw_payload["governance_rules"][0]["capability_id"] == "mcp.inventory.list.local"
+
+
+def test_local_store_clears_stale_discovery_snapshot_only_when_launch_config_changes(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    profile = LocalExternalMCPProfile(
+        profile_id="profile-a",
+        command="python",
+        args=("-m", "demo.server"),
+        env_placeholders={"API_KEY": "${API_KEY}"},
+        env_literals={"LOG_LEVEL": "debug"},
+    )
+    snapshot = {
+        "server_id": "profile-a",
+        "tools": [{"name": "remote_tool"}],
+    }
+
+    store.save_profile(profile)
+    store.save_discovery_snapshot("profile-a", snapshot)
+
+    store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="profile-a",
+            command="python",
+            args=("-m", "demo.server"),
+            env_placeholders={"API_KEY": "${API_KEY}"},
+            env_literals={"LOG_LEVEL": "debug"},
+        )
+    )
+
+    assert store.get_discovery_snapshot("profile-a") == snapshot
+
+    store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="profile-a",
+            command="python",
+            args=("-m", "demo.server"),
+            env_placeholders={"API_KEY": "${API_KEY}"},
+            env_literals={"LOG_LEVEL": "info"},
+        )
+    )
+
+    assert store.get_discovery_snapshot("profile-a") is None
+
+
+def test_local_store_raises_on_corrupt_payload_instead_of_treating_it_as_empty_state(tmp_path):
+    path = tmp_path / "local_mcp_store.json"
+    corrupt_payload = '{"profiles": [}'
+    path.write_text(corrupt_payload, encoding="utf-8")
+    store = LocalMCPStore(path)
+
+    with pytest.raises(LocalMCPStoreLoadError):
+        store.load()
+
+    with pytest.raises(LocalMCPStoreLoadError):
+        store.save_profile(
+            LocalExternalMCPProfile(
+                profile_id="profile-a",
+                command="python",
+                env_literals={"LOG_LEVEL": "debug"},
+            )
+        )
+
+    assert path.read_text(encoding="utf-8") == corrupt_payload

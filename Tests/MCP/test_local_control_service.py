@@ -250,13 +250,27 @@ async def test_local_control_service_connects_profile_and_persists_discovery_sna
     client = FakeMCPClient()
     service = LocalMCPControlService(store=store, client=client, manifest_provider=lambda: {})
 
-    with patch.dict(os.environ, {"API_KEY": "resolved-api-key", "PATH": "/usr/bin"}, clear=True):
+    with patch.dict(
+        os.environ,
+        {
+            "API_KEY": "resolved-api-key",
+            "PATH": "/usr/bin",
+            "HOME": "/tmp/demo-home",
+            "LANG": "C.UTF-8",
+            "UNRELATED_SECRET": "should-not-leak",
+        },
+        clear=True,
+    ):
         snapshot = await service.connect_profile("profile-a")
 
     assert client.connected[0]["server_id"] == "profile-a"
-    assert client.connected[0]["env"]["API_KEY"] == "resolved-api-key"
-    assert client.connected[0]["env"]["LOG_LEVEL"] == "debug"
-    assert client.connected[0]["env"]["PATH"] == "/usr/bin"
+    assert client.connected[0]["env"] == {
+        "API_KEY": "resolved-api-key",
+        "LOG_LEVEL": "debug",
+        "PATH": "/usr/bin",
+        "HOME": "/tmp/demo-home",
+        "LANG": "C.UTF-8",
+    }
     assert store.discovery_snapshots["profile-a"]["tools"][0]["name"] == "remote_tool"
     assert snapshot["prompts"][0]["name"] == "remote_prompt"
 
