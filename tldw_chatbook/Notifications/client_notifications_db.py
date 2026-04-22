@@ -45,7 +45,7 @@ class ClientNotificationsDB(BaseDB):
                 """
             )
 
-    def insert_notification(
+    def insert(
         self,
         *,
         category: str,
@@ -137,3 +137,35 @@ class ClientNotificationsDB(BaseDB):
         if data.get("payload") is not None:
             data["payload"] = json.loads(data["payload"])
         return data
+
+    def list(self, *, limit: int = 100, include_dismissed: bool = False) -> list[dict[str, Any]]:
+        return self.list_notifications(limit=limit, include_dismissed=include_dismissed)
+
+    def mark_read_notification(self, notification_id: int, *, is_read: bool) -> bool:
+        return self.mark_read(notification_id, is_read=is_read)
+
+    def dismiss(self, notification_id: int, *, is_dismissed: bool) -> bool:
+        return self.dismiss_notification(notification_id, is_dismissed=is_dismissed)
+
+    def insert_notification(
+        self,
+        *,
+        category: str,
+        title: str,
+        message: str,
+        severity: str = "info",
+        source_backend: str,
+        source_entity_id: str | None = None,
+        source_entity_kind: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self.insert(
+            category=category,
+            title=title,
+            message=message,
+            severity=severity,
+            source_backend=source_backend,
+            source_entity_id=source_entity_id,
+            source_entity_kind=source_entity_kind,
+            payload=payload,
+        )

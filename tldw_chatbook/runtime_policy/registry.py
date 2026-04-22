@@ -519,6 +519,16 @@ def _build_capability_registry(
 
 _CAPABILITY_ROWS, CAPABILITY_REGISTRY = _build_capability_registry(AUDITED_CAPABILITY_SEEDS)
 
+
+def _build_capability_action_matrix() -> dict[str, frozenset[str]]:
+    matrix: dict[str, set[str]] = {}
+    for entry in CAPABILITY_REGISTRY.values():
+        matrix.setdefault(entry.capability_id, set()).add(entry.action_id)
+    return {capability_id: frozenset(action_ids) for capability_id, action_ids in matrix.items()}
+
+
+CAPABILITY_ACTION_MATRIX = _build_capability_action_matrix()
+
 PHASE_ONE_REQUIRED_ACTION_IDS = frozenset(
     {
         "notes.create.local",

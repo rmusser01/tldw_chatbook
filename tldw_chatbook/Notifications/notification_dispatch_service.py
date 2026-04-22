@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Utils.NotificationHelper import show_notification
 
 
 class NotificationDispatchService:
@@ -22,7 +23,7 @@ class NotificationDispatchService:
         source_entity_kind: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        row = self.store.insert_notification(
+        row = self.store.insert(
             category=category,
             title=title,
             message=message,
@@ -36,11 +37,10 @@ class NotificationDispatchService:
         return row
 
     def _try_toast_or_notify(self, *, app: Any, message: str, severity: str) -> None:
-        notify = getattr(app, "notify", None)
-        if not callable(notify):
-            return
+        show_notification(app, message, severity=self._normalize_severity(severity))
 
-        notify_severity = {
+    def _normalize_severity(self, severity: str) -> str:
+        return {
             "info": "information",
             "information": "information",
             "warn": "warning",
@@ -48,8 +48,3 @@ class NotificationDispatchService:
             "error": "error",
             "success": "information",
         }.get(severity, severity)
-
-        try:
-            notify(message, severity=notify_severity)
-        except Exception:
-            return

@@ -5,7 +5,7 @@ from tldw_chatbook.runtime_policy.engine import PolicyEngine
 import pytest
 
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer, classify_backend_exception
-from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.runtime_policy.registry import CAPABILITY_ACTION_MATRIX, CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from tldw_chatbook.tldw_api.exceptions import APIResponseError, AuthenticationError
 
@@ -618,10 +618,6 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         writing.scenes.update.server
     """),
 }
-
-CAPABILITY_ACTION_MATRIX = EXPECTED_ACTION_IDS_BY_CAPABILITY
-
-
 def test_client_notifications_capability_exposes_queue_update_local():
     action_ids = CAPABILITY_ACTION_MATRIX["client_notifications"]
     assert "notifications.queue.update.local" in action_ids
