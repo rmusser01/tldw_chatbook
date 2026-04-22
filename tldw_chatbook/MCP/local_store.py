@@ -502,7 +502,11 @@ class LocalMCPStore:
         return True
 
     def save_discovery_snapshot(self, profile_id: str, snapshot: Mapping[str, Any]) -> dict[str, Any]:
-        normalized_profile_id = _text(profile_id)
+        normalized_profile_id = _require_non_empty_field(
+            profile_id,
+            "profile_id",
+            "Local MCP discovery snapshot",
+        )
         current = self.load()
         discovery_snapshots = dict(current.discovery_snapshots)
         discovery_snapshots[normalized_profile_id] = dict(snapshot)

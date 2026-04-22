@@ -142,6 +142,21 @@ def test_local_store_rejects_blank_governance_rule_writes_before_persistence(tmp
     assert not (tmp_path / "local_mcp_store.json").exists()
 
 
+def test_local_store_rejects_blank_discovery_snapshot_profile_id_before_persistence(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+
+    with pytest.raises(ValueError, match="profile_id"):
+        store.save_discovery_snapshot(
+            "",
+            {
+                "server_id": "profile-a",
+                "tools": [{"name": "remote_tool"}],
+            },
+        )
+
+    assert not (tmp_path / "local_mcp_store.json").exists()
+
+
 def test_local_store_loads_legacy_env_payload_and_drops_unsafe_entries(tmp_path):
     path = tmp_path / "local_mcp_store.json"
     path.write_text(
