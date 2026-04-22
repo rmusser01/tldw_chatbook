@@ -30,6 +30,8 @@ def test_unified_mcp_context_partitions_per_server_state(tmp_path):
 
     assert restored.selected_source == "server"
     assert restored.selected_active_server_id == "server-a"
+    assert restored.selected_scope == "personal"
+    assert restored.selected_section == "overview"
     assert restored.per_server_state["server-a"].selected_section == "inventory"
     assert restored.per_server_state["server-b"].selected_section == "catalogs"
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from pathlib import Path
 
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
-from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
+from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget, TargetStatusMetadata
 
 
 def test_bootstrap_from_legacy_config_only_when_registry_is_empty(tmp_path):
@@ -84,3 +86,53 @@ def test_target_store_uses_atomic_temp_file_replacement(tmp_path):
 
     assert (tmp_path / "server_targets.json").exists()
     assert not (tmp_path / "server_targets.json.tmp").exists()
+
+
+def test_target_store_updates_status_metadata_without_overwriting_auth_reference(tmp_path):
+    store = ConfiguredServerTargetStore(tmp_path / "server_targets.json")
+    target = ConfiguredServerTarget(
+        server_id="server-a",
+        label="Server A",
+        base_url="https://server-a.example/api",
+        auth_reference="legacy:tldw_api",
+    )
+    store.save_targets([target])
+
+    updated = store.update_target_status(
+        "server-a",
+        last_known_reachability="reachable",
+        last_known_auth_state="authenticated",
+        last_connected_at=datetime(2026, 4, 22, 10, 30, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 22, 10, 31, tzinfo=timezone.utc),
+    )
+
+    assert updated.auth_reference == "legacy:tldw_api"
+    assert updated.last_known_reachability == "reachable"
+    assert updated.last_known_auth_state == "authenticated"
+    assert updated.last_connected_at == datetime(2026, 4, 22, 10, 30, tzinfo=timezone.utc)
+    assert updated.updated_at == datetime(2026, 4, 22, 10, 31, tzinfo=timezone.utc)
+
+    restored = store.list_targets()[0]
+    assert restored.last_known_reachability == "reachable"
+    assert restored.last_known_auth_state == "authenticated"
+    assert restored.last_connected_at == datetime(2026, 4, 22, 10, 30, tzinfo=timezone.utc)
+    assert restored.updated_at == datetime(2026, 4, 22, 10, 31, tzinfo=timezone.utc)
+
+
+def test_target_store_resolves_active_target_by_default_target_and_explicit_server_id(tmp_path):
+    store = ConfiguredServerTargetStore(tmp_path / "server_targets.json")
+    default_target = ConfiguredServerTarget(
+        server_id="server-default",
+        label="Default",
+        base_url="https://default.example/api",
+        is_default=True,
+    )
+    other_target = ConfiguredServerTarget(
+        server_id="server-secondary",
+        label="Secondary",
+        base_url="https://secondary.example/api",
+    )
+    store.save_targets([default_target, other_target])
+
+    assert store.resolve_active_target().server_id == "server-default"
+    assert store.resolve_active_target("server-secondary").server_id == "server-secondary"
