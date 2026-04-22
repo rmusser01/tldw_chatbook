@@ -93,20 +93,27 @@ The following decisions are fixed for this vertical:
 - Server watchlists are treated as live remote-only records.
 - No local shadow copy of remote watchlist metadata is introduced in this slice.
 - The remote parity promise in this slice is specifically `watchlist source CRUD`.
+- The first-slice server editor supports only `rss` and `site` source types.
+- `forum` sources are blocked centrally in UI/service/policy even if the server schema can represent them.
 - `group_ids` remain read-only/deferred in this slice.
 - `group_ids` must never be editable in the first-slice UI.
 - first-slice create/update payloads must omit `group_ids` entirely.
 - Server group CRUD is explicitly deferred.
 - Server jobs, runs, and alert rules are explicitly deferred.
+- First-slice server source editing does not expose a free-form raw `settings` editor.
+- Existing server-side `settings` values are preserved when the user updates only first-slice editable fields.
 - Existing local subscriptions scheduling/review/briefings/dashboard behavior remains local-only in this slice.
 - In server mode, unsupported local-only areas must degrade explicitly rather than appearing half-functional.
 - Chatbook gains a persisted, Chatbook-owned local notification inbox.
+- The notification inbox uses its own dedicated local store rather than piggybacking on the subscriptions database.
 - The notification inbox schema is general-purpose, but only `subscriptions/watchlists` events produce into it initially.
 - Toasts are delivery, not storage.
 - One notification dispatch pipeline must own:
   - queue insert
   - toast attempt
   - fallback notify behavior
+- Server delete must be represented accurately as a reversible delete with a restore window, not as an immediate hard delete.
+- Dedicated restore UI for remote watchlist sources is deferred even though delete responses carry restore metadata.
 - Runtime policy remains the authority for backend mode, permissions, and unsupported-operation behavior.
 
 ## User Decisions Captured
@@ -126,6 +133,7 @@ The following decisions are fixed for this vertical:
 - Extend `subscription_screen` / `SubscriptionWindow` to become backend-aware.
 - Add runtime-backend refresh handling for the subscriptions screen path.
 - Split local versus server initialization in the subscriptions window.
+- Split local versus server lifecycle/state-sync behavior in the subscriptions screen wrapper.
 - Add explicit dirty-state and stale-load handling rules for backend switches.
 - Preserve the current local subscriptions product in local mode.
 - Add normalized list-row mapping for:
@@ -137,6 +145,7 @@ The following decisions are fixed for this vertical:
 - Add a persisted local notification queue/store.
 - Add a `Notifications` tab backed by the local queue.
 - Add a single notification dispatch helper/service that writes queue records and attempts toast delivery.
+- Extend runtime-policy registry coverage for local notification queue mutations required by the inbox UI.
 - Add runtime-policy enforcement at both UI and service seams.
 - Add regression coverage for:
   - backend switching
@@ -153,6 +162,7 @@ The following decisions are fixed for this vertical:
 - Watchlist runs
 - Alert rules
 - Group CRUD
+- Editable remote source restore UI
 - Remote reminders / notification feeds
 - Whole-app notification migration
 - Rewriting all existing app notifications to use the new queue
@@ -226,6 +236,38 @@ The controlling rules are:
 - stale widget state must not be able to mutate the wrong backend
 - unsupported actions must be blocked both in the UI seam and in the scope-service seam
 
+### 1b. Action-Level Policy Contract
+
+This vertical must use the existing action-level runtime-policy vocabulary rather than inventing a second permission layer.
+
+Required action ids for the first slice are:
+
+- `watchlists.list.local`
+- `watchlists.detail.local`
+- `watchlists.create.local`
+- `watchlists.update.local`
+- `watchlists.delete.local`
+- `watchlists.list.server`
+- `watchlists.detail.server`
+- `watchlists.create.server`
+- `watchlists.update.server`
+- `watchlists.delete.server`
+- `notifications.queue.list.local`
+- `notifications.queue.observe.local`
+- `notifications.dispatch.launch.local`
+
+The current registry does not yet expose queue-mutation actions for inbox state changes, so this vertical must add:
+
+- `notifications.queue.update.local`
+
+That action covers:
+
+- mark read
+- mark unread
+- dismiss
+
+Clear-all or hard-delete style inbox actions remain out of scope for this slice.
+
 ### 1a. Backend-Switch Safety Rules
 
 This is required for planning. The screen cannot rely on best-effort refresh alone.
@@ -268,6 +310,19 @@ The window must explicitly split initialization:
 
 This split is architectural, not cosmetic.
 
+### 2a. Screen Lifecycle Split
+
+`SubscriptionScreen` also requires explicit backend-aware refactoring. It currently mirrors local database state and triggers local-only refresh calls directly.
+
+The screen rules must become:
+
+- `handle_runtime_backend_changed()` delegates to backend-aware refresh paths rather than assuming a local DB-backed window
+- `on_screen_resume()` must not unconditionally call local-only review/dashboard/item refresh methods in server mode
+- `_sync_state_from_window()` must stop assuming `window.db` and `window.scheduler_worker` are always present
+- screen shell state should be derived from normalized watchlist-scope data or explicit backend-aware window accessors
+
+This is required so server mode does not accidentally execute local-only resume/suspend behavior after the window split lands.
+
 ### 3. Core Units
 
 The vertical should be decomposed into the following units.
@@ -288,6 +343,7 @@ The client/service contract for this first slice must also enforce:
 - create/update payloads do not include `group_ids`
 - any returned `group_ids` are display-only metadata
 - optional group-name lookup, if implemented, is display-only enrichment and must never affect mutation payloads
+- server delete responses are modeled as reversible-delete payloads and retain restore-window metadata
 
 These methods must be first-class work, not hidden under UI implementation.
 
@@ -323,6 +379,13 @@ This layer must normalize only the shared shell-facing fields. It must not force
 A local persisted queue/inbox store with read/dismiss behavior.
 
 This store is Chatbook-owned and local-only.
+
+This store should be a dedicated notifications store with its own config/path getter, following the existing DB-path pattern used elsewhere in Chatbook, rather than a new table inside `subscriptions.db`.
+
+Recommended naming:
+
+- `get_notifications_db_path()`
+- default file name `tldw_chatbook_notifications.db`
 
 #### `notification_dispatch_service`
 
@@ -385,9 +448,9 @@ Limit to the actual first-slice server source contract:
 - `source_type`
 - `active`
 - `tags`
-- `settings`
 - optional read-only display of `group_ids`
 - optional read-only display of resolved group names if group lookup is added
+- optional read-only summary that advanced server settings exist
 
 This pane must not expose fake support for:
 
@@ -395,6 +458,15 @@ This pane must not expose fake support for:
 - runs
 - alert rules
 - group editing
+- `forum` source creation/editing
+- arbitrary raw `settings` editing
+
+The source-type rule for this pane is strict:
+
+- allow `rss`
+- allow `site`
+- block `forum` centrally even if returned by server contracts or flags
+- if a server row with `source_type=forum` is encountered, render it as unsupported/read-only rather than pretending first-slice edit support exists
 
 The mutation rule for this pane is strict:
 
@@ -402,6 +474,7 @@ The mutation rule for this pane is strict:
 - update payloads omit `group_ids`
 - returned `group_ids` may be rendered for context only
 - any optional group-name resolution is display-only and non-authoritative
+- when advanced `settings` already exist on a server source, first-slice edits must preserve them unless a later vertical adds an explicit editor
 
 ### 6. Notification Queue Contract
 
@@ -527,6 +600,7 @@ The tab must support:
 4. Underlying local DB or remote service performs mutation
 5. Shared list refreshes for that backend
 6. Notification dispatch service records a local notification and attempts toast delivery
+7. If the mutation was a remote delete, the notification payload preserves the server restore window metadata for accurate copy and future restore UX
 
 ## Error Handling
 
@@ -539,6 +613,8 @@ Error handling should stay source-specific and non-magical.
 - queue insert plus toast attempt are secondary side effects
 - in this first slice, notification queue inserts are limited to user-triggered shell actions from this vertical, not background scheduler/server events
 - notification queue inserts are limited to CRUD outcome records from this vertical, not prompts, background checks, or remote feed events
+- server delete success copy must reflect reversible-delete semantics rather than claiming permanent removal
+- first-slice server edits must preserve opaque server `settings` fields they do not expose
 
 Server mode failures should surface clear remote status messages such as:
 
@@ -590,6 +666,8 @@ The test plan should mirror the unit boundaries above.
 - server-mode view should not start local scheduler flows
 - failed remote CRUD must not pollute local state
 - notifications queue insert plus toast fallback behavior
+- server-mode resume/suspend paths should not call local-only refresh flows
+- server delete notifications should include restore-window metadata
 
 ## Risks And Mitigations
 
@@ -613,6 +691,13 @@ Mitigation:
 
 - define one dispatch pipeline that owns queue insert plus toast fallback
 
+### Risk: notification queue mutations bypass runtime policy
+
+Mitigation:
+
+- add explicit `notifications.queue.update.local` policy coverage
+- require inbox mark-read/mark-unread/dismiss paths to use the policy seam instead of direct store writes
+
 ### Risk: stale backend UI state mutating the wrong backend
 
 Mitigation:
@@ -631,6 +716,14 @@ Mitigation:
 - render `group_ids` as read-only display only
 - do not include `group_ids` in first-slice create/update payloads
 - keep group CRUD and editable group selection deferred to a later vertical
+
+### Risk: first-slice server edits clobber advanced source settings
+
+Mitigation:
+
+- do not expose arbitrary raw `settings` editing in this slice
+- preserve existing server `settings` when updating only first-slice editable fields
+- block `forum` creation/update centrally instead of partially exposing unsupported settings semantics
 
 ## Follow-On Work Deliberately Deferred
 
@@ -653,7 +746,11 @@ This vertical is successful when:
 - backend changes do not silently discard dirty editor state
 - stale responses from the previous backend cannot repaint the current backend view
 - Chatbook has a persisted local notification inbox with read/dismiss state
+- inbox read/unread/dismiss actions are covered by runtime policy rather than direct ad hoc store writes
 - the inbox is populated only by user-triggered CRUD outcome records from this vertical
 - no local shadow copy of remote watchlists is introduced
+- local notifications live in a dedicated local notifications store, not in `subscriptions.db`
+- server editor only exposes supported first-slice source types and does not expose arbitrary raw `settings` editing
 - server source CRUD does not mutate `group_ids` in this slice
+- server delete outcomes are presented as reversible deletes with restore-window metadata
 - no jobs/runs/alert-rules scope slips into the first slice
