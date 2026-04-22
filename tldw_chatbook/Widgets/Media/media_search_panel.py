@@ -13,7 +13,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.reactive import reactive
-from textual.widgets import Input, Label, Checkbox, Button, Static, Collapsible
+from textual.widgets import Input, Label, Checkbox, Button, Static, Collapsible, Select
 from textual.message import Message
 from loguru import logger
 
@@ -29,6 +29,14 @@ class MediaSearchEvent(Message):
         self.search_term = search_term
         self.keyword_filter = keyword_filter
         self.show_deleted = show_deleted
+
+
+class MediaBrowseSubviewChangedEvent(Message):
+    """Event fired when the browse subview changes."""
+
+    def __init__(self, subview: str) -> None:
+        super().__init__()
+        self.subview = subview
 
 
 class MediaSearchPanel(Container):
@@ -117,6 +125,18 @@ class MediaSearchPanel(Container):
         height: 3;
         width: 100%;
     }
+
+    MediaSearchPanel .saved-view-row {
+        layout: horizontal;
+        height: 3;
+        align-vertical: middle;
+        margin-bottom: 1;
+    }
+
+    MediaSearchPanel .saved-view-select {
+        width: 24;
+        margin-left: 1;
+    }
     
     MediaSearchPanel Collapsible {
         margin-top: 0;
@@ -141,6 +161,8 @@ class MediaSearchPanel(Container):
     keyword_filter: reactive[str] = reactive("")
     show_deleted: reactive[bool] = reactive(False)
     active_type: reactive[Optional[str]] = reactive(None)
+    browse_subview: reactive[str] = reactive("all")
+    saved_view_enabled: reactive[bool] = reactive(True)
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the search panel."""
@@ -189,6 +211,18 @@ class MediaSearchPanel(Container):
                                 classes="show-deleted-checkbox",
                                 value=False
                             )
+
+                    with Horizontal(classes="saved-view-row"):
+                        yield Label("Browse:", classes="filter-label")
+                        yield Select(
+                            [
+                                ("All media", "all"),
+                                ("Read-it-later", "read-it-later"),
+                            ],
+                            id="browse-subview-select",
+                            classes="saved-view-select",
+                            value="all",
+                        )
                     
                     # Active filters display on separate line
                     yield Static("", id="active-filters", classes="active-filters")
@@ -224,6 +258,24 @@ class MediaSearchPanel(Container):
     def watch_active_type(self, active_type: Optional[str]) -> None:
         """Update active filters display when type changes."""
         self._update_active_filters()
+
+    def watch_browse_subview(self, browse_subview: str) -> None:
+        """Update browse subview select when state changes."""
+        try:
+            browse_select = self.query_one("#browse-subview-select", Select)
+            if browse_select.value != browse_subview:
+                browse_select.value = browse_subview
+        except Exception:
+            pass
+        self._update_active_filters()
+
+    def watch_saved_view_enabled(self, saved_view_enabled: bool) -> None:
+        """Enable or disable the saved-view selector for current context."""
+        try:
+            browse_select = self.query_one("#browse-subview-select", Select)
+            browse_select.disabled = not saved_view_enabled
+        except Exception:
+            pass
     
     def _update_active_filters(self) -> None:
         """Update the active filters display."""
@@ -231,6 +283,9 @@ class MediaSearchPanel(Container):
         
         if self.active_type:
             filters.append(f"Type: {self.active_type}")
+
+        if self.browse_subview == "read-it-later":
+            filters.append("Browse: Read-it-later")
             
         if self.search_term:
             filters.append(f"Search: '{self.search_term}'")
@@ -261,6 +316,12 @@ class MediaSearchPanel(Container):
     def handle_show_deleted(self, event: Checkbox.Changed) -> None:
         """Handle show deleted checkbox changes."""
         self.show_deleted = event.value
+
+    @on(Select.Changed, "#browse-subview-select")
+    def handle_browse_subview_changed(self, event: Select.Changed) -> None:
+        """Handle browse subview changes."""
+        self.browse_subview = str(event.value or "all")
+        self.post_message(MediaBrowseSubviewChangedEvent(self.browse_subview))
     
     @on(Button.Pressed, "#search-button")
     def handle_search_button(self) -> None:
@@ -291,6 +352,14 @@ class MediaSearchPanel(Container):
         """Set the active media type filter."""
         self.active_type = display_name
         self._update_active_filters()
+
+    def set_browse_subview(self, subview: str) -> None:
+        """Set the active browse subview."""
+        self.browse_subview = str(subview or "all")
+
+    def set_saved_view_enabled(self, enabled: bool) -> None:
+        """Toggle saved-view browsing for the current context."""
+        self.saved_view_enabled = bool(enabled)
     
     def clear_filters(self) -> None:
         """Clear all search filters."""

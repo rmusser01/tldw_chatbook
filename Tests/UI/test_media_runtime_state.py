@@ -25,3 +25,15 @@ def test_media_runtime_state_backend_reset_clears_selection_and_caches():
     assert state.browse_items == []
     assert state.reading_progress_by_record_id == {}
     assert state.ingestion_source_items_by_id == {}
+
+
+def test_media_runtime_state_backend_reset_restores_safe_saved_view_defaults():
+    state = MediaRuntimeState(runtime_backend="server")
+    state.active_browse_subview = "read-it-later"
+    state.selected_record_id = "server:reading_item:41"
+
+    state.reset_for_backend("local")
+
+    assert state.runtime_backend == "local"
+    assert state.active_browse_subview == "all"
+    assert state.selected_record_id is None

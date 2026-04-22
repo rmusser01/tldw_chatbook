@@ -19,6 +19,7 @@ from ..Widgets.Media import (
     MediaNavigationPanel,
     MediaSearchPanel,
     MediaSearchEvent,
+    MediaBrowseSubviewChangedEvent,
     MediaListPanel,
     MediaItemSelectedEvent,
     MediaViewerPanel
@@ -159,6 +160,42 @@ class MediaWindow(Container):
             return "local"
         return str(getattr(runtime_state, "runtime_backend", "local") or "local")
 
+    def _active_browse_subview(self) -> str:
+        """Return the current browse subview."""
+        runtime_state = getattr(self, "runtime_state", None)
+        if runtime_state is None:
+            return "all"
+        return str(getattr(runtime_state, "active_browse_subview", "all") or "all")
+
+    def _saved_view_available_for_context(self) -> bool:
+        """Saved-view browsing is aggregate-only for server mode."""
+        if self._runtime_backend() != "server":
+            return True
+        return (self.active_media_type or "all-media") == "all-media"
+
+    def _sync_saved_view_controls(self) -> None:
+        """Keep the search panel's browse-subview controls aligned with runtime state."""
+        if not hasattr(self, "search_panel"):
+            return
+        self.search_panel.set_saved_view_enabled(self._saved_view_available_for_context())
+        self.search_panel.set_browse_subview(self._active_browse_subview())
+
+    def _reset_invalid_saved_view_for_context(self) -> bool:
+        """Reset invalid saved-view state and notify the user once."""
+        if self._active_browse_subview() != "read-it-later":
+            return False
+        if self._saved_view_available_for_context():
+            return False
+
+        if self.runtime_state is not None:
+            self.runtime_state.active_browse_subview = "all"
+        self._sync_saved_view_controls()
+        self.app_instance.notify(
+            "Read-it-later is only available in server mode from All Media.",
+            severity="warning",
+        )
+        return True
+
     def _record_backend(self, record: Optional[Dict[str, Any]] = None) -> str:
         """Resolve backend from a normalized record or current runtime state."""
         if isinstance(record, dict) and record.get("backend"):
@@ -230,6 +267,7 @@ class MediaWindow(Container):
             self.viewer_panel.media_data = None
         self.viewer_panel.clear_display()
         self._show_empty_state()
+        self._sync_saved_view_controls()
 
     async def load_reading_progress(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Load and cache reading progress for a normalized media record."""
@@ -381,6 +419,28 @@ class MediaWindow(Container):
                 self.active_media_type,
                 event.search_term,
                 event.keyword_filter
+            )
+
+    @on(MediaBrowseSubviewChangedEvent)
+    def handle_browse_subview_changed(self, event: MediaBrowseSubviewChangedEvent) -> None:
+        """Handle browse-subview selection independently from media-type navigation."""
+        if self.runtime_state is not None:
+            self.runtime_state.active_browse_subview = str(event.subview or "all")
+
+        if self._reset_invalid_saved_view_for_context() and self.active_media_type:
+            self._perform_search(
+                self.active_media_type,
+                self.search_panel.search_term,
+                self.search_panel.keyword_filter,
+            )
+            return
+
+        self._sync_saved_view_controls()
+        if self.active_media_type:
+            self._perform_search(
+                self.active_media_type,
+                self.search_panel.search_term,
+                self.search_panel.keyword_filter,
             )
     
     @on(MediaItemSelectedEvent)
@@ -984,12 +1044,15 @@ class MediaWindow(Container):
             self.runtime_state.search_term = ""
             self.runtime_state.keyword_filter = ""
             self.runtime_state.selected_record_id = None
+
+        self._reset_invalid_saved_view_for_context()
         
         # Update navigation panel
         self.nav_panel.selected_type = type_slug
         
         # Update search panel
         self.search_panel.set_type_filter(type_slug, display_name)
+        self._sync_saved_view_controls()
         
         # Clear viewer
         self.viewer_panel.clear_display()
@@ -1080,6 +1143,9 @@ class MediaWindow(Container):
                     keywords_list = [k.strip() for k in keyword_filter.split(',') if k.strip()]
 
                 mode = self._runtime_backend()
+                if self._reset_invalid_saved_view_for_context():
+                    self._sync_saved_view_controls()
+
                 search_filters = {
                     "sort_by": "last_modified_desc",
                     "include_deleted": getattr(self.search_panel, "show_deleted", False),
@@ -1095,13 +1161,22 @@ class MediaWindow(Container):
                     )
 
                 offset = max(self.list_panel.current_page - 1, 0) * self.list_panel.items_per_page
-                payload = await scope_service.search_media(
-                    mode=mode,
-                    query=search_term if search_term else None,
-                    limit=self.list_panel.items_per_page,
-                    offset=offset,
-                    **search_filters,
-                )
+                if self._active_browse_subview() == "read-it-later":
+                    payload = await scope_service.list_read_it_later(
+                        mode=mode,
+                        query=search_term if search_term else None,
+                        limit=self.list_panel.items_per_page,
+                        offset=offset,
+                        **search_filters,
+                    )
+                else:
+                    payload = await scope_service.search_media(
+                        mode=mode,
+                        query=search_term if search_term else None,
+                        limit=self.list_panel.items_per_page,
+                        offset=offset,
+                        **search_filters,
+                    )
                 results = list(payload.get("items", []))
                 total_matches = int(payload.get("total", len(results)) or 0)
 

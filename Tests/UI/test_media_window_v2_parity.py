@@ -21,6 +21,8 @@ def _build_media_window(*, runtime_backend: str = "local", scope_service: Option
     )
     window = MediaWindow(app)
     window.runtime_state = app.media_runtime_state
+    if not isinstance(app.media_reading_scope_service.search_media, AsyncMock):
+        app.media_reading_scope_service.search_media = AsyncMock(return_value={"items": [], "total": 0})
     window.viewer_panel = Mock()
     window.list_panel = SimpleNamespace(
         current_page=1,
@@ -29,10 +31,18 @@ def _build_media_window(*, runtime_backend: str = "local", scope_service: Option
         load_items=Mock(),
         selected_id=None,
     )
-    window.search_panel = SimpleNamespace(search_term="", keyword_filter="", show_deleted=False, set_type_filter=Mock())
+    window.search_panel = SimpleNamespace(
+        search_term="",
+        keyword_filter="",
+        show_deleted=False,
+        set_type_filter=Mock(),
+        set_saved_view_enabled=Mock(),
+        set_browse_subview=Mock(),
+    )
     window.nav_panel = Mock()
     empty_state = SimpleNamespace(add_class=Mock(), remove_class=Mock())
     window.query_one = Mock(return_value=empty_state)
+    window.run_worker = lambda coro, exclusive=True: coro.close()
     return window, app
 
 
@@ -178,6 +188,35 @@ async def test_media_window_filters_server_results_by_selected_type():
     assert results[0]["media_type"] == "article"
     assert page == 1
     assert total_pages == 1
+
+
+@pytest.mark.asyncio
+async def test_media_window_uses_explicit_saved_view_search_for_read_it_later_subview():
+    scope_service = Mock()
+    scope_service.list_read_it_later = AsyncMock(
+        return_value={"items": [{"id": "local:media:7", "title": "Saved"}], "total": 1}
+    )
+    window, _app = _build_media_window(runtime_backend="local", scope_service=scope_service)
+    window.runtime_state.active_browse_subview = "read-it-later"
+
+    tasks = []
+    window.run_worker = lambda coro, exclusive=True: tasks.append(asyncio.create_task(coro))
+
+    window._perform_search("all-media", "", "")
+    await asyncio.gather(*tasks)
+
+    scope_service.list_read_it_later.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_media_window_forces_server_saved_view_back_to_all_media_when_type_is_not_all_media():
+    window, app = _build_media_window(runtime_backend="server", scope_service=Mock())
+    window.runtime_state.active_browse_subview = "read-it-later"
+
+    window.activate_media_type("article", "Article")
+
+    assert window.runtime_state.active_browse_subview == "all"
+    app.notify.assert_called()
 
 
 def test_media_viewer_metadata_display_includes_reading_progress_for_backed_records():
