@@ -92,7 +92,7 @@ class ServerWatchlistsService:
         response = await self._require_client().list_watchlist_sources(q=q, tags=tags, page=page, size=size)
         payload = self._payload_to_mapping(response)
         items = self._filtered_normalized_items(self._coerce_items(payload))
-        total = payload.get("total", len(items)) if isinstance(payload, Mapping) else len(items)
+        total = len(items)
         return {"items": items, "total": total, "page": page, "size": size}
 
     async def get_source_detail(self, source_id: int) -> dict[str, Any]:

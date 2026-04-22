@@ -242,6 +242,7 @@ async def test_server_watchlists_service_filters_forum_sources_from_list_and_rej
 
     payload = await service.list_sources()
 
+    assert payload["total"] == 1
     assert [item["source_id"] for item in payload["items"]] == [22]
     assert payload["items"][0]["source_type"] == "site"
 
