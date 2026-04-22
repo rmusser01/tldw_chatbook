@@ -16,18 +16,20 @@ That changes the roadmap in one important way: runtime policy remains a cross-cu
 
 That means the next unresolved Tranche 2 focus should move to `Local MCP Runtime`, with `Writing Suite` and `Research Sessions / Runs` following after that.
 
+`Collections: Reading List / Read-it-later` is now also landed for the current server contract. The authoritative capability seam, runtime normalization, and search-panel affordance now make the boundary explicit: local saved browsing remains per-media-type, while server saved browsing is aggregate-only in `All Media`. Any future per-media-type server saved view remains blocked on a server contract extension, so the next larger non-MCP row should now move to `Writing Suite`.
+
 ## Immediate Post-Tranche-0 Order
 
-1. `Media / Reading / Ingestion Sources` plus `Collections: Reading List / Read-it-later`
-   This is the cleanest next crosswalk because Chatbook already has landed local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, and server ingestion-source create for `archive_snapshot` and `git_repository`; per-media-type server saved views and sync/mirror semantics remain deferred.
-2. `Watchlists` plus `Client Notifications`
-   Partially landed. Chatbook now has a source-aware subscriptions shell, remote watchlist source CRUD, and a persisted local notifications inbox. Remaining work is the broader watchlists execution and control-plane surface plus any later server reminder/feed client.
-3. `Local MCP Runtime`
+1. `Local MCP Runtime`
    Next active Tranche 2 focus. The runtime-policy layer is now in place, and Chatbook already has local MCP modules; the next gap is turning that into a first-class local runtime, approvals, status, and governance surface.
-4. `Writing Suite`
-   This remains a high-value standalone gap with a clear server contract and very little existing product surface in Chatbook, so it should follow once the highest-leverage media/watchlist foundations are stable.
-5. `Research Sessions / Runs`
+2. `Writing Suite`
+   This is now the next larger non-MCP row. The read-it-later tranche is landed for the current server contract, and Chatbook still lacks a serious standalone project and manuscript hierarchy.
+3. `Research Sessions / Runs`
    Research is a user-priority local-first domain, but it depends on several adjacent capabilities becoming less fragmented first: local notifications, stronger collection/media seams, and a clearer execution/status model.
+4. `Media / Reading / Ingestion Sources`
+   The approved `Read-it-later` follow-up is landed for the current server contract. Remaining work in this area is the broader media and ingestion parity surface plus any future server contract change for per-media-type saved views.
+5. `Watchlists` plus `Client Notifications`
+   Partially landed. Chatbook now has a source-aware subscriptions shell, remote watchlist source CRUD, and a persisted local notifications inbox. Remaining work is the broader watchlists execution and control-plane surface plus any later server reminder/feed client.
 6. `Workflows`, `Scheduler Workflows`, and `Chat Workflows`
    These remain remote-only acceptable, but once the local-first rows above are in place, Chatbook should add discover/trigger/observe support for connected-server workflow surfaces.
 7. `Server Reminders / Notification Feeds`, `Sharing`, and `Web Clipper`
@@ -86,7 +88,7 @@ Execution intent for this tranche:
 
 - Crosswalk `Watchlists` onto existing local subscriptions and notification plumbing before inventing a separate remote-first model.
 - Treat the first-slice watchlists source CRUD and client-notifications inbox as landed foundations; keep watchlist groups, jobs, runs, alert rules, restore UX, and server reminder or feed surfaces as later follow-on work.
-- Build `Collections: Reading List / Read-it-later` on top of the existing media and reading seams rather than treating it as a disconnected collection system. Treat local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, and server ingestion-source create as landed foundations; keep per-media-type server saved views and any sync/mirror contract out of scope for this tranche.
+- Treat `Collections: Reading List / Read-it-later` as landed for the current server contract. Keep any future per-media-type server saved view follow-on explicitly blocked on a server list-contract extension, and keep any sync/mirror contract out of scope until separately approved.
 - Add `Writing Suite` and `Research Sessions / Runs` as serious standalone surfaces with matching remote contracts, not as thin shells around server-only functionality.
 - Keep `Client Notifications` and `Local MCP Runtime` Chatbook-owned so offline capability remains credible even as remote interop improves.
 
@@ -116,10 +118,10 @@ Execution intent for this tranche:
 
 ## Follow-On Vertical Plans
 
-- `Collections: Reading List / Read-it-later parity`: Turn the tranche guidance into a focused plan for the standalone-first reading collection surface, using the existing media and reading seams as the base for local and remote collection alignment. Keep the plan scoped to the landed aggregate saved view and compatibility mapping unless a separate sync/mirror design is approved.
+- `Collections: Reading List / Read-it-later parity`: Landed for the current server contract. Reopen this row only if the server adds per-media-type saved browsing support or a separate sync/mirror design is approved.
 - `Watchlists / subscriptions alignment`: Turn the tranche guidance into a focused plan that maps local subscriptions, alert rules, and notification delivery onto the server watchlist vocabulary without collapsing local ownership.
 - `Local MCP runtime parity`: Define the local-first runtime, approvals, catalog, prompts, tools, resources, and status surface before any later remote governance work.
-- `Remote MCP control plane`: Define the later remote governance surface separately from local MCP runtime so catalog and approval policy do not subsume standalone Chatbook control.
+- `Remote MCP control plane`: The current remote Unified MCP hub-management route surface is now effectively covered inside `Tools & Settings`, with explicit local/server panes, configured server targets, remote browse sections, governance actions, governance-pack source/import/upgrade flows, expanded advanced admin browse/action coverage, assignment workspace membership control, credential-binding administration, slot-status views, and the top-level external-server secret setter. The next follow-on should focus on UI polish, richer structured presentation, and any future server-side MCP surface expansion without collapsing the source-separated local MCP runtime model.
 - `Writing suite parity`: Plan the local-first project, manuscript, chapter, and scene hierarchy together with the server contract and source-separated UI behavior.
 - `Research sessions parity`: Plan the local and remote session lifecycle, run execution, streaming status, and bundle retrieval surface as a standalone-first research vertical.
 - `Remote workflows surface`: Split general workflows, scheduler workflows, and chat workflows into a dedicated remote-only plan that covers discovery, scheduler configuration and scheduling control-plane behavior, launch, run status, and observation after the core parity rows land.
