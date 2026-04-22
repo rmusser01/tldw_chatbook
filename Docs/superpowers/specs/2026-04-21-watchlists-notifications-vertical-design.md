@@ -69,6 +69,8 @@ This first client slice deliberately narrows that scope to:
 
 - remote `Source` list/detail/create/update/delete
 - optional read-only display of returned `group_ids`
+- optional read-only lookup of group names for display only
+- strict omission of `group_ids` from first-slice create/update requests
 
 It explicitly defers:
 
@@ -92,6 +94,8 @@ The following decisions are fixed for this vertical:
 - No local shadow copy of remote watchlist metadata is introduced in this slice.
 - The remote parity promise in this slice is specifically `watchlist source CRUD`.
 - `group_ids` remain read-only/deferred in this slice.
+- `group_ids` must never be editable in the first-slice UI.
+- first-slice create/update payloads must omit `group_ids` entirely.
 - Server group CRUD is explicitly deferred.
 - Server jobs, runs, and alert rules are explicitly deferred.
 - Existing local subscriptions scheduling/review/briefings/dashboard behavior remains local-only in this slice.
@@ -122,6 +126,7 @@ The following decisions are fixed for this vertical:
 - Extend `subscription_screen` / `SubscriptionWindow` to become backend-aware.
 - Add runtime-backend refresh handling for the subscriptions screen path.
 - Split local versus server initialization in the subscriptions window.
+- Add explicit dirty-state and stale-load handling rules for backend switches.
 - Preserve the current local subscriptions product in local mode.
 - Add normalized list-row mapping for:
   - local subscriptions
@@ -221,6 +226,29 @@ The controlling rules are:
 - stale widget state must not be able to mutate the wrong backend
 - unsupported actions must be blocked both in the UI seam and in the scope-service seam
 
+### 1a. Backend-Switch Safety Rules
+
+This is required for planning. The screen cannot rely on best-effort refresh alone.
+
+The backend-switch policy is:
+
+- if the active editor has unsaved local changes, backend switching must not silently discard them
+- the user must be prompted to either:
+  - discard edits and continue switching, or
+  - cancel the backend switch
+- no cross-backend draft carryover is allowed
+- the screen/window must own one explicit action lock for in-flight write operations
+- if a read/list/detail request is in flight when the backend changes, its response must be ignored unless it matches the current refresh generation
+- the screen/window must maintain a monotonic refresh generation or equivalent stale-response guard
+- write operations must be treated more strictly than reads:
+  - while create/update/delete is in flight, backend switching must be temporarily disabled or blocked with a busy message
+  - once the write resolves, the screen may refresh into the new backend normally
+
+This prevents two failure modes:
+
+- stale local/server responses repainting the wrong backend view
+- unsaved edits disappearing unpredictably on backend switch
+
 ### 2. Split Initialization
 
 This is a required design correction.
@@ -254,6 +282,12 @@ New `tldw_api` client methods for the remote first slice:
 - update watchlist source
 - delete watchlist source
 - optionally list groups for read-only name display if needed
+
+The client/service contract for this first slice must also enforce:
+
+- create/update payloads do not include `group_ids`
+- any returned `group_ids` are display-only metadata
+- optional group-name lookup, if implemented, is display-only enrichment and must never affect mutation payloads
 
 These methods must be first-class work, not hidden under UI implementation.
 
@@ -353,6 +387,7 @@ Limit to the actual first-slice server source contract:
 - `tags`
 - `settings`
 - optional read-only display of `group_ids`
+- optional read-only display of resolved group names if group lookup is added
 
 This pane must not expose fake support for:
 
@@ -360,6 +395,13 @@ This pane must not expose fake support for:
 - runs
 - alert rules
 - group editing
+
+The mutation rule for this pane is strict:
+
+- create payloads omit `group_ids`
+- update payloads omit `group_ids`
+- returned `group_ids` may be rendered for context only
+- any optional group-name resolution is display-only and non-authoritative
 
 ### 6. Notification Queue Contract
 
@@ -384,6 +426,19 @@ Initial producer categories:
 
 - `subscriptions`
 - `watchlists`
+
+Initial producer events are intentionally narrow:
+
+- user-triggered create/update/delete success from the subscriptions/watchlists shell
+- user-triggered create/update/delete failure from the subscriptions/watchlists shell
+
+The following are explicitly deferred as notification producers for this first slice:
+
+- background local scheduler activity
+- backend-switch prompts or warnings
+- remote server-originated watchlist events
+- remote reminders/notification feeds
+- unrelated app-domain notifications
 
 Future domains may produce into the same queue later without redesigning the schema now.
 
@@ -455,11 +510,14 @@ The tab must support:
 ### On Backend Change
 
 1. App runtime backend changes
-2. `SubscriptionScreen.handle_runtime_backend_changed()` is invoked
-3. The screen forwards to `SubscriptionWindow.refresh_backend_view()`
-4. Window rereads authoritative runtime state
-5. Shared list/editor/tabs rebuild for the active backend
-6. Stale local scheduler/server pane state is torn down or hidden as appropriate
+2. If the active editor is dirty, the user is prompted to discard or cancel the switch
+3. If a create/update/delete operation is still in flight, the switch is blocked until the write resolves
+4. If switching proceeds, `SubscriptionScreen.handle_runtime_backend_changed()` is invoked
+5. The screen increments the refresh generation and forwards to `SubscriptionWindow.refresh_backend_view()`
+6. Window rereads authoritative runtime state
+7. Shared list/editor/tabs rebuild for the active backend
+8. Any stale read/list/detail responses from an earlier generation are ignored
+9. Stale local scheduler/server pane state is torn down or hidden as appropriate
 
 ### On Mutation
 
@@ -479,6 +537,8 @@ Error handling should stay source-specific and non-magical.
 - failed remote operations do not create local shadow records
 - notification dispatch must not block the underlying successful mutation
 - queue insert plus toast attempt are secondary side effects
+- in this first slice, notification queue inserts are limited to user-triggered shell actions from this vertical, not background scheduler/server events
+- notification queue inserts are limited to CRUD outcome records from this vertical, not prompts, background checks, or remote feed events
 
 Server mode failures should surface clear remote status messages such as:
 
@@ -558,8 +618,19 @@ Mitigation:
 Mitigation:
 
 - runtime-backend callback path on the screen
+- dirty-editor discard-or-cancel prompt on backend switch
+- generation-based stale-response guard for read/list/detail requests
+- temporary switch blocking while writes are in flight
 - reread authoritative runtime state inside create/update/delete handlers
 - runtime-policy enforcement in the scope service
+
+### Risk: accidental server group mutation through first-slice source updates
+
+Mitigation:
+
+- render `group_ids` as read-only display only
+- do not include `group_ids` in first-slice create/update payloads
+- keep group CRUD and editable group selection deferred to a later vertical
 
 ## Follow-On Work Deliberately Deferred
 
@@ -579,7 +650,10 @@ This vertical is successful when:
 - server mode can browse and mutate remote watchlist sources through the same screen shell
 - unsupported local-only tabs fail explicitly in server mode
 - backend changes refresh this screen correctly
+- backend changes do not silently discard dirty editor state
+- stale responses from the previous backend cannot repaint the current backend view
 - Chatbook has a persisted local notification inbox with read/dismiss state
-- the inbox is populated by watchlists/subscriptions events from either backend
+- the inbox is populated only by user-triggered CRUD outcome records from this vertical
 - no local shadow copy of remote watchlists is introduced
+- server source CRUD does not mutate `group_ids` in this slice
 - no jobs/runs/alert-rules scope slips into the first slice
