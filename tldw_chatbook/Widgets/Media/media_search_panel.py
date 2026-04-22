@@ -137,6 +137,14 @@ class MediaSearchPanel(Container):
         width: 24;
         margin-left: 1;
     }
+
+    MediaSearchPanel .saved-view-status {
+        width: 100%;
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
+        margin-top: 0;
+    }
     
     MediaSearchPanel Collapsible {
         margin-top: 0;
@@ -163,6 +171,7 @@ class MediaSearchPanel(Container):
     active_type: reactive[Optional[str]] = reactive(None)
     browse_subview: reactive[str] = reactive("all")
     saved_view_enabled: reactive[bool] = reactive(True)
+    saved_view_reason: reactive[Optional[str]] = reactive(None)
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the search panel."""
@@ -224,6 +233,7 @@ class MediaSearchPanel(Container):
                             classes="saved-view-select",
                             value="all",
                         )
+                    yield Static("", id="saved-view-status", classes="saved-view-status")
                     
                     # Active filters display on separate line
                     yield Static("", id="active-filters", classes="active-filters")
@@ -279,6 +289,14 @@ class MediaSearchPanel(Container):
         try:
             browse_select = self.query_one("#browse-subview-select", Select)
             browse_select.disabled = not saved_view_enabled
+        except Exception:
+            pass
+
+    def watch_saved_view_reason(self, saved_view_reason: Optional[str]) -> None:
+        """Update the saved-view status message."""
+        try:
+            status = self.query_one("#saved-view-status", Static)
+            status.update(saved_view_reason or "")
         except Exception:
             pass
     
@@ -368,6 +386,11 @@ class MediaSearchPanel(Container):
     def set_saved_view_enabled(self, enabled: bool) -> None:
         """Toggle saved-view browsing for the current context."""
         self.saved_view_enabled = bool(enabled)
+
+    def set_saved_view_capability(self, enabled: bool, reason: str | None = None) -> None:
+        """Set saved-view availability and a short explanatory status message."""
+        self.saved_view_enabled = bool(enabled)
+        self.saved_view_reason = None if enabled else reason
     
     def clear_filters(self) -> None:
         """Clear all search filters."""

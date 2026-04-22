@@ -192,7 +192,13 @@ class MediaWindow(Container):
         if not hasattr(self, "search_panel"):
             return
         capability = self._read_it_later_capability()
-        self.search_panel.set_saved_view_enabled(bool(getattr(capability, "available", True)))
+        if hasattr(self.search_panel, "set_saved_view_capability"):
+            self.search_panel.set_saved_view_capability(
+                bool(getattr(capability, "available", True)),
+                getattr(capability, "reason", None),
+            )
+        else:
+            self.search_panel.set_saved_view_enabled(bool(getattr(capability, "available", True)))
         self.search_panel.set_browse_subview(self._active_browse_subview())
 
     def _normalize_saved_view_context(self) -> bool:
