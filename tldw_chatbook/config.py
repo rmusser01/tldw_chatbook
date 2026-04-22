@@ -3255,6 +3255,12 @@ def get_subscriptions_db_path() -> Path:
         db_path = user_dir / "tldw_chatbook_subscriptions.db"
     return db_path
 
+def get_notifications_db_path() -> Path:
+    custom_path = get_cli_setting("database", "notifications_db_path", None)
+    if custom_path:
+        return Path(custom_path).expanduser().resolve()
+    return get_user_data_dir() / "tldw_chatbook_notifications.db"
+
 def get_cli_log_file_path() -> Path:
     # Use user-specific folder for logs
     user_dir = get_user_data_dir()
