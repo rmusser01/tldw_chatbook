@@ -76,6 +76,7 @@ The following decisions are fixed for this slice:
 ## In Scope
 
 - Tighten the current server aggregate-only `Read-it-later` behavior so it is explicit and stable.
+- Introduce one authoritative capability seam for `Read-it-later` availability in the current context so UI controls and browse execution consume the same answer.
 - Review and harden the runtime-state rules around:
   - backend switching
   - media-type switching
@@ -95,6 +96,7 @@ The following decisions are fixed for this slice:
 - Sync, dual-write, or mirror semantics
 - New server API work in this slice
 - Broader media search redesign
+- Special non-parity pseudo-views such as `collections-tags` and `multi-item-review`
 - Writing suite implementation
 
 ## Approaches Considered
@@ -161,6 +163,14 @@ The UI must never blur these two truths into a fake "same feature everywhere" cl
 
 This slice keeps that service as the behavioral authority. UI code should not re-interpret the server contract or try to synthesize unsupported server browse shapes on top of it.
 
+That requirement needs one explicit capability seam rather than split heuristics across the window and widgets. The design should therefore add or expose one helper at the seam layer, for example a `read_it_later_context_capability(...)` or `is_read_it_later_available(...)` style API, that answers at least:
+
+- whether `Read-it-later` is available in the current source and media-type context
+- whether the current context is aggregate-only
+- the user-facing reason when the context is invalid
+
+Both `MediaWindow` and `media_search_panel` must consume that same seam result rather than maintaining separate aggregate-only logic.
+
 ### 2. UI state must be capability-aware
 
 `tldw_chatbook/UI/MediaWindow_v2.py` already contains the key guardrails:
@@ -175,6 +185,12 @@ This slice should tighten those rules so the UI is resilient under:
 - restoring saved runtime state after app navigation or screen remount
 - changing media type while server `Read-it-later` is selected
 - any future code path that attempts to rehydrate an invalid `server + read-it-later + non-all-media` combination
+
+The normalization entrypoints should be explicit in the implementation plan:
+
+- backend-switch normalization when the runtime backend changes or `MediaRuntimeState.reset_for_backend(...)` is called
+- screen-entry normalization during media screen mount or initial activation before the first visible browse state is trusted
+- pre-query normalization before any browse request executes so invalid restored or programmatic state cannot issue an unsupported saved-view query
 
 ### 3. Search-panel affordances must explain the truth
 
@@ -198,8 +214,18 @@ The intended UX rules are:
    - the subview resets to `all`
    - the controls update immediately
    - the user receives one clear warning
+   - a fresh valid query is issued for the corrected context
+   - stale saved-only browse state is not left visible after the correction
 4. The UI must not silently display a subset of aggregate server saved items and label it as a type-specific server saved view.
 5. Restored state must respect the same validity rules as live interaction.
+
+The stale-state rule should be explicit. When an invalid server saved-view context is corrected, the implementation must not leave behind:
+
+- stale `browse_items` from the invalid saved query
+- a stale `selected_record_id` that no longer belongs to the corrected result set
+- stale detail cache assumptions that cause the viewer to imply the user is still inside the old saved-only result context
+
+The corrected context must become the new authoritative state immediately.
 
 ## Capability And Parity Language
 
@@ -221,7 +247,9 @@ Required coverage:
 - server `Read-it-later` is only available from `All Media`
 - switching to a non-aggregate media type in server mode resets the saved subview
 - runtime-state restore does not resurrect invalid server saved-view combinations
+- backend-switch normalization and screen-entry normalization both converge invalid saved-view state to the same safe result
 - saved-view controls stay synchronized with the valid context
+- invalid-context correction triggers a valid requery and does not leave stale saved-only browse state visible
 - no service or UI code path performs aggregate server saved fetch plus client-side media-type bucketing and then presents it as a true server saved view
 
 ## Follow-On Dependency
@@ -245,4 +273,5 @@ This slice is successful when:
 - server aggregate-only behavior is enforced consistently
 - invalid states are corrected deterministically
 - parity docs clearly distinguish "landed now" from "blocked on server contract"
+- parity docs stop describing per-type server saved browsing as a remaining Chatbook-only follow-up
 - the team can move to `Writing Suite` without leaving a misleading `Read-it-later` parity claim behind
