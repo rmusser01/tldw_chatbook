@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import asyncio
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -84,6 +86,237 @@ class EmptySnapshotClient(FakeMCPClient):
             "resources": [],
             "prompts": [],
         }
+
+
+class FakeJSONRPCStdout:
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[bytes] = asyncio.Queue()
+
+    async def readline(self) -> bytes:
+        return await self._queue.get()
+
+    async def push_message(self, payload: dict[str, object]) -> None:
+        await self._queue.put(json.dumps(payload).encode("utf-8") + b"\n")
+
+    async def close(self) -> None:
+        await self._queue.put(b"")
+
+
+class FakeJSONRPCStdin:
+    def __init__(self, process: "FakeJSONRPCProcess") -> None:
+        self.process = process
+        self._buffer = bytearray()
+        self.closed = False
+
+    def write(self, data: bytes) -> None:
+        self._buffer.extend(data)
+
+    async def drain(self) -> None:
+        while b"\n" in self._buffer:
+            raw_line, _, remainder = self._buffer.partition(b"\n")
+            self._buffer = bytearray(remainder)
+            if not raw_line:
+                continue
+            message = json.loads(raw_line.decode("utf-8"))
+            self.process.client_messages.append(message)
+            await self.process.handle_client_message(message)
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        return None
+
+
+class FakeJSONRPCProcess:
+    def __init__(self, process_id: int) -> None:
+        self.process_id = process_id
+        self.client_messages: list[dict[str, object]] = []
+        self.stdout = FakeJSONRPCStdout()
+        self.stderr = FakeJSONRPCStdout()
+        self.stdin = FakeJSONRPCStdin(self)
+        self.returncode: int | None = None
+        self.terminated = False
+        self.killed = False
+        self.wait_calls = 0
+
+    async def handle_client_message(self, message: dict[str, object]) -> None:
+        if "id" in message and "method" in message:
+            method = message["method"]
+            request_id = message["id"]
+            params = message.get("params", {})
+
+            if method == "initialize":
+                await self.stdout.push_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {
+                                "tools": {"listChanged": True},
+                                "resources": {"listChanged": True},
+                                "prompts": {"listChanged": True},
+                            },
+                            "serverInfo": {
+                                "name": f"fake-server-{self.process_id}",
+                                "version": "1.0.0",
+                            },
+                        },
+                    }
+                )
+                return
+
+            if method == "tools/list":
+                await self.stdout.push_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "tools": [
+                                {
+                                    "name": f"remote_tool_{self.process_id}",
+                                    "description": "Remote tool",
+                                    "inputSchema": {},
+                                }
+                            ]
+                        },
+                    }
+                )
+                return
+
+            if method == "resources/list":
+                await self.stdout.push_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "resources": [
+                                {
+                                    "uri": f"remote://resource/{self.process_id}",
+                                    "name": "Remote Resource",
+                                    "description": "Remote resource",
+                                    "mimeType": "text/plain",
+                                }
+                            ]
+                        },
+                    }
+                )
+                return
+
+            if method == "prompts/list":
+                await self.stdout.push_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "prompts": [
+                                {
+                                    "name": f"remote_prompt_{self.process_id}",
+                                    "description": "Remote prompt",
+                                    "arguments": [],
+                                }
+                            ]
+                        },
+                    }
+                )
+                return
+
+            if method == "tools/call":
+                await self.stdout.push_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": f"tool-result-{params['name']}",
+                                }
+                            ]
+                        },
+                    }
+                )
+                return
+
+            if method == "resources/read":
+                await self.stdout.push_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "contents": [
+                                {
+                                    "uri": params["uri"],
+                                    "mimeType": "text/plain",
+                                    "text": "resource-body",
+                                }
+                            ]
+                        },
+                    }
+                )
+                return
+
+            if method == "prompts/get":
+                await self.stdout.push_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "messages": [
+                                {
+                                    "role": "assistant",
+                                    "content": {
+                                        "type": "text",
+                                        "text": "prompt-body",
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                )
+                return
+
+            await self.stdout.push_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32601, "message": f"Unknown method: {method}"},
+                }
+            )
+            return
+
+        if message.get("method") == "notifications/initialized":
+            await self.stdout.push_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": f"server-ping-{self.process_id}",
+                    "method": "ping",
+                    "params": {},
+                }
+            )
+            return
+
+        if message.get("id") == f"server-ping-{self.process_id}":
+            return
+
+    async def wait(self) -> int:
+        self.wait_calls += 1
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = 0
+        self.stdin.close()
+        asyncio.create_task(self.stdout.close())
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+        self.stdin.close()
+        asyncio.create_task(self.stdout.close())
 
 
 def test_local_control_service_builds_inventory_from_local_manifest_without_loopback():
@@ -373,76 +606,20 @@ async def test_local_control_service_describes_connected_server_from_client_cach
 
 
 @pytest.mark.asyncio
-async def test_mcp_client_connect_to_server_uses_stdio_transport_flow(monkeypatch):
-    call_log = []
+async def test_mcp_client_connect_to_server_uses_stdio_jsonrpc_flow(monkeypatch):
+    created_processes: list[FakeJSONRPCProcess] = []
 
-    class FakeServerParams:
-        def __init__(self, command, args, env):
-            self.command = command
-            self.args = args
-            self.env = env
-            call_log.append(("server_params", command, list(args), env))
+    async def fake_create_subprocess_exec(command, *args, **kwargs):
+        process = FakeJSONRPCProcess(process_id=len(created_processes) + 1)
+        process.spawn = {
+            "command": command,
+            "args": list(args),
+            "env": kwargs.get("env"),
+        }
+        created_processes.append(process)
+        return process
 
-    class FakeTransportContext:
-        def __init__(self, server_params):
-            self.server_params = server_params
-
-        async def __aenter__(self):
-            call_log.append(("transport_enter", self.server_params.command))
-            return ("read-stream", "write-stream")
-
-        async def __aexit__(self, exc_type, exc, tb):
-            call_log.append(("transport_exit", self.server_params.command))
-
-    def fake_stdio_client(server_params):
-        call_log.append(("stdio_client", server_params.command))
-        return FakeTransportContext(server_params)
-
-    class FakeSession:
-        def __init__(self, read_stream, write_stream):
-            self.read_stream = read_stream
-            self.write_stream = write_stream
-            call_log.append(("session_init", read_stream, write_stream))
-
-        async def __aenter__(self):
-            call_log.append(("session_enter", self.read_stream, self.write_stream))
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            call_log.append(("session_exit", exc_type is None))
-
-        async def initialize(self):
-            call_log.append(("initialize", self.read_stream, self.write_stream))
-
-        async def list_tools(self):
-            call_log.append(("list_tools",))
-            return SimpleNamespace(
-                tools=[SimpleNamespace(name="remote_tool", description="Remote tool", inputSchema={})]
-            )
-
-        async def list_resources(self):
-            call_log.append(("list_resources",))
-            return SimpleNamespace(
-                resources=[
-                    SimpleNamespace(
-                        uri="remote://resource",
-                        name="Remote Resource",
-                        description="Remote resource",
-                        mimeType="text/plain",
-                    )
-                ]
-            )
-
-        async def list_prompts(self):
-            call_log.append(("list_prompts",))
-            return SimpleNamespace(
-                prompts=[SimpleNamespace(name="remote_prompt", description="Remote prompt", arguments=[])]
-            )
-
-    monkeypatch.setattr(mcp_client_module, "MCP_CLIENT_AVAILABLE", True)
-    monkeypatch.setattr(mcp_client_module, "StdioServerParameters", FakeServerParams, raising=False)
-    monkeypatch.setattr(mcp_client_module, "stdio_client", fake_stdio_client, raising=False)
-    monkeypatch.setattr(mcp_client_module, "ClientSession", FakeSession, raising=False)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
     client = mcp_client_module.MCPClient(name="test-client")
 
@@ -454,96 +631,45 @@ async def test_mcp_client_connect_to_server_uses_stdio_transport_flow(monkeypatc
     )
 
     assert connected is True
-    assert call_log[:8] == [
-        ("server_params", "python", ["-m", "demo.server"], {"API_KEY": "resolved-api-key"}),
-        ("stdio_client", "python"),
-        ("transport_enter", "python"),
-        ("session_init", "read-stream", "write-stream"),
-        ("session_enter", "read-stream", "write-stream"),
-        ("initialize", "read-stream", "write-stream"),
-        ("list_tools",),
-        ("list_resources",),
-    ]
-    assert call_log[8] == ("list_prompts",)
-    assert "profile-a" in client.sessions
+    assert len(created_processes) == 1
+    process = created_processes[0]
+    assert process.spawn == {
+        "command": "python",
+        "args": ["-m", "demo.server"],
+        "env": {"API_KEY": "resolved-api-key"},
+    }
+    methods = [message["method"] for message in process.client_messages if "method" in message]
+    assert methods[:2] == ["initialize", "notifications/initialized"]
+    assert "tools/list" in methods
+    assert "resources/list" in methods
+    assert "prompts/list" in methods
+    assert process.client_messages[0]["params"]["clientInfo"]["name"] == "test-client"
+    assert process.client_messages[1] == {"jsonrpc": "2.0", "method": "notifications/initialized"}
+    ping_response = next(message for message in process.client_messages if message.get("id") == "server-ping-1")
+    assert ping_response["id"] == "server-ping-1"
+    assert ping_response["result"] == {}
     assert client.servers["profile-a"]["command"] == "python"
     assert client.servers["profile-a"]["args"] == ["-m", "demo.server"]
-    assert client.servers["profile-a"]["tools"][0].name == "remote_tool"
-    assert client.servers["profile-a"]["resources"][0].uri == "remote://resource"
-    assert client.servers["profile-a"]["prompts"][0].name == "remote_prompt"
+    assert client.servers["profile-a"]["tools"][0].name == "remote_tool_1"
+    assert client.servers["profile-a"]["resources"][0].uri == "remote://resource/1"
+    assert client.servers["profile-a"]["prompts"][0].name == "remote_prompt_1"
 
 
 @pytest.mark.asyncio
 async def test_mcp_client_connect_to_server_cleans_up_existing_connection_for_same_server_id(monkeypatch):
-    call_log = []
-    session_counter = {"value": 0}
+    created_processes: list[FakeJSONRPCProcess] = []
 
-    class FakeServerParams:
-        def __init__(self, command, args, env):
-            self.command = command
-            self.args = args
-            self.env = env
+    async def fake_create_subprocess_exec(command, *args, **kwargs):
+        process = FakeJSONRPCProcess(process_id=len(created_processes) + 1)
+        process.spawn = {
+            "command": command,
+            "args": list(args),
+            "env": kwargs.get("env"),
+        }
+        created_processes.append(process)
+        return process
 
-    class FakeTransportContext:
-        def __init__(self, server_params):
-            self.server_params = server_params
-            self.session_id = None
-
-        async def __aenter__(self):
-            self.session_id = session_counter["value"] + 1
-            call_log.append(("transport_enter", self.session_id, self.server_params.command))
-            return (f"read-{self.session_id}", f"write-{self.session_id}")
-
-        async def __aexit__(self, exc_type, exc, tb):
-            call_log.append(("transport_exit", self.session_id, self.server_params.command))
-
-    def fake_stdio_client(server_params):
-        return FakeTransportContext(server_params)
-
-    class FakeSession:
-        def __init__(self, read_stream, write_stream):
-            session_counter["value"] += 1
-            self.session_id = session_counter["value"]
-            self.read_stream = read_stream
-            self.write_stream = write_stream
-            call_log.append(("session_init", self.session_id, read_stream, write_stream))
-
-        async def __aenter__(self):
-            call_log.append(("session_enter", self.session_id))
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            call_log.append(("session_exit", self.session_id))
-
-        async def initialize(self):
-            call_log.append(("initialize", self.session_id))
-
-        async def list_tools(self):
-            return SimpleNamespace(
-                tools=[SimpleNamespace(name=f"remote_tool_{self.session_id}", description="Remote tool", inputSchema={})]
-            )
-
-        async def list_resources(self):
-            return SimpleNamespace(
-                resources=[
-                    SimpleNamespace(
-                        uri=f"remote://resource/{self.session_id}",
-                        name="Remote Resource",
-                        description="Remote resource",
-                        mimeType="text/plain",
-                    )
-                ]
-            )
-
-        async def list_prompts(self):
-            return SimpleNamespace(
-                prompts=[SimpleNamespace(name=f"remote_prompt_{self.session_id}", description="Remote prompt", arguments=[])]
-            )
-
-    monkeypatch.setattr(mcp_client_module, "MCP_CLIENT_AVAILABLE", True)
-    monkeypatch.setattr(mcp_client_module, "StdioServerParameters", FakeServerParams, raising=False)
-    monkeypatch.setattr(mcp_client_module, "stdio_client", fake_stdio_client, raising=False)
-    monkeypatch.setattr(mcp_client_module, "ClientSession", FakeSession, raising=False)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
     client = mcp_client_module.MCPClient(name="test-client")
 
@@ -552,10 +678,50 @@ async def test_mcp_client_connect_to_server_cleans_up_existing_connection_for_sa
 
     assert first_connected is True
     assert second_connected is True
-    assert ("session_exit", 1) in call_log
-    assert ("transport_exit", 1, "python") in call_log
-    assert client.sessions["profile-a"].session_id == 2
+    assert len(created_processes) == 2
+    assert created_processes[0].terminated is True
+    assert created_processes[0].stdin.closed is True
+    assert created_processes[1].terminated is False
     assert client.servers["profile-a"]["args"] == ["-m", "demo.two"]
     assert client.servers["profile-a"]["tools"][0].name == "remote_tool_2"
     assert client.servers["profile-a"]["resources"][0].uri == "remote://resource/2"
     assert client.servers["profile-a"]["prompts"][0].name == "remote_prompt_2"
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_tool_resource_and_prompt_calls_use_jsonrpc_requests(monkeypatch):
+    created_processes: list[FakeJSONRPCProcess] = []
+
+    async def fake_create_subprocess_exec(command, *args, **kwargs):
+        process = FakeJSONRPCProcess(process_id=len(created_processes) + 1)
+        process.spawn = {
+            "command": command,
+            "args": list(args),
+            "env": kwargs.get("env"),
+        }
+        created_processes.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    client = mcp_client_module.MCPClient(name="test-client")
+    connected = await client.connect_to_server("profile-a", "python", args=["-m", "demo.server"])
+
+    assert connected is True
+
+    tool_result = await client.call_tool("profile-a", "remote_tool_1", {"topic": "news"})
+    resource_result = await client.read_resource("profile-a", "remote://resource/1")
+    prompt_result = await client.get_prompt("profile-a", "remote_prompt_1", {"topic": "news"})
+
+    assert tool_result == {"result": [{"type": "text", "text": "tool-result-remote_tool_1"}]}
+    assert resource_result == {
+        "uri": "remote://resource/1",
+        "content": "resource-body",
+        "mimeType": "text/plain",
+    }
+    assert prompt_result == [{"role": "assistant", "content": "prompt-body"}]
+
+    methods = [message["method"] for message in created_processes[0].client_messages if "method" in message]
+    assert "tools/call" in methods
+    assert "resources/read" in methods
+    assert "prompts/get" in methods
