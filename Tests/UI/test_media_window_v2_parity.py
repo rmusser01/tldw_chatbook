@@ -7,7 +7,10 @@ import pytest
 from textual import on
 from textual.app import App, ComposeResult
 
-from tldw_chatbook.Event_Handlers.media_events import MediaAnalysisSaveEvent
+from tldw_chatbook.Event_Handlers.media_events import (
+    MediaAnalysisSaveEvent,
+    MediaReadItLaterToggleEvent,
+)
 from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 from tldw_chatbook.Widgets.Media.media_search_panel import MediaBrowseSubviewChangedEvent, MediaSearchPanel
@@ -47,6 +50,21 @@ def _build_media_window(*, runtime_backend: str = "local", scope_service: Option
     window.query_one = Mock(return_value=empty_state)
     window.run_worker = lambda coro, exclusive=True: coro.close()
     return window, app
+
+
+def test_media_viewer_updates_saved_button_label_from_normalized_record():
+    panel = MediaViewerPanel(Mock())
+    panel.media_data = {
+        "id": "local:media:7",
+        "title": "Saved Item",
+        "supports_read_it_later": True,
+        "is_read_it_later": True,
+    }
+    panel._update_read_it_later_button = Mock()
+
+    panel.load_media(panel.media_data)
+
+    panel._update_read_it_later_button.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -210,6 +228,24 @@ async def test_media_window_uses_explicit_saved_view_search_for_read_it_later_su
 
     scope_service.list_read_it_later.assert_awaited_once()
     scope_service.search_media.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_media_window_remove_from_saved_view_clears_selection_when_filtered_out():
+    scope_service = Mock()
+    scope_service.remove_from_read_it_later = AsyncMock(
+        return_value={"id": "local:media:7", "is_read_it_later": False}
+    )
+    scope_service.list_read_it_later = AsyncMock(return_value={"items": [], "total": 0})
+    window, _app = _build_media_window(runtime_backend="local", scope_service=scope_service)
+    window.runtime_state.active_browse_subview = "read-it-later"
+    window.runtime_state.selected_record_id = "local:media:7"
+
+    await window._handle_read_it_later_toggle_async(
+        MediaReadItLaterToggleEvent(record_id="local:media:7", media_id="7", save_for_later=False)
+    )
+
+    assert window.runtime_state.selected_record_id is None
 
 
 @pytest.mark.asyncio

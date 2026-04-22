@@ -180,6 +180,16 @@ class MediaAnalysisDeleteEvent(Message):
         self.version_uuid = version_uuid
         self.type_slug = type_slug
 
+
+class MediaReadItLaterToggleEvent(Message):
+    """Event fired when toggling a record's read-it-later state."""
+
+    def __init__(self, media_id: Any, *, record_id: Any = None, save_for_later: bool = True) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
+        self.save_for_later = save_for_later
+
 #
 # Functions:
 
