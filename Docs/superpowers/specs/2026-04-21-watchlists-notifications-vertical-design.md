@@ -256,6 +256,8 @@ Required action ids for the first slice are:
 - `notifications.queue.observe.local`
 - `notifications.dispatch.launch.local`
 
+For this vertical, `watchlists.*.local` are the shell/service action ids for the local subscriptions-backed path. The existing local subscriptions product remains the implementation backend in local mode, but policy evaluation at the shared shell and scope-service seam should use the `watchlists` capability namespace rather than inventing parallel `subscriptions.*` action ids.
+
 The current registry does not yet expose queue-mutation actions for inbox state changes, so this vertical must add:
 
 - `notifications.queue.update.local`
@@ -310,6 +312,12 @@ The window must explicitly split initialization:
 
 This split is architectural, not cosmetic.
 
+Teardown rules are equally strict:
+
+- when leaving local mode, any running local scheduler worker must be stopped rather than merely hidden
+- local-only refresh or polling behavior must be cancelled before server-mode UI is considered active
+- hiding a local-only tab is acceptable for passive UI state, but never for active background behavior
+
 ### 2a. Screen Lifecycle Split
 
 `SubscriptionScreen` also requires explicit backend-aware refactoring. It currently mirrors local database state and triggers local-only refresh calls directly.
@@ -318,6 +326,7 @@ The screen rules must become:
 
 - `handle_runtime_backend_changed()` delegates to backend-aware refresh paths rather than assuming a local DB-backed window
 - `on_screen_resume()` must not unconditionally call local-only review/dashboard/item refresh methods in server mode
+- `on_screen_suspend()` and backend-switch teardown paths must explicitly stop local scheduler/worker activity rather than merely hiding local-only tabs
 - `_sync_state_from_window()` must stop assuming `window.db` and `window.scheduler_worker` are always present
 - screen shell state should be derived from normalized watchlist-scope data or explicit backend-aware window accessors
 
@@ -590,7 +599,8 @@ The tab must support:
 6. Window rereads authoritative runtime state
 7. Shared list/editor/tabs rebuild for the active backend
 8. Any stale read/list/detail responses from an earlier generation are ignored
-9. Stale local scheduler/server pane state is torn down or hidden as appropriate
+9. Any active local scheduler/worker state is explicitly stopped before server-mode UI becomes active
+10. Passive stale local/server pane state is then torn down or hidden as appropriate
 
 ### On Mutation
 
