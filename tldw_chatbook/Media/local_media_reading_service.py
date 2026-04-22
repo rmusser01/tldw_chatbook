@@ -34,6 +34,20 @@ class LocalMediaReadingService:
     ) -> dict[str, Any]:
         db = self._require_db()
 
+        media_ids_filter = filters.get("media_ids_filter")
+        if filters.get("read_it_later_only", False):
+            media_ids_filter = db.list_read_it_later_media_ids(
+                include_deleted=bool(filters.get("include_deleted", False)),
+                include_trash=bool(filters.get("include_trash", False)),
+            )
+            if not media_ids_filter:
+                return {
+                    "items": [],
+                    "total": 0,
+                    "offset": offset,
+                    "limit": limit,
+                }
+
         results_per_page = max(limit + offset, limit)
         rows, total = db.search_media_db(
             search_query=query,
@@ -43,7 +57,7 @@ class LocalMediaReadingService:
             must_have_keywords=filters.get("must_have") or filters.get("must_have_keywords"),
             must_not_have_keywords=filters.get("must_not") or filters.get("must_not_have_keywords"),
             sort_by=filters.get("sort_by", "last_modified_desc"),
-            media_ids_filter=filters.get("media_ids_filter"),
+            media_ids_filter=media_ids_filter,
             page=1,
             results_per_page=results_per_page,
             include_trash=bool(filters.get("include_trash", False)),

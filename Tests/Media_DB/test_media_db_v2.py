@@ -527,6 +527,34 @@ class TestDatabaseCRUDAndSync:
         finally:
             reopened_db.close_connection()
 
+    def test_read_it_later_state_round_trips_for_local_media(self, db_instance):
+        media_id, _, _ = db_instance.add_media_with_keywords(
+            title="Reader",
+            content="Hello",
+            media_type="article",
+            keywords=[],
+        )
+
+        saved = db_instance.save_media_to_read_it_later(media_id)
+
+        assert saved["media_id"] == media_id
+        assert saved["is_read_it_later"] is True
+        assert saved["saved_at"] is not None
+        assert db_instance.get_media_read_it_later_state(media_id)["is_read_it_later"] is True
+
+    def test_soft_deleted_local_media_is_hidden_from_saved_view_by_default(self, db_instance):
+        media_id, _, _ = db_instance.add_media_with_keywords(
+            title="Reader",
+            content="Hello",
+            media_type="article",
+            keywords=[],
+        )
+        db_instance.save_media_to_read_it_later(media_id)
+        db_instance.soft_delete_media(media_id)
+
+        ids = db_instance.list_read_it_later_media_ids()
+        assert media_id not in ids
+
 
 @pytest.mark.integration
 class TestSyncLogManagement:

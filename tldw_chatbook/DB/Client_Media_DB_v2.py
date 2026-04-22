@@ -434,6 +434,16 @@ class MediaDatabase:
     );
     """
 
+    _LOCAL_ONLY_TABLES_SQL = """
+    CREATE TABLE IF NOT EXISTS MediaReadItLaterState (
+        media_id INTEGER PRIMARY KEY,
+        is_read_it_later BOOLEAN NOT NULL DEFAULT 1,
+        saved_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        FOREIGN KEY (media_id) REFERENCES Media(id) ON DELETE CASCADE
+    );
+    """
+
     def __init__(self, db_path: Union[str, Path], client_id: str, 
                  check_integrity_on_startup: bool = False):
         """
@@ -978,6 +988,7 @@ class MediaDatabase:
         try:
             migration_sql = f"""
             {self._READING_PROGRESS_TABLE_SQL}
+            {self._LOCAL_ONLY_TABLES_SQL}
             UPDATE schema_version SET version = 3;
             """
 
@@ -1003,13 +1014,15 @@ class MediaDatabase:
 
             if current_db_version == target_version:
                 logging.debug("Database schema is up to date.")
-                # Optionally ensure FTS tables exist even if schema version matches
+                # Ensure FTS and local-only tables exist even if schema version matches
                 try:
-                    conn.executescript(self._FTS_TABLES_SQL)
+                    conn.executescript(
+                        f"{self._FTS_TABLES_SQL}\n{self._READING_PROGRESS_TABLE_SQL}\n{self._LOCAL_ONLY_TABLES_SQL}"
+                    )
                     conn.commit()
-                    logging.debug("Verified FTS tables exist.")
+                    logging.debug("Verified FTS and local-only tables exist.")
                 except sqlite3.Error as fts_err:
-                    logging.warning(f"Could not verify/create FTS tables on already correct schema version: {fts_err}")
+                    logging.warning(f"Could not verify/create local tables on already correct schema version: {fts_err}")
                 return
 
             if current_db_version > target_version:
@@ -2082,6 +2095,79 @@ class MediaDatabase:
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error deleting reading progress for media_id={media_id} from DB '{self.db_path_str}': {e}")
             raise DatabaseError(f"Failed to delete reading progress for media_id {media_id}") from e
+
+    def get_media_read_it_later_state(self, media_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch the local-only read-it-later state for a media item."""
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT media_id, is_read_it_later, saved_at, updated_at
+                FROM MediaReadItLaterState
+                WHERE media_id = ?
+                """,
+                (media_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "media_id": row["media_id"],
+                "is_read_it_later": bool(row["is_read_it_later"]),
+                "saved_at": row["saved_at"],
+                "updated_at": row["updated_at"],
+            }
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching read-it-later state for media_id={media_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to fetch read-it-later state for media_id {media_id}") from e
+
+    def save_media_to_read_it_later(self, media_id: int) -> Dict[str, Any]:
+        """Persist the local-only read-it-later state for a media item."""
+        current_time = self._get_current_utc_timestamp_str()
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO MediaReadItLaterState (media_id, is_read_it_later, saved_at, updated_at)
+                    VALUES (?, 1, ?, ?)
+                    ON CONFLICT(media_id) DO UPDATE SET
+                        is_read_it_later = 1,
+                        saved_at = COALESCE(MediaReadItLaterState.saved_at, excluded.saved_at),
+                        updated_at = excluded.updated_at
+                    """,
+                    (media_id, current_time, current_time),
+                )
+            fetched = self.get_media_read_it_later_state(media_id)
+            if fetched is not None:
+                return fetched
+            return {
+                "media_id": media_id,
+                "is_read_it_later": True,
+                "saved_at": current_time,
+                "updated_at": current_time,
+            }
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error saving read-it-later state for media_id={media_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to save read-it-later state for media_id {media_id}") from e
+
+    def list_read_it_later_media_ids(self, *, include_deleted: bool = False, include_trash: bool = False) -> List[int]:
+        """List media IDs saved in the local read-it-later table."""
+        sql = """
+            SELECT s.media_id
+            FROM MediaReadItLaterState s
+            JOIN Media m ON m.id = s.media_id
+            WHERE s.is_read_it_later = 1
+        """
+        if not include_deleted:
+            sql += " AND m.deleted = 0"
+        if not include_trash:
+            sql += " AND m.is_trash = 0"
+        sql += " ORDER BY s.saved_at DESC, s.media_id DESC"
+        try:
+            cursor = self.execute_query(sql, ())
+            return [int(row["media_id"]) for row in cursor.fetchall()]
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error listing read-it-later media IDs from DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to list read-it-later media IDs") from e
 
     def soft_delete_media(self, media_id: int, cascade: bool = True) -> bool:
         """
