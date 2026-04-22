@@ -53,6 +53,10 @@ from .media_reading_schemas import (
     ReadingProgressUpdate,
     ReadingUpdateRequest,
 )
+from .watchlists_schemas import (
+    SourceCreateRequest,
+    SourceUpdateRequest,
+)
 from .prompt_chatbook_schemas import (
     ChatbookExportRequest,
     ChatbookImportRequest,
@@ -473,6 +477,38 @@ class TLDWAPIClient:
             f"/api/v1/files/{file_id}",
             params={"hard": str(hard).lower(), "delete_file": str(delete_file).lower()},
         )
+
+    async def create_watchlist_source(self, request_data: SourceCreateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/watchlists/sources",
+            json_data=request_data.model_dump(mode="json"),
+        )
+
+    async def list_watchlist_sources(
+        self,
+        *,
+        q: str | None = None,
+        tags: list[str] | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> Dict[str, Any]:
+        params = {"q": q, "tags": tags, "page": page, "size": size}
+        return await self._request(
+            "GET",
+            "/api/v1/watchlists/sources",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+
+    async def update_watchlist_source(self, source_id: int, request_data: SourceUpdateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/watchlists/sources/{source_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def delete_watchlist_source(self, source_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/watchlists/sources/{source_id}")
 
     async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
         response = await self._request(

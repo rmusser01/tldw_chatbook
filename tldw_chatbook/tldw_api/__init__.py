@@ -71,6 +71,13 @@ from .media_reading_schemas import (
     ReferenceImageListResponse,
     ViewMode,
 )
+from .watchlists_schemas import (
+    SourceCreateRequest,
+    SourceDeleteResponse,
+    SourceResponse,
+    SourcesListResponse,
+    SourceUpdateRequest,
+)
 from .prompt_chatbook_schemas import (
     PromptCreateRequest,
     PromptPreviewRequest,
@@ -241,6 +248,8 @@ __all__ = [
     "ReadingDeleteResponse", "ReadingItem", "ReadingItemDetail", "ReadingItemsListResponse",
     "ReadingProgressNotFound", "ReadingProgressResponse", "ReadingProgressUpdate", "ReadingUpdateRequest",
     "ReferenceImageListItem", "ReferenceImageListResponse", "ViewMode",
+    "SourceCreateRequest", "SourceDeleteResponse", "SourceResponse", "SourcesListResponse",
+    "SourceUpdateRequest",
     "PromptCreateRequest", "PromptPreviewRequest", "PromptResponse", "PromptVersionResponse",
     "ChatbookExportRequest", "ChatbookImportRequest", "ChatbookPreviewResponse",
     "ChatbookExportJobResponse", "ChatbookImportJobResponse",
