@@ -26,7 +26,16 @@ class MainNavigationBar(Container):
     Main navigation bar for the application.
     Replaces the tab-based navigation with screen-based navigation.
     """
-    
+
+    # Navigation items organized by visual group
+    NAV_GROUPS = [
+        ("Workspace", [("chat", "Chat"), ("coding", "Coding"), ("chatbooks", "Chatbooks")]),
+        ("Content", [("notes", "Notes"), ("media", "Media"), ("ingest", "Ingest"), ("search", "Search"), ("subscriptions", "Subscriptions")]),
+        ("Characters", [("ccp", "Conv/Char"), ("study", "Study")]),
+        ("AI Config", [("llm", "LLM"), ("stts", "S/TT/S"), ("evals", "Evals")]),
+        ("System", [("tools_settings", "Settings"), ("customize", "Customize"), ("logs", "Logs"), ("stats", "Stats")]),
+    ]
+
     DEFAULT_CSS = """
     MainNavigationBar {
         height: 3;
@@ -36,7 +45,7 @@ class MainNavigationBar(Container):
         border-bottom: solid $primary;
         overflow-x: auto;
     }
-    
+
     .main-nav {
         height: 100%;
         width: auto;
@@ -44,7 +53,7 @@ class MainNavigationBar(Container):
         align: center middle;
         padding: 0 1;
     }
-    
+
     .nav-button {
         margin: 0;
         padding: 0 1;
@@ -53,64 +62,59 @@ class MainNavigationBar(Container):
         border: none;
         height: 3;
     }
-    
+
     .nav-button:hover {
         background: $primary-lighten-2;
         text-style: bold;
     }
-    
+
     .nav-button.active {
         background: $primary;
         text-style: bold;
         color: $text;
     }
-    
+
     .nav-separator {
         margin: 0;
-        padding: 0 0;
+        padding: 0;
         color: $text-muted;
-        width: 1;
+        width: auto;
+    }
+
+    .nav-group-separator {
+        margin: 0;
+        padding: 0 1;
+        color: $accent;
+        width: auto;
+        text-style: bold;
     }
     """
-    
+
     def __init__(self, active: str = "chat", **kwargs):
         super().__init__(**kwargs)
         self.active_screen = active
-        
-        # Define the navigation items
-        self.nav_items = [
-            ("chat", "Chat"),
-            ("ccp", "Conv/Char"),
-            ("notes", "Notes"),
-            ("media", "Media"),
-            ("search", "Search"),
-            ("ingest", "Ingest"),
-            ("tools_settings", "Settings"),
-            ("llm", "LLM"),
-            ("customize", "Customize"),
-            ("logs", "Logs"),
-            ("coding", "Coding"),
-            ("stats", "Stats"),
-            ("evals", "Evals"),
-        ]
-    
+
     def compose(self) -> ComposeResult:
-        """Compose the navigation bar."""
+        """Compose the navigation bar with visual grouping."""
         with Horizontal(classes="main-nav"):
-            for i, (screen_id, label) in enumerate(self.nav_items):
-                # Add separator between items (except before first)
-                if i > 0:
-                    yield Static("|", classes="nav-separator")
-                
-                # Create button with active class if needed
-                button = Button(
-                    label,
-                    id=f"nav-{screen_id}",
-                    classes="nav-button"
-                )
-                if screen_id == self.active_screen:
-                    button.add_class("active")
-                yield button
+            first_group = True
+            for group_name, items in self.NAV_GROUPS:
+                if not first_group:
+                    yield Static("┃", classes="nav-group-separator")
+                first_group = False
+
+                for i, (screen_id, label) in enumerate(items):
+                    if i > 0:
+                        yield Static("·", classes="nav-separator")
+
+                    button = Button(
+                        label,
+                        id=f"nav-{screen_id}",
+                        classes="nav-button"
+                    )
+                    if screen_id == self.active_screen:
+                        button.add_class("active")
+                    yield button
     
     @on(Button.Pressed, ".nav-button")
     def handle_navigation(self, event: Button.Pressed) -> None:

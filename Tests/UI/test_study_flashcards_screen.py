@@ -230,6 +230,18 @@ class StudyTestApp(App):
         await self.push_screen(self._screen)
 
 
+def _text(widget) -> str:
+    return str(widget.render())
+
+
+def _is_blank(value) -> bool:
+    return value in {None, "", False, Select.BLANK} or str(value).startswith("Select.")
+
+
+def _non_blank_option_values(options: list[tuple]) -> list[str]:
+    return [option[1] for option in options if not _is_blank(option[1])]
+
+
 def _list_item_for_card(list_view: ListView, backing_id: str):
     for item in list_view.children:
         record = getattr(item, "study_card_record", None)
@@ -277,7 +289,7 @@ async def test_flashcards_view_loads_scope_backed_decks_without_default_fallback
 
         assert all(getattr(option, "value", None) != "default" for option in deck_select._options)
         assert ("list_decks", "local", "global", None, 100, 0) in scope.calls
-        assert "Select a deck" in status.renderable
+        assert "Select a deck" in _text(status)
 
 
 @pytest.mark.asyncio
@@ -371,8 +383,8 @@ async def test_server_mode_keeps_delete_deck_visible_but_disabled():
         assert delete_deck_button.display is True
         assert delete_deck_button.disabled is True
         assert delete_note.display is True
-        assert "server" in delete_note.renderable.lower()
-        assert "delete" in delete_note.renderable.lower()
+        assert "server" in _text(delete_note).lower()
+        assert "delete" in _text(delete_note).lower()
 
 
 @pytest.mark.asyncio
@@ -457,7 +469,7 @@ async def test_delete_selected_card_uses_selected_card_version_and_refreshes_lis
         assert ("end_review_session", "server", "global", None, 41) in scope.calls
         assert len(scope.cards) == 1
         assert scope.cards[0]["backing_id"] == "card-local-2"
-        assert "No cards in this deck." not in app.screen.query_one("#card-list", ListView).children[0].children[0].renderable
+        assert "No cards in this deck." not in _text(app.screen.query_one("#card-list", ListView).children[0].children[0])
 
 
 @pytest.mark.asyncio
@@ -495,7 +507,7 @@ async def test_move_selected_card_refreshes_current_deck_and_exits_review_when_n
         assert ("end_review_session", "server", "global", None, 41) in scope.calls
         assert any(card["backing_id"] == "card-local-1" and card["deck_record_id"].endswith("deck-local-2") for card in scope.cards)
         assert any(card["backing_id"] == "card-local-2" and card["deck_record_id"].endswith("deck-local-1") for card in scope.cards)
-        assert app.screen.query_one("#review-status", Static).renderable != ""
+        assert _text(app.screen.query_one("#review-status", Static)) != ""
 
 
 @pytest.mark.asyncio
@@ -534,7 +546,7 @@ async def test_delete_selected_card_preserves_unrelated_active_review_state():
         assert ("delete_flashcard", "server", "card-local-2", 11, False) in scope.calls
         assert controller.current_review_card["backing_id"] == "card-local-1"
         assert controller.current_review_session_id == 41
-        assert "Next card" in app.screen.query_one("#review-status", Static).renderable
+        assert "Next card" in _text(app.screen.query_one("#review-status", Static))
 
 
 @pytest.mark.asyncio
@@ -575,7 +587,7 @@ async def test_move_selected_card_preserves_unrelated_active_review_state():
         assert ("move_flashcard", "server", "card-local-2", "deck-local-2", 11) in scope.calls
         assert controller.current_review_card["backing_id"] == "card-local-1"
         assert controller.current_review_session_id == 41
-        assert "Next card" in app.screen.query_one("#review-status", Static).renderable
+        assert "Next card" in _text(app.screen.query_one("#review-status", Static))
 
 
 @pytest.mark.asyncio
@@ -651,10 +663,10 @@ async def test_local_delete_deck_uses_selected_deck_version_and_resets_review_st
         assert controller.selected_card_record is None
         assert controller.current_review_card is None
         assert controller.current_review_session_id is None
-        assert app.screen.query_one("#deck-select", Select).value == Select.BLANK
-        assert app.screen.query_one("#review-front", Static).renderable == ""
-        assert app.screen.query_one("#review-back", Static).renderable == ""
-        assert "Select a deck" in app.screen.query_one("#review-status", Static).renderable
+        assert _is_blank(app.screen.query_one("#deck-select", Select).value)
+        assert _text(app.screen.query_one("#review-front", Static)) == ""
+        assert _text(app.screen.query_one("#review-back", Static)) == ""
+        assert "Select a deck" in _text(app.screen.query_one("#review-status", Static))
 
 
 @pytest.mark.asyncio
@@ -683,7 +695,7 @@ async def test_flashcards_review_flow_uses_scope_service_and_ends_server_session
 
         review_front = app.screen.query_one("#review-front", Static)
         review_back = app.screen.query_one("#review-back", Static)
-        assert "Question" in review_front.renderable
+        assert "Question" in _text(review_front)
         assert review_back.display is False
 
         controller.show_answer()
@@ -697,7 +709,7 @@ async def test_flashcards_review_flow_uses_scope_service_and_ends_server_session
 
         assert ("submit_flashcard_review", "server", "global", None, "card-server-1", 4) in scope.calls
         assert ("end_review_session", "server", "global", None, 41) in scope.calls
-        assert "No cards due" in status.renderable
+        assert "No cards due" in _text(status)
 
 
 @pytest.mark.asyncio
@@ -719,7 +731,7 @@ async def test_flashcards_view_shows_explicit_empty_state_when_no_decks_exist():
         status = app.screen.query_one("#review-status", Static)
         create_button = app.screen.query_one("#create-deck-button", Button)
 
-        assert "Create a deck" in status.renderable
+        assert "Create a deck" in _text(status)
         assert create_button.display is True
 
 
@@ -748,8 +760,8 @@ async def test_workspace_flashcards_scope_uses_workspace_filtered_decks_and_serv
         create_button = app.screen.query_one("#create-deck-button", Button)
 
         assert ("list_decks", "server", "workspace", "workspace-1", 100, 0) in scope.calls
-        assert [option[1] for option in deck_select._options if option[1] != Select.BLANK] == ["deck-workspace-1"]
-        assert [option[1] for option in move_target_select._options if option[1] != Select.BLANK] == ["deck-workspace-1"]
+        assert _non_blank_option_values(deck_select._options) == ["deck-workspace-1"]
+        assert _non_blank_option_values(move_target_select._options) == ["deck-workspace-1"]
         assert create_button.disabled is False
 
         app.screen.query_one("#new-deck-name-input", Input).value = "New Workspace Deck"
@@ -758,7 +770,7 @@ async def test_workspace_flashcards_scope_uses_workspace_filtered_decks_and_serv
 
         assert ("create_deck", "server", "workspace", "workspace-1", "New Workspace Deck", None, None) in scope.calls
         assert str(deck_select.value) == "new-workspace-deck"
-        assert [option[1] for option in move_target_select._options if option[1] != Select.BLANK] == ["deck-workspace-1"]
+        assert _non_blank_option_values(move_target_select._options) == ["deck-workspace-1"]
 
 
 @pytest.mark.asyncio
@@ -789,9 +801,9 @@ async def test_workspace_flashcards_local_mode_fail_closed_ui_state():
         delete_selected_button = app.screen.query_one("#delete-selected-card-button", Button)
         delete_deck_button = app.screen.query_one("#delete-deck-button", Button)
 
-        assert not any(call[0] == "list_decks" for call in scope.calls)
-        assert "server mode" in review_status.renderable.lower()
-        assert deck_select.value == Select.BLANK
+        assert not any(call[0] == "list_decks" and call[2] == "workspace" for call in scope.calls)
+        assert "server mode" in _text(review_status).lower()
+        assert _is_blank(deck_select.value)
         assert create_deck_button.disabled is True
         assert create_card_button.disabled is True
         assert start_review_button.disabled is True
@@ -856,11 +868,11 @@ async def test_scope_transition_resets_review_state_and_clears_flashcards_panel(
         assert controller.selected_card_record is None
         assert controller.current_cards == []
         assert controller.current_decks == []
-        assert deck_select.value == Select.BLANK
-        assert move_target_select.value == Select.BLANK
-        assert review_front.renderable == ""
-        assert review_back.renderable == ""
-        assert "No study decks in this workspace yet." in review_status.renderable
+        assert _is_blank(deck_select.value)
+        assert _is_blank(move_target_select.value)
+        assert _text(review_front) == ""
+        assert _text(review_back) == ""
+        assert "No study decks in this workspace yet." in _text(review_status)
 
 
 @pytest.mark.asyncio
@@ -896,7 +908,7 @@ async def test_backend_flip_keeps_server_review_session_teardown_before_workspac
         assert ("end_review_session", "server", "workspace", "workspace-1", 41) in scope.calls
         assert controller.current_review_session_id is None
         assert controller.current_review_card is None
-        assert "server mode" in str(review_status.renderable).lower()
+        assert "server mode" in _text(review_status).lower()
 
 
 @pytest.mark.asyncio

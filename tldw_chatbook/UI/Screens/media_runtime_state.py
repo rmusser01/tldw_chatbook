@@ -20,6 +20,7 @@ class MediaRuntimeState:
 
     runtime_backend: str = "local"
     active_media_type: Optional[str] = None
+    active_browse_subview: str = "all"
     search_term: str = ""
     keyword_filter: str = ""
     selected_record_id: Optional[str] = None
@@ -35,6 +36,7 @@ class MediaRuntimeState:
         """Switch backend and clear backend-scoped selection and caches."""
         self.runtime_backend = _normalize_runtime_backend(runtime_backend)
         self.active_media_type = None
+        self.active_browse_subview = "all"
         self.selected_record_id = None
         self.browse_items.clear()
         self.detail_by_record_id.clear()

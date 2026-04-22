@@ -323,14 +323,30 @@ class MediaListPanel(Container):
         """Handle previous page button."""
         if self.current_page > 1:
             self.current_page -= 1
-            self.post_message(MediaSearchEvent("", "", False))  # Trigger search with new page
+            self.post_message(self._build_pagination_search_event())
     
     @on(Button.Pressed, "#next-button")
     def handle_next_page(self) -> None:
         """Handle next page button."""
         if self.current_page < self.total_pages:
             self.current_page += 1
-            self.post_message(MediaSearchEvent("", "", False))  # Trigger search with new page
+            self.post_message(self._build_pagination_search_event())
+
+    def _build_pagination_search_event(self) -> "MediaSearchEvent":
+        """Build a search event that preserves the active filters during pagination."""
+        search_term = ""
+        keyword_filter = ""
+        show_deleted = False
+
+        try:
+            search_panel = self.screen.query_one("#media-search-panel")
+            search_term = str(getattr(search_panel, "search_term", "") or "")
+            keyword_filter = str(getattr(search_panel, "keyword_filter", "") or "")
+            show_deleted = bool(getattr(search_panel, "show_deleted", False))
+        except Exception:
+            logger.debug("Media pagination fell back to empty search state")
+
+        return MediaSearchEvent(search_term, keyword_filter, show_deleted)
     
     def set_loading(self, loading: bool) -> None:
         """Set loading state."""

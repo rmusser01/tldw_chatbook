@@ -59,7 +59,7 @@ class QuickTestScreen(Screen):
     .form-section {
         width: 100%;
         max-width: 80;
-        margin: 0 auto;
+        align-horizontal: center;
         padding: 2;
         border: round $primary;
         background: $panel;
@@ -104,7 +104,7 @@ class QuickTestScreen(Screen):
     .run-section {
         width: 100%;
         max-width: 80;
-        margin: 0 auto;
+        align-horizontal: center;
         padding: 1;
         align: center middle;
     }
@@ -121,7 +121,7 @@ class QuickTestScreen(Screen):
     .progress-section {
         width: 100%;
         max-width: 80;
-        margin: 0 auto;
+        align-horizontal: center;
         padding: 2;
         border: round $primary;
         background: $panel;
@@ -146,7 +146,7 @@ class QuickTestScreen(Screen):
     .results-section {
         width: 100%;
         max-width: 80;
-        margin: 0 auto;
+        align-horizontal: center;
         padding: 2;
         border: round $primary;
         background: $panel;
@@ -160,7 +160,7 @@ class QuickTestScreen(Screen):
     }
     
     .result-metric {
-        margin: 0.5 0;
+        margin: 1 0;
     }
     
     .results-detail {
@@ -194,7 +194,7 @@ class QuickTestScreen(Screen):
     # Reactive properties
     selected_task_id = reactive(None)
     selected_model_id = reactive(None)
-    is_running = reactive(False)
+    evaluation_running = reactive(False)
     progress = reactive(0.0)
     progress_message = reactive("")
     
@@ -228,7 +228,7 @@ class QuickTestScreen(Screen):
                         prompt="Select a task...",
                         id="task-select",
                         classes="form-input",
-                        allow_blank=False
+                        allow_blank=True
                     )
                 
                 # Model selection
@@ -239,7 +239,7 @@ class QuickTestScreen(Screen):
                         prompt="Select a model...",
                         id="model-select",
                         classes="form-input",
-                        allow_blank=False
+                        allow_blank=True
                     )
                 
                 # Quick config
@@ -298,19 +298,16 @@ class QuickTestScreen(Screen):
     def on_mount(self) -> None:
         """Initialize when screen mounts."""
         logger.info("Quick test screen mounted")
-        
-        # Update navigation
+        self.call_after_refresh(self._initialize_screen)
+
+    def _initialize_screen(self) -> None:
+        """Finish setup after the screen is fully running."""
         if self.nav_bar:
             self.nav_bar.push_breadcrumb("Quick Test", "quick_test")
-        
-        # Initialize orchestrator
+
         self._initialize_orchestrator()
-        
-        # Load available options
         self._load_tasks()
         self._load_models()
-        
-        # Focus first input
         self.set_focus(self.query_one("#task-select"))
     
     def _initialize_orchestrator(self) -> None:
@@ -372,10 +369,10 @@ class QuickTestScreen(Screen):
     def handle_selection_change(self, event: Select.Changed) -> None:
         """Handle task or model selection."""
         if event.control.id == "task-select":
-            self.selected_task_id = event.value
+            self.selected_task_id = None if event.value == Select.BLANK else event.value
             logger.info(f"Selected task: {event.value}")
         elif event.control.id == "model-select":
-            self.selected_model_id = event.value
+            self.selected_model_id = None if event.value == Select.BLANK else event.value
             logger.info(f"Selected model: {event.value}")
     
     @on(Button.Pressed, "#run-button")
@@ -404,7 +401,7 @@ class QuickTestScreen(Screen):
     
     def action_run_evaluation(self) -> None:
         """Run the evaluation."""
-        if self.is_running:
+        if self.evaluation_running:
             self._show_status("Evaluation already running", "warning")
             return
         
@@ -426,7 +423,7 @@ class QuickTestScreen(Screen):
             return
         
         # Start evaluation
-        self.is_running = True
+        self.evaluation_running = True
         self.progress = 0.0
         
         # Update UI
@@ -448,7 +445,7 @@ class QuickTestScreen(Screen):
         """Stop the running evaluation."""
         if self.current_worker:
             self.current_worker.cancel()
-            self.is_running = False
+            self.evaluation_running = False
             self._show_progress(False)
             if self.nav_bar:
                 self.nav_bar.set_status(EvalStatus.IDLE)
@@ -548,7 +545,7 @@ Completed: {results['timestamp']}
     
     def _cleanup_evaluation(self) -> None:
         """Clean up after evaluation."""
-        self.is_running = False
+        self.evaluation_running = False
         self._show_progress(False)
         self.current_worker = None
     
@@ -569,8 +566,8 @@ Completed: {results['timestamp']}
             severity = "information" if level == "info" else level
             self.app_instance.notify(message, severity=severity)
     
-    def watch_is_running(self, old: bool, new: bool) -> None:
-        """React to running state changes."""
+    def watch_evaluation_running(self, old: bool, new: bool) -> None:
+        """React to evaluation running state changes."""
         try:
             run_button = self.query_one("#run-button", Button)
             if new:

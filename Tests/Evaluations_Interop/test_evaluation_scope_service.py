@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Evaluations_Interop.evaluation_scope_service import EvaluationScopeService
+from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
 class FakeLocalEvaluationService:
@@ -185,6 +186,28 @@ class FakeServerEvaluationService:
         return {"status": "cancellation_requested", "id": run_id}
 
 
+class FakePolicyEnforcer:
+    def __init__(self, denied_reason: str | None = None):
+        self.denied_reason = denied_reason
+        self.calls = []
+
+    @classmethod
+    def deny(cls, reason_code: str) -> "FakePolicyEnforcer":
+        return cls(denied_reason=reason_code)
+
+    def require_allowed(self, *, action_id: str) -> None:
+        self.calls.append(action_id)
+        if self.denied_reason is None:
+            return
+        raise PolicyDeniedError(
+            action_id=action_id,
+            reason_code=self.denied_reason,
+            user_message=f"{action_id} denied",
+            effective_source="local",
+            authority_owner="server",
+        )
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_evaluation_list_by_backend():
     local = FakeLocalEvaluationService()
@@ -242,6 +265,41 @@ async def test_scope_service_lists_local_targets_and_routes_run_creation_by_back
     assert local_run["evaluation_id"] == "task_123"
     assert server_run["record_id"] == "server:evaluation_run:run_srv"
     assert server_run["target_model"] == "openai:gpt-4.1-mini"
+
+
+@pytest.mark.asyncio
+async def test_evaluation_scope_service_denies_server_run_creation_in_local_mode():
+    policy_enforcer = FakePolicyEnforcer.deny("wrong_source")
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=FakeServerEvaluationService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await scope.create_run(
+            mode="server",
+            eval_id="eval_123",
+            target_model="openai:gpt-4.1",
+        )
+
+    assert exc.value.reason_code == "wrong_source"
+    assert policy_enforcer.calls == ["evaluations.run.launch.server"]
+
+
+@pytest.mark.asyncio
+async def test_evaluation_scope_service_keeps_normalizing_server_runs_after_policy_passes():
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=FakeServerEvaluationService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    runs = await scope.list_runs(mode="server", eval_id="eval_123")
+
+    assert runs[0]["record_id"] == "server:evaluation_run:run_999"
+    assert policy_enforcer.calls == ["evaluations.run.list.server"]
 
 
 @pytest.mark.asyncio

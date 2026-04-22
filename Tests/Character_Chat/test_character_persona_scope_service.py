@@ -8,6 +8,7 @@ from tldw_chatbook.Character_Chat.character_persona_scope_service import (
 from tldw_chatbook.Character_Chat.server_character_persona_service import (
     ServerCharacterPersonaService,
 )
+from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
 class FakeCharacterPersonaClient:
@@ -146,6 +147,28 @@ class FakeLocalCharacterBackend:
         return [{"id": 2, "name": "Local Ada"}]
 
 
+class FakePolicyEnforcer:
+    def __init__(self, denied_reason: str | None = None):
+        self.denied_reason = denied_reason
+        self.calls = []
+
+    @classmethod
+    def deny(cls, reason_code: str) -> "FakePolicyEnforcer":
+        return cls(denied_reason=reason_code)
+
+    def require_allowed(self, *, action_id: str) -> None:
+        self.calls.append(action_id)
+        if self.denied_reason is None:
+            return
+        raise PolicyDeniedError(
+            action_id=action_id,
+            reason_code=self.denied_reason,
+            user_message=f"{action_id} denied",
+            effective_source="local",
+            authority_owner="server",
+        )
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_to_server_backend_when_mode_is_server():
     local_service = Mock()
@@ -166,6 +189,18 @@ async def test_scope_service_routes_to_server_backend_when_mode_is_server():
         }
     ]
     local_service.list_persona_profiles.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_character_persona_scope_service_denies_server_persona_listing_in_local_mode():
+    scope_service = CharacterPersonaScopeService(
+        local_service=Mock(),
+        server_service=Mock(),
+        policy_enforcer=FakePolicyEnforcer.deny("wrong_source"),
+    )
+
+    with pytest.raises(PolicyDeniedError):
+        await scope_service.list_persona_profiles(mode="server")
 
 
 @pytest.mark.asyncio
@@ -406,7 +441,7 @@ def test_server_character_persona_service_from_config_uses_api_client(monkeypatc
     build_client = Mock(return_value=sentinel_client)
 
     monkeypatch.setattr(
-        "tldw_chatbook.Character_Chat.server_character_persona_service.build_tldw_api_client_from_config",
+        "tldw_chatbook.Character_Chat.server_character_persona_service.build_runtime_api_client_from_config",
         build_client,
     )
 
@@ -429,10 +464,15 @@ def test_app_wires_character_persona_services(monkeypatch):
     )
     original_scope_service = app_module.CharacterPersonaScopeService
 
-    def scope_service_factory(*, local_service, server_service):
+    def scope_service_factory(*, local_service, server_service, policy_enforcer=None):
         captured["local_service"] = local_service
         captured["server_service"] = server_service
-        return original_scope_service(local_service=local_service, server_service=server_service)
+        captured["policy_enforcer"] = policy_enforcer
+        return original_scope_service(
+            local_service=local_service,
+            server_service=server_service,
+            policy_enforcer=policy_enforcer,
+        )
 
     monkeypatch.setattr(app_module, "CharacterPersonaScopeService", scope_service_factory)
 
@@ -445,3 +485,4 @@ def test_app_wires_character_persona_services(monkeypatch):
     assert fake_app.server_character_persona_service is server_service
     assert captured["local_service"] is fake_app.chachanotes_db
     assert captured["server_service"] is server_service
+    assert captured["policy_enforcer"] is fake_app.service_policy_enforcer

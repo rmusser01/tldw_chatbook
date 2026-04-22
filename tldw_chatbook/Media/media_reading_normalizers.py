@@ -31,6 +31,28 @@ def _clean_timestamp(*values: Any) -> Optional[str]:
     return None
 
 
+def _normalize_read_it_later_state(
+    item: Mapping[str, Any],
+    *,
+    backend: str,
+) -> tuple[bool, bool, Optional[str]]:
+    supports_read_it_later = True
+
+    explicit_saved = item.get("is_read_it_later")
+    if explicit_saved is None:
+        explicit_saved = item.get("read_it_later")
+
+    if explicit_saved is None and backend == "server":
+        explicit_saved = item.get("status") == "saved"
+
+    is_read_it_later = bool(explicit_saved)
+    read_it_later_saved_at = _clean_timestamp(
+        item.get("read_it_later_saved_at"),
+        item.get("saved_at"),
+    )
+    return supports_read_it_later, is_read_it_later, read_it_later_saved_at
+
+
 def _media_author_from_metadata(item: Mapping[str, Any]) -> Optional[str]:
     metadata = _as_mapping(item.get("metadata"))
     for key in ("author", "byline", "creator"):
@@ -94,6 +116,10 @@ def normalize_local_media_row(
     raw_source_id = row.get("id")
     source_id = str(raw_source_id)
     backing_media_id = raw_source_id
+    supports_read_it_later, is_read_it_later, read_it_later_saved_at = _normalize_read_it_later_state(
+        row,
+        backend="local",
+    )
 
     return {
         "id": build_canonical_media_id("local", "media", source_id),
@@ -116,6 +142,9 @@ def normalize_local_media_row(
             for key in ("transcription", "transcript", "content_transcript")
         ),
         "has_chunks": _has_chunks(row),
+        "supports_read_it_later": supports_read_it_later,
+        "is_read_it_later": is_read_it_later,
+        "read_it_later_saved_at": read_it_later_saved_at,
         "reading_progress": normalize_reading_progress(
             reading_progress,
             backend="local",
@@ -133,6 +162,10 @@ def normalize_server_reading_item(
     source_id = str(raw_source_id)
     raw_media_id = item.get("media_id")
     backing_media_id = raw_media_id
+    supports_read_it_later, is_read_it_later, read_it_later_saved_at = _normalize_read_it_later_state(
+        item,
+        backend="server",
+    )
 
     return {
         "id": build_canonical_media_id("server", "reading_item", source_id),
@@ -152,6 +185,9 @@ def normalize_server_reading_item(
         "is_trash": bool(item.get("is_trash", False)),
         "has_transcript": bool(item.get("has_transcript", False)),
         "has_chunks": bool(item.get("media_id") or item.get("has_archive_copy") or item.get("has_chunks")),
+        "supports_read_it_later": supports_read_it_later,
+        "is_read_it_later": is_read_it_later,
+        "read_it_later_saved_at": read_it_later_saved_at,
         "reading_progress": normalize_reading_progress(
             reading_progress,
             backend="server",

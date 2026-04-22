@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Optional
 
+from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..tldw_api import (
     QuizAttemptSubmitRequest,
     QuizCreateRequest,
@@ -19,12 +20,7 @@ class ServerQuizService:
 
     @classmethod
     def from_config(cls, app_config: dict[str, Any]) -> "ServerQuizService":
-        api_config = dict((app_config or {}).get("tldw_api", {}) or {})
-        base_url = str(api_config.get("base_url") or "").strip()
-        if not base_url:
-            raise ValueError("Missing tldw_api.base_url")
-        token = api_config.get("api_key") or api_config.get("bearer_token")
-        return cls(client=TLDWAPIClient(base_url=base_url, token=token))
+        return cls(client=build_runtime_api_client_from_config(app_config))
 
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:

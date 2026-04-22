@@ -19,6 +19,7 @@ from ..Widgets.Media import (
     MediaNavigationPanel,
     MediaSearchPanel,
     MediaSearchEvent,
+    MediaBrowseSubviewChangedEvent,
     MediaListPanel,
     MediaItemSelectedEvent,
     MediaViewerPanel
@@ -33,6 +34,7 @@ from ..Event_Handlers.media_events import (
     MediaUndeleteEvent,
     MediaListCollapseEvent,
     SidebarCollapseEvent,
+    MediaReadItLaterToggleEvent,
     MediaAnalysisRequestEvent,
     MediaAnalysisSaveEvent,
     MediaAnalysisSaveAsNoteEvent,
@@ -159,6 +161,42 @@ class MediaWindow(Container):
             return "local"
         return str(getattr(runtime_state, "runtime_backend", "local") or "local")
 
+    def _active_browse_subview(self) -> str:
+        """Return the current browse subview."""
+        runtime_state = getattr(self, "runtime_state", None)
+        if runtime_state is None:
+            return "all"
+        return str(getattr(runtime_state, "active_browse_subview", "all") or "all")
+
+    def _saved_view_available_for_context(self) -> bool:
+        """Saved-view browsing is aggregate-only for server mode."""
+        if self._runtime_backend() != "server":
+            return True
+        return (self.active_media_type or "all-media") == "all-media"
+
+    def _sync_saved_view_controls(self) -> None:
+        """Keep the search panel's browse-subview controls aligned with runtime state."""
+        if not hasattr(self, "search_panel"):
+            return
+        self.search_panel.set_saved_view_enabled(self._saved_view_available_for_context())
+        self.search_panel.set_browse_subview(self._active_browse_subview())
+
+    def _reset_invalid_saved_view_for_context(self) -> bool:
+        """Reset invalid saved-view state and notify the user once."""
+        if self._active_browse_subview() != "read-it-later":
+            return False
+        if self._saved_view_available_for_context():
+            return False
+
+        if self.runtime_state is not None:
+            self.runtime_state.active_browse_subview = "all"
+        self._sync_saved_view_controls()
+        self.app_instance.notify(
+            "Read-it-later is only available in server mode from All Media.",
+            severity="warning",
+        )
+        return True
+
     def _record_backend(self, record: Optional[Dict[str, Any]] = None) -> str:
         """Resolve backend from a normalized record or current runtime state."""
         if isinstance(record, dict) and record.get("backend"):
@@ -218,6 +256,169 @@ class MediaWindow(Container):
         self.query_one("#media-empty-state").remove_class("hidden")
         self.viewer_panel.add_class("hidden")
 
+    def _merge_record_detail(self, record_id: str, updated: Optional[Dict[str, Any]], *, save_for_later: bool) -> Dict[str, Any]:
+        """Merge mutation output into the cached detail record without assuming a full payload."""
+        existing = {}
+        if self.runtime_state is not None:
+            existing = dict(self.runtime_state.detail_by_record_id.get(record_id) or {})
+        if not existing and isinstance(getattr(self.viewer_panel, "media_data", None), dict):
+            existing = dict(self.viewer_panel.media_data or {})
+
+        merged = dict(existing)
+        if isinstance(updated, dict):
+            merged.update(updated)
+
+        merged["id"] = record_id
+        merged.setdefault("backend", self._record_backend(existing))
+        merged.setdefault(
+            "source_id",
+            self._source_media_id(existing, fallback=updated.get("source_id") if isinstance(updated, dict) else None),
+        )
+        merged["supports_read_it_later"] = bool(merged.get("supports_read_it_later", True))
+        merged["is_read_it_later"] = bool(
+            merged.get("is_read_it_later", save_for_later)
+            if isinstance(updated, dict) and "is_read_it_later" in updated
+            else save_for_later
+        )
+        return merged
+
+    def _clear_selection_for_record(self, record_id: Optional[str]) -> None:
+        """Clear selection when the active record should be removed from the viewer."""
+        if record_id in (None, ""):
+            return
+
+        selected_record_id = getattr(self.runtime_state, "selected_record_id", None) if self.runtime_state is not None else None
+        if selected_record_id != record_id:
+            return
+
+        self.selected_media_id = None
+        if self.runtime_state is not None:
+            self.runtime_state.selected_record_id = None
+        if hasattr(self.list_panel, "selected_id"):
+            self.list_panel.selected_id = None
+        self.viewer_panel.clear_display()
+        self._show_empty_state()
+
+    def _build_browse_filters(self, type_slug: str, keyword_filter: str, mode: str) -> Dict[str, Any]:
+        """Build shared browse filters for media queries."""
+        media_types_filter = None
+        if type_slug not in ["all-media", "analysis-review"]:
+            media_types_filter = [type_slug.replace("-", "_")]
+
+        keywords_list = None
+        if keyword_filter:
+            keywords_list = [keyword.strip() for keyword in keyword_filter.split(",") if keyword.strip()]
+
+        search_filters: Dict[str, Any] = {
+            "sort_by": "last_modified_desc",
+            "include_deleted": getattr(self.search_panel, "show_deleted", False),
+        }
+        if mode == "local":
+            search_filters.update(
+                {
+                    "media_types": media_types_filter,
+                    "must_have_keywords": keywords_list,
+                    "fields": ["title", "content", "author", "url", "type", "analysis_content"],
+                    "include_trash": False,
+                }
+            )
+        return search_filters
+
+    def _normalize_browse_payload(
+        self,
+        *,
+        type_slug: str,
+        mode: str,
+        payload: Dict[str, Any],
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Normalize browse payload results across search paths."""
+        results = list(payload.get("items", []))
+        total_matches = int(payload.get("total", len(results)) or 0)
+
+        if mode == "server" and type_slug not in ["all-media", "analysis-review"]:
+            expected_media_type = type_slug.replace("-", "_")
+            results = [
+                item for item in results
+                if str(item.get("media_type") or "").strip().lower() == expected_media_type
+            ]
+            total_matches = len(results)
+
+        return results, total_matches
+
+    async def _execute_browse_query_async(
+        self,
+        *,
+        type_slug: str,
+        search_term: str,
+        keyword_filter: str,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Execute the active browse query through the current seam."""
+        scope_service = self._scope_service()
+        if scope_service is None:
+            return [], 0
+
+        mode = self._runtime_backend()
+        search_filters = self._build_browse_filters(type_slug, keyword_filter, mode)
+        offset = max(self.list_panel.current_page - 1, 0) * self.list_panel.items_per_page
+
+        if self._active_browse_subview() == "read-it-later":
+            payload = await scope_service.list_read_it_later(
+                mode=mode,
+                query=search_term if search_term else None,
+                limit=self.list_panel.items_per_page,
+                offset=offset,
+                **search_filters,
+            )
+        else:
+            payload = await scope_service.search_media(
+                mode=mode,
+                query=search_term if search_term else None,
+                limit=self.list_panel.items_per_page,
+                offset=offset,
+                **search_filters,
+            )
+
+        if self.runtime_state is not None:
+            self.runtime_state.search_term = search_term
+            self.runtime_state.keyword_filter = keyword_filter
+
+        return self._normalize_browse_payload(
+            type_slug=type_slug,
+            mode=mode,
+            payload=payload,
+        )
+
+    async def _refresh_current_browse_results_async(self) -> List[Dict[str, Any]]:
+        """Refresh current browse results through the active search path."""
+        type_slug = self.active_media_type or "all-media"
+        search_term = getattr(self.search_panel, "search_term", "")
+        keyword_filter = getattr(self.search_panel, "keyword_filter", "")
+        current_page = max(int(getattr(self.list_panel, "current_page", 1) or 1), 1)
+        results, total_matches = await self._execute_browse_query_async(
+            type_slug=type_slug,
+            search_term=search_term,
+            keyword_filter=keyword_filter,
+        )
+
+        total_pages = (total_matches + self.list_panel.items_per_page - 1) // self.list_panel.items_per_page
+        total_pages = max(total_pages, 1)
+
+        if not results and total_matches > 0:
+            corrected_page = min(current_page, total_pages)
+            if corrected_page != current_page:
+                self.list_panel.current_page = corrected_page
+                results, total_matches = await self._execute_browse_query_async(
+                    type_slug=type_slug,
+                    search_term=search_term,
+                    keyword_filter=keyword_filter,
+                )
+                total_pages = (total_matches + self.list_panel.items_per_page - 1) // self.list_panel.items_per_page
+                total_pages = max(total_pages, 1)
+                current_page = corrected_page
+
+        self.update_search_results(results, 1 if not results else current_page, total_pages)
+        return results
+
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
         """Reset media state when the active backend changes."""
         if self.runtime_state is not None:
@@ -230,6 +431,7 @@ class MediaWindow(Container):
             self.viewer_panel.media_data = None
         self.viewer_panel.clear_display()
         self._show_empty_state()
+        self._sync_saved_view_controls()
 
     async def load_reading_progress(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Load and cache reading progress for a normalized media record."""
@@ -381,6 +583,28 @@ class MediaWindow(Container):
                 self.active_media_type,
                 event.search_term,
                 event.keyword_filter
+            )
+
+    @on(MediaBrowseSubviewChangedEvent)
+    def handle_browse_subview_changed(self, event: MediaBrowseSubviewChangedEvent) -> None:
+        """Handle browse-subview selection independently from media-type navigation."""
+        if self.runtime_state is not None:
+            self.runtime_state.active_browse_subview = str(event.subview or "all")
+
+        if self._reset_invalid_saved_view_for_context() and self.active_media_type:
+            self._perform_search(
+                self.active_media_type,
+                self.search_panel.search_term,
+                self.search_panel.keyword_filter,
+            )
+            return
+
+        self._sync_saved_view_controls()
+        if self.active_media_type:
+            self._perform_search(
+                self.active_media_type,
+                self.search_panel.search_term,
+                self.search_panel.keyword_filter,
             )
     
     @on(MediaItemSelectedEvent)
@@ -573,6 +797,63 @@ class MediaWindow(Container):
                 search_term,
                 keyword_filter
             )
+
+    @on(MediaReadItLaterToggleEvent)
+    def handle_read_it_later_toggle(self, event: MediaReadItLaterToggleEvent) -> None:
+        """Handle viewer save/remove actions in a worker."""
+        self.run_worker(self._handle_read_it_later_toggle_async(event), exclusive=True)
+
+    async def _handle_read_it_later_toggle_async(self, event: MediaReadItLaterToggleEvent) -> None:
+        """Mutate read-it-later state, refresh results, and clear filtered selection."""
+        scope_service = self._scope_service()
+        if scope_service is None:
+            self.app_instance.notify("Media reading scope service is not available.", severity="error")
+            return
+
+        record = self._record_for_event(event)
+        record_id = self._record_id(
+            record,
+            getattr(event, "record_id", None) or getattr(event, "media_id", None),
+        )
+        if record_id is None:
+            self.app_instance.notify("Unable to determine media record for save action.", severity="error")
+            return
+
+        try:
+            if event.save_for_later:
+                updated = await self._maybe_await(
+                    scope_service.save_to_read_it_later(
+                        mode=self._record_backend(record),
+                        media_id=self._source_media_id(record, fallback=getattr(event, "media_id", None)),
+                    )
+                )
+            else:
+                updated = await self._maybe_await(
+                    scope_service.remove_from_read_it_later(
+                        mode=self._record_backend(record),
+                        media_id=self._source_media_id(record, fallback=getattr(event, "media_id", None)),
+                    )
+                )
+        except Exception as exc:
+            logger.error(f"Error toggling read-it-later for {record_id}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
+            return
+
+        merged = self._merge_record_detail(record_id, updated if isinstance(updated, dict) else None, save_for_later=event.save_for_later)
+        if self.runtime_state is not None:
+            self.runtime_state.detail_by_record_id[record_id] = merged
+        if getattr(self.runtime_state, "selected_record_id", None) == record_id:
+            self.viewer_panel.load_media(merged)
+
+        try:
+            await self._refresh_current_browse_results_async()
+        except Exception as exc:
+            logger.error(f"Error refreshing browse results after read-it-later toggle for {record_id}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Error loading media: {str(exc)[:100]}", severity="error")
+            return
+
+        if self._active_browse_subview() == "read-it-later" and not event.save_for_later:
+            self._clear_selection_for_record(record_id)
     
     @on(MediaListCollapseEvent)
     def handle_list_collapse(self) -> None:
@@ -984,12 +1265,15 @@ class MediaWindow(Container):
             self.runtime_state.search_term = ""
             self.runtime_state.keyword_filter = ""
             self.runtime_state.selected_record_id = None
+
+        self._reset_invalid_saved_view_for_context()
         
         # Update navigation panel
         self.nav_panel.selected_type = type_slug
         
         # Update search panel
         self.search_panel.set_type_filter(type_slug, display_name)
+        self._sync_saved_view_controls()
         
         # Clear viewer
         self.viewer_panel.clear_display()
@@ -1067,56 +1351,16 @@ class MediaWindow(Container):
                 
                 # Set loading state
                 self.list_panel.set_loading(True)
-                
-                # Prepare search parameters
-                media_types_filter = None
-                if type_slug not in ["all-media", "analysis-review"]:
-                    db_media_type = type_slug.replace('-', '_')
-                    media_types_filter = [db_media_type]
-                
-                # Parse keywords
-                keywords_list = None
-                if keyword_filter:
-                    keywords_list = [k.strip() for k in keyword_filter.split(',') if k.strip()]
+                if self._reset_invalid_saved_view_for_context():
+                    self._sync_saved_view_controls()
 
-                mode = self._runtime_backend()
-                search_filters = {
-                    "sort_by": "last_modified_desc",
-                    "include_deleted": getattr(self.search_panel, "show_deleted", False),
-                }
-                if mode == "local":
-                    search_filters.update(
-                        {
-                            "media_types": media_types_filter,
-                            "must_have_keywords": keywords_list,
-                            "fields": ['title', 'content', 'author', 'url', 'type', 'analysis_content'],
-                            "include_trash": False,
-                        }
-                    )
-
-                offset = max(self.list_panel.current_page - 1, 0) * self.list_panel.items_per_page
-                payload = await scope_service.search_media(
-                    mode=mode,
-                    query=search_term if search_term else None,
-                    limit=self.list_panel.items_per_page,
-                    offset=offset,
-                    **search_filters,
+                results, total_matches = await self._execute_browse_query_async(
+                    type_slug=type_slug,
+                    search_term=search_term,
+                    keyword_filter=keyword_filter,
                 )
-                results = list(payload.get("items", []))
-                total_matches = int(payload.get("total", len(results)) or 0)
-
-                if mode == "server" and type_slug not in ["all-media", "analysis-review"]:
-                    expected_media_type = type_slug.replace("-", "_")
-                    results = [
-                        item for item in results
-                        if str(item.get("media_type") or "").strip().lower() == expected_media_type
-                    ]
-                    total_matches = len(results)
                 
                 logger.info(f"Search returned {len(results)} results, total matches: {total_matches}")
-                if self.runtime_state is not None:
-                    self.runtime_state.search_term = search_term
-                    self.runtime_state.keyword_filter = keyword_filter
                 
                 if results:
                     # Calculate total pages

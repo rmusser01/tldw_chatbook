@@ -15,6 +15,7 @@ from tldw_chatbook.Media import (
 )
 from tldw_chatbook.Constants import ALL_TABS
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
+from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
@@ -97,6 +98,20 @@ async def test_tab_links_emit_navigation_messages():
 
     assert len(messages_received) == 1
     assert messages_received[0].screen_name == "notes"
+
+
+@pytest.mark.asyncio
+async def test_main_navigation_exposes_all_routed_primary_screens():
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="chat")
+
+    app = TestApp()
+
+    async with app.run_test() as pilot:
+        nav = pilot.app.query_one(MainNavigationBar)
+        for screen_id in ("study", "stts", "chatbooks", "subscriptions"):
+            assert nav.query_one(f"#nav-{screen_id}") is not None
 
 
 def test_screen_state_preservation():

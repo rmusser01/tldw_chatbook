@@ -110,12 +110,29 @@ class SiteConfigSettings(Container):
     def __init__(self):
         """Initialize site config settings."""
         super().__init__()
-        self.config_manager = get_site_config_manager()
         self.form_builder = FormBuilder()
         self.unsaved_changes = False
-    
+        self.config_manager = None
+        self.config_manager_error: Optional[str] = None
+
+        try:
+            self.config_manager = get_site_config_manager()
+        except Exception as exc:
+            self.config_manager_error = str(exc)
+            logger.warning(f"Site configuration manager unavailable: {exc}")
+
     def compose(self) -> ComposeResult:
         """Compose the site config UI."""
+        if self.config_manager is None:
+            message = (
+                "[yellow]Site configuration settings are unavailable.[/yellow]\n"
+                "Check the subscriptions database path and write permissions."
+            )
+            if self.config_manager_error:
+                message = f"{message}\n\n{self.config_manager_error}"
+            yield Static(message, id="site-config-unavailable")
+            return
+
         with Horizontal():
             # Left panel - Site list
             with Container(classes="site-list-container"):
@@ -376,11 +393,15 @@ class SiteConfigSettings(Container):
     
     async def on_mount(self):
         """Load site configurations on mount."""
+        if self.config_manager is None:
+            return
         self.load_site_list()
     
     @work(thread=True)
     def load_site_list(self):
         """Load list of configured sites."""
+        if self.config_manager is None:
+            return
         try:
             configs = self.config_manager.list_configs()
             self.call_from_thread(self.update_site_table, configs)
@@ -417,6 +438,8 @@ class SiteConfigSettings(Container):
     @work(thread=True)
     def load_site_config(self, domain: str):
         """Load configuration for selected site."""
+        if self.config_manager is None:
+            return
         try:
             config = self.config_manager.get_config(f"https://{domain}")
             self.call_from_thread(self.display_config, config)
@@ -495,6 +518,10 @@ Created: {config.created_at}"""
     @on(Button.Pressed, "#add-site-btn")
     async def on_add_site(self):
         """Handle adding a new site."""
+        if self.config_manager is None:
+            self.notify("Site configuration storage is unavailable", severity="warning")
+            return
+
         input_field = self.query_one("#new-domain-input", Input)
         domain = input_field.value.strip()
         
@@ -514,6 +541,10 @@ Created: {config.created_at}"""
     @on(Button.Pressed, "#save-config-btn")
     async def on_save_config(self):
         """Save current configuration."""
+        if self.config_manager is None:
+            self.notify("Site configuration storage is unavailable", severity="warning")
+            return
+
         if not self.current_config:
             return
         
@@ -539,6 +570,10 @@ Created: {config.created_at}"""
     @on(Button.Pressed, "#delete-config-btn")
     async def on_delete_config(self):
         """Delete current configuration."""
+        if self.config_manager is None:
+            self.notify("Site configuration storage is unavailable", severity="warning")
+            return
+
         if not self.current_config:
             return
         
@@ -556,6 +591,10 @@ Created: {config.created_at}"""
     @on(Button.Pressed, "#apply-preset-btn")
     async def on_apply_preset(self):
         """Show preset selection dialog."""
+        if self.config_manager is None:
+            self.notify("Site configuration storage is unavailable", severity="warning")
+            return
+
         if not self.current_config:
             return
         

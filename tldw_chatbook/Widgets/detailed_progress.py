@@ -80,7 +80,8 @@ class DetailedProgressBar(Widget):
             with Horizontal(classes="progress-stage-row"):
                 yield Label("Stage:", classes="progress-label")
                 yield Static("", id="stage-indicator", classes="stage-indicator")
-                if self.pausable:
+            if self.pausable:
+                with Horizontal(classes="progress-action-row"):
                     yield Button(
                         "⏸ Pause" if not self.is_paused else "▶ Resume",
                         id="pause-button",
@@ -133,7 +134,7 @@ class DetailedProgressBar(Widget):
     def on_mount(self) -> None:
         """Start tracking when mounted."""
         self.start_time = datetime.now()
-        self.update_timer = self.set_timer(1.0, self._update_metrics, pause=False)
+        self.update_timer = self.set_interval(1.0, self._update_metrics, pause=False)
     
     def start_stage(self, stage_index: int, total_items: int = 100) -> None:
         """Start a new stage of processing."""
@@ -250,13 +251,13 @@ class DetailedProgressBar(Widget):
             
             # Update main progress
             main_bar = self.query_one("#main-progress", ProgressBar)
-            main_bar.update(progress=overall_progress)
+            main_bar.update(total=100, progress=overall_progress)
             
             # Update stage progress
             stage = self.stages[self.current_stage]
             stage_progress = (stage.current / stage.total * 100) if stage.total > 0 else 0
             stage_bar = self.query_one("#stage-progress", ProgressBar)
-            stage_bar.update(progress=stage_progress)
+            stage_bar.update(total=100, progress=stage_progress)
             
         except Exception as e:
             logger.error(f"Error updating progress bars: {e}")

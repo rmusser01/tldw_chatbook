@@ -1,6 +1,6 @@
 # tldw_chatbook
 
-A sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. It provides a complete ecosystem for AI-powered interactions including conversation management, character/persona chat, notes with bidirectional file sync, media ingestion, advanced RAG (Retrieval-Augmented Generation) capabilities, comprehensive LLM evaluation system, and optional web browser access.
+A sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. The product is organized around a chat-first screen shell: Chat is the main work surface, while notes, media, study, personas, ingestion, search, and model tools act as supporting destinations that can hand context back into the active conversation.
 
 ![Screenshot](https://github.com/rmusser01/tldw_chatbook/blob/main/static/PoC-Frontpage.PNG?raw=true)
 
@@ -205,23 +205,21 @@ python scripts/verify_higgs_installation.py
   - No terminal emulator required
   - Full functionality via browser interface
 
-### Main Application Tabs
-1. **Chat** - Advanced AI conversation interface with streaming support
-2. **Chat Tabs** - Multiple concurrent chat sessions (disabled by default)
-3. **Conversations, Characters & Prompts** - Manage conversations, character personas, and prompt templates
+### Main Application Destinations
+The current screen shell is organized around primary destinations and local subviews rather than equal-weight tabs:
+
+1. **Chat** - Primary conversation and agentic control surface with streaming, tool use, inline approvals, and task continuity
+2. **Conversations, Characters & Prompts** - Manage conversations, personas, and prompt templates, then hand them into the active chat session
+3. **Study** - Workspace/global study dashboard with flashcards, quizzes, study guides, and related learning flows
 4. **Notes** - Advanced note-taking with bidirectional file sync
 5. **Media** - Browse and manage ingested media content
 6. **Search/RAG** - Hybrid search across all content (FTS5 + optional vectors)
 7. **Media Ingestion** - Process documents, videos, audio, and web content
-8. **Embeddings** - Create and manage vector embeddings
-9. **Evaluations** - Comprehensive LLM benchmarking system
-10. **LLM Management** - Local model server control
-11. **Tools & Settings** - Configuration and utilities
-12. **Stats** - Usage statistics and metrics
-13. **Logs** - Application logs and debugging
-14. **Coding** - AI-powered coding assistant (WIP)
-15. **STTS** - Speech-to-Text and Text-to-Speech interface
-16. **Subscriptions** - Content subscription tracking and monitoring
+8. **Model & Evaluation Tools** - LLM management, speech tools, and evaluation workflows
+9. **System Surfaces** - Settings, customization, logs, and statistics
+10. **Subscriptions / Chatbooks** - Supporting library and monitoring destinations
+
+`Coding` still exists as a compatibility route during migration, but agentic programming and control are moving into Chat-first workflows instead of living as a separate primary destination.
 
 ### LLM Support
 - **Commercial LLM APIs**: OpenAI, Anthropic, Cohere, DeepSeek, Google, Groq, Mistral, OpenRouter, HuggingFace
@@ -343,6 +341,7 @@ All chat features listed here work with the core installation:
   - Strip thinking blocks from responses
   - Cost estimation widget (WIP)
   - Tool calling integration
+  - Inline approvals and task resume state for agentic workflows
 - **Prompt Management**
   - Save, edit, clone prompts
   - Bulk import/export
@@ -499,9 +498,10 @@ Customizable splash screens with 50+ animation effects:
 For detailed customization, see the [Splash Screen Guide](Docs/Development/SplashScreens/SPLASH_SCREEN_GUIDE.md).
 
 ### Coding Assistant
-- **AI-powered code assistance**: In dedicated coding tab
-- **Code mapping**: Analysis and understanding of codebases
-- **Integration ready**: Framework for future enhancements
+- **Chat-first programming workflows**: Agentic programming and control are designed to happen in Chat, alongside the rest of the conversation context
+- **Inline task continuity**: Approvals, progress, failures, and resume cues can be surfaced directly in the chat shell
+- **Code mapping**: Analysis and understanding of codebases remain available as supporting capabilities
+- **Legacy compatibility**: The standalone coding surface still exists during migration, but it is no longer the long-term primary UX model
 
 ## Configuration
 

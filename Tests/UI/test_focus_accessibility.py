@@ -3,6 +3,8 @@ Test suite for verifying focus accessibility improvements.
 Tests that focus indicators are properly visible on all interactive elements.
 """
 
+from pathlib import Path
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, TextArea, Select, Checkbox, RadioButton, Label
@@ -26,6 +28,9 @@ class FocusTestApp(App):
             yield RadioButton("Test Radio", id="test-radio")
 
 
+CSS_PATH = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+
+
 @pytest.mark.asyncio
 async def test_button_has_focus_outline():
     """Test that buttons show focus outline when focused."""
@@ -45,17 +50,12 @@ async def test_button_has_focus_outline():
         assert app.CSS_PATH  # Verify CSS is loaded
         
         # Check that the CSS file exists and has proper focus styles
-        import os
-        css_path = os.path.join(
-            os.path.dirname(__file__), 
-            "../../tldw_chatbook/css/tldw_cli_modular.tcss"
-        )
-        assert os.path.exists(css_path)
-        
-        with open(css_path, 'r') as f:
+        assert CSS_PATH.exists()
+
+        with CSS_PATH.open("r", encoding="utf-8") as f:
             css_content = f.read()
             # Verify focus styles are present and not suppressed
-            assert "outline: 2px solid $accent" in css_content
+            assert "outline: heavy $accent" in css_content
             assert "outline: none !important" not in css_content
 
 
@@ -67,6 +67,7 @@ async def test_input_has_focus_outline():
         # Focus the input
         input_widget = app.query_one("#test-input", Input)
         input_widget.focus()
+        await pilot.pause()
         
         # Verify focus
         assert input_widget.has_focus
@@ -80,6 +81,7 @@ async def test_textarea_has_focus_outline():
         # Focus the textarea
         textarea = app.query_one("#test-textarea", TextArea)
         textarea.focus()
+        await pilot.pause()
         
         # Verify focus
         assert textarea.has_focus
@@ -88,15 +90,8 @@ async def test_textarea_has_focus_outline():
 @pytest.mark.asyncio
 async def test_no_outline_suppression_in_css():
     """Test that CSS doesn't contain outline suppression anti-patterns."""
-    import os
-    
     # Check the main CSS file
-    css_path = os.path.join(
-        os.path.dirname(__file__), 
-        "../../tldw_chatbook/css/tldw_cli_modular.tcss"
-    )
-    
-    with open(css_path, 'r') as f:
+    with CSS_PATH.open("r", encoding="utf-8") as f:
         css_content = f.read()
         
         # These anti-patterns should NOT be present
@@ -105,7 +100,7 @@ async def test_no_outline_suppression_in_css():
         
         # These proper patterns SHOULD be present
         assert "*:focus" in css_content
-        assert "outline: 2px solid" in css_content or "outline: solid" in css_content
+        assert "outline: heavy" in css_content or "outline: solid" in css_content
 
 
 @pytest.mark.asyncio

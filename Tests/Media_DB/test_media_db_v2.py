@@ -505,7 +505,7 @@ class TestDatabaseCRUDAndSync:
 
         reopened_db = Database(db_path=temp_db_path, client_id="schema_client")
         try:
-            assert get_schema_version(reopened_db) == 3
+            assert get_schema_version(reopened_db) == 4
             reopened_db.upsert_reading_progress(
                 media_id,
                 {
@@ -524,8 +524,57 @@ class TestDatabaseCRUDAndSync:
             assert fetched["zoom_level"] == 1.1
             assert fetched["cfi"] == "epubcfi(/6/2[chapter]!/4/2/6)"
             assert fetched["percentage"] == 40.0
+
+            saved_state = reopened_db.save_media_to_read_it_later(media_id)
+            fetched_saved_state = reopened_db.get_media_read_it_later_state(media_id)
+            assert saved_state["media_id"] == media_id
+            assert saved_state["is_read_it_later"] is True
+            assert fetched_saved_state is not None
+            assert fetched_saved_state["media_id"] == media_id
+            assert fetched_saved_state["is_read_it_later"] is True
         finally:
             reopened_db.close_connection()
+
+    def test_read_it_later_state_round_trips_for_local_media(self, db_instance):
+        media_id, _, _ = db_instance.add_media_with_keywords(
+            title="Reader",
+            content="Hello",
+            media_type="article",
+            keywords=[],
+        )
+
+        saved = db_instance.save_media_to_read_it_later(media_id)
+
+        assert saved["media_id"] == media_id
+        assert saved["is_read_it_later"] is True
+        assert saved["saved_at"] is not None
+        assert db_instance.get_media_read_it_later_state(media_id)["is_read_it_later"] is True
+
+    def test_soft_deleted_local_media_is_hidden_from_saved_view_by_default(self, db_instance):
+        media_id, _, _ = db_instance.add_media_with_keywords(
+            title="Reader",
+            content="Hello",
+            media_type="article",
+            keywords=[],
+        )
+        db_instance.save_media_to_read_it_later(media_id)
+        db_instance.soft_delete_media(media_id)
+
+        ids = db_instance.list_read_it_later_media_ids()
+        assert media_id not in ids
+
+    def test_trashed_local_media_is_hidden_from_saved_view_by_default(self, db_instance):
+        media_id, _, _ = db_instance.add_media_with_keywords(
+            title="Reader",
+            content="Hello",
+            media_type="article",
+            keywords=[],
+        )
+        db_instance.save_media_to_read_it_later(media_id)
+        db_instance.mark_as_trash(media_id)
+
+        ids = db_instance.list_read_it_later_media_ids()
+        assert media_id not in ids
 
 
 @pytest.mark.integration

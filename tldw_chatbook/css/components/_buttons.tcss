@@ -19,14 +19,14 @@ Button:hover {
 /* Enhanced focus state with visible outline */
 Button:focus {
     background: $primary-darken-1;
-    outline: solid $accent;
+    outline: heavy $accent;
 }
 
 /* When both hovering AND focused */
 Button:hover:focus {
     background: $primary-lighten-2;
     text-style: bold;
-    outline: solid $accent;
+    outline: heavy $accent;
 }
 
 /* Disabled state */

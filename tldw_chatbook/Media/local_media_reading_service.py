@@ -24,6 +24,25 @@ class LocalMediaReadingService:
     def _unsupported_ingestion_sources(self) -> ValueError:
         return ValueError("Local ingestion sources are not available yet.")
 
+    def _normalize_media_id_filter(self, media_ids: Any) -> list[int]:
+        normalized: list[int] = []
+        for media_id in media_ids or []:
+            normalized.append(self._coerce_media_id(media_id))
+        return normalized
+
+    def _enrich_with_read_it_later_state(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        enriched = dict(row)
+        state = self._require_db().get_media_read_it_later_state(self._coerce_media_id(row["id"]))
+        if state is None:
+            return enriched
+        enriched["is_read_it_later"] = state.get("is_read_it_later")
+        enriched["saved_at"] = state.get("saved_at")
+        enriched["read_it_later_saved_at"] = state.get("saved_at")
+        return enriched
+
+    def _enrich_rows_with_read_it_later_state(self, rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        return [self._enrich_with_read_it_later_state(row) for row in rows]
+
     def search_media(
         self,
         *,
@@ -34,6 +53,28 @@ class LocalMediaReadingService:
     ) -> dict[str, Any]:
         db = self._require_db()
 
+        caller_media_ids_filter = filters.get("media_ids_filter")
+        media_ids_filter = self._normalize_media_id_filter(caller_media_ids_filter)
+        if filters.get("read_it_later_only", False):
+            saved_media_ids = self._normalize_media_id_filter(
+                db.list_read_it_later_media_ids(
+                    include_deleted=bool(filters.get("include_deleted", False)),
+                    include_trash=bool(filters.get("include_trash", False)),
+                )
+            )
+            if caller_media_ids_filter is not None:
+                saved_id_set = set(saved_media_ids)
+                media_ids_filter = [media_id for media_id in media_ids_filter if media_id in saved_id_set]
+            else:
+                media_ids_filter = saved_media_ids
+            if not media_ids_filter:
+                return {
+                    "items": [],
+                    "total": 0,
+                    "offset": offset,
+                    "limit": limit,
+                }
+
         results_per_page = max(limit + offset, limit)
         rows, total = db.search_media_db(
             search_query=query,
@@ -43,13 +84,13 @@ class LocalMediaReadingService:
             must_have_keywords=filters.get("must_have") or filters.get("must_have_keywords"),
             must_not_have_keywords=filters.get("must_not") or filters.get("must_not_have_keywords"),
             sort_by=filters.get("sort_by", "last_modified_desc"),
-            media_ids_filter=filters.get("media_ids_filter"),
+            media_ids_filter=media_ids_filter,
             page=1,
             results_per_page=results_per_page,
             include_trash=bool(filters.get("include_trash", False)),
             include_deleted=bool(filters.get("include_deleted", False)),
         )
-        items = list(rows)[offset:offset + limit]
+        items = self._enrich_rows_with_read_it_later_state(list(rows)[offset:offset + limit])
         return {
             "items": items,
             "total": total,
@@ -59,11 +100,12 @@ class LocalMediaReadingService:
 
     def get_media_detail(self, media_id: Any, *, include_deleted: bool = False, include_trash: bool = False) -> Any:
         db = self._require_db()
-        return db.get_media_by_id(
+        detail = db.get_media_by_id(
             self._coerce_media_id(media_id),
             include_deleted=include_deleted,
             include_trash=include_trash,
         )
+        return self._enrich_with_read_it_later_state(detail)
 
     def update_media_metadata(self, media_id: Any, **metadata: Any) -> Any:
         db = self._require_db()
@@ -90,6 +132,28 @@ class LocalMediaReadingService:
 
     def delete_reading_progress(self, media_id: Any) -> Any:
         return self._require_db().delete_reading_progress(self._coerce_media_id(media_id))
+
+    def save_to_read_it_later(self, media_id: Any) -> Any:
+        return self._require_db().save_media_to_read_it_later(self._coerce_media_id(media_id))
+
+    def remove_from_read_it_later(self, media_id: Any) -> Any:
+        db = self._require_db()
+        normalized_media_id = self._coerce_media_id(media_id)
+        current_time = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            conn.execute(
+                """
+                DELETE FROM MediaReadItLaterState
+                WHERE media_id = ?
+                """,
+                (normalized_media_id,),
+            )
+        return {
+            "media_id": normalized_media_id,
+            "is_read_it_later": False,
+            "saved_at": None,
+            "updated_at": current_time,
+        }
 
     def list_ingestion_sources(self) -> Any:
         raise self._unsupported_ingestion_sources()

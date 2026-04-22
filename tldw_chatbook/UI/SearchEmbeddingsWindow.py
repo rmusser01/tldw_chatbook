@@ -85,7 +85,7 @@ class ContentTreePanel(Container):
     """Content selection tree panel with filtering."""
 
     # Reactive attributes
-    selected_content_types = reactive(set())
+    selected_content_types = reactive(set)
     selected_items = reactive(dict, layout=False)  # {content_type: {item_ids}}
     search_query = reactive("")
     is_loading = reactive(False)
@@ -145,13 +145,13 @@ class ContentTreePanel(Container):
                     content_data['media'] = self._load_media_data()
 
             # Update UI from main thread
-            self.call_from_thread(self._update_tree_content, content_data)
+            self.app.call_from_thread(self._update_tree_content, content_data)
 
         except Exception as e:
             logger.error(f"Error loading content data: {e}")
-            self.call_from_thread(self.notify, f"Error loading content: {e}", "error")
+            self.app.call_from_thread(self.notify, f"Error loading content: {e}", "error")
         finally:
-            self.call_from_thread(setattr, self, "is_loading", False)
+            self.app.call_from_thread(setattr, self, "is_loading", False)
 
     def _load_chat_data(self) -> List[Dict[str, Any]]:
         """Load chat conversation data."""
@@ -697,11 +697,11 @@ class SearchEmbeddingsWindow(Container):
     def load_content_for_selected_types(self) -> None:
         """Load content based on selected types."""
         if not self.selected_content_types:
-            self.call_from_thread(self.clear_content_tree)
+            self.app.call_from_thread(self.clear_content_tree)
             return
             
         # Simulate loading content
-        self.call_from_thread(self.update_content_tree)
+        self.app.call_from_thread(self.update_content_tree)
 
     def clear_content_tree(self) -> None:
         """Clear the content tree."""
@@ -801,8 +801,8 @@ class SearchEmbeddingsWindow(Container):
     @work(thread=True, exclusive=True)
     def start_embedding_creation(self) -> None:
         """Start embedding creation process (ADR-004)."""
-        self.call_from_thread(setattr, self, "is_processing", True)
-        self.call_from_thread(setattr, self, "processing_status", "Initializing...")
+        self.app.call_from_thread(setattr, self, "is_processing", True)
+        self.app.call_from_thread(setattr, self, "processing_status", "Initializing...")
 
         try:
             # Simulate embedding creation process
@@ -817,14 +817,14 @@ class SearchEmbeddingsWindow(Container):
                 status = f"Processing item {i + 1} of {total_items}"
 
                 # Update progress from thread (ADR-004)
-                self.call_from_thread(self._update_progress, progress, status)
+                self.app.call_from_thread(self._update_progress, progress, status)
 
             # Mark as complete
-            self.call_from_thread(self._embedding_creation_complete)
+            self.app.call_from_thread(self._embedding_creation_complete)
 
         except Exception as e:
             logger.error(f"Error creating embeddings: {e}")
-            self.call_from_thread(self._embedding_creation_error, str(e))
+            self.app.call_from_thread(self._embedding_creation_error, str(e))
 
     def _update_progress(self, progress: int, status: str) -> None:
         """Update progress from worker thread."""

@@ -17,9 +17,10 @@ class ScopeType(str, Enum):
 class NotesScopeService:
     """Route screen-facing note actions to the correct backing service."""
 
-    def __init__(self, local_notes_service: Any, server_service: Any):
+    def __init__(self, local_notes_service: Any, server_service: Any, policy_enforcer: Any = None):
         self.local_notes_service = local_notes_service
         self.server_service = server_service
+        self.policy_enforcer = policy_enforcer
 
     def _normalize_scope(self, scope: ScopeType | str) -> ScopeType:
         if isinstance(scope, ScopeType):
@@ -35,6 +36,19 @@ class NotesScopeService:
         if not workspace_id:
             raise ValueError("workspace_id is required for workspace note operations.")
         return workspace_id
+
+    def _enforce_policy(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=action_id)
+
+    def _note_action_id(self, scope: ScopeType, action: str) -> str:
+        suffix = {
+            ScopeType.LOCAL_NOTE: "local",
+            ScopeType.SERVER_NOTE: "server",
+            ScopeType.WORKSPACE: "workspace",
+        }[scope]
+        return f"notes.{action}.{suffix}"
 
     @staticmethod
     def _normalize_keywords(keywords: Optional[Sequence[str]]) -> list[str]:
@@ -110,6 +124,12 @@ class NotesScopeService:
         keywords: Optional[Sequence[str]] = None,
     ) -> Any:
         normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(
+            self._note_action_id(
+                normalized_scope,
+                "update" if note_id else "create",
+            )
+        )
         if normalized_scope == ScopeType.LOCAL_NOTE:
             local_user_id = self._require_user_id(user_id)
             if note_id:
@@ -182,6 +202,7 @@ class NotesScopeService:
         workspace_id: Optional[str] = None,
     ) -> Any:
         normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "delete"))
         if normalized_scope == ScopeType.LOCAL_NOTE:
             return self.local_notes_service.soft_delete_note(
                 self._require_user_id(user_id),
@@ -208,6 +229,7 @@ class NotesScopeService:
         workspace_notes: Optional[Sequence[dict[str, Any]]] = None,
     ) -> Any:
         normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "list"))
         if normalized_scope == ScopeType.LOCAL_NOTE:
             return self.local_notes_service.search_notes(
                 self._require_user_id(user_id),
@@ -226,6 +248,57 @@ class NotesScopeService:
             notes=workspace_notes,
         )
 
+    async def list_notes(
+        self,
+        *,
+        scope: ScopeType | str,
+        limit: int = 100,
+        offset: int = 0,
+        user_id: Optional[str] = None,
+    ) -> Any:
+        normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "list"))
+        if normalized_scope == ScopeType.LOCAL_NOTE:
+            return self.local_notes_service.list_notes(
+                self._require_user_id(user_id),
+                limit=limit,
+            )
+        if normalized_scope == ScopeType.SERVER_NOTE:
+            return await self.server_service.list_server_notes(limit=limit, offset=offset)
+        raise ValueError("Workspace notes require a selected workspace context.")
+
+    async def list_workspaces(self) -> Any:
+        self._enforce_policy("notes.workspace.list.server")
+        return await self.server_service.list_workspaces()
+
+    async def get_note_detail(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        user_id: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        workspace_notes: Optional[Sequence[dict[str, Any]]] = None,
+    ) -> Any:
+        normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "detail"))
+        if normalized_scope == ScopeType.LOCAL_NOTE:
+            return self.local_notes_service.get_note_by_id(
+                self._require_user_id(user_id),
+                note_id,
+            )
+        if normalized_scope == ScopeType.SERVER_NOTE:
+            return await self.server_service.get_server_note(str(note_id))
+
+        resolved_workspace_id = self._require_workspace_id(workspace_id)
+        notes = list(workspace_notes) if workspace_notes is not None else await self.server_service.list_workspace_notes(
+            resolved_workspace_id
+        )
+        for note in notes:
+            if str(note.get("id")) == str(note_id):
+                return note
+        return None
+
     async def load_workspace_context(
         self,
         *,
@@ -233,6 +306,7 @@ class NotesScopeService:
         workspace_id: Optional[str],
     ) -> Any:
         normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy("notes.workspace.detail.server")
         if normalized_scope != ScopeType.WORKSPACE:
             raise ValueError("Workspace context can only be loaded for workspace scope.")
         return await self.server_service.load_workspace_context(

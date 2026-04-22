@@ -17,17 +17,17 @@
 
 /* Sidebar header with improved visibility */
 .sidebar-header {
-    height: 4;
-    padding: 1;
-    background: $primary 20%;
-    border-bottom: thick $primary;
+    height: 3;
+    padding: 0 1;
+    background: $surface;
+    border-bottom: solid $surface-lighten-1;
     align: center middle;
 }
 
 .sidebar-title {
     text-style: bold;
     color: $text;
-    text-align: center;
+    text-align: left;
 }
 
 /* Preset bar for quick configuration */
@@ -60,15 +60,15 @@
 
 /* Search container with better visibility */
 .search-container {
-    height: 4;
-    padding: 1;
-    background: $surface 10%;
-    border-bottom: solid $surface-lighten-1;
+    height: 3;
+    padding: 0 1;
+    background: transparent;
+    border-bottom: none;
 }
 
 .search-input {
     width: 100%;
-    border: round $accent;
+    border: round $surface-lighten-1;
     background: $background;
 }
 
@@ -135,24 +135,23 @@
 
 /* Enhanced setting groups with clear visual hierarchy */
 .setting-group {
-    margin: 1 0;
+    margin: 2 0;
     padding: 1;
-    /* border-radius: 2; - not supported in TCSS, use border: round instead */
 }
 
 .setting-group-essential {
-    border-left: thick $success;
-    background: $success 15%;
+    border-left: solid $success;
+    background: transparent;
 }
 
 .setting-group-common {
-    border-left: thick $primary;
-    background: $primary 15%;
+    border-left: solid $primary;
+    background: transparent;
 }
 
 .setting-group-advanced {
-    border-left: thick $warning;
-    background: $warning 15%;
+    border-left: solid $warning;
+    background: transparent;
 }
 
 /* Priority Indicators */
@@ -207,12 +206,12 @@
 /* Generic .sidebar (used by #chat-left-sidebar and potentially others) */
 .sidebar {
     dock: left;
-    width: 35%; /* Set to 35% of screen width */
-    min-width: 25; /* Minimum width to prevent it becoming unusable */
-    max-width: 100; /* Maximum width (optional) */
+    width: 25%; /* Reduced from 35% for better chat area space */
+    min-width: 35; /* Reduced from 45 */
+    max-width: 80; /* Maximum width (optional) */
     background: $boost;
-    padding: 1 2;
-    border-right: thick $background-darken-1;
+    padding: 0 1;
+    border-right: solid $surface;
     height: 100%;
     overflow-y: auto;
     overflow-x: hidden;
@@ -252,7 +251,7 @@
 }
 
 /* Common sidebar elements */
-.sidebar-title { text-style: bold underline; margin-bottom: 1; width: 100%; text-align: center; }
+.sidebar-title { text-style: bold; margin-bottom: 1; width: 100%; text-align: left; }
 
 /* Sidebar header with resize controls */
 .sidebar-header-with-resize {
@@ -443,7 +442,7 @@
 
 /* Keyboard navigation indicators */
 .sidebar *:focus {
-    outline: solid $accent;
+    outline: heavy $accent;
 }
 
 /* Search mode indicator */
@@ -453,15 +452,15 @@
 
 /* Focus states for accessibility */
 .sidebar Button:focus {
-    outline: solid $accent;
+    outline: heavy $accent;
 }
 
 .sidebar Select:focus {
-    outline: solid $accent;
+    outline: heavy $accent;
 }
 
 .sidebar Input:focus {
-    outline: solid $accent;
+    outline: heavy $accent;
 }
 
 /* ----------------------------------------
@@ -480,6 +479,7 @@
     margin-bottom: 0;
     text-style: bold;
     color: $text-muted;
+    text-align: left;
 }
 
 .setting-input {
@@ -557,11 +557,12 @@
 
 /* TabbedContent customization */
 TabbedContent {
-    height: 100%;
+    height: auto;
 }
 
 TabbedContent > TabPane {
     padding: 0;
+    height: auto;
 }
 
 TabbedContent Tabs {
@@ -573,9 +574,15 @@ TabbedContent Tab {
     padding: 0 1;
 }
 
-TabbedContent Tab.active {
+TabbedContent Tab.-active {
     background: $primary 20%;
     text-style: bold;
+}
+
+/* Hide the tab underline indicator */
+TabbedContent Underline {
+    height: 0;
+    display: none;
 }
 
 /* Search results styling */

@@ -1034,7 +1034,7 @@ Select:focus,
 TextArea:focus,
 Button:focus,
 Checkbox:focus {
-    outline: solid $accent;
+    outline: heavy $accent;
 
 }
 
@@ -1044,7 +1044,7 @@ Select:focus,
 TextArea:focus,
 Button:focus,
 Checkbox:focus {
-    outline: solid $accent;
+    outline: heavy $accent;
 
 }
 
@@ -1347,6 +1347,12 @@ Select:hover {
     align: left middle;
 }
 
+.progress-action-row {
+    layout: horizontal;
+    margin-bottom: 1;
+    align: right middle;
+}
+
 .progress-label {
     width: 12;
     text-align: right;
@@ -1367,7 +1373,6 @@ Select:hover {
 }
 
 .pause-button {
-    margin-left: 2;
     min-width: 10;
 }
 

@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
+from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
 class FakeLocalStudyService:
@@ -183,6 +184,28 @@ class PagedFakeServerStudyService:
         return {"id": "deck-created", "name": name, "description": description, "workspace_id": workspace_id}
 
 
+class FakePolicyEnforcer:
+    def __init__(self, denied_reason: str | None = None):
+        self.denied_reason = denied_reason
+        self.calls = []
+
+    @classmethod
+    def deny(cls, reason_code: str) -> "FakePolicyEnforcer":
+        return cls(denied_reason=reason_code)
+
+    def require_allowed(self, *, action_id: str) -> None:
+        self.calls.append(action_id)
+        if self.denied_reason is None:
+            return
+        raise PolicyDeniedError(
+            action_id=action_id,
+            reason_code=self.denied_reason,
+            user_message=f"{action_id} denied",
+            effective_source="local",
+            authority_owner="server",
+        )
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_deck_list_by_backend():
     scope = StudyScopeService(
@@ -196,6 +219,62 @@ async def test_scope_service_routes_deck_list_by_backend():
     assert local_decks[0]["record_id"] == "local:study_deck:deck-local-1"
     assert server_decks[0]["record_id"] == "server:study_deck:7"
     assert server_decks[0]["scheduler_type"] == "fsrs"
+
+
+@pytest.mark.asyncio
+async def test_study_scope_service_denies_server_deck_create_when_runtime_policy_blocks_it():
+    policy_enforcer = FakePolicyEnforcer.deny("wrong_source")
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=FakeServerStudyService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await scope.create_deck(
+            mode="server",
+            scope_type="global",
+            name="Remote deck",
+            description="Body",
+        )
+
+    assert exc.value.reason_code == "wrong_source"
+    assert policy_enforcer.calls == ["study.deck.create.server"]
+
+
+@pytest.mark.asyncio
+async def test_study_scope_service_keeps_normalizing_server_decks_after_policy_passes():
+    policy_enforcer = FakePolicyEnforcer()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=FakeServerStudyService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    server_decks = await scope.list_decks(mode="server")
+
+    assert server_decks[0]["record_id"] == "server:study_deck:7"
+    assert policy_enforcer.calls == ["study.deck.list.server"]
+
+
+@pytest.mark.asyncio
+async def test_study_scope_service_routes_flashcard_mutations_through_deck_policy_proxy():
+    policy_enforcer = FakePolicyEnforcer()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=FakeServerStudyService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    created = await scope.create_flashcard(
+        mode="local",
+        deck_id="deck-local-1",
+        front="Question",
+        back="Answer",
+    )
+
+    assert created["record_id"] == "local:study_flashcard:card-local-1"
+    assert policy_enforcer.calls == ["study.deck.update.local"]
 
 
 @pytest.mark.asyncio

@@ -126,7 +126,7 @@ class NotesSidebarLeft(VerticalScroll):
         await list_view.clear()
 
         normalized_items = list(items)
-        title_prefix = str(title_label.renderable).split(" (", 1)[0]
+        title_prefix = str(title_label.render()).split(" (", 1)[0]
         title_label.update(f"{title_prefix} ({len(normalized_items)})")
 
         if not normalized_items:

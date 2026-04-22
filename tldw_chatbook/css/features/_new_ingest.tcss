@@ -973,7 +973,7 @@ Button:focus,
 Input:focus,
 RadioButton:focus {
     box-shadow: 0 0 0 2px $accent;
-    outline: 2px solid transparent;
+    outline: solid transparent;
 }
 
 /* Scrollbar styling for webkit browsers */

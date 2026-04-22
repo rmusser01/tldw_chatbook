@@ -10,7 +10,9 @@ from textual.app import App
 from textual.containers import Container
 from textual.widgets import Button, Static
 
+from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
 from tldw_chatbook.UI.Study_Modules.flashcards_handler import StudyFlashcardsController
+from tldw_chatbook.UI.Study_Modules.quizzes_handler import StudyQuizzesController
 from tldw_chatbook.UI.Study_Window import StudyWindow
 from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Screens.notes_scope_models import WorkspaceSubview
@@ -45,6 +47,10 @@ class StudyScreenMountTestApp(App[None]):
         await self.push_screen(self.screen_under_test)
 
 
+def _text(widget) -> str:
+    return str(widget.render())
+
+
 def test_flashcards_controller_handle_scope_changed_resets_local_state():
     window = SimpleNamespace(app_instance=SimpleNamespace(), runtime_backend="server")
     controller = StudyFlashcardsController(window)
@@ -65,6 +71,75 @@ def test_flashcards_controller_handle_scope_changed_resets_local_state():
     assert controller.selected_deck_record is None
     assert controller.selected_card_record is None
     assert controller.has_decks is False
+
+
+@pytest.mark.asyncio
+async def test_flashcards_controller_preflights_create_deck_before_scope_service_dispatch():
+    policy_decision = PolicyDecision(
+        allowed=False,
+        reason_code="authority_denied",
+        user_message="Blocked by runtime policy.",
+        effective_source="server",
+        authority_owner="runtime_policy",
+    )
+    app_instance = SimpleNamespace(
+        require_ui_action_allowed=Mock(return_value=policy_decision),
+        get_authoritative_runtime_source=Mock(return_value="server"),
+        notify=Mock(),
+    )
+    service = Mock(create_deck=AsyncMock())
+    window = SimpleNamespace(
+        app_instance=app_instance,
+        notify=Mock(),
+        query_one=Mock(return_value=SimpleNamespace(value="Deck Name")),
+    )
+    controller = StudyFlashcardsController(window)
+    controller._scope_service_cache = service
+    controller._scope_is_available = Mock(return_value=True)  # type: ignore[method-assign]
+
+    await controller.create_deck()
+
+    app_instance.require_ui_action_allowed.assert_called_once_with(
+        action_id="study.deck.create.server",
+        scope_type="global",
+    )
+    service.create_deck.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_quizzes_controller_preflights_start_attempt_before_scope_service_dispatch():
+    policy_decision = PolicyDecision(
+        allowed=False,
+        reason_code="authority_denied",
+        user_message="Blocked by runtime policy.",
+        effective_source="server",
+        authority_owner="runtime_policy",
+    )
+    app_instance = SimpleNamespace(
+        require_ui_action_allowed=Mock(return_value=policy_decision),
+        get_authoritative_runtime_source=Mock(return_value="server"),
+        notify=Mock(),
+    )
+    service = Mock(start_attempt=AsyncMock())
+    select_widget = SimpleNamespace(value="quiz-1")
+    answer_widget = SimpleNamespace(value="")
+    window = SimpleNamespace(
+        app_instance=app_instance,
+        notify=Mock(),
+        query_one=Mock(side_effect=lambda selector, *args, **kwargs: select_widget if selector == "#quiz-select" else answer_widget),
+    )
+    controller = StudyQuizzesController(window)
+    controller._scope_service_cache = service
+    controller._scope_is_available = Mock(return_value=True)  # type: ignore[method-assign]
+    controller.has_quizzes = True
+
+    await controller.start_attempt()
+
+    app_instance.require_ui_action_allowed.assert_called_once_with(
+        action_id="quiz.attempt.create.server",
+        scope_type="global",
+    )
+    service.start_attempt.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -97,6 +172,20 @@ async def test_pending_scope_context_overrides_restored_state_for_activation():
     assert screen.current_scope.workspace_id == "workspace-9"
     assert screen.current_scope.workspace_name == "Biology"
     assert app_instance.pending_study_scope_context is None
+
+
+def test_study_screen_prefers_authoritative_runtime_source_over_saved_screen_mode():
+    app_instance = SimpleNamespace(
+        runtime_policy=SimpleNamespace(state=RuntimeSourceState(active_source="server")),
+        current_runtime_backend="local",
+        runtime_backend="local",
+        notify=Mock(),
+        get_authoritative_runtime_source=lambda: "server",
+    )
+
+    screen = StudyScreen(app_instance=app_instance)
+
+    assert screen._runtime_backend() == "server"
 
 
 @pytest.mark.asyncio
@@ -457,10 +546,10 @@ async def test_study_window_renders_workspace_scope_banner_and_exit_controls():
         switch_button = study_window.query_one("#study-switch-global-button", Button)
 
         assert banner.display is not False
-        assert str(scope_title.renderable) == "Workspace Study"
-        assert "Biology" in str(workspace_name.renderable)
-        assert "server" in str(backend_status.renderable).lower()
-        assert "available" in str(backend_status.renderable).lower()
+        assert _text(scope_title) == "Workspace Study"
+        assert "Biology" in _text(workspace_name)
+        assert "server" in _text(backend_status).lower()
+        assert "available" in _text(backend_status).lower()
         assert str(back_button.label) == "Back to Workspace"
         assert str(switch_button.label) == "Switch To Global Study"
 

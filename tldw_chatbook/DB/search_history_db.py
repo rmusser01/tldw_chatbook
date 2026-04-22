@@ -303,14 +303,19 @@ class SearchHistoryDB:
                 history = []
                 for row in cursor:
                     search_params = json.loads(row['search_params']) if row['search_params'] else {}
+                    execution_time_ms = row['execution_time_ms'] or 0
+                    result_count = row['result_count'] or 0
                     
                     history.append({
                         'id': row['id'],
                         'query': row['query'],
                         'search_type': row['search_type'],
                         'timestamp': row['timestamp'],
-                        'execution_time_ms': row['execution_time_ms'],
-                        'result_count': row['result_count'],
+                        'execution_time_ms': execution_time_ms,
+                        'result_count': result_count,
+                        # Compatibility aliases used by legacy Search/RAG UI code.
+                        'results_count': result_count,
+                        'search_time': execution_time_ms / 1000.0,
                         'success': bool(row['success']),
                         'error_message': row['error_message'],
                         'search_params': search_params
@@ -346,6 +351,58 @@ class SearchHistoryDB:
             
             logger.error(f"Error getting search history: {e}")
             return []
+
+    def add_search(
+        self,
+        query: str,
+        search_type: str,
+        results_count: int = 0,
+        search_time: float = 0.0,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> int:
+        """
+        Compatibility wrapper for older callers that record a search before results render.
+
+        Args:
+            query: Search query string
+            search_type: Search mode used by the UI
+            results_count: Initial result count, if known
+            search_time: Execution time in seconds
+            filters: Optional source filters
+
+        Returns:
+            The recorded search row id, or -1 on error
+        """
+        search_id = self.record_search(
+            query=query,
+            search_type=search_type,
+            results=[],
+            execution_time_ms=max(0, int(search_time * 1000)),
+            search_params={"filters": filters or {}},
+        )
+
+        if search_id != -1 and results_count:
+            self.update_search_results_count(search_id, results_count)
+
+        return search_id
+
+    def update_search_results_count(self, search_id: int, count: int) -> None:
+        """
+        Update the result count for an existing search history entry.
+
+        Args:
+            search_id: Search history row id
+            count: Final result count
+        """
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE search_history SET result_count = ? WHERE id = ?",
+                    (count, search_id),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Error updating search results count: {e}")
             
     def get_search_results(self, search_id: int, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """

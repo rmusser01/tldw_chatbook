@@ -479,6 +479,13 @@ class MediaViewerPanel(Container):
                         with Collapsible(title="Actions", collapsed=True):
                             with Horizontal(classes="metadata-buttons"):
                                 yield Button("Edit", id="edit-button", variant="primary")
+                                yield Button(
+                                    "Save for Later",
+                                    id="read-it-later-button",
+                                    variant="default",
+                                    classes="hidden",
+                                    disabled=True,
+                                )
                                 yield Button("Delete", id="delete-button", variant="error")
                     
                     # Edit mode (hidden by default)
@@ -645,6 +652,7 @@ class MediaViewerPanel(Container):
     def watch_media_data(self, media_data: Optional[Dict[str, Any]]) -> None:
         """Update display when media data changes."""
         if media_data:
+            self._update_read_it_later_button()
             self.update_metadata_display()
             self.update_content_display()
             self.update_analysis_display()
@@ -804,8 +812,28 @@ class MediaViewerPanel(Container):
             # Clear search input
             search_input = self.query_one("#content-search-input", Input)
             search_input.value = ""
+            self._update_read_it_later_button()
         except:
             pass
+
+    def _update_read_it_later_button(self) -> None:
+        """Sync the save/remove affordance with the currently loaded record."""
+        try:
+            button = self.query_one("#read-it-later-button", Button)
+        except Exception:
+            return
+
+        media_data = self.media_data or {}
+        supports_toggle = bool(media_data.get("supports_read_it_later"))
+        is_saved = bool(media_data.get("is_read_it_later"))
+
+        button.disabled = not supports_toggle
+        if supports_toggle:
+            button.remove_class("hidden")
+            button.label = "Remove from Read-it-later" if is_saved else "Save for Later"
+        else:
+            button.add_class("hidden")
+            button.label = "Save for Later"
     
     def _format_content_for_reading(self, content: str) -> str:
         """Format content for better readability."""
@@ -906,6 +934,22 @@ class MediaViewerPanel(Container):
                 record_id=self.media_data.get("id"),
                 backing_media_id=self.media_data.get("backing_media_id"),
             ))
+
+    @on(Button.Pressed, "#read-it-later-button")
+    def handle_read_it_later_button(self) -> None:
+        """Toggle the current record's read-it-later state."""
+        if not self.media_data or not self.media_data.get("supports_read_it_later"):
+            return
+
+        from ...Event_Handlers.media_events import MediaReadItLaterToggleEvent
+
+        self.post_message(
+            MediaReadItLaterToggleEvent(
+                media_id=self.media_data.get("source_id", self.media_data.get("id")),
+                record_id=self.media_data.get("id"),
+                save_for_later=not bool(self.media_data.get("is_read_it_later")),
+            )
+        )
     
     @on(Input.Changed, "#content-search-input")
     def handle_content_search(self, event: Input.Changed) -> None:
@@ -1009,6 +1053,7 @@ class MediaViewerPanel(Container):
         self.media_data = media_data
         self.edit_mode = False
         self.clear_search()
+        self._update_read_it_later_button()
         # Clear search input when loading new media
         try:
             search_input = self.query_one("#content-search-input", Input)

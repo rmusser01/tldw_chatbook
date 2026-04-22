@@ -17,9 +17,10 @@ class RAGAdminBackend(str, Enum):
 class RAGAdminScopeService:
     """Route retrieval-admin actions to local or server backends and normalize outputs."""
 
-    def __init__(self, *, local_service: Any, server_service: Any):
+    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
         self.local_service = local_service
         self.server_service = server_service
+        self.policy_enforcer = policy_enforcer
 
     def _normalize_mode(self, mode: RAGAdminBackend | str | None) -> RAGAdminBackend:
         if mode is None:
@@ -45,6 +46,19 @@ class RAGAdminScopeService:
             return await value
         return value
 
+    def _enforce_policy(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=action_id)
+
+    @staticmethod
+    def _template_action_id(mode: RAGAdminBackend, action: str) -> str:
+        return f"rag.template.{action}.{mode.value}"
+
+    @staticmethod
+    def _admin_action_id(mode: RAGAdminBackend, action: str) -> str:
+        return f"rag.admin.{action}.{mode.value}"
+
     async def list_templates(
         self,
         *,
@@ -55,6 +69,7 @@ class RAGAdminScopeService:
         user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._template_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         records = await self._maybe_await(
             service.list_templates(
@@ -76,6 +91,7 @@ class RAGAdminScopeService:
         template_name: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._template_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(service.get_template(template_name))
         return normalize_template_record(normalized_mode.value, record)
@@ -91,6 +107,7 @@ class RAGAdminScopeService:
         user_id: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._template_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.create_template(
@@ -113,6 +130,7 @@ class RAGAdminScopeService:
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._template_action_id(normalized_mode, "update"))
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.update_template(
@@ -131,7 +149,9 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
         hard_delete: bool = False,
     ) -> None:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._template_action_id(normalized_mode, "delete"))
+        service = self._service_for_mode(normalized_mode)
         await self._maybe_await(service.delete_template(template_name, hard_delete=hard_delete))
 
     async def get_template_diagnostics(
@@ -140,6 +160,7 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._admin_action_id(normalized_mode, "observe"))
         service = self._service_for_mode(normalized_mode)
         diagnostics = await self._maybe_await(service.get_template_diagnostics())
         payload = dict(diagnostics or {})
@@ -156,6 +177,7 @@ class RAGAdminScopeService:
         include_metadata: bool = False,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._admin_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         method = getattr(service, "apply_template", None)
         if not callable(method):
@@ -175,6 +197,7 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._admin_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         records = await self._maybe_await(service.list_collections())
         return [
@@ -189,6 +212,7 @@ class RAGAdminScopeService:
         collection_name: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._admin_action_id(normalized_mode, "observe"))
         service = self._service_for_mode(normalized_mode)
         detail = await self._maybe_await(service.get_collection_detail(collection_name))
         return normalize_collection_record(normalized_mode.value, detail)
@@ -199,5 +223,7 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
         collection_name: str,
     ) -> None:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._admin_action_id(normalized_mode, "configure"))
+        service = self._service_for_mode(normalized_mode)
         await self._maybe_await(service.delete_collection(collection_name))

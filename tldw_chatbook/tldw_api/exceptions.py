@@ -15,7 +15,9 @@ class APIConnectionError(TLDWAPIError):
 
 class APIRequestError(TLDWAPIError):
     """Raised for errors in constructing or sending the request (e.g., bad data)."""
-    pass
+    def __init__(self, message: str, response_data: dict | None = None):
+        super().__init__(message)
+        self.response_data = response_data or {}
 
 class APIResponseError(TLDWAPIError):
     """Raised for non-2xx responses or issues parsing the response."""
@@ -26,7 +28,9 @@ class APIResponseError(TLDWAPIError):
 
 class AuthenticationError(TLDWAPIError):
     """Raised for authentication failures."""
-    pass
+    def __init__(self, message: str, response_data: dict | None = None):
+        super().__init__(message)
+        self.response_data = response_data or {}
 
 #
 # End of tldw_chatbook/tldw_api/exceptions.py

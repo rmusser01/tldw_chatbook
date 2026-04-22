@@ -41,6 +41,20 @@ class FakeClient:
         self.calls.append(("list_ingestion_sources",))
         return [{"id": 7, "source_type": "archive_snapshot", "sink_type": "media", "policy": "canonical", "enabled": True}]
 
+    async def create_ingestion_source(self, request_data):
+        self.calls.append(("create_ingestion_source", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "id": 8,
+            "user_id": 1,
+            "source_type": "git_repository",
+            "sink_type": "media",
+            "policy": "canonical",
+            "enabled": True,
+            "schedule_enabled": False,
+            "schedule_config": {},
+            "config": {"repo_url": "https://example.com/repo.git"},
+        }
+
     async def get_ingestion_source(self, source_id):
         self.calls.append(("get_ingestion_source", source_id))
         return {"id": source_id, "source_type": "archive_snapshot", "sink_type": "media", "policy": "canonical", "enabled": True}
@@ -162,6 +176,12 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
     service = ServerMediaReadingService(client=client)
 
     listed = await service.list_ingestion_sources()
+    created = await service.create_ingestion_source(
+        source_type="git_repository",
+        sink_type="media",
+        policy="canonical",
+        config={"repo_url": "https://example.com/repo.git"},
+    )
     detail = await service.get_ingestion_source(7)
     patched = await service.patch_ingestion_source(7, enabled=False, policy="canonical")
     items = await service.list_ingestion_source_items(7)
@@ -169,6 +189,7 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
     uploaded = await service.upload_ingestion_source_archive(7, "/tmp/archive.zip")
 
     assert listed[0]["id"] == 7
+    assert created["id"] == 8
     assert detail["id"] == 7
     assert patched["enabled"] is False
     assert items[0]["source_id"] == 7
@@ -176,6 +197,18 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
     assert uploaded["job_id"] == 124
     assert client.calls == [
         ("list_ingestion_sources",),
+        (
+            "create_ingestion_source",
+            {
+                "source_type": "git_repository",
+                "sink_type": "media",
+                "policy": "canonical",
+                "enabled": True,
+                "schedule_enabled": False,
+                "schedule": {},
+                "config": {"repo_url": "https://example.com/repo.git"},
+            },
+        ),
         ("get_ingestion_source", 7),
         ("patch_ingestion_source", 7, {"policy": "canonical", "enabled": False}),
         ("list_ingestion_source_items", 7),
@@ -219,7 +252,7 @@ def test_server_service_from_config_uses_shared_api_client_builder(monkeypatch):
     sentinel_client = Mock()
     build_client = Mock(return_value=sentinel_client)
     monkeypatch.setattr(
-        "tldw_chatbook.Media.server_media_reading_service.build_tldw_api_client_from_config",
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         build_client,
     )
 

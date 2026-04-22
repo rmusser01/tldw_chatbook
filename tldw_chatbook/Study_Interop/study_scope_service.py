@@ -24,9 +24,10 @@ class StudyScopeService:
 
     _ALLOWED_SCOPE_TYPES = {"global", "workspace"}
 
-    def __init__(self, *, local_service: Any, server_service: Any):
+    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
         self.local_service = local_service
         self.server_service = server_service
+        self.policy_enforcer = policy_enforcer
 
     def _normalize_mode(self, mode: StudyBackend | str | None) -> StudyBackend:
         if mode is None:
@@ -51,6 +52,22 @@ class StudyScopeService:
         if inspect.isawaitable(value):
             return await value
         return value
+
+    def _enforce_policy(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=action_id)
+
+    @staticmethod
+    def _deck_action_id(mode: StudyBackend, action: str) -> str:
+        return f"study.deck.{action}.{mode.value}"
+
+    @staticmethod
+    def _flashcard_action_id(mode: StudyBackend, *, mutation: bool) -> str:
+        # The audited registry currently exposes deck-level study actions only, so
+        # flashcard and review operations proxy through the owning deck surface.
+        action = "update" if mutation else "detail"
+        return f"study.deck.{action}.{mode.value}"
 
     @staticmethod
     def _coerce_delete_result(result: Any) -> bool:
@@ -113,6 +130,7 @@ class StudyScopeService:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._deck_action_id(normalized_mode, "list"))
         normalized_scope_type, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
         service = self._service_for_mode(normalized_mode)
 
@@ -157,6 +175,7 @@ class StudyScopeService:
         scheduler_type: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._deck_action_id(normalized_mode, "create"))
         normalized_scope_type, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
         if normalized_mode == StudyBackend.LOCAL and normalized_scope_type == "workspace":
             raise ValueError("Workspace Study is unavailable in local mode")
@@ -180,6 +199,7 @@ class StudyScopeService:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=False))
         service = self._service_for_mode(normalized_mode)
         raw_records = await self._maybe_await(
             service.list_flashcards(deck_id=deck_id, q=q, limit=limit, offset=offset)
@@ -201,6 +221,7 @@ class StudyScopeService:
         extra: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=True))
         record = await self._maybe_await(
             self._service_for_mode(normalized_mode).create_flashcard(
                 deck_id=deck_id,
@@ -222,6 +243,7 @@ class StudyScopeService:
         expected_version: int | None = None,
     ) -> dict[str, Any] | None:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=True))
         record = await self._maybe_await(
             self._service_for_mode(normalized_mode).move_flashcard(
                 card_id,
@@ -242,6 +264,7 @@ class StudyScopeService:
         hard_delete: bool = False,
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=True))
         if normalized_mode == StudyBackend.SERVER:
             if expected_version is None:
                 raise ValueError("expected_version is required for server flashcard deletion.")
@@ -267,6 +290,7 @@ class StudyScopeService:
         hard_delete: bool = False,
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._deck_action_id(normalized_mode, "delete"))
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).delete_deck(
                 deck_id,
@@ -285,6 +309,7 @@ class StudyScopeService:
         workspace_id: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=False))
         normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
         if normalized_mode == StudyBackend.LOCAL and normalized_scope_type == "workspace":
             raise ValueError("Workspace Study is unavailable in local mode")
@@ -311,6 +336,7 @@ class StudyScopeService:
         workspace_id: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=True))
         normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
         if normalized_mode == StudyBackend.LOCAL and normalized_scope_type == "workspace":
             raise ValueError("Workspace Study is unavailable in local mode")
@@ -335,6 +361,7 @@ class StudyScopeService:
         workspace_id: str | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=True))
         normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
         if normalized_mode == StudyBackend.LOCAL and normalized_scope_type == "workspace":
             raise ValueError("Workspace Study is unavailable in local mode")

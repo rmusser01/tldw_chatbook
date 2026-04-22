@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping, Optional, Sequence
 
-from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
+from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..tldw_api import (
     NoteCreateRequest,
     NoteUpdateRequest,
@@ -28,17 +28,39 @@ _UNSET = object()
 class ServerNotesWorkspaceService:
     """Thin service around server-backed notes and workspace resources."""
 
-    def __init__(self, client: Optional[TLDWAPIClient]):
+    def __init__(self, client: Optional[TLDWAPIClient], policy_enforcer: Any = None):
         self.client = client
+        self.policy_enforcer = policy_enforcer
 
     @classmethod
-    def from_config(cls, app_config: Mapping[str, Any]) -> "ServerNotesWorkspaceService":
-        return cls(client=build_tldw_api_client_from_config(app_config))
+    def from_config(
+        cls,
+        app_config: Mapping[str, Any],
+        *,
+        policy_enforcer: Any = None,
+    ) -> "ServerNotesWorkspaceService":
+        return cls(
+            client=build_runtime_api_client_from_config(app_config),
+            policy_enforcer=policy_enforcer,
+        )
 
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:
             raise ValueError("TLDW API client is required for server note and workspace operations.")
         return self.client
+
+    def _enforce_policy(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=action_id)
+
+    @staticmethod
+    def _note_action_id(action: str, source_suffix: str) -> str:
+        return f"notes.{action}.{source_suffix}"
+
+    @staticmethod
+    def _workspace_action_id(action: str) -> str:
+        return f"notes.workspace.{action}.server"
 
     def _coerce_items(self, payload: Any) -> list[dict[str, Any]]:
         if isinstance(payload, list):
@@ -350,6 +372,7 @@ class ServerNotesWorkspaceService:
         )
 
     async def list_server_notes(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        self._enforce_policy(self._note_action_id("list", "server"))
         client = self._require_client()
         response = await client.list_server_notes(limit=limit, offset=offset, include_keywords=True)
         items = [self.normalize_server_note(item) for item in self._coerce_items(response)]
@@ -364,6 +387,7 @@ class ServerNotesWorkspaceService:
         limit: int = 10,
         offset: int = 0,
     ) -> dict[str, Any]:
+        self._enforce_policy(self._note_action_id("list", "server"))
         client = self._require_client()
         response = await client.search_server_notes(
             query=query,
@@ -378,6 +402,7 @@ class ServerNotesWorkspaceService:
         }
 
     async def get_server_note(self, note_id: str) -> dict[str, Any]:
+        self._enforce_policy(self._note_action_id("detail", "server"))
         client = self._require_client()
         response = await client.get_server_note(note_id)
         return self.normalize_server_note(self._coerce_resource(response, "note", "item"))
@@ -391,6 +416,12 @@ class ServerNotesWorkspaceService:
         keywords: Any = _UNSET,
         version: Optional[int] = None,
     ) -> dict[str, Any]:
+        self._enforce_policy(
+            self._note_action_id(
+                "update" if note_id else "create",
+                "server",
+            )
+        )
         client = self._require_client()
         if note_id:
             if version is None:
@@ -416,10 +447,12 @@ class ServerNotesWorkspaceService:
         return self.normalize_server_note(self._coerce_resource(response, "note", "item"))
 
     async def delete_server_note(self, note_id: str, version: int) -> dict[str, Any]:
+        self._enforce_policy(self._note_action_id("delete", "server"))
         client = self._require_client()
         return await client.delete_server_note(note_id, expected_version=version)
 
     async def list_workspaces(self) -> list[dict[str, Any]]:
+        self._enforce_policy(self._workspace_action_id("list"))
         client = self._require_client()
         response = await client.list_workspaces()
         return [self.normalize_workspace(item) for item in self._coerce_items(response)]
@@ -440,6 +473,9 @@ class ServerNotesWorkspaceService:
         audio_voice: Any = _UNSET,
         audio_speed: Any = _UNSET,
     ) -> dict[str, Any]:
+        self._enforce_policy(
+            self._workspace_action_id("update" if version is not None else "create")
+        )
         client = self._require_client()
         if version is None:
             request = self.build_workspace_create_payload(
@@ -466,6 +502,7 @@ class ServerNotesWorkspaceService:
         return self.normalize_workspace(self._coerce_resource(response, "workspace", "item"))
 
     async def delete_workspace(self, workspace_id: str) -> dict[str, Any]:
+        self._enforce_policy(self._workspace_action_id("delete"))
         client = self._require_client()
         return await client.delete_workspace(workspace_id)
 
@@ -502,10 +539,12 @@ class ServerNotesWorkspaceService:
         query: str,
         notes: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> list[dict[str, Any]]:
+        self._enforce_policy(self._note_action_id("list", "workspace"))
         working_notes = list(notes) if notes is not None else (await self.list_workspace_notes(workspace_id))
         return self.filter_workspace_notes(working_notes, workspace_id=workspace_id, query=query)
 
     async def list_workspace_notes(self, workspace_id: str) -> list[dict[str, Any]]:
+        self._enforce_policy(self._note_action_id("list", "workspace"))
         client = self._require_client()
         response = await client.list_workspace_notes(workspace_id)
         return [self.normalize_workspace_note(item) for item in self._coerce_items(response)]
@@ -520,6 +559,12 @@ class ServerNotesWorkspaceService:
         keywords: Any = _UNSET,
         version: Optional[int] = None,
     ) -> dict[str, Any]:
+        self._enforce_policy(
+            self._note_action_id(
+                "update" if note_id is not None else "create",
+                "workspace",
+            )
+        )
         client = self._require_client()
         if note_id is None:
             request = self.build_workspace_note_create_payload(
@@ -546,10 +591,12 @@ class ServerNotesWorkspaceService:
         note_id: int,
         version: int,
     ) -> dict[str, Any]:
+        self._enforce_policy(self._note_action_id("delete", "workspace"))
         client = self._require_client()
         return await client.delete_workspace_note(workspace_id, note_id)
 
     async def list_workspace_sources(self, workspace_id: str) -> list[dict[str, Any]]:
+        self._enforce_policy(self._workspace_action_id("detail"))
         client = self._require_client()
         response = await client.list_workspace_sources(workspace_id)
         return [self.normalize_workspace_source(item) for item in self._coerce_items(response)]
@@ -567,6 +614,7 @@ class ServerNotesWorkspaceService:
         position: Any = _UNSET,
         selected: Any = _UNSET,
     ) -> dict[str, Any]:
+        self._enforce_policy(self._workspace_action_id("update"))
         client = self._require_client()
         if version is None:
             request = self.build_workspace_source_create_payload(
@@ -592,10 +640,12 @@ class ServerNotesWorkspaceService:
         return self.normalize_workspace_source(self._coerce_resource(response, "source", "item"))
 
     async def delete_workspace_source(self, workspace_id: str, source_id: str) -> dict[str, Any]:
+        self._enforce_policy(self._workspace_action_id("update"))
         client = self._require_client()
         return await client.delete_workspace_source(workspace_id, source_id)
 
     async def list_workspace_artifacts(self, workspace_id: str) -> list[dict[str, Any]]:
+        self._enforce_policy(self._workspace_action_id("detail"))
         client = self._require_client()
         response = await client.list_workspace_artifacts(workspace_id)
         return [self.normalize_workspace_artifact(item) for item in self._coerce_items(response)]
@@ -611,6 +661,7 @@ class ServerNotesWorkspaceService:
         status: Any = _UNSET,
         content: Any = _UNSET,
     ) -> dict[str, Any]:
+        self._enforce_policy(self._workspace_action_id("update"))
         client = self._require_client()
         if version is None:
             request = self.build_workspace_artifact_create_payload(
@@ -632,10 +683,12 @@ class ServerNotesWorkspaceService:
         return self.normalize_workspace_artifact(self._coerce_resource(response, "artifact", "item"))
 
     async def delete_workspace_artifact(self, workspace_id: str, artifact_id: str) -> dict[str, Any]:
+        self._enforce_policy(self._workspace_action_id("update"))
         client = self._require_client()
         return await client.delete_workspace_artifact(workspace_id, artifact_id)
 
     async def load_workspace_context(self, workspace_id: str) -> dict[str, Any]:
+        self._enforce_policy(self._workspace_action_id("detail"))
         client = self._require_client()
         workspace = self.normalize_workspace(
             self._coerce_resource(await client.get_workspace(workspace_id), "workspace", "item")
