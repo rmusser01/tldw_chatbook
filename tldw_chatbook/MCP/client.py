@@ -62,6 +62,9 @@ class MCPClient:
             logger.error("MCP client dependencies not available for stdio server connection")
             return False
 
+        if server_id in self.sessions or server_id in self._connection_stacks:
+            await self._teardown_connection(server_id)
+
         stack = AsyncExitStack()
         session = None
         session_context_managed = False

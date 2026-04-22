@@ -471,3 +471,91 @@ async def test_mcp_client_connect_to_server_uses_stdio_transport_flow(monkeypatc
     assert client.servers["profile-a"]["tools"][0].name == "remote_tool"
     assert client.servers["profile-a"]["resources"][0].uri == "remote://resource"
     assert client.servers["profile-a"]["prompts"][0].name == "remote_prompt"
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_connect_to_server_cleans_up_existing_connection_for_same_server_id(monkeypatch):
+    call_log = []
+    session_counter = {"value": 0}
+
+    class FakeServerParams:
+        def __init__(self, command, args, env):
+            self.command = command
+            self.args = args
+            self.env = env
+
+    class FakeTransportContext:
+        def __init__(self, server_params):
+            self.server_params = server_params
+            self.session_id = None
+
+        async def __aenter__(self):
+            self.session_id = session_counter["value"] + 1
+            call_log.append(("transport_enter", self.session_id, self.server_params.command))
+            return (f"read-{self.session_id}", f"write-{self.session_id}")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            call_log.append(("transport_exit", self.session_id, self.server_params.command))
+
+    def fake_stdio_client(server_params):
+        return FakeTransportContext(server_params)
+
+    class FakeSession:
+        def __init__(self, read_stream, write_stream):
+            session_counter["value"] += 1
+            self.session_id = session_counter["value"]
+            self.read_stream = read_stream
+            self.write_stream = write_stream
+            call_log.append(("session_init", self.session_id, read_stream, write_stream))
+
+        async def __aenter__(self):
+            call_log.append(("session_enter", self.session_id))
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            call_log.append(("session_exit", self.session_id))
+
+        async def initialize(self):
+            call_log.append(("initialize", self.session_id))
+
+        async def list_tools(self):
+            return SimpleNamespace(
+                tools=[SimpleNamespace(name=f"remote_tool_{self.session_id}", description="Remote tool", inputSchema={})]
+            )
+
+        async def list_resources(self):
+            return SimpleNamespace(
+                resources=[
+                    SimpleNamespace(
+                        uri=f"remote://resource/{self.session_id}",
+                        name="Remote Resource",
+                        description="Remote resource",
+                        mimeType="text/plain",
+                    )
+                ]
+            )
+
+        async def list_prompts(self):
+            return SimpleNamespace(
+                prompts=[SimpleNamespace(name=f"remote_prompt_{self.session_id}", description="Remote prompt", arguments=[])]
+            )
+
+    monkeypatch.setattr(mcp_client_module, "MCP_CLIENT_AVAILABLE", True)
+    monkeypatch.setattr(mcp_client_module, "StdioServerParameters", FakeServerParams, raising=False)
+    monkeypatch.setattr(mcp_client_module, "stdio_client", fake_stdio_client, raising=False)
+    monkeypatch.setattr(mcp_client_module, "ClientSession", FakeSession, raising=False)
+
+    client = mcp_client_module.MCPClient(name="test-client")
+
+    first_connected = await client.connect_to_server("profile-a", "python", args=["-m", "demo.one"])
+    second_connected = await client.connect_to_server("profile-a", "python", args=["-m", "demo.two"])
+
+    assert first_connected is True
+    assert second_connected is True
+    assert ("session_exit", 1) in call_log
+    assert ("transport_exit", 1, "python") in call_log
+    assert client.sessions["profile-a"].session_id == 2
+    assert client.servers["profile-a"]["args"] == ["-m", "demo.two"]
+    assert client.servers["profile-a"]["tools"][0].name == "remote_tool_2"
+    assert client.servers["profile-a"]["resources"][0].uri == "remote://resource/2"
+    assert client.servers["profile-a"]["prompts"][0].name == "remote_prompt_2"
