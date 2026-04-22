@@ -71,11 +71,12 @@ class LocalMCPControlService:
         self,
         profile: Mapping[str, Any] | LocalExternalMCPProfile,
     ) -> dict[str, Any]:
-        record = (
-            profile
+        strict_input = (
+            profile.to_input_dict()
             if isinstance(profile, LocalExternalMCPProfile)
-            else LocalExternalMCPProfile.from_input_dict(profile)
+            else profile
         )
+        record = LocalExternalMCPProfile.from_input_dict(strict_input)
         return self.store.save_profile(record).to_dict()
 
     async def connect_profile(self, profile_id: str) -> dict[str, Any]:

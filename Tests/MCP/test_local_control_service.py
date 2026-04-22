@@ -218,6 +218,32 @@ def test_local_control_service_rejects_legacy_env_literal_bypass_on_profile_save
     assert stored.legacy_env_literals == {}
 
 
+def test_local_control_service_rejects_legacy_env_literal_bypass_on_profile_object_save():
+    store = FakeLocalStore()
+    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+    profile = LocalExternalMCPProfile(
+        profile_id="profile-c",
+        command="python",
+        args=("-m", "demo.server"),
+        env_literals={"LOG_LEVEL": "debug"},
+        legacy_env_literals={
+            "SERVICE_ALIAS": "example-service-prod",
+            "MODEL_NAME": "gpt-4o-mini",
+            "SOCKET_PATH": "/tmp/mcp-demo.sock",
+        },
+    )
+
+    saved = service.save_external_profile(profile)
+    stored = store.get_profile("profile-c")
+
+    assert saved["env"]["LOG_LEVEL"] == "debug"
+    assert "SERVICE_ALIAS" not in saved["env"]
+    assert "MODEL_NAME" not in saved["env"]
+    assert "SOCKET_PATH" not in saved["env"]
+    assert stored is not None
+    assert stored.legacy_env_literals == {}
+
+
 @pytest.mark.asyncio
 async def test_local_control_service_connects_profile_and_persists_discovery_snapshot():
     store = FakeLocalStore()

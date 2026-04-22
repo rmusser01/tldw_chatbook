@@ -255,6 +255,17 @@ class LocalExternalMCPProfile:
             "updated_at": _datetime_to_iso(self.updated_at),
         }
 
+    def to_input_dict(self) -> dict[str, Any]:
+        return {
+            "profile_id": self.profile_id,
+            "command": self.command,
+            "args": list(self.args),
+            "env_placeholders": dict(self.env_placeholders),
+            "env_literals": dict(self.env_literals),
+            "created_at": _datetime_to_iso(self.created_at),
+            "updated_at": _datetime_to_iso(self.updated_at),
+        }
+
     @classmethod
     def from_input_dict(cls, data: Any) -> "LocalExternalMCPProfile":
         if not isinstance(data, Mapping):
