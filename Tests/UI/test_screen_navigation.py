@@ -1,5 +1,7 @@
 """Focused screen wiring tests for screen-navigation mode."""
 
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -21,16 +23,33 @@ from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 
 
 def _build_test_app() -> TldwCli:
+    temp_dir = Path(tempfile.mkdtemp())
+    notifications_db_path = temp_dir / "notifications.sqlite3"
+    subscriptions_db_path = temp_dir / "subscriptions.sqlite3"
+
     with patch("tldw_chatbook.app.load_settings", return_value={"tldw_api": {"base_url": "http://localhost:8000"}}):
         with patch("tldw_chatbook.app.get_cli_setting", side_effect=lambda _section, _key, default=None: default):
-            with patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None):
-                with patch("tldw_chatbook.app.ServerNotesWorkspaceService.from_config", return_value=MagicMock()):
-                    with patch("tldw_chatbook.app.ServerCharacterPersonaService.from_config", return_value=MagicMock()):
-                        with patch.object(TldwCli, "_init_notes_service", lambda self, _user: setattr(self, "notes_service", None)):
-                            with patch.object(TldwCli, "_init_prompts_service", lambda self: setattr(self, "prompts_service_initialized", False)):
-                                with patch.object(TldwCli, "_init_providers_models", lambda self: setattr(self, "providers_models", {})):
-                                    with patch.object(TldwCli, "_init_media_db", lambda self: (setattr(self, "media_db", None), setattr(self, "_media_types_for_ui", ["All Media"]))):
-                                        return TldwCli()
+            with patch("tldw_chatbook.app.load_runtime_policy_for_app", return_value=SimpleNamespace(state=None)):
+                with patch("tldw_chatbook.app.get_notifications_db_path", return_value=notifications_db_path, create=True):
+                    with patch("tldw_chatbook.app.get_subscriptions_db_path", return_value=subscriptions_db_path, create=True):
+                        with patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None):
+                            with patch("tldw_chatbook.app.ServerNotesWorkspaceService.from_config", return_value=MagicMock()):
+                                with patch("tldw_chatbook.app.ServerCharacterPersonaService.from_config", return_value=MagicMock()):
+                                    with patch("tldw_chatbook.app.NotesScopeService", return_value=MagicMock()):
+                                        with patch("tldw_chatbook.app.RAGAdminScopeService", return_value=MagicMock()):
+                                            with patch.object(TldwCli, "_wire_evaluation_services", lambda self: None):
+                                                with patch.object(TldwCli, "_wire_study_services", lambda self: None):
+                                                    with patch.object(TldwCli, "_wire_character_persona_services", lambda self: None):
+                                                        with patch.object(TldwCli, "_init_notes_service", lambda self, _user: setattr(self, "notes_service", None)):
+                                                            with patch.object(TldwCli, "_init_prompts_service", lambda self: setattr(self, "prompts_service_initialized", False)):
+                                                                with patch.object(TldwCli, "_init_providers_models", lambda self: setattr(self, "providers_models", {})):
+                                                                    with patch.object(TldwCli, "_init_media_db", lambda self: (setattr(self, "media_db", None), setattr(self, "_media_types_for_ui", ["All Media"]))):
+                                                                        return TldwCli()
+
+
+@pytest.fixture
+def app() -> TldwCli:
+    return _build_test_app()
 
 
 def test_app_uses_screen_navigation_and_wires_media_services():
@@ -41,6 +60,13 @@ def test_app_uses_screen_navigation_and_wires_media_services():
     assert isinstance(app.server_media_reading_service, ServerMediaReadingService)
     assert isinstance(app.media_reading_scope_service, MediaReadingScopeService)
     assert app.media_runtime_state.runtime_backend == "local"
+
+
+def test_app_initializes_watchlists_and_notifications_services(app):
+    assert app.server_watchlists_service is not None
+    assert app.watchlist_scope_service is not None
+    assert app.client_notifications_db is not None
+    assert app.notification_dispatch_service is not None
 
 
 def test_media_screen_uses_shared_runtime_state():
