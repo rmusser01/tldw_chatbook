@@ -136,6 +136,21 @@ def test_normalize_server_reading_item_exposes_saved_state_without_fake_saved_ti
     assert normalized["read_it_later_saved_at"] is None
 
 
+def test_normalize_local_media_row_propagates_saved_state_fields():
+    normalized = normalize_local_media_row(
+        {
+            "id": 21,
+            "title": "Saved Local Article",
+            "is_read_it_later": True,
+            "saved_at": "2026-04-21T10:00:00Z",
+        }
+    )
+
+    assert normalized["supports_read_it_later"] is True
+    assert normalized["is_read_it_later"] is True
+    assert normalized["read_it_later_saved_at"] == "2026-04-21T10:00:00Z"
+
+
 def test_normalize_reading_progress_computes_percent_when_missing():
     normalized = normalize_reading_progress(
         {

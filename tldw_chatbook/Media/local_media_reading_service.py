@@ -30,6 +30,16 @@ class LocalMediaReadingService:
             normalized.append(self._coerce_media_id(media_id))
         return normalized
 
+    def _enrich_with_read_it_later_state(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        enriched = dict(row)
+        state = self._require_db().get_media_read_it_later_state(self._coerce_media_id(row["id"]))
+        if state is None:
+            return enriched
+        enriched["is_read_it_later"] = state.get("is_read_it_later")
+        enriched["saved_at"] = state.get("saved_at")
+        enriched["read_it_later_saved_at"] = state.get("saved_at")
+        return enriched
+
     def search_media(
         self,
         *,
@@ -78,6 +88,8 @@ class LocalMediaReadingService:
             include_deleted=bool(filters.get("include_deleted", False)),
         )
         items = list(rows)[offset:offset + limit]
+        if filters.get("read_it_later_only", False):
+            items = [self._enrich_with_read_it_later_state(row) for row in items]
         return {
             "items": items,
             "total": total,
@@ -118,6 +130,28 @@ class LocalMediaReadingService:
 
     def delete_reading_progress(self, media_id: Any) -> Any:
         return self._require_db().delete_reading_progress(self._coerce_media_id(media_id))
+
+    def save_to_read_it_later(self, media_id: Any) -> Any:
+        return self._require_db().save_media_to_read_it_later(self._coerce_media_id(media_id))
+
+    def remove_from_read_it_later(self, media_id: Any) -> Any:
+        db = self._require_db()
+        normalized_media_id = self._coerce_media_id(media_id)
+        current_time = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            conn.execute(
+                """
+                DELETE FROM MediaReadItLaterState
+                WHERE media_id = ?
+                """,
+                (normalized_media_id,),
+            )
+        return {
+            "media_id": normalized_media_id,
+            "is_read_it_later": False,
+            "saved_at": None,
+            "updated_at": current_time,
+        }
 
     def list_ingestion_sources(self) -> Any:
         raise self._unsupported_ingestion_sources()

@@ -13,6 +13,31 @@ class FakeLocalMediaService:
 
     def search_media(self, *, query=None, limit=20, offset=0, **kwargs):
         self.calls.append(("search_media", query, limit, offset, kwargs))
+        if kwargs.get("read_it_later_only"):
+            return {
+                "items": [
+                    {
+                        "id": 12,
+                        "uuid": "local-uuid-12",
+                        "title": "Saved Local PDF",
+                        "type": "pdf",
+                        "author": "Ada Lovelace",
+                        "url": "https://example.com/local.pdf",
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "last_modified": "2026-01-02T00:00:00Z",
+                        "deleted": 0,
+                        "is_trash": 0,
+                        "transcription": "Transcript text",
+                        "chunk_count": 3,
+                        "status": "ready",
+                        "is_read_it_later": True,
+                        "saved_at": "2026-04-21T10:00:00Z",
+                    }
+                ],
+                "total": 1,
+                "offset": offset,
+                "limit": limit,
+            }
         return {
             "items": [
                 {
@@ -86,6 +111,22 @@ class FakeLocalMediaService:
 
     def create_ingestion_source(self, **kwargs):
         raise ValueError("Local ingestion sources are not available yet.")
+
+    def save_to_read_it_later(self, media_id):
+        self.calls.append(("save_to_read_it_later", media_id))
+        return {
+            "media_id": media_id,
+            "is_read_it_later": True,
+            "saved_at": "2026-04-21T12:00:00Z",
+        }
+
+    def remove_from_read_it_later(self, media_id):
+        self.calls.append(("remove_from_read_it_later", media_id))
+        return {
+            "media_id": media_id,
+            "is_read_it_later": False,
+            "saved_at": None,
+        }
 
     def get_ingestion_source(self, source_id):
         raise ValueError("Local ingestion sources are not available yet.")
@@ -330,6 +371,22 @@ async def test_scope_service_records_local_media_read_action_before_normalizing_
 
 
 @pytest.mark.asyncio
+async def test_scope_service_list_read_it_later_normalizes_local_saved_state():
+    local = FakeLocalMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+    )
+
+    result = await scope_service.list_read_it_later(mode="local")
+
+    assert local.calls == [("search_media", None, 20, 0, {"read_it_later_only": True})]
+    assert result["items"][0]["id"] == "local:media:12"
+    assert result["items"][0]["is_read_it_later"] is True
+    assert result["items"][0]["read_it_later_saved_at"] == "2026-04-21T10:00:00Z"
+
+
+@pytest.mark.asyncio
 async def test_scope_service_normalizes_server_detail_and_fetches_progress_by_backing_media_id():
     server = FakeServerMediaService()
     scope_service = MediaReadingScopeService(
@@ -407,6 +464,21 @@ async def test_scope_service_routes_local_edit_and_document_version_helpers():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_local_save_and_remove_delegate_to_local_service():
+    local = FakeLocalMediaService()
+    scope = MediaReadingScopeService(local_service=local, server_service=FakeServerMediaService())
+
+    saved = await scope.save_to_read_it_later(mode="local", media_id=12)
+    removed = await scope.remove_from_read_it_later(mode="local", media_id=12)
+
+    assert saved["is_read_it_later"] is True
+    assert saved["saved_at"] == "2026-04-21T12:00:00Z"
+    assert removed["is_read_it_later"] is False
+    assert ("save_to_read_it_later", 12) in local.calls
+    assert ("remove_from_read_it_later", 12) in local.calls
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_server_ingestion_source_operations_and_normalizes_payloads():
     server = FakeServerMediaService()
     scope_service = MediaReadingScopeService(
@@ -468,6 +540,28 @@ async def test_scope_service_can_create_server_ingestion_source():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_denies_server_create_ingestion_source_when_policy_blocks_it():
+    policy_enforcer = FakePolicyEnforcer.deny("server_unreachable")
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await scope_service.create_ingestion_source(
+            mode="server",
+            source_type="git_repository",
+            sink_type="media",
+            policy="canonical",
+            config={"repo_url": "https://example.com/repo.git"},
+        )
+
+    assert exc.value.reason_code == "server_unreachable"
+    assert policy_enforcer.calls == ["media.ingestion_sources.create.server"]
+
+
+@pytest.mark.asyncio
 async def test_media_scope_service_denies_server_ingestion_sources_when_server_is_unreachable():
     policy_enforcer = FakePolicyEnforcer.deny("server_unreachable")
     scope_service = MediaReadingScopeService(
@@ -492,6 +586,27 @@ async def test_scope_service_fails_explicitly_for_unsupported_local_ingestion_so
 
     with pytest.raises(ValueError, match="Local ingestion sources are not available yet."):
         await scope_service.list_ingestion_sources(mode="local")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_create_ingestion_source_fails_explicitly_for_local_before_policy_denial():
+    policy_enforcer = FakePolicyEnforcer.deny("blocked")
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(ValueError, match="Local ingestion sources are not available yet."):
+        await scope_service.create_ingestion_source(
+            mode="local",
+            source_type="git_repository",
+            sink_type="media",
+            policy="canonical",
+            config={"repo_url": "https://example.com/repo.git"},
+        )
+
+    assert policy_enforcer.calls == []
 
 
 @pytest.mark.asyncio

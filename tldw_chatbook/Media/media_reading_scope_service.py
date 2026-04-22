@@ -180,12 +180,7 @@ class MediaReadingScopeService:
         self._enforce_policy(self._reading_list_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         if normalized_mode == MediaReadingBackend.LOCAL:
-            if hasattr(service, "save_to_read_it_later"):
-                return await self._maybe_await(service.save_to_read_it_later(media_id))
-            media_db = getattr(service, "media_db", None)
-            if media_db is None or not hasattr(media_db, "save_media_to_read_it_later"):
-                raise ValueError("Local read-it-later persistence is not available yet.")
-            return await self._maybe_await(media_db.save_media_to_read_it_later(int(media_id)))
+            return await self._maybe_await(service.save_to_read_it_later(media_id))
         return await self._maybe_await(service.update_media_metadata(media_id, status="saved"))
 
     async def remove_from_read_it_later(
@@ -198,12 +193,7 @@ class MediaReadingScopeService:
         self._enforce_policy(self._reading_list_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
         if normalized_mode == MediaReadingBackend.LOCAL:
-            if hasattr(service, "remove_from_read_it_later"):
-                return await self._maybe_await(service.remove_from_read_it_later(media_id))
-            media_db = getattr(service, "media_db", None)
-            if media_db is None or not hasattr(media_db, "remove_media_from_read_it_later"):
-                raise ValueError("Local read-it-later persistence is not available yet.")
-            return await self._maybe_await(media_db.remove_media_from_read_it_later(int(media_id)))
+            return await self._maybe_await(service.remove_from_read_it_later(media_id))
         return await self._maybe_await(service.update_media_metadata(media_id, status="archived"))
 
     async def update_media_metadata(
@@ -300,9 +290,9 @@ class MediaReadingScopeService:
         config: Optional[Mapping[str, Any]] = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "create"))
         if normalized_mode == MediaReadingBackend.LOCAL:
             raise ValueError("Local ingestion sources are not available yet.")
+        self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         source = await self._maybe_await(
             service.create_ingestion_source(

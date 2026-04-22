@@ -252,7 +252,7 @@ def test_server_service_from_config_uses_shared_api_client_builder(monkeypatch):
     sentinel_client = Mock()
     build_client = Mock(return_value=sentinel_client)
     monkeypatch.setattr(
-        "tldw_chatbook.Media.server_media_reading_service.build_runtime_api_client_from_config",
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         build_client,
     )
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
-from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..tldw_api import (
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
@@ -25,6 +24,8 @@ class ServerMediaReadingService:
 
     @classmethod
     def from_config(cls, app_config: Mapping[str, Any]) -> "ServerMediaReadingService":
+        from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
+
         return cls(client=build_runtime_api_client_from_config(app_config))
 
     def _require_client(self) -> TLDWAPIClient:

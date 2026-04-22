@@ -46,6 +46,13 @@ class SpyReadItLaterDb:
         )
         return [2, 3]
 
+    def get_media_read_it_later_state(self, media_id):
+        return {
+            "media_id": media_id,
+            "is_read_it_later": True,
+            "saved_at": "2026-04-21T10:00:00Z",
+        }
+
     def search_media_db(
         self,
         *,
@@ -82,6 +89,8 @@ def test_local_service_search_media_uses_db_backed_saved_filter_spy():
     assert db.saved_filters == [{"include_deleted": False, "include_trash": False}]
     assert db.search_calls[0]["media_ids_filter"] == [2]
     assert [item["id"] for item in payload["items"]] == [2]
+    assert payload["items"][0]["is_read_it_later"] is True
+    assert payload["items"][0]["saved_at"] == "2026-04-21T10:00:00Z"
 
 
 def test_local_service_search_media_uses_db_backed_saved_filter(memory_db_factory):
@@ -95,3 +104,31 @@ def test_local_service_search_media_uses_db_backed_saved_filter(memory_db_factor
 
     assert [item["id"] for item in payload["items"]] == [kept_id]
     assert all(item["id"] != other_id for item in payload["items"])
+
+
+def test_local_service_search_media_read_it_later_only_enriches_saved_state(memory_db_factory):
+    db = memory_db_factory()
+    kept_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    db.save_media_to_read_it_later(kept_id)
+
+    service = LocalMediaReadingService(db)
+    payload = service.search_media(read_it_later_only=True)
+
+    assert payload["items"][0]["id"] == kept_id
+    assert payload["items"][0]["is_read_it_later"] is True
+    assert payload["items"][0]["saved_at"] is not None
+
+
+def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    service = LocalMediaReadingService(db)
+
+    saved = service.save_to_read_it_later(media_id)
+    removed = service.remove_from_read_it_later(media_id)
+
+    assert saved["is_read_it_later"] is True
+    assert saved["saved_at"] is not None
+    assert removed["is_read_it_later"] is False
+    assert removed["saved_at"] is None
+    assert db.get_media_read_it_later_state(media_id) is None
