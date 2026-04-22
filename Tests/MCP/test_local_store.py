@@ -109,6 +109,39 @@ def test_local_store_rejects_non_placeholder_secret_env_entries_even_when_declar
     assert not (tmp_path / "local_mcp_store.json").exists()
 
 
+def test_local_store_rejects_blank_profile_writes_before_persistence(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+
+    with pytest.raises(ValueError, match="profile_id"):
+        store.save_profile(LocalExternalMCPProfile(profile_id="", command="python"))
+
+    with pytest.raises(ValueError, match="command"):
+        store.save_profile(LocalExternalMCPProfile(profile_id="profile-a", command=""))
+
+    assert not (tmp_path / "local_mcp_store.json").exists()
+
+
+def test_local_store_rejects_blank_governance_rule_writes_before_persistence(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+
+    with pytest.raises(ValueError, match="rule_id"):
+        store.save_governance_rule(
+            LocalGovernanceRule(rule_id="", capability_id="mcp.inventory.list.local", decision="allow")
+        )
+
+    with pytest.raises(ValueError, match="capability_id"):
+        store.save_governance_rule(
+            LocalGovernanceRule(rule_id="rule-a", capability_id="", decision="allow")
+        )
+
+    with pytest.raises(ValueError, match="decision"):
+        store.save_governance_rule(
+            LocalGovernanceRule(rule_id="rule-a", capability_id="mcp.inventory.list.local", decision="")
+        )
+
+    assert not (tmp_path / "local_mcp_store.json").exists()
+
+
 def test_local_store_loads_legacy_env_payload_and_drops_unsafe_entries(tmp_path):
     path = tmp_path / "local_mcp_store.json"
     path.write_text(

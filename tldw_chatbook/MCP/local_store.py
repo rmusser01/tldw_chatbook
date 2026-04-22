@@ -53,6 +53,13 @@ class LocalMCPStoreLoadError(RuntimeError):
         super().__init__(f"Failed to load local MCP store from '{self.path}': {reason}")
 
 
+def _require_non_empty_field(value: str, field_name: str, record_type: str) -> str:
+    normalized = _text(value)
+    if not normalized:
+        raise ValueError(f"{record_type} requires non-empty {field_name}")
+    return normalized
+
+
 def _datetime_to_iso(value: datetime | None) -> str | None:
     if value is None:
         return None
@@ -447,13 +454,15 @@ class LocalMCPStore:
         current = self.load()
         now = datetime.now(timezone.utc)
         canonical_profile = LocalExternalMCPProfile.from_input_dict(profile.to_input_dict())
+        profile_id = _require_non_empty_field(canonical_profile.profile_id, "profile_id", "Local MCP profile")
+        command = _require_non_empty_field(canonical_profile.command, "command", "Local MCP profile")
         existing_profile = next(
-            (item for item in current.profiles if item.profile_id == canonical_profile.profile_id),
+            (item for item in current.profiles if item.profile_id == profile_id),
             None,
         )
         saved_profile = LocalExternalMCPProfile(
-            profile_id=canonical_profile.profile_id,
-            command=canonical_profile.command,
+            profile_id=profile_id,
+            command=command,
             args=canonical_profile.args,
             env_placeholders=canonical_profile.env_placeholders,
             env_literals=canonical_profile.env_literals,
@@ -515,10 +524,17 @@ class LocalMCPStore:
     def save_governance_rule(self, rule: LocalGovernanceRule) -> LocalGovernanceRule:
         current = self.load()
         now = datetime.now(timezone.utc)
+        rule_id = _require_non_empty_field(rule.rule_id, "rule_id", "Local MCP governance rule")
+        capability_id = _require_non_empty_field(
+            rule.capability_id,
+            "capability_id",
+            "Local MCP governance rule",
+        )
+        decision = _require_non_empty_field(rule.decision, "decision", "Local MCP governance rule")
         saved_rule = LocalGovernanceRule(
-            rule_id=rule.rule_id,
-            capability_id=rule.capability_id,
-            decision=rule.decision,
+            rule_id=rule_id,
+            capability_id=capability_id,
+            decision=decision,
             notes=rule.notes,
             updated_at=now,
         )

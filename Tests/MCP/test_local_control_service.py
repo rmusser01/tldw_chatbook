@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
-from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile
+from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
 from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
 
 
@@ -242,6 +242,63 @@ def test_local_control_service_rejects_legacy_env_literal_bypass_on_profile_obje
     assert "SOCKET_PATH" not in saved["env"]
     assert stored is not None
     assert stored.legacy_env_literals == {}
+
+
+def test_local_control_service_rejects_invalid_profile_writes(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+
+    with pytest.raises(ValueError, match="profile_id"):
+        service.save_external_profile(
+            {
+                "profile_id": "",
+                "command": "python",
+            }
+        )
+
+    with pytest.raises(ValueError, match="command"):
+        service.save_external_profile(
+            {
+                "profile_id": "profile-b",
+                "command": "",
+            }
+        )
+
+    assert store.get_profile("profile-b") is None
+
+
+def test_local_control_service_rejects_invalid_governance_rule_writes(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+
+    with pytest.raises(ValueError, match="rule_id"):
+        service.save_governance_rule(
+            {
+                "rule_id": "",
+                "capability_id": "mcp.governance.list.local",
+                "decision": "allow",
+            }
+        )
+
+    with pytest.raises(ValueError, match="capability_id"):
+        service.save_governance_rule(
+            {
+                "rule_id": "rule-b",
+                "capability_id": "",
+                "decision": "allow",
+            }
+        )
+
+    with pytest.raises(ValueError, match="decision"):
+        service.save_governance_rule(
+            {
+                "rule_id": "rule-b",
+                "capability_id": "mcp.governance.list.local",
+                "decision": "",
+            }
+        )
+
+    assert store.list_governance_rules() == []
 
 
 @pytest.mark.asyncio
