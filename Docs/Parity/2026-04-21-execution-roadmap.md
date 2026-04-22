@@ -6,9 +6,32 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 
 Tranche ordering follows the capability matrix, gap ledger, and target-state design. The sequence is intentionally standalone-first: lock the runtime-policy and capability-map prerequisites first, strengthen domains that already have partial dual-backend seams next, then add the highest-value missing local and remote surfaces, and only after that spend effort on remote-only convenience layers.
 
+## Status Update
+
+`Tranche 0: Runtime Policy And Capability Map` is now landed and verified. See [runtime-policy-tranche-0.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Docs/Development/runtime-policy-tranche-0.md) for the authoritative verification record.
+
+That changes the roadmap in one important way: runtime policy remains a cross-cutting extension surface, but it is no longer the next unresolved blocker. Active execution should now move into the domains that either build directly on the new authority layer or deliver the highest-value standalone-client parity you prioritized.
+
+## Immediate Post-Tranche-0 Order
+
+1. `Media / Reading / Ingestion Sources` plus `Collections: Reading List / Read-it-later`
+   This is the cleanest next crosswalk because Chatbook already has landed local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, and server ingestion-source create for `archive_snapshot` and `git_repository`; per-media-type server saved views and sync/mirror semantics remain deferred.
+2. `Watchlists` plus `Client Notifications`
+   Chatbook already has a real local subscriptions stack and toast-like notification plumbing, so this is the strongest local-first bridge into server watchlists, alert rules, and later remote reminder/feed awareness.
+3. `Local MCP Runtime`
+   The runtime-policy layer is now in place, and Chatbook already has local MCP modules; the next gap is turning that into a first-class local runtime, approvals, status, and governance surface.
+4. `Writing Suite`
+   This remains a high-value standalone gap with a clear server contract and very little existing product surface in Chatbook, so it should follow once the highest-leverage media/watchlist foundations are stable.
+5. `Research Sessions / Runs`
+   Research is a user-priority local-first domain, but it depends on several adjacent capabilities becoming less fragmented first: local notifications, stronger collection/media seams, and a clearer execution/status model.
+6. `Workflows`, `Scheduler Workflows`, and `Chat Workflows`
+   These remain remote-only acceptable, but once the local-first rows above are in place, Chatbook should add discover/trigger/observe support for connected-server workflow surfaces.
+7. `Server Reminders / Notification Feeds`, `Sharing`, and `Web Clipper`
+   These are still worthwhile remote surfaces, but they should follow the higher-value standalone rows and the remote workflow/control surfaces they often depend on.
+
 ## Tranche 0: Runtime Policy And Capability Map
 
-This tranche is the prerequisite layer for the rest of the roadmap and should not be skipped. It locks the operating rules that keep Chatbook standalone-first while still allowing clean server interoperability: source-labeled local versus server mode, explicit write authority, offline fallback behavior, tenancy-aware server usage, and evidence-backed capability mapping. The capability matrix and gap ledger already establish the current baseline, so this tranche is about treating that runtime-policy contract as the gate for later execution rather than letting downstream verticals invent their own source or authority rules.
+This tranche was the prerequisite layer for the rest of the roadmap. It locked the operating rules that keep Chatbook standalone-first while still allowing clean server interoperability: source-labeled local versus server mode, explicit write authority, offline fallback behavior, tenancy-aware server usage, and evidence-backed capability mapping. The capability matrix and gap ledger already established the baseline; this tranche turned that runtime-policy contract into an actual gate for later execution rather than letting downstream verticals invent their own source or authority rules.
 
 Domains in this tranche:
 
@@ -19,6 +42,7 @@ Execution intent for this tranche:
 - Keep the capability matrix and gap ledger as the source of truth for what is dual-backend, local-first, remote-only, or contract-maturity constrained.
 - Normalize source labels, authority rules, and offline-unavailable states before domain work starts to avoid parity regressions later.
 - Use this tranche to define the shared runtime seams that Tranche 1 and Tranche 2 work will extend rather than re-decide.
+- Status: landed. Continue extending it as later tranches add new domains rather than reopening the authority model.
 
 ## Tranche 1: Strengthen Existing Dual-Backend Domains
 
@@ -57,7 +81,7 @@ Domains in this tranche:
 Execution intent for this tranche:
 
 - Crosswalk `Watchlists` onto existing local subscriptions and notification plumbing before inventing a separate remote-first model.
-- Build `Collections: Reading List / Read-it-later` on top of the existing media and reading seams rather than treating it as a disconnected collection system.
+- Build `Collections: Reading List / Read-it-later` on top of the existing media and reading seams rather than treating it as a disconnected collection system. Treat local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, and server ingestion-source create as landed foundations; keep per-media-type server saved views and any sync/mirror contract out of scope for this tranche.
 - Add `Writing Suite` and `Research Sessions / Runs` as serious standalone surfaces with matching remote contracts, not as thin shells around server-only functionality.
 - Keep `Client Notifications` and `Local MCP Runtime` Chatbook-owned so offline capability remains credible even as remote interop improves.
 
@@ -87,7 +111,7 @@ Execution intent for this tranche:
 
 ## Follow-On Vertical Plans
 
-- `Collections: Reading List / Read-it-later parity`: Turn the tranche guidance into a focused plan for the standalone-first reading collection surface, using the existing media and reading seams as the base for local and remote collection alignment.
+- `Collections: Reading List / Read-it-later parity`: Turn the tranche guidance into a focused plan for the standalone-first reading collection surface, using the existing media and reading seams as the base for local and remote collection alignment. Keep the plan scoped to the landed aggregate saved view and compatibility mapping unless a separate sync/mirror design is approved.
 - `Watchlists / subscriptions alignment`: Turn the tranche guidance into a focused plan that maps local subscriptions, alert rules, and notification delivery onto the server watchlist vocabulary without collapsing local ownership.
 - `Local MCP runtime parity`: Define the local-first runtime, approvals, catalog, prompts, tools, resources, and status surface before any later remote governance work.
 - `Remote MCP control plane`: Define the later remote governance surface separately from local MCP runtime so catalog and approval policy do not subsume standalone Chatbook control.

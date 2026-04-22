@@ -393,6 +393,7 @@ class MediaWindow(Container):
         type_slug = self.active_media_type or "all-media"
         search_term = getattr(self.search_panel, "search_term", "")
         keyword_filter = getattr(self.search_panel, "keyword_filter", "")
+        current_page = max(int(getattr(self.list_panel, "current_page", 1) or 1), 1)
         results, total_matches = await self._execute_browse_query_async(
             type_slug=type_slug,
             search_term=search_term,
@@ -400,7 +401,22 @@ class MediaWindow(Container):
         )
 
         total_pages = (total_matches + self.list_panel.items_per_page - 1) // self.list_panel.items_per_page
-        self.update_search_results(results, 1 if not results else self.list_panel.current_page, max(total_pages, 1))
+        total_pages = max(total_pages, 1)
+
+        if not results and total_matches > 0:
+            corrected_page = min(current_page, total_pages)
+            if corrected_page != current_page:
+                self.list_panel.current_page = corrected_page
+                results, total_matches = await self._execute_browse_query_async(
+                    type_slug=type_slug,
+                    search_term=search_term,
+                    keyword_filter=keyword_filter,
+                )
+                total_pages = (total_matches + self.list_panel.items_per_page - 1) // self.list_panel.items_per_page
+                total_pages = max(total_pages, 1)
+                current_page = corrected_page
+
+        self.update_search_results(results, 1 if not results else current_page, total_pages)
         return results
 
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:

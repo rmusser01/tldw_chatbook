@@ -342,6 +342,49 @@ async def test_media_window_remove_from_saved_view_clears_selection_when_filtere
 
 
 @pytest.mark.asyncio
+async def test_media_window_remove_from_saved_view_requeries_first_page_when_current_page_becomes_empty():
+    read_it_later_calls = []
+
+    async def list_read_it_later(**kwargs):
+        read_it_later_calls.append(kwargs)
+        if kwargs["offset"] == 20:
+            return {"items": [], "total": 1}
+
+        return {
+            "items": [
+                {
+                    "id": "local:media:1",
+                    "source_id": "1",
+                    "title": "Still Saved",
+                    "supports_read_it_later": True,
+                    "is_read_it_later": True,
+                }
+            ],
+            "total": 1,
+        }
+
+    scope_service = Mock()
+    scope_service.remove_from_read_it_later = AsyncMock(
+        return_value={"id": "local:media:21", "source_id": "21", "is_read_it_later": False}
+    )
+    scope_service.list_read_it_later = AsyncMock(side_effect=list_read_it_later)
+    window, _app = _build_media_window(runtime_backend="local", scope_service=scope_service)
+    window.runtime_state.active_browse_subview = "read-it-later"
+    window.list_panel.current_page = 2
+
+    await window._handle_read_it_later_toggle_async(
+        MediaReadItLaterToggleEvent(record_id="local:media:21", media_id="21", save_for_later=False)
+    )
+
+    assert [call["offset"] for call in read_it_later_calls] == [20, 0]
+    results, page, total_pages = window.list_panel.load_items.call_args.args
+    assert [item["id"] for item in results] == ["local:media:1"]
+    assert page == 1
+    assert total_pages == 1
+    assert window.runtime_state.browse_items == results
+
+
+@pytest.mark.asyncio
 async def test_media_window_toggle_keeps_selection_when_record_still_matches_filter_off_page():
     async def list_read_it_later(**kwargs):
         media_ids_filter = kwargs.get("media_ids_filter")

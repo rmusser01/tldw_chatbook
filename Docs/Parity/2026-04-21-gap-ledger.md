@@ -4,16 +4,22 @@ Audit date: 2026-04-21
 
 Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parity-audit-design.md`
 
+## Status Update After Tranche 0
+
+- `Cross-cutting Runtime Policy` is no longer an unlanded blocker. The foundational runtime-policy package, capability registry, hard-stop seams, representative UI preflight, and raw-client boundary were landed and verified in [runtime-policy-tranche-0.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Docs/Development/runtime-policy-tranche-0.md).
+- The remaining runtime-policy work is breadth and adoption across more domains and screens, not absence of the authority model itself.
+- The active parity focus should therefore shift to the next user-priority standalone and remote-interop rows rather than treating runtime policy as still missing.
+
 ## Critical Gaps
 
 ### Collections: Reading List / Read-it-later: Saved reading collection and read-later item flows
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
-- Current state: Local saved-reading and read-it-later behavior already exists through the media reading surfaces, but the remote collection shape is not yet aligned.
-- Gap: Remote collection parity and identifier normalization are still incomplete for a user-priority standalone collection surface.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/reading.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/items.py`; Chatbook: `tldw_chatbook/Media/local_media_reading_service.py`, `tldw_chatbook/Media/media_reading_scope_service.py`, `tldw_chatbook/UI/Screens/media_screen.py`; Verification: reading and item routes cover the saved-reading collection surface.
+- Current state: Local saved-state persistence, server save/remove compatibility mapping, the aggregate `All Media` server saved view, and server ingestion-source create for `archive_snapshot` and `git_repository` are already landed.
+- Gap: Per-media-type server saved views and any sync/mirror semantics are still deferred for this user-priority standalone collection surface.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/reading.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/items.py`; Chatbook: `tldw_chatbook/Media/local_media_reading_service.py`, `tldw_chatbook/Media/media_reading_scope_service.py`, `tldw_chatbook/UI/Screens/media_screen.py`; Verification: local saved-state persistence is covered by `Tests/Media/test_local_media_reading_service.py` and `Tests/Media/test_media_reading_normalizers.py`; server save/remove compatibility and the aggregate `All Media` saved view are covered by `Tests/Media/test_media_reading_scope_service.py` and `Tests/UI/test_media_window_v2_parity.py`; server ingestion-source create is covered by `Tests/Media/test_server_media_reading_service.py`, `Tests/Media/test_media_reading_scope_service.py`, and `Tests/UI/test_media_ingestion_source_panel.py`.
 - Recommended tranche: Tranche 2
-- Notes: Priority 81. This is one of the clearest standalone-first parity rows and should stay source-separated until later sync work exists.
+- Notes: Priority 81. This is now a partially landed vertical rather than an open blank-slate gap; the remaining work is the per-media-type saved-view matrix and any future sync contract.
 
 ### Watchlists: Watchlists, sources, jobs, runs, and alert rules
 - Requirement class: Local parity required + Remote parity required
@@ -60,14 +66,16 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 2
 - Notes: Priority 71. Even with lower interop value, this stays high because it supports several top standalone rows.
 
+## Foundational Work Landed
+
 ### Cross-cutting Runtime Policy: Auth, feature flags, rate limits, persona policy hooks, and MCP policy context
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Discover / Configure / Trigger / Observe
-- Current state: Mode, auth, feature, and policy controls exist piecemeal across Chatbook, but not as one coherent source-labeled layer.
-- Gap: The app still lacks the runtime-policy foundation needed to keep local/server authority explicit across the rest of the parity work.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/core/feature_flags.py`, `../tldw_server/tldw_Server_API/app/api/v1/API_Deps/auth_deps.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/workspaces_rate_limit_policy.py`, `../tldw_server/tldw_Server_API/app/core/MCP_unified/server.py`; Chatbook: `tldw_chatbook/config.py`, `tldw_chatbook/UI/Screens/chat_screen_state.py`, `tldw_chatbook/Widgets/enhanced_settings_sidebar.py`, `tldw_chatbook/tldw_api/client.py`; Verification: policy concerns are present, but not unified.
-- Recommended tranche: Tranche 0
-- Notes: Priority 70. This is leverage work for the rest of the matrix, not a cosmetic polish item.
+- Current state: The runtime-policy foundation is now in place with one authoritative source-state model, action-level capability registry, hard-stop enforcement for approved seams, representative UI preflight, and raw-client boundary cleanup.
+- Remaining gap: Broader rollout is still needed across the rest of the product surface, but this is no longer a missing prerequisite.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/core/feature_flags.py`, `../tldw_server/tldw_Server_API/app/api/v1/API_Deps/auth_deps.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/workspaces_rate_limit_policy.py`, `../tldw_server/tldw_Server_API/app/core/MCP_unified/server.py`; Chatbook: `tldw_chatbook/runtime_policy/`, `tldw_chatbook/app.py`, `tldw_chatbook/tldw_api/client.py`; Verification: [runtime-policy-tranche-0.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Docs/Development/runtime-policy-tranche-0.md) records the passing verification matrix and boundary guard coverage.
+- Recommended tranche: Landed in Tranche 0; extend incrementally in Tranche 1+
+- Notes: Priority 70. This remains leverage work, but it should no longer be treated as an open critical blocker.
 
 ## High-Value Partial Crosswalks
 
