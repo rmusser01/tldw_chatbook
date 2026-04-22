@@ -66,7 +66,10 @@ The following decisions are fixed for this vertical:
 - In `server mode`, `Read-it-later` is a compatibility mapping:
   - save => `status="saved"`
   - remove => `status="archived"`
+- In `server mode`, `Read-it-later` is first-class in the aggregate `All Media` browse surface for this slice.
+- Per-media-type server `Read-it-later` subfilters are deferred until the server browse contract can support them without client-side drift.
 - `favorite` remains a separate concern and is not reused as `Read-it-later`.
+- `read_it_later_saved_at` is an optional compatibility field and is local-authoritative in this slice.
 - `Media` remains the primary browsing surface.
 - `media_ingest_screen` remains the ingestion/source-management surface.
 - In `server mode`, the ingestion surface targets the current server contract that exists now:
@@ -77,6 +80,10 @@ The following decisions are fixed for this vertical:
   - list items
   - trigger sync
   - archive upload
+- First-slice server ingestion-source create is intentionally narrowed to remote-client-sensible source types:
+  - `archive_snapshot`
+  - `git_repository`
+- `local_directory` creation is deferred as a server-local concern until a better remote-client UX exists.
 - Server-side ingestion-source delete is explicitly deferred unless the server adds it.
 - Runtime policy remains the authority for source-aware permission and offline behavior.
 - This slice may extend the current media seam and window boundaries, but it should not become a broad Media UX redesign.
@@ -89,6 +96,7 @@ The following decisions are fixed for this vertical:
   - local mode via local persistence-aware queries
   - server mode via `status=saved` request shaping
 - Add source-aware `Read-it-later` mutation through the scope service.
+- Add explicit UI-facing scope-service operations for `Read-it-later` list/save/remove behavior.
 - Extend the current server media-reading service and scope service to support ingestion-source create in addition to the already landed list/detail/update/items/sync/archive operations.
 - Refine `Media` browsing so `Read-it-later` is a first-class subview/filter over the same source-scoped records.
 - Refine `media_ingest_screen` so server mode exposes the full currently-supported ingestion-source management contract.
@@ -200,6 +208,7 @@ The vertical should remain decomposed into small, explicit units:
 - `media/reading scope service`
   - routes all browse/detail/mutate behavior by active source
   - enforces source-aware authority and unsupported-operation behavior
+  - exposes intent-level `Read-it-later` actions rather than forcing UI code to compose low-level status mutations directly
 - `media runtime state`
   - owns source-scoped caches, selection, and subview state
 - `media screen boundary`
@@ -268,6 +277,9 @@ Contract notes:
 - `is_read_it_later` is a compatibility field:
   - local mode reflects local saved-state
   - server mode reflects compatibility mapping from server reading/item state
+- `read_it_later_saved_at` is optional:
+  - local mode may populate it from local saved-state persistence
+  - server mode should leave it unset unless the server later exposes a real saved-timestamp field
 
 ### 5. Server Compatibility Mapping
 
@@ -283,6 +295,11 @@ This slice must not:
 - leave the reverse action ambiguous
 
 `Read-it-later` in server mode is therefore a presentation-layer compatibility view over the server’s reading lifecycle state.
+
+This slice must also not:
+
+- synthesize `read_it_later_saved_at` from server `updated_at`
+- imply the server owns a precise saved timestamp when it does not currently expose one
 
 ### 6. Local Persistence
 
@@ -326,6 +343,7 @@ Server mode:
 
 - the browse path must query the server using compatible request shaping, specifically `status=saved`
 - it must not fetch generic reading items and then locally filter them into a saved view
+- because current server media-type narrowing still relies on client-side shaping in the chatbook stack, first-slice server `Read-it-later` should be exposed under aggregate `All Media`, not as a guaranteed-correct per-type saved view
 
 This is required so:
 
@@ -358,11 +376,15 @@ The detail surface remains structurally familiar. It simply consumes the normali
 Saved-state behavior must remain source-aware:
 
 - local mode:
+  - use explicit scope-service actions such as `save_to_read_it_later(...)` and `remove_from_read_it_later(...)`
   - persist local saved-state
   - update UI only after local persistence succeeds
 - server mode:
+  - use the same explicit scope-service actions, routed to server authority
   - call server update path using the compatibility mapping
   - update UI only after server success
+
+Browse paths for the saved subview should likewise use an explicit scope-service operation such as `list_read_it_later(...)` rather than ad hoc widget-level filter composition.
 
 If the normalized record does not support `Read-it-later`:
 
@@ -397,6 +419,10 @@ In server mode:
   - patch mutable settings
   - trigger sync
   - upload archive for archive-backed sources where supported
+- first-slice create affordances are limited to:
+  - `archive_snapshot`
+  - `git_repository`
+- `local_directory` is deferred or placed behind advanced/server-local handling rather than presented as a normal remote-client create path
 
 This slice explicitly does not promise:
 
@@ -487,8 +513,11 @@ This vertical needs coverage in five layers.
 - save/remove compatibility mapping:
   - save => `saved`
   - remove => `archived`
+- existing server-backed workspace or source scope metadata remains preserved when save/remove paths resave records
+- server `read_it_later_saved_at` remains unset unless a real server field exists
 - unsupported-operation behavior remains explicit
 - ingestion-source create support lands through the same seam
+- server `Read-it-later` subview is only exposed where aggregate `All Media` semantics are correct
 - existing list/detail/update/items/sync/archive flows remain covered
 
 ### 4. UI State Tests
@@ -526,8 +555,10 @@ This vertical is complete when:
 - `Read-it-later` is a real source-scoped subview inside `Media`
 - local mode supports save/remove/filter through local authority
 - server mode supports save/remove/filter through the explicit `saved`/`archived` compatibility mapping
+- server mode does not invent a fake saved timestamp and does not overpromise per-media-type saved filtering
 - source-native filtering is used in both local and server mode
 - `media_ingest_screen` exposes the full currently-supported server ingestion-source management contract
+- first-slice server source creation is limited to `archive_snapshot` and `git_repository`
 - no covered path bypasses the scope service
 - runtime-policy and source-authority rules remain intact
 - parity docs can honestly move this row from a major gap to a substantial landed seam
