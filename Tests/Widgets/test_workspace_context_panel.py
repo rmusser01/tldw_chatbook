@@ -71,7 +71,11 @@ async def test_workspace_context_panel_exposes_open_study_action_only_in_details
         open_study_button = panel.query_one("#workspace-open-study-button", Button)
 
         assert str(open_study_button.label) == "Open Study"
-        assert len(panel.query("Button")) == 1
+        assert panel.query_one("#workspace-save-button", Button)
+        assert panel.query_one("#workspace-add-source-button", Button)
+        assert panel.query_one("#workspace-save-source-button", Button)
+        assert panel.query_one("#workspace-create-artifact-button", Button)
+        assert panel.query_one("#workspace-save-artifact-button", Button)
         assert open_study_button.parent.id == "workspace-details"
 
 

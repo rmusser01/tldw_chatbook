@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Collapsible, Select, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
 
 from tldw_chatbook.UI.Screens.notes_scope_models import (
     NotesScreenState,
@@ -1091,7 +1091,8 @@ class TestNotesScreenMethods:
             await pilot.pause()
 
             assert create_from_template.display is False
-            assert create_blank.display is False
+            assert create_blank.display is not False
+            assert str(create_blank.label) == "Create Server Note"
             assert import_note.display is False
             assert template_select.display is False
 
@@ -1102,9 +1103,234 @@ class TestNotesScreenMethods:
             await pilot.pause()
 
             assert create_from_template.display is False
-            assert create_blank.display is False
+            assert create_blank.display is not False
+            assert str(create_blank.label) == "Create Workspace"
             assert import_note.display is False
             assert template_select.display is False
+
+            screen._set_state(
+                scope_type=ScopeType.WORKSPACE,
+                workspace_subview=WorkspaceSubview.NOTES,
+            )
+            await pilot.pause()
+
+            assert create_blank.display is not False
+            assert str(create_blank.label) == "Create Workspace Note"
+
+    @pytest.mark.asyncio
+    async def test_create_new_note_routes_server_scope_through_scope_service(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        mock_app_instance.notes_scope_service.save_note = AsyncMock(
+            return_value={"id": "server-9", "title": "New Note", "content": "", "version": 1, "keywords": []}
+        )
+        screen.refresh_current_scope = AsyncMock()  # type: ignore[method-assign]
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.SERVER_NOTE,
+            has_unsaved_changes=False,
+        )
+
+        await screen._create_new_note()
+
+        mock_app_instance.notes_scope_service.save_note.assert_awaited_once_with(
+            scope=ScopeType.SERVER_NOTE.value,
+            title="New Note",
+            content="",
+            note_id=None,
+            version=None,
+            user_id="default_user",
+            workspace_id=None,
+            keywords=[],
+        )
+        assert screen.state.selected_server_note_id == "server-9"
+        assert screen.state.selected_server_note_version == 1
+        assert screen.state.selected_note_title == "New Note"
+        assert screen.state.selected_note_content == ""
+
+    @pytest.mark.asyncio
+    async def test_create_new_note_routes_workspace_note_scope_through_scope_service(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        mock_app_instance.notes_scope_service.save_note = AsyncMock(
+            return_value={"id": 42, "title": "New Workspace Note", "content": "", "version": 1, "keywords": []}
+        )
+        screen.refresh_current_scope = AsyncMock()  # type: ignore[method-assign]
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.NOTES,
+            selected_workspace_id="ws-1",
+            has_unsaved_changes=False,
+        )
+
+        await screen._create_new_note()
+
+        mock_app_instance.notes_scope_service.save_note.assert_awaited_once_with(
+            scope=ScopeType.WORKSPACE.value,
+            title="New Workspace Note",
+            content="",
+            note_id=None,
+            version=None,
+            user_id="default_user",
+            workspace_id="ws-1",
+            keywords=[],
+        )
+        assert screen.state.selected_workspace_note_id == 42
+        assert screen.state.selected_workspace_note_version == 1
+        assert screen.state.selected_note_title == "New Workspace Note"
+
+    @pytest.mark.asyncio
+    async def test_create_new_note_routes_workspace_details_to_workspace_create(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        mock_app_instance.server_notes_workspace_service.save_workspace = AsyncMock(
+            return_value={"id": "ws-new", "name": "New Workspace", "version": 1}
+        )
+        screen.refresh_current_scope = AsyncMock()  # type: ignore[method-assign]
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.DETAILS,
+            has_unsaved_changes=False,
+        )
+
+        await screen._create_new_note()
+
+        mock_app_instance.server_notes_workspace_service.save_workspace.assert_awaited_once()
+        assert screen.state.selected_workspace_id == "ws-new"
+        assert screen.state.selected_note_title == "New Workspace"
+
+    @pytest.mark.asyncio
+    async def test_save_workspace_details_routes_to_workspace_service(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+        mock_app_instance.server_notes_workspace_service.save_workspace = AsyncMock(
+            return_value={
+                "id": "ws-1",
+                "name": "Renamed Workspace",
+                "study_materials_policy": "workspace",
+                "archived": True,
+                "version": 3,
+            }
+        )
+
+        async with app.run_test() as pilot:
+            screen.state = NotesScreenState(
+                scope_type=ScopeType.WORKSPACE,
+                workspace_subview=WorkspaceSubview.DETAILS,
+                selected_workspace_id="ws-1",
+                selected_workspace_version=2,
+            )
+            panel = screen.query_one("#workspace-context-panel", WorkspaceContextPanel)
+            panel.query_one("#workspace-name-input", Input).value = "Renamed Workspace"
+            panel.query_one("#workspace-policy-input", Input).value = "workspace"
+            panel.query_one("#workspace-archived-toggle", Switch).value = True
+
+            saved = await screen._save_current_workspace_details()
+
+        assert saved is True
+        mock_app_instance.server_notes_workspace_service.save_workspace.assert_awaited_once_with(
+            workspace_id="ws-1",
+            name="Renamed Workspace",
+            version=2,
+            archived=True,
+            study_materials_policy="workspace",
+        )
+        assert screen.state.selected_workspace_version == 3
+
+    @pytest.mark.asyncio
+    async def test_save_workspace_source_routes_to_workspace_service(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+        mock_app_instance.server_notes_workspace_service.save_workspace_source = AsyncMock(
+            return_value={
+                "id": "src-1",
+                "workspace_id": "ws-1",
+                "media_id": 12,
+                "title": "Updated Source",
+                "source_type": "pdf",
+                "url": "https://example.com",
+                "position": 2,
+                "selected": False,
+                "version": 5,
+            }
+        )
+
+        async with app.run_test() as pilot:
+            screen.state = NotesScreenState(
+                scope_type=ScopeType.WORKSPACE,
+                workspace_subview=WorkspaceSubview.SOURCES,
+                selected_workspace_id="ws-1",
+                selected_workspace_source_id="src-1",
+                selected_workspace_source_version=4,
+            )
+            panel = screen.query_one("#workspace-context-panel", WorkspaceContextPanel)
+            panel.set_workspace_source_details(
+                {"id": "src-1", "media_id": 12, "title": "Old Source", "source_type": "video", "url": None, "position": 1, "selected": True, "version": 4}
+            )
+            panel.query_one("#workspace-source-title-input", Input).value = "Updated Source"
+            panel.query_one("#workspace-source-type-input", Input).value = "pdf"
+            panel.query_one("#workspace-source-url-input", Input).value = "https://example.com"
+            panel.query_one("#workspace-source-position-input", Input).value = "2"
+            panel.query_one("#workspace-source-selected-toggle", Switch).value = False
+
+            saved = await screen._save_current_workspace_source()
+
+        assert saved is True
+        mock_app_instance.server_notes_workspace_service.save_workspace_source.assert_awaited_once_with(
+            workspace_id="ws-1",
+            source_id="src-1",
+            media_id=12,
+            title="Updated Source",
+            source_type="pdf",
+            version=4,
+            url="https://example.com",
+            position=2,
+            selected=False,
+        )
+        assert screen.state.selected_workspace_source_version == 5
+
+    @pytest.mark.asyncio
+    async def test_save_workspace_artifact_routes_to_workspace_service(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+        mock_app_instance.server_notes_workspace_service.save_workspace_artifact = AsyncMock(
+            return_value={
+                "id": "art-1",
+                "workspace_id": "ws-1",
+                "artifact_type": "summary",
+                "title": "Updated Artifact",
+                "status": "complete",
+                "content": "Artifact body",
+                "version": 4,
+            }
+        )
+
+        async with app.run_test() as pilot:
+            screen.state = NotesScreenState(
+                scope_type=ScopeType.WORKSPACE,
+                workspace_subview=WorkspaceSubview.ARTIFACTS,
+                selected_workspace_id="ws-1",
+                selected_workspace_artifact_id="art-1",
+                selected_workspace_artifact_version=3,
+            )
+            panel = screen.query_one("#workspace-context-panel", WorkspaceContextPanel)
+            panel.set_workspace_artifact_details(
+                {"id": "art-1", "artifact_type": "note", "title": "Old Artifact", "status": "pending", "content": "", "version": 3}
+            )
+            panel.query_one("#workspace-artifact-title-input", Input).value = "Updated Artifact"
+            panel.query_one("#workspace-artifact-type-input", Input).value = "summary"
+            panel.query_one("#workspace-artifact-status-input", Input).value = "complete"
+            panel.query_one("#workspace-artifact-content-input", TextArea).load_text("Artifact body")
+
+            saved = await screen._save_current_workspace_artifact()
+
+        assert saved is True
+        mock_app_instance.server_notes_workspace_service.save_workspace_artifact.assert_awaited_once_with(
+            workspace_id="ws-1",
+            artifact_id="art-1",
+            artifact_type="summary",
+            title="Updated Artifact",
+            version=3,
+            status="complete",
+            content="Artifact body",
+        )
+        assert screen.state.selected_workspace_artifact_version == 4
 
     @pytest.mark.asyncio
     async def test_scope_context_hides_local_only_selected_note_action_controls(self, mock_app_instance):

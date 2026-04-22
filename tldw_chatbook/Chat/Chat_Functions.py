@@ -1461,11 +1461,11 @@ def save_chat_history_to_db_wrapper(
         conversation_assistant_kind: Optional[str] = None
         conversation_assistant_id: Optional[str] = None
         conversation_persona_memory_mode: Optional[str] = None
-        conversation_runtime_backend: Optional[str] = runtime_backend or "local"
-        conversation_discovery_owner: Optional[str] = discovery_owner or "general_chat"
-        conversation_discovery_entity_id: Optional[str] = discovery_entity_id
-        conversation_scope_type: Optional[str] = scope_type
-        conversation_workspace_id: Optional[str] = workspace_id
+        conversation_runtime_backend: Optional[str] = None
+        conversation_discovery_owner: Optional[str] = None
+        conversation_discovery_entity_id: Optional[str] = None
+        conversation_scope_type: Optional[str] = None
+        conversation_workspace_id: Optional[str] = None
         persistence_service = ChatPersistenceService(db)
         explicit_assistant_kind = str(assistant_kind).strip().lower() if assistant_kind else None
         explicit_assistant_id = str(assistant_id).strip() if assistant_id else None
@@ -1479,6 +1479,11 @@ def save_chat_history_to_db_wrapper(
         existing_conv_details = None
         existing_assistant_kind = None
         existing_assistant_id = None
+        existing_runtime_backend = None
+        existing_discovery_owner = None
+        existing_discovery_entity_id = None
+        existing_scope_type = None
+        existing_workspace_id = None
         if not is_new_conversation:
             try:
                 existing_conv_details = db.get_conversation_by_id(current_conversation_id)
@@ -1487,9 +1492,24 @@ def save_chat_history_to_db_wrapper(
                     return current_conversation_id, f"Error: Conversation {current_conversation_id} not found for resaving."
                 existing_assistant_kind = existing_conv_details.get("assistant_kind")
                 existing_assistant_id = existing_conv_details.get("assistant_id")
+                existing_runtime_backend = existing_conv_details.get("runtime_backend")
+                existing_discovery_owner = existing_conv_details.get("discovery_owner")
+                existing_discovery_entity_id = existing_conv_details.get("discovery_entity_id")
+                existing_scope_type = existing_conv_details.get("scope_type")
+                existing_workspace_id = existing_conv_details.get("workspace_id")
             except (InputError, ConflictError, CharactersRAGDBError) as e:
                 logging.error(f"Error preparing existing conversation {current_conversation_id} for resave: {e}", exc_info=True)
                 return current_conversation_id, f"Error during resave prep: {e}"
+
+        conversation_runtime_backend = runtime_backend or existing_runtime_backend or "local"
+        conversation_discovery_owner = discovery_owner or existing_discovery_owner or "general_chat"
+        conversation_discovery_entity_id = (
+            discovery_entity_id
+            if discovery_entity_id is not None
+            else existing_discovery_entity_id
+        )
+        conversation_scope_type = scope_type if scope_type is not None else existing_scope_type
+        conversation_workspace_id = workspace_id if workspace_id is not None else existing_workspace_id
 
         if explicit_assistant_kind == "persona":
             if not explicit_assistant_id:
@@ -1529,7 +1549,11 @@ def save_chat_history_to_db_wrapper(
                         conversation_assistant_kind = "character"
                         conversation_assistant_id = str(character['id'])
                         conversation_discovery_owner = discovery_owner or "ccp_character"
-                        conversation_discovery_entity_id = discovery_entity_id or str(character['id'])
+                        conversation_discovery_entity_id = (
+                            discovery_entity_id
+                            if discovery_entity_id is not None
+                            else str(character['id'])
+                        )
                         conversation_runtime_backend = runtime_backend or "local"
                         logging.info(
                             f"Chat will be associated with specific character '{final_character_name_for_title}' (ID: {associated_character_id})."

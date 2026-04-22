@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
+from uuid import uuid4
 
 from loguru import logger
 from textual import on
@@ -16,7 +17,7 @@ from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
 from textual.timer import Timer
-from textual.widgets import Button, Input, Label, ListView, Select, TextArea
+from textual.widgets import Button, Input, Label, ListView, Select, Switch, TextArea
 
 from ...Event_Handlers.Audio_Events.dictation_integration_events import InsertDictationTextEvent
 from ...Third_Party.textual_fspicker import FileSave
@@ -25,6 +26,7 @@ from ...Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
 from ...Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarRight
 from ...Widgets.Note_Widgets.notes_sync_widget_improved import NotesSyncWidgetImproved
 from ...Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPanel
+from ...Widgets.Note_Widgets.workspace_source_picker import WorkspaceSourcePicker
 from ...Widgets.emoji_picker import EmojiPickerScreen, EmojiSelected
 from ..Navigation.base_app_screen import BaseAppScreen
 from .notes_scope_models import NotesScreenState, PendingNavigation, ScopeType, WorkspaceSubview
@@ -260,9 +262,25 @@ class NotesScreen(BaseAppScreen):
             word_count.display = is_note_editor
 
             show_local_create_actions = self.state.scope_type == ScopeType.LOCAL_NOTE
+            show_create_blank = show_local_create_actions
+            create_blank_label = "Create Blank Note"
+            if self.state.scope_type == ScopeType.SERVER_NOTE:
+                show_create_blank = True
+                create_blank_label = "Create Server Note"
+            elif self.state.scope_type == ScopeType.WORKSPACE:
+                if self.state.workspace_subview == WorkspaceSubview.NOTES:
+                    show_create_blank = True
+                    create_blank_label = "Create Workspace Note"
+                elif not self.state.selected_workspace_id or self.state.workspace_subview == WorkspaceSubview.DETAILS:
+                    show_create_blank = True
+                    create_blank_label = "Create Workspace"
+                else:
+                    show_create_blank = False
+
             template_select.display = show_local_create_actions
             create_from_template_button.display = show_local_create_actions
-            create_blank_button.display = show_local_create_actions
+            create_blank_button.display = show_create_blank
+            create_blank_button.label = create_blank_label
             import_button.display = show_local_create_actions
             load_selected_button.display = show_local_create_actions
             edit_selected_button.display = show_local_create_actions
@@ -336,6 +354,7 @@ class NotesScreen(BaseAppScreen):
             "selected_server_note_id": None,
             "selected_server_note_version": None,
             "selected_workspace_id": None,
+            "selected_workspace_version": None,
             "selected_workspace_note_id": None,
             "selected_workspace_note_version": None,
             "selected_workspace_source_id": None,
@@ -353,6 +372,8 @@ class NotesScreen(BaseAppScreen):
             return self.state.selected_workspace_source_id
         if self.state.workspace_subview == WorkspaceSubview.ARTIFACTS:
             return self.state.selected_workspace_artifact_id
+        if self.state.workspace_subview == WorkspaceSubview.DETAILS:
+            return self.state.selected_workspace_id
         return self.state.selected_workspace_note_id
 
     def _get_current_resource_version(self) -> Optional[int]:
@@ -364,6 +385,8 @@ class NotesScreen(BaseAppScreen):
             return self.state.selected_workspace_source_version
         if self.state.workspace_subview == WorkspaceSubview.ARTIFACTS:
             return self.state.selected_workspace_artifact_version
+        if self.state.workspace_subview == WorkspaceSubview.DETAILS:
+            return self.state.selected_workspace_version
         return self.state.selected_workspace_note_version
 
     def _resource_target_changed(
@@ -444,6 +467,8 @@ class NotesScreen(BaseAppScreen):
             elif changes["workspace_subview"] == WorkspaceSubview.ARTIFACTS:
                 changes["selected_workspace_artifact_id"] = pending.target_id
                 changes["selected_workspace_artifact_version"] = pending.target_version
+            elif changes["workspace_subview"] == WorkspaceSubview.DETAILS:
+                changes["selected_workspace_version"] = pending.target_version
             else:
                 changes["selected_workspace_note_id"] = pending.target_id
                 changes["selected_workspace_note_version"] = pending.target_version
@@ -674,6 +699,22 @@ class NotesScreen(BaseAppScreen):
             await panel.populate_workspace_notes(notes)
             await panel.populate_workspace_sources(sources)
             await panel.populate_workspace_artifacts(artifacts)
+            selected_source = next(
+                (item for item in sources if item.get("id") == self.state.selected_workspace_source_id),
+                None,
+            )
+            if selected_source is not None:
+                panel.set_workspace_source_details(selected_source)
+            else:
+                panel.clear_workspace_source_details()
+            selected_artifact = next(
+                (item for item in artifacts if item.get("id") == self.state.selected_workspace_artifact_id),
+                None,
+            )
+            if selected_artifact is not None:
+                panel.set_workspace_artifact_details(selected_artifact)
+            else:
+                panel.clear_workspace_artifact_details()
         except QueryError:
             return
 
@@ -747,6 +788,70 @@ class NotesScreen(BaseAppScreen):
             self.app_instance.current_selected_note_version = None
             self.app_instance.current_selected_note_title = ""
             self.app_instance.current_selected_note_content = ""
+
+    def _workspace_service(self) -> Any:
+        return self.server_notes_workspace_service or getattr(self.notes_scope_service, "server_service", None)
+
+    def _workspace_panel(self) -> Optional[WorkspaceContextPanel]:
+        if not self.is_mounted:
+            return None
+        try:
+            return self.query_one("#workspace-context-panel", WorkspaceContextPanel)
+        except QueryError:
+            return None
+
+    def _workspace_record(self) -> dict[str, Any]:
+        return dict(self._workspace_context_payload.get("workspace", {}) or {})
+
+    def _workspace_source_record(self, source_id: Any | None = None) -> dict[str, Any]:
+        lookup_id = self.state.selected_workspace_source_id if source_id is None else source_id
+        if lookup_id is None:
+            return {}
+        for item in self._workspace_context_payload.get("sources", []) or []:
+            if item.get("id") == lookup_id:
+                return dict(item)
+        return {}
+
+    def _workspace_artifact_record(self, artifact_id: Any | None = None) -> dict[str, Any]:
+        lookup_id = self.state.selected_workspace_artifact_id if artifact_id is None else artifact_id
+        if lookup_id is None:
+            return {}
+        for item in self._workspace_context_payload.get("artifacts", []) or []:
+            if item.get("id") == lookup_id:
+                return dict(item)
+        return {}
+
+    def _upsert_workspace_payload_item(self, collection_key: str, record: dict[str, Any]) -> None:
+        items = list(self._workspace_context_payload.get(collection_key, []) or [])
+        record_id = record.get("id")
+        replaced = False
+        for index, item in enumerate(items):
+            if item.get("id") == record_id:
+                items[index] = dict(record)
+                replaced = True
+                break
+        if not replaced:
+            items.insert(0, dict(record))
+        self._workspace_context_payload[collection_key] = items
+
+    async def _refresh_workspace_panel_from_payload(self) -> None:
+        if not self.state.selected_workspace_id:
+            return
+        await self._populate_workspace_context_panel_if_available(
+            workspace=self._workspace_record(),
+            notes=self._filter_workspace_notes_in_memory(
+                list(self._workspace_context_payload.get("notes", []) or [])
+            ),
+            sources=list(self._workspace_context_payload.get("sources", []) or []),
+            artifacts=list(self._workspace_context_payload.get("artifacts", []) or []),
+        )
+
+    @staticmethod
+    def _safe_int(value: str, *, default: int = 0) -> int:
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return default
 
     async def _hydrate_editor_for_local_note(self, note_id: Any, note_details: dict[str, Any]) -> None:
         content = note_details.get("content", "") or ""
@@ -1082,6 +1187,14 @@ class NotesScreen(BaseAppScreen):
         return True
 
     async def _save_current_note(self) -> bool:
+        if self.state.scope_type == ScopeType.WORKSPACE:
+            if self.state.workspace_subview == WorkspaceSubview.DETAILS:
+                return await self._save_current_workspace_details()
+            if self.state.workspace_subview == WorkspaceSubview.SOURCES:
+                return await self._save_current_workspace_source()
+            if self.state.workspace_subview == WorkspaceSubview.ARTIFACTS:
+                return await self._save_current_workspace_artifact()
+
         resource_id = self._get_current_resource_id()
         if not resource_id:
             return False
@@ -1213,14 +1326,400 @@ class NotesScreen(BaseAppScreen):
             return False
 
     async def _create_new_note(self) -> None:
-        if self.state.scope_type != ScopeType.LOCAL_NOTE or self.notes_service is None:
-            self._notify("Creating new notes is only enabled for local scope right now.", severity="warning")
+        if self.state.scope_type == ScopeType.LOCAL_NOTE:
+            if self.notes_service is None:
+                self._notify("Local notes service is not configured.", severity="warning")
+                return
+            new_note_id = self.notes_service.add_note(user_id=self.notes_user_id, title="New Note", content="")
+            if new_note_id:
+                await self._load_note(new_note_id)
+                await self.refresh_current_scope()
+                self._notify("New note created", severity="information")
             return
-        new_note_id = self.notes_service.add_note(user_id=self.notes_user_id, title="New Note", content="")
-        if new_note_id:
-            await self._load_note(new_note_id)
-            await self.refresh_current_scope()
-            self._notify("New note created", severity="information")
+
+        if self.state.scope_type == ScopeType.SERVER_NOTE:
+            if self.notes_scope_service is None:
+                self._notify("Scope-aware notes service is not configured.", severity="warning")
+                return
+            result = await self.notes_scope_service.save_note(
+                scope=ScopeType.SERVER_NOTE.value,
+                title="New Note",
+                content="",
+                note_id=None,
+                version=None,
+                user_id=self.notes_user_id,
+                workspace_id=None,
+                keywords=[],
+            )
+            if isinstance(result, dict):
+                updated_notes = [dict(result)] + [
+                    item for item in self.state.notes_list if item.get("id") != result.get("id")
+                ]
+                self._set_state(notes_list=updated_notes)
+                await self._hydrate_editor_for_server_note(str(result.get("id")), result)
+                await self._populate_scope_list_if_available(updated_notes)
+                self._notify("Server note created", severity="information")
+            return
+
+        if self.state.workspace_subview == WorkspaceSubview.NOTES and self.state.selected_workspace_id:
+            if self.notes_scope_service is None:
+                self._notify("Scope-aware notes service is not configured.", severity="warning")
+                return
+            result = await self.notes_scope_service.save_note(
+                scope=ScopeType.WORKSPACE.value,
+                title="New Workspace Note",
+                content="",
+                note_id=None,
+                version=None,
+                user_id=self.notes_user_id,
+                workspace_id=self.state.selected_workspace_id,
+                keywords=[],
+            )
+            if isinstance(result, dict):
+                self._upsert_workspace_payload_item("notes", dict(result))
+                await self._hydrate_editor_for_workspace_note(result)
+                await self._refresh_workspace_panel_from_payload()
+                self._notify("Workspace note created", severity="information")
+            return
+
+        await self._create_workspace_record()
+
+    async def _create_workspace_record(self) -> bool:
+        service = self._workspace_service()
+        if service is None or not hasattr(service, "save_workspace"):
+            self._notify("Workspace service is not configured.", severity="warning")
+            return False
+        workspace_id = f"workspace-{uuid4().hex[:12]}"
+        try:
+            result = await service.save_workspace(
+                workspace_id=workspace_id,
+                name="New Workspace",
+                version=None,
+                archived=False,
+                study_materials_policy="general",
+            )
+        except Exception as exc:
+            logger.error(f"Error creating workspace: {exc}", exc_info=True)
+            self._notify(f"Error creating workspace: {type(exc).__name__}", severity="error")
+            return False
+        if not isinstance(result, dict):
+            self._notify("Failed to create workspace.", severity="error")
+            return False
+
+        self._workspace_context_payload = {
+            "workspace": dict(result),
+            "notes": [],
+            "sources": [],
+            "artifacts": [],
+        }
+        self._set_state(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.DETAILS,
+            selected_workspace_id=result.get("id", workspace_id),
+            selected_workspace_version=result.get("version"),
+            selected_note_title=result.get("name", "New Workspace"),
+            selected_note_content="",
+            has_unsaved_changes=False,
+        )
+        self._set_keywords_baseline([])
+        self._sync_legacy_local_selection()
+        await self._refresh_workspace_panel_from_payload()
+        self._update_scope_context_ui()
+        self._notify("Workspace created", severity="information")
+        return True
+
+    async def _save_current_workspace_details(self) -> bool:
+        workspace_id = self.state.selected_workspace_id
+        if not workspace_id:
+            self._notify("No workspace selected to save.", severity="warning")
+            return False
+        panel = self._workspace_panel()
+        service = self._workspace_service()
+        if panel is None or service is None or not hasattr(service, "save_workspace"):
+            self._notify("Workspace service is not configured.", severity="warning")
+            return False
+
+        name = panel.query_one("#workspace-name-input", Input).value.strip() or "Untitled Workspace"
+        policy = panel.query_one("#workspace-policy-input", Input).value.strip() or "general"
+        archived = panel.query_one("#workspace-archived-toggle", Switch).value
+
+        try:
+            result = await service.save_workspace(
+                workspace_id=workspace_id,
+                name=name,
+                version=self.state.selected_workspace_version,
+                archived=archived,
+                study_materials_policy=policy,
+            )
+        except Exception as exc:
+            logger.error(f"Error saving workspace details: {exc}", exc_info=True)
+            self._notify(f"Error saving workspace: {type(exc).__name__}", severity="error")
+            return False
+        if not isinstance(result, dict):
+            self._notify("Failed to save workspace.", severity="error")
+            return False
+
+        self._workspace_context_payload["workspace"] = dict(result)
+        self._set_state(
+            selected_workspace_id=result.get("id", workspace_id),
+            selected_workspace_version=result.get("version", self.state.selected_workspace_version),
+            selected_note_title=result.get("name", name),
+            selected_note_content="",
+            has_unsaved_changes=False,
+        )
+        await self._refresh_workspace_panel_from_payload()
+        self._update_scope_context_ui()
+        self._notify("Workspace saved", severity="information")
+        return True
+
+    async def _save_current_workspace_source(self) -> bool:
+        workspace_id = self.state.selected_workspace_id
+        source_id = self.state.selected_workspace_source_id
+        if not workspace_id or not source_id:
+            self._notify("No workspace source selected to save.", severity="warning")
+            return False
+        panel = self._workspace_panel()
+        service = self._workspace_service()
+        if panel is None or service is None or not hasattr(service, "save_workspace_source"):
+            self._notify("Workspace source service is not configured.", severity="warning")
+            return False
+
+        media_id = panel.selected_source_media_id
+        if media_id is None:
+            existing_source = self._workspace_source_record(source_id)
+            media_id = existing_source.get("media_id")
+        if media_id is None:
+            self._notify("A workspace source must be linked to a media item.", severity="warning")
+            return False
+
+        title = panel.query_one("#workspace-source-title-input", Input).value.strip() or f"Media {media_id}"
+        source_type = panel.query_one("#workspace-source-type-input", Input).value.strip() or "media"
+        url_value = panel.query_one("#workspace-source-url-input", Input).value.strip()
+        position = self._safe_int(panel.query_one("#workspace-source-position-input", Input).value, default=0)
+        selected = panel.query_one("#workspace-source-selected-toggle", Switch).value
+
+        try:
+            result = await service.save_workspace_source(
+                workspace_id=workspace_id,
+                source_id=source_id,
+                media_id=media_id,
+                title=title,
+                source_type=source_type,
+                version=self.state.selected_workspace_source_version,
+                url=url_value or None,
+                position=position,
+                selected=selected,
+            )
+        except Exception as exc:
+            logger.error(f"Error saving workspace source: {exc}", exc_info=True)
+            self._notify(f"Error saving workspace source: {type(exc).__name__}", severity="error")
+            return False
+        if not isinstance(result, dict):
+            self._notify("Failed to save workspace source.", severity="error")
+            return False
+
+        self._upsert_workspace_payload_item("sources", dict(result))
+        self._set_state(
+            selected_workspace_source_id=result.get("id", source_id),
+            selected_workspace_source_version=result.get("version", self.state.selected_workspace_source_version),
+            has_unsaved_changes=False,
+            **self._baseline_changes(
+                resource_id=result.get("id", source_id),
+                version=result.get("version", self.state.selected_workspace_source_version),
+                title=result.get("title", title),
+                content="",
+            ),
+        )
+        await self._refresh_workspace_panel_from_payload()
+        self._notify("Workspace source saved", severity="information")
+        return True
+
+    async def _save_current_workspace_artifact(self) -> bool:
+        workspace_id = self.state.selected_workspace_id
+        artifact_id = self.state.selected_workspace_artifact_id
+        if not workspace_id or not artifact_id:
+            self._notify("No workspace artifact selected to save.", severity="warning")
+            return False
+        panel = self._workspace_panel()
+        service = self._workspace_service()
+        if panel is None or service is None or not hasattr(service, "save_workspace_artifact"):
+            self._notify("Workspace artifact service is not configured.", severity="warning")
+            return False
+
+        title = panel.query_one("#workspace-artifact-title-input", Input).value.strip() or "Untitled Artifact"
+        artifact_type = panel.query_one("#workspace-artifact-type-input", Input).value.strip() or "note"
+        status = panel.query_one("#workspace-artifact-status-input", Input).value.strip() or "pending"
+        content = panel.query_one("#workspace-artifact-content-input", TextArea).text
+
+        try:
+            result = await service.save_workspace_artifact(
+                workspace_id=workspace_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                title=title,
+                version=self.state.selected_workspace_artifact_version,
+                status=status,
+                content=content,
+            )
+        except Exception as exc:
+            logger.error(f"Error saving workspace artifact: {exc}", exc_info=True)
+            self._notify(f"Error saving workspace artifact: {type(exc).__name__}", severity="error")
+            return False
+        if not isinstance(result, dict):
+            self._notify("Failed to save workspace artifact.", severity="error")
+            return False
+
+        self._upsert_workspace_payload_item("artifacts", dict(result))
+        self._set_state(
+            selected_workspace_artifact_id=result.get("id", artifact_id),
+            selected_workspace_artifact_version=result.get("version", self.state.selected_workspace_artifact_version),
+            has_unsaved_changes=False,
+            **self._baseline_changes(
+                resource_id=result.get("id", artifact_id),
+                version=result.get("version", self.state.selected_workspace_artifact_version),
+                title=result.get("title", title),
+                content=str(result.get("content") or content or ""),
+            ),
+        )
+        await self._refresh_workspace_panel_from_payload()
+        self._notify("Workspace artifact saved", severity="information")
+        return True
+
+    async def _create_workspace_source(self) -> bool:
+        workspace_id = self.state.selected_workspace_id
+        service = self._workspace_service()
+        panel = self._workspace_panel()
+        if not workspace_id:
+            self._notify("Select a workspace before adding a source.", severity="warning")
+            return False
+        if panel is None or service is None or not hasattr(service, "save_workspace_source"):
+            self._notify("Workspace source service is not configured.", severity="warning")
+            return False
+
+        picker = WorkspaceSourcePicker(
+            service=getattr(self.app_instance, "server_media_reading_service", None),
+        )
+        selected_media_id = await self.app_instance.push_screen_wait(picker)
+        if selected_media_id in (None, False):
+            return False
+        try:
+            media_id = int(selected_media_id)
+        except (TypeError, ValueError):
+            media_id = picker.selected_media_id if picker.selected_media_id is not None else None
+        if media_id is None:
+            self._notify("No workspace source selected.", severity="warning")
+            return False
+
+        picked_item = next((item for item in picker.results if item.get("id") == media_id), {})
+        panel.set_pending_source_media(
+            media_id,
+            title=str(picked_item.get("title") or f"Media {media_id}"),
+            source_type=str(picked_item.get("type") or "media"),
+        )
+
+        source_id = f"source-{uuid4().hex[:12]}"
+        title = panel.query_one("#workspace-source-title-input", Input).value.strip() or str(
+            picked_item.get("title") or f"Media {media_id}"
+        )
+        source_type = panel.query_one("#workspace-source-type-input", Input).value.strip() or str(
+            picked_item.get("type") or "media"
+        )
+        url_value = panel.query_one("#workspace-source-url-input", Input).value.strip()
+        position = self._safe_int(panel.query_one("#workspace-source-position-input", Input).value, default=0)
+        selected = panel.query_one("#workspace-source-selected-toggle", Switch).value
+
+        try:
+            result = await service.save_workspace_source(
+                workspace_id=workspace_id,
+                source_id=source_id,
+                media_id=media_id,
+                title=title,
+                source_type=source_type,
+                version=None,
+                url=url_value or None,
+                position=position,
+                selected=selected,
+            )
+        except Exception as exc:
+            logger.error(f"Error creating workspace source: {exc}", exc_info=True)
+            self._notify(f"Error creating workspace source: {type(exc).__name__}", severity="error")
+            return False
+        if not isinstance(result, dict):
+            self._notify("Failed to create workspace source.", severity="error")
+            return False
+
+        self._upsert_workspace_payload_item("sources", dict(result))
+        self._set_state(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.SOURCES,
+            selected_workspace_source_id=result.get("id", source_id),
+            selected_workspace_source_version=result.get("version"),
+            has_unsaved_changes=False,
+            **self._baseline_changes(
+                resource_id=result.get("id", source_id),
+                version=result.get("version"),
+                title=result.get("title", title),
+                content="",
+            ),
+        )
+        await self._refresh_workspace_panel_from_payload()
+        self._update_scope_context_ui()
+        self._notify("Workspace source created", severity="information")
+        return True
+
+    async def _create_workspace_artifact(self) -> bool:
+        workspace_id = self.state.selected_workspace_id
+        service = self._workspace_service()
+        panel = self._workspace_panel()
+        if not workspace_id:
+            self._notify("Select a workspace before creating an artifact.", severity="warning")
+            return False
+        if panel is None or service is None or not hasattr(service, "save_workspace_artifact"):
+            self._notify("Workspace artifact service is not configured.", severity="warning")
+            return False
+
+        artifact_id = f"artifact-{uuid4().hex[:12]}"
+        title = panel.query_one("#workspace-artifact-title-input", Input).value.strip() or "New Artifact"
+        artifact_type = panel.query_one("#workspace-artifact-type-input", Input).value.strip() or "note"
+        status = panel.query_one("#workspace-artifact-status-input", Input).value.strip() or "pending"
+        content = panel.query_one("#workspace-artifact-content-input", TextArea).text
+
+        try:
+            result = await service.save_workspace_artifact(
+                workspace_id=workspace_id,
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                title=title,
+                version=None,
+                status=status,
+                content=content,
+            )
+        except Exception as exc:
+            logger.error(f"Error creating workspace artifact: {exc}", exc_info=True)
+            self._notify(f"Error creating workspace artifact: {type(exc).__name__}", severity="error")
+            return False
+        if not isinstance(result, dict):
+            self._notify("Failed to create workspace artifact.", severity="error")
+            return False
+
+        self._upsert_workspace_payload_item("artifacts", dict(result))
+        self._set_state(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.ARTIFACTS,
+            selected_workspace_artifact_id=result.get("id", artifact_id),
+            selected_workspace_artifact_version=result.get("version"),
+            has_unsaved_changes=False,
+            **self._baseline_changes(
+                resource_id=result.get("id", artifact_id),
+                version=result.get("version"),
+                title=result.get("title", title),
+                content=str(result.get("content") or content or ""),
+            ),
+        )
+        await self._refresh_workspace_panel_from_payload()
+        self._update_scope_context_ui()
+        self._notify("Workspace artifact created", severity="information")
+        return True
 
     async def _delete_current_note(self) -> None:
         if self._current_resource_kind() != "note":
@@ -1313,6 +1812,7 @@ class NotesScreen(BaseAppScreen):
             scope_type=ScopeType.WORKSPACE,
             workspace_subview=subview,
             selected_workspace_id=workspace_id,
+            selected_workspace_version=payload.get("workspace", {}).get("version"),
             selected_note_title=payload.get("workspace", {}).get("name", ""),
             selected_note_content="",
             has_unsaved_changes=False,
@@ -1364,6 +1864,7 @@ class NotesScreen(BaseAppScreen):
                 return None
             if self.state.selected_workspace_id != resolved_workspace_id:
                 self._set_state(selected_workspace_id=resolved_workspace_id)
+            self._set_state(selected_workspace_version=payload.get("workspace", {}).get("version"))
             await self._hydrate_editor_for_workspace_note(note_details)
         else:
             self._apply_navigation_target(navigation)
@@ -1371,6 +1872,7 @@ class NotesScreen(BaseAppScreen):
             selected_item = next((item for item in selection_items if item.get("id") == item_id), None)
             if selected_item is not None:
                 self._set_state(
+                    selected_workspace_version=payload.get("workspace", {}).get("version"),
                     selected_note_title=str(
                         selected_item.get("title")
                         or selected_item.get("name")
@@ -1631,6 +2133,31 @@ class NotesScreen(BaseAppScreen):
         if callable(open_study):
             open_study(scope_context)
 
+    @on(Button.Pressed, "#workspace-save-button")
+    async def handle_workspace_save_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._save_current_workspace_details()
+
+    @on(Button.Pressed, "#workspace-add-source-button")
+    async def handle_workspace_add_source_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._create_workspace_source()
+
+    @on(Button.Pressed, "#workspace-save-source-button")
+    async def handle_workspace_save_source_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._save_current_workspace_source()
+
+    @on(Button.Pressed, "#workspace-create-artifact-button")
+    async def handle_workspace_create_artifact_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._create_workspace_artifact()
+
+    @on(Button.Pressed, "#workspace-save-artifact-button")
+    async def handle_workspace_save_artifact_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._save_current_workspace_artifact()
+
     @on(Button.Pressed, "#notes-export-markdown-button")
     async def handle_export_markdown_button(self, event: Button.Pressed) -> None:
         event.stop()
@@ -1846,6 +2373,7 @@ class NotesScreen(BaseAppScreen):
                     "selected_server_note_id": self.state.selected_server_note_id,
                     "selected_server_note_version": self.state.selected_server_note_version,
                     "selected_workspace_id": self.state.selected_workspace_id,
+                    "selected_workspace_version": self.state.selected_workspace_version,
                     "selected_workspace_note_id": self.state.selected_workspace_note_id,
                     "selected_workspace_note_version": self.state.selected_workspace_note_version,
                     "selected_workspace_source_id": self.state.selected_workspace_source_id,
@@ -1882,6 +2410,7 @@ class NotesScreen(BaseAppScreen):
             selected_server_note_id=notes_state.get("selected_server_note_id"),
             selected_server_note_version=notes_state.get("selected_server_note_version"),
             selected_workspace_id=notes_state.get("selected_workspace_id"),
+            selected_workspace_version=notes_state.get("selected_workspace_version"),
             selected_workspace_note_id=notes_state.get("selected_workspace_note_id"),
             selected_workspace_note_version=notes_state.get("selected_workspace_note_version"),
             selected_workspace_source_id=notes_state.get("selected_workspace_source_id"),
