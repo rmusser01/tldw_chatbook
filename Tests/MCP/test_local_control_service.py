@@ -3,10 +3,12 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
+import tldw_chatbook.MCP.client as mcp_client_module
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
 from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
@@ -368,3 +370,104 @@ async def test_local_control_service_describes_connected_server_from_client_cach
     assert description["tools"][0]["name"] == "remote_tool"
     assert description["resources"][0]["uri"] == "remote://resource"
     assert description["prompts"][0]["name"] == "remote_prompt"
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_connect_to_server_uses_stdio_transport_flow(monkeypatch):
+    call_log = []
+
+    class FakeServerParams:
+        def __init__(self, command, args, env):
+            self.command = command
+            self.args = args
+            self.env = env
+            call_log.append(("server_params", command, list(args), env))
+
+    class FakeTransportContext:
+        def __init__(self, server_params):
+            self.server_params = server_params
+
+        async def __aenter__(self):
+            call_log.append(("transport_enter", self.server_params.command))
+            return ("read-stream", "write-stream")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            call_log.append(("transport_exit", self.server_params.command))
+
+    def fake_stdio_client(server_params):
+        call_log.append(("stdio_client", server_params.command))
+        return FakeTransportContext(server_params)
+
+    class FakeSession:
+        def __init__(self, read_stream, write_stream):
+            self.read_stream = read_stream
+            self.write_stream = write_stream
+            call_log.append(("session_init", read_stream, write_stream))
+
+        async def __aenter__(self):
+            call_log.append(("session_enter", self.read_stream, self.write_stream))
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            call_log.append(("session_exit", exc_type is None))
+
+        async def initialize(self):
+            call_log.append(("initialize", self.read_stream, self.write_stream))
+
+        async def list_tools(self):
+            call_log.append(("list_tools",))
+            return SimpleNamespace(
+                tools=[SimpleNamespace(name="remote_tool", description="Remote tool", inputSchema={})]
+            )
+
+        async def list_resources(self):
+            call_log.append(("list_resources",))
+            return SimpleNamespace(
+                resources=[
+                    SimpleNamespace(
+                        uri="remote://resource",
+                        name="Remote Resource",
+                        description="Remote resource",
+                        mimeType="text/plain",
+                    )
+                ]
+            )
+
+        async def list_prompts(self):
+            call_log.append(("list_prompts",))
+            return SimpleNamespace(
+                prompts=[SimpleNamespace(name="remote_prompt", description="Remote prompt", arguments=[])]
+            )
+
+    monkeypatch.setattr(mcp_client_module, "MCP_CLIENT_AVAILABLE", True)
+    monkeypatch.setattr(mcp_client_module, "StdioServerParameters", FakeServerParams, raising=False)
+    monkeypatch.setattr(mcp_client_module, "stdio_client", fake_stdio_client, raising=False)
+    monkeypatch.setattr(mcp_client_module, "ClientSession", FakeSession, raising=False)
+
+    client = mcp_client_module.MCPClient(name="test-client")
+
+    connected = await client.connect_to_server(
+        "profile-a",
+        "python",
+        args=["-m", "demo.server"],
+        env={"API_KEY": "resolved-api-key"},
+    )
+
+    assert connected is True
+    assert call_log[:8] == [
+        ("server_params", "python", ["-m", "demo.server"], {"API_KEY": "resolved-api-key"}),
+        ("stdio_client", "python"),
+        ("transport_enter", "python"),
+        ("session_init", "read-stream", "write-stream"),
+        ("session_enter", "read-stream", "write-stream"),
+        ("initialize", "read-stream", "write-stream"),
+        ("list_tools",),
+        ("list_resources",),
+    ]
+    assert call_log[8] == ("list_prompts",)
+    assert "profile-a" in client.sessions
+    assert client.servers["profile-a"]["command"] == "python"
+    assert client.servers["profile-a"]["args"] == ["-m", "demo.server"]
+    assert client.servers["profile-a"]["tools"][0].name == "remote_tool"
+    assert client.servers["profile-a"]["resources"][0].uri == "remote://resource"
+    assert client.servers["profile-a"]["prompts"][0].name == "remote_prompt"

@@ -5,19 +5,20 @@ This module provides client functionality to connect to external MCP servers
 and use their tools, resources, and prompts within tldw_chatbook.
 """
 
-import asyncio
-from typing import Dict, List, Optional, Any, Union
+from contextlib import AsyncExitStack
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 # Import MCP client components conditionally
 try:
-    from mcp.client import Client, StdioServerParameters
+    from mcp import StdioServerParameters
+    from mcp.client.stdio import stdio_client
     from mcp.client.session import ClientSession
-    from mcp.types import Tool, Resource, Prompt
     MCP_CLIENT_AVAILABLE = True
 except ImportError:
     MCP_CLIENT_AVAILABLE = False
-    Client = None
+    StdioServerParameters = None
+    stdio_client = None
     ClientSession = None
 
 from loguru import logger
@@ -34,6 +35,8 @@ class MCPClient:
         self.name = name
         self.sessions: Dict[str, ClientSession] = {}
         self.servers: Dict[str, Dict[str, Any]] = {}
+        self._connection_stacks: Dict[str, AsyncExitStack] = {}
+        self._session_context_managed: set[str] = set()
         
         logger.info(f"MCP Client '{name}' initialized")
     
@@ -55,6 +58,13 @@ class MCPClient:
         Returns:
             True if connection successful
         """
+        if not all((MCP_CLIENT_AVAILABLE, StdioServerParameters, stdio_client, ClientSession)):
+            logger.error("MCP client dependencies not available for stdio server connection")
+            return False
+
+        stack = AsyncExitStack()
+        session = None
+        session_context_managed = False
         try:
             # Create server parameters
             server_params = StdioServerParameters(
@@ -62,21 +72,25 @@ class MCPClient:
                 args=args or [],
                 env=env
             )
-            
-            # Create and store session
-            session = ClientSession(
-                server=server_params,
-                name=f"{self.name}:{server_id}"
-            )
-            
-            # Initialize the session
+
+            read_stream, write_stream = await stack.enter_async_context(stdio_client(server_params))
+            session_candidate = ClientSession(read_stream, write_stream)
+            if hasattr(session_candidate, "__aenter__") and hasattr(session_candidate, "__aexit__"):
+                session = await stack.enter_async_context(session_candidate)
+                session_context_managed = True
+            else:
+                session = session_candidate
+
             await session.initialize()
-            
+
             # Store session and server info
             self.sessions[server_id] = session
+            self._connection_stacks[server_id] = stack
+            if session_context_managed:
+                self._session_context_managed.add(server_id)
             self.servers[server_id] = {
                 "command": command,
-                "args": args,
+                "args": list(args or []),
                 "connected_at": datetime.now().isoformat(),
                 "tools": [],
                 "resources": [],
@@ -88,15 +102,14 @@ class MCPClient:
             
             logger.info(f"Successfully connected to MCP server: {server_id}")
             return True
-            
+
         except Exception as e:
-            if server_id in self.sessions:
-                try:
-                    await self.sessions[server_id].close()
-                except Exception:
-                    pass
-                self.sessions.pop(server_id, None)
-            self.servers.pop(server_id, None)
+            await self._teardown_connection(
+                server_id,
+                session=session,
+                stack=stack,
+                session_context_managed=session_context_managed,
+            )
             logger.error(f"Failed to connect to MCP server {server_id}: {e}")
             return False
     
@@ -111,10 +124,7 @@ class MCPClient:
         """
         try:
             if server_id in self.sessions:
-                session = self.sessions[server_id]
-                await session.close()
-                del self.sessions[server_id]
-                del self.servers[server_id]
+                await self._teardown_connection(server_id)
                 logger.info(f"Disconnected from MCP server: {server_id}")
                 return True
             else:
@@ -375,3 +385,35 @@ class MCPClient:
         for server_id in server_ids:
             await self.disconnect_from_server(server_id)
         logger.info("Disconnected from all MCP servers")
+
+    async def _teardown_connection(
+        self,
+        server_id: str,
+        *,
+        session: Optional[Any] = None,
+        stack: Optional[AsyncExitStack] = None,
+        session_context_managed: Optional[bool] = None,
+    ) -> None:
+        active_session = session if session is not None else self.sessions.get(server_id)
+        active_stack = stack if stack is not None else self._connection_stacks.pop(server_id, None)
+        managed_by_context = (
+            session_context_managed
+            if session_context_managed is not None
+            else server_id in self._session_context_managed
+        )
+
+        if active_session is not None and not managed_by_context and hasattr(active_session, "close"):
+            try:
+                await active_session.close()
+            except Exception:
+                pass
+
+        if active_stack is not None:
+            try:
+                await active_stack.aclose()
+            except Exception:
+                pass
+
+        self._session_context_managed.discard(server_id)
+        self.sessions.pop(server_id, None)
+        self.servers.pop(server_id, None)
