@@ -2,6 +2,7 @@ import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import (
+    ALLOWED_SERVER_CREATE_SOURCE_TYPES,
     MediaReadingBackend,
     MediaReadingScopeService,
 )
@@ -565,6 +566,25 @@ async def test_scope_service_can_create_server_ingestion_source():
 
     assert created["entity_kind"] == "ingestion_source"
     assert created["source_type"] == "git_repository"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_unsupported_server_ingestion_source_type_before_dispatch():
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(local_service=None, server_service=server)
+
+    assert "local_directory" not in ALLOWED_SERVER_CREATE_SOURCE_TYPES
+
+    with pytest.raises(ValueError, match="Unsupported server ingestion source type"):
+        await scope.create_ingestion_source(
+            mode="server",
+            source_type="local_directory",
+            sink_type="media",
+            policy="canonical",
+            config={"path": "/srv/media"},
+        )
+
+    assert not any(call[0] == "create_ingestion_source" for call in server.calls)
 
 
 @pytest.mark.asyncio

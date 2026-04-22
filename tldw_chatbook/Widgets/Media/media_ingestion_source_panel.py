@@ -13,11 +13,13 @@ from textual.containers import Container, Horizontal, ScrollableContainer, Verti
 from textual.reactive import reactive
 from textual.widgets import Button, Checkbox, Input, Label, ListItem, ListView, Select, Static
 
+from ...Media.media_reading_scope_service import ALLOWED_SERVER_CREATE_SOURCE_TYPES
+
 if TYPE_CHECKING:
     from ...app import TldwCli
 
 
-ALLOWED_CREATE_SOURCE_TYPES = ("archive_snapshot", "git_repository")
+ALLOWED_CREATE_SOURCE_TYPES = ALLOWED_SERVER_CREATE_SOURCE_TYPES
 CREATE_SOURCE_TYPE_OPTIONS = [
     ("Archive Snapshot", "archive_snapshot"),
     ("Git Repository", "git_repository"),
@@ -172,6 +174,15 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         sink_type = str(source.get("sink_type") or "")
         return "archive" in source_type or "archive" in sink_type
 
+    def _current_runtime_backend(self) -> str:
+        runtime_backend = self.runtime_backend
+        if self.runtime_state is not None:
+            runtime_backend = str(getattr(self.runtime_state, "runtime_backend", runtime_backend) or "local")
+        normalized_backend = str(runtime_backend or "local").strip().lower()
+        if normalized_backend not in {"local", "server"}:
+            return "local"
+        return normalized_backend
+
     def _set_create_controls_disabled(self, disabled: bool) -> None:
         self.query_one("#create-source-type", Select).disabled = disabled
         self.query_one("#create-policy-type", Select).disabled = disabled
@@ -203,8 +214,7 @@ class MediaIngestionSourcePanel(ScrollableContainer):
 
     async def refresh_for_mode(self, *, preferred_source_id: Any = None) -> None:
         """Refresh the panel for the current runtime backend."""
-        if self.runtime_state is not None:
-            self.runtime_backend = str(getattr(self.runtime_state, "runtime_backend", self.runtime_backend) or "local")
+        self.runtime_backend = self._current_runtime_backend()
 
         if self.runtime_backend != "server":
             self._show_server_ui(False)
@@ -344,6 +354,7 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         self.run_worker(self._create_source(), exclusive=True)
 
     async def _create_source(self) -> None:
+        self.runtime_backend = self._current_runtime_backend()
         if self.runtime_backend != "server":
             self._set_create_controls_disabled(True)
             self.notify("Server ingestion sources require server mode.", severity="warning")

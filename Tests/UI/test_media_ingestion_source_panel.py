@@ -124,7 +124,7 @@ async def test_ingestion_source_panel_creates_allowed_server_source_and_refreshe
         source_type.value = "git_repository"
         panel.query_one("#create-config-input", Input).value = '{"repo_url": "https://example.com/repo.git"}'
 
-        await panel._create_source()
+        await pilot.click("#create-source-btn")
         await pilot.pause(0.05)
 
         scope_service.create_ingestion_source.assert_awaited_once_with(
@@ -137,3 +137,30 @@ async def test_ingestion_source_panel_creates_allowed_server_source_and_refreshe
         assert scope_service.list_ingestion_sources.await_count == 2
         assert panel.selected_source == created_source
         scope_service.list_ingestion_source_items.assert_awaited_with(mode="server", source_id="7")
+
+
+@pytest.mark.asyncio
+async def test_ingestion_source_panel_does_not_dispatch_create_when_runtime_state_switched_to_local():
+    scope_service = Mock()
+    scope_service.list_ingestion_sources = AsyncMock(return_value=[])
+    scope_service.create_ingestion_source = AsyncMock()
+
+    app = SourcePanelTestApp(runtime_backend="server", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(MediaIngestionSourcePanel)
+        panel.runtime_backend = "server"
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        panel.query_one("#create-source-type", Select).value = "git_repository"
+        panel.query_one("#create-config-input", Input).value = '{"repo_url": "https://example.com/repo.git"}'
+
+        app.media_runtime_state.runtime_backend = "local"
+
+        await pilot.click("#create-source-btn")
+        await pilot.pause(0.05)
+
+        scope_service.create_ingestion_source.assert_not_awaited()
+        assert panel.runtime_backend == "local"
+        assert panel.query_one("#create-source-btn", Button).disabled is True

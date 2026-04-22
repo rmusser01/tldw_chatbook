@@ -14,6 +14,8 @@ from .media_reading_normalizers import (
     normalize_server_reading_item,
 )
 
+ALLOWED_SERVER_CREATE_SOURCE_TYPES = ("archive_snapshot", "git_repository")
+
 
 class MediaReadingBackend(str, Enum):
     LOCAL = "local"
@@ -76,6 +78,17 @@ class MediaReadingScopeService:
         if self.server_service is None:
             raise ValueError("Server media backend is unavailable.")
         return self.server_service
+
+    @staticmethod
+    def _validate_server_create_source_type(source_type: str) -> str:
+        normalized_source_type = str(source_type or "").strip()
+        if normalized_source_type not in ALLOWED_SERVER_CREATE_SOURCE_TYPES:
+            allowed_types = ", ".join(ALLOWED_SERVER_CREATE_SOURCE_TYPES)
+            raise ValueError(
+                f"Unsupported server ingestion source type: {normalized_source_type}. "
+                f"Allowed types: {allowed_types}."
+            )
+        return normalized_source_type
 
     def _normalize_media_record(
         self,
@@ -292,11 +305,12 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == MediaReadingBackend.LOCAL:
             raise ValueError("Local ingestion sources are not available yet.")
+        normalized_source_type = self._validate_server_create_source_type(source_type)
         self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         source = await self._maybe_await(
             service.create_ingestion_source(
-                source_type=source_type,
+                source_type=normalized_source_type,
                 sink_type=sink_type,
                 policy=policy,
                 enabled=enabled,
