@@ -15,6 +15,10 @@ from tldw_chatbook.Media import (
     MediaReadingScopeService,
     ServerMediaReadingService,
 )
+from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+from tldw_chatbook.Subscriptions.server_watchlists_service import ServerWatchlistsService
+from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistScopeService
 from tldw_chatbook.Constants import ALL_TABS
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -63,10 +67,14 @@ def test_app_uses_screen_navigation_and_wires_media_services():
 
 
 def test_app_initializes_watchlists_and_notifications_services(app):
-    assert app.server_watchlists_service is not None
-    assert app.watchlist_scope_service is not None
-    assert app.client_notifications_db is not None
-    assert app.notification_dispatch_service is not None
+    assert isinstance(app.local_watchlists_service, LocalWatchlistsService)
+    assert isinstance(app.server_watchlists_service, ServerWatchlistsService)
+    assert isinstance(app.watchlist_scope_service, WatchlistScopeService)
+    assert app.watchlist_scope_service.local_service is app.local_watchlists_service
+    assert app.watchlist_scope_service.server_service is app.server_watchlists_service
+    assert app.watchlist_scope_service.policy_enforcer is app.service_policy_enforcer
+    assert isinstance(app.client_notifications_db, ClientNotificationsDB)
+    assert app.notification_dispatch_service.store is app.client_notifications_db
 
 
 def test_media_screen_uses_shared_runtime_state():
