@@ -108,6 +108,36 @@ def test_local_store_rejects_non_placeholder_secret_env_entries_even_when_declar
     assert not (tmp_path / "local_mcp_store.json").exists()
 
 
+def test_local_store_loads_legacy_env_payload_and_drops_unsafe_entries(tmp_path):
+    path = tmp_path / "local_mcp_store.json"
+    path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "profile_id": "profile-a",
+                        "command": "python",
+                        "args": ["-m", "demo.server"],
+                        "env": {
+                            "SERVICE_URL": "https://api.example.com",
+                            "API_KEY": "sk-live-super-secret-value",
+                            "LOG_LEVEL": "debug",
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    restored = LocalMCPStore(path).get_profile("profile-a")
+
+    assert restored is not None
+    assert restored.env["SERVICE_URL"] == "https://api.example.com"
+    assert restored.env["LOG_LEVEL"] == "debug"
+    assert "API_KEY" not in restored.env
+
+
 def test_local_store_persists_discovery_snapshots_and_governance_updates(tmp_path):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
     rule = LocalGovernanceRule(

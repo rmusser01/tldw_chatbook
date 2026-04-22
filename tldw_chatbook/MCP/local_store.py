@@ -40,6 +40,7 @@ _SAFE_LITERAL_VALUES = {
 }
 _SAFE_INTEGER_PATTERN = re.compile(r"^[0-9]{1,5}$")
 _SAFE_DECIMAL_PATTERN = re.compile(r"^[0-9]{1,4}\.[0-9]{1,2}$")
+_SAFE_URL_LITERAL_PATTERN = re.compile(r"^https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[^\s]*)?$", re.IGNORECASE)
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
@@ -108,7 +109,29 @@ def _is_safe_literal_value(value: str) -> bool:
         return True
     if _SAFE_DECIMAL_PATTERN.fullmatch(normalized):
         return True
+    if _SAFE_URL_LITERAL_PATTERN.fullmatch(value.strip()):
+        return True
     return False
+
+
+def _coerce_legacy_env(legacy_env: Mapping[str, Any] | None) -> tuple[dict[str, str], dict[str, str]]:
+    placeholders: dict[str, str] = {}
+    literals: dict[str, str] = {}
+    for raw_key, raw_value in (legacy_env or {}).items():
+        key = _text(raw_key)
+        value = _text(raw_value)
+        if not key or not value:
+            continue
+        if _ENV_PLACEHOLDER_PATTERN.fullmatch(value):
+            placeholders[key] = value
+            continue
+        if _is_secret_bearing_env_key(key):
+            continue
+        if _looks_like_raw_secret_value(value):
+            continue
+        if _is_safe_literal_value(value):
+            literals[key] = value
+    return placeholders, literals
 
 
 def _sanitize_env_placeholders(env: Mapping[str, Any] | None) -> dict[str, str]:
@@ -204,15 +227,11 @@ class LocalExternalMCPProfile:
         raw_env_literals = _coerce_mapping(data.get("env_literals"))
         legacy_env = _coerce_mapping(data.get("env"))
         if legacy_env:
-            for key, value in legacy_env.items():
-                text_key = _text(key)
-                text_value = _text(value)
-                if not text_key or not text_value:
-                    continue
-                if _ENV_PLACEHOLDER_PATTERN.fullmatch(text_value):
-                    raw_env_placeholders[text_key] = text_value
-                else:
-                    raw_env_literals[text_key] = text_value
+            legacy_placeholders, legacy_literals = _coerce_legacy_env(legacy_env)
+            for key, value in legacy_placeholders.items():
+                raw_env_placeholders.setdefault(key, value)
+            for key, value in legacy_literals.items():
+                raw_env_literals.setdefault(key, value)
         return cls(
             profile_id=_text(data.get("profile_id")),
             command=_text(data.get("command")),

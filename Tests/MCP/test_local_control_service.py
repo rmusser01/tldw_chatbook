@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import ast
+import os
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
@@ -69,6 +74,16 @@ class FakeMCPClient:
         }
 
 
+class EmptySnapshotClient(FakeMCPClient):
+    async def describe_server(self, server_id: str):
+        return {
+            "server_id": server_id,
+            "tools": [],
+            "resources": [],
+            "prompts": [],
+        }
+
+
 def test_local_control_service_builds_inventory_from_local_manifest_without_loopback():
     service = LocalMCPControlService(
         store=FakeLocalStore(),
@@ -97,6 +112,35 @@ def test_local_control_service_uses_real_local_manifest_helper_by_default():
     assert any(tool["description"] == "Perform RAG search across ingested media." for tool in inventory["tools"])
     assert any(resource["uri"] == "note://{note_id}" for resource in inventory["resources"])
     assert any(prompt["name"] == "summarize_conversation" for prompt in inventory["prompts"])
+
+
+def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
+    server_path = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "MCP" / "server.py"
+    module_node = ast.parse(server_path.read_text(encoding="utf-8"))
+
+    def _registered_names(method_name: str) -> list[str]:
+        for node in module_node.body:
+            if isinstance(node, ast.ClassDef) and node.name == "TldwMCPServer":
+                for child in node.body:
+                    if isinstance(child, ast.FunctionDef) and child.name == method_name:
+                        names: list[str] = []
+                        for nested in child.body:
+                            if isinstance(nested, ast.AsyncFunctionDef):
+                                names.append(nested.name)
+                        return names
+        return []
+
+    helper_manifest = describe_local_mcp_capabilities()
+    helper_tool_names = [item["name"] for item in helper_manifest["tools"]]
+    helper_resource_names = [item["name"] for item in helper_manifest["resources"]]
+    helper_prompt_names = [item["name"] for item in helper_manifest["prompts"]]
+
+    assert set(helper_tool_names) == set(_registered_names("_register_tools"))
+    assert len(helper_tool_names) == len(_registered_names("_register_tools"))
+    assert set(helper_resource_names) == set(_registered_names("_register_resources")[:5])
+    assert len(helper_resource_names) == len(_registered_names("_register_resources")[:5])
+    assert set(helper_prompt_names) == set(_registered_names("_register_prompts"))
+    assert len(helper_prompt_names) == len(_registered_names("_register_prompts"))
 
 
 def test_local_control_service_exposes_overview_external_servers_and_governance():
@@ -138,11 +182,27 @@ async def test_local_control_service_connects_profile_and_persists_discovery_sna
     client = FakeMCPClient()
     service = LocalMCPControlService(store=store, client=client, manifest_provider=lambda: {})
 
-    snapshot = await service.connect_profile("profile-a")
+    with patch.dict(os.environ, {"API_KEY": "resolved-api-key"}, clear=True):
+        snapshot = await service.connect_profile("profile-a")
 
     assert client.connected[0]["server_id"] == "profile-a"
+    assert client.connected[0]["env"]["API_KEY"] == "resolved-api-key"
+    assert client.connected[0]["env"]["LOG_LEVEL"] == "debug"
     assert store.discovery_snapshots["profile-a"]["tools"][0]["name"] == "remote_tool"
     assert snapshot["prompts"][0]["name"] == "remote_prompt"
+
+
+@pytest.mark.asyncio
+async def test_local_control_service_rejects_empty_capability_snapshots():
+    store = FakeLocalStore()
+    client = EmptySnapshotClient()
+    service = LocalMCPControlService(store=store, client=client, manifest_provider=lambda: {})
+
+    with patch.dict(os.environ, {"API_KEY": "resolved-api-key"}, clear=True):
+        with pytest.raises(RuntimeError):
+            await service.connect_profile("profile-a")
+
+    assert "profile-a" not in store.discovery_snapshots
 
 
 @pytest.mark.asyncio

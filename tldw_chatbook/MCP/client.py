@@ -90,6 +90,13 @@ class MCPClient:
             return True
             
         except Exception as e:
+            if server_id in self.sessions:
+                try:
+                    await self.sessions[server_id].close()
+                except Exception:
+                    pass
+                self.sessions.pop(server_id, None)
+            self.servers.pop(server_id, None)
             logger.error(f"Failed to connect to MCP server {server_id}: {e}")
             return False
     
@@ -124,30 +131,33 @@ class MCPClient:
         Args:
             server_id: Server identifier
         """
-        try:
-            session = self.sessions.get(server_id)
-            if not session:
-                return
-            
-            # List tools
-            tools_response = await session.list_tools()
-            self.servers[server_id]["tools"] = tools_response.tools
-            
-            # List resources
-            resources_response = await session.list_resources()
-            self.servers[server_id]["resources"] = resources_response.resources
-            
-            # List prompts
-            prompts_response = await session.list_prompts()
-            self.servers[server_id]["prompts"] = prompts_response.prompts
-            
-            logger.info(f"Discovered capabilities for {server_id}: "
-                       f"{len(self.servers[server_id]['tools'])} tools, "
-                       f"{len(self.servers[server_id]['resources'])} resources, "
-                       f"{len(self.servers[server_id]['prompts'])} prompts")
-                       
-        except Exception as e:
-            logger.error(f"Error discovering capabilities for {server_id}: {e}")
+        session = self.sessions.get(server_id)
+        if not session:
+            raise RuntimeError(f"Server session not found for {server_id}")
+
+        # List tools
+        tools_response = await session.list_tools()
+        self.servers[server_id]["tools"] = tools_response.tools
+
+        # List resources
+        resources_response = await session.list_resources()
+        self.servers[server_id]["resources"] = resources_response.resources
+
+        # List prompts
+        prompts_response = await session.list_prompts()
+        self.servers[server_id]["prompts"] = prompts_response.prompts
+
+        logger.info(f"Discovered capabilities for {server_id}: "
+                   f"{len(self.servers[server_id]['tools'])} tools, "
+                   f"{len(self.servers[server_id]['resources'])} resources, "
+                   f"{len(self.servers[server_id]['prompts'])} prompts")
+
+        if not (
+            self.servers[server_id]["tools"]
+            or self.servers[server_id]["resources"]
+            or self.servers[server_id]["prompts"]
+        ):
+            raise RuntimeError(f"Server {server_id} returned no discoverable capabilities")
     
     async def call_tool(
         self,
