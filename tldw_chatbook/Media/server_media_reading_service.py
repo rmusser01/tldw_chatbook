@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
-from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
+from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..tldw_api import (
+    IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
     MediaSearchRequest,
     ReadingProgressUpdate,
@@ -24,7 +25,7 @@ class ServerMediaReadingService:
 
     @classmethod
     def from_config(cls, app_config: Mapping[str, Any]) -> "ServerMediaReadingService":
-        return cls(client=build_tldw_api_client_from_config(app_config))
+        return cls(client=build_runtime_api_client_from_config(app_config))
 
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:
@@ -81,6 +82,28 @@ class ServerMediaReadingService:
 
     async def list_ingestion_sources(self) -> Any:
         return await self._require_client().list_ingestion_sources()
+
+    async def create_ingestion_source(
+        self,
+        *,
+        source_type: str,
+        sink_type: str,
+        policy: str = "canonical",
+        enabled: bool = True,
+        schedule_enabled: bool = False,
+        schedule: Optional[Mapping[str, Any]] = None,
+        config: Optional[Mapping[str, Any]] = None,
+    ) -> Any:
+        request_data = IngestionSourceCreateRequest(
+            source_type=source_type,
+            sink_type=sink_type,
+            policy=policy,
+            enabled=enabled,
+            schedule_enabled=schedule_enabled,
+            schedule=dict(schedule or {}),
+            config=dict(config or {}),
+        )
+        return await self._require_client().create_ingestion_source(request_data)
 
     async def get_ingestion_source(self, source_id: Any) -> Any:
         return await self._require_client().get_ingestion_source(int(source_id))

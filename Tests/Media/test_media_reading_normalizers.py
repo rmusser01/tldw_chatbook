@@ -66,6 +66,9 @@ def test_normalize_local_media_row_exposes_shared_contract():
         "is_trash": True,
         "has_transcript": True,
         "has_chunks": True,
+        "supports_read_it_later": True,
+        "is_read_it_later": False,
+        "read_it_later_saved_at": None,
         "reading_progress": {
             "backend": "local",
             "backing_media_id": 12,
@@ -115,6 +118,22 @@ def test_normalize_server_reading_item_uses_media_id_for_backing_media_id():
     assert normalized["has_chunks"] is True
     assert normalized["reading_progress"]["backing_media_id"] == 99
     assert normalized["reading_progress"]["percent_complete"] == 25.0
+
+
+def test_normalize_server_reading_item_exposes_saved_state_without_fake_saved_timestamp():
+    normalized = normalize_server_reading_item(
+        {
+            "id": 41,
+            "media_id": 99,
+            "title": "Server Article",
+            "status": "saved",
+            "updated_at": "2026-04-21T10:00:00Z",
+        }
+    )
+
+    assert normalized["supports_read_it_later"] is True
+    assert normalized["is_read_it_later"] is True
+    assert normalized["read_it_later_saved_at"] is None
 
 
 def test_normalize_reading_progress_computes_percent_when_missing():

@@ -4,6 +4,7 @@ from tldw_chatbook.Media.media_reading_scope_service import (
     MediaReadingBackend,
     MediaReadingScopeService,
 )
+from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
 class FakeLocalMediaService:
@@ -81,6 +82,9 @@ class FakeLocalMediaService:
         return True
 
     def list_ingestion_sources(self):
+        raise ValueError("Local ingestion sources are not available yet.")
+
+    def create_ingestion_source(self, **kwargs):
         raise ValueError("Local ingestion sources are not available yet.")
 
     def get_ingestion_source(self, source_id):
@@ -201,6 +205,20 @@ class FakeServerMediaService:
             }
         ]
 
+    async def create_ingestion_source(self, **kwargs):
+        self.calls.append(("create_ingestion_source", kwargs))
+        return {
+            "id": 8,
+            "user_id": 1,
+            "source_type": kwargs["source_type"],
+            "sink_type": kwargs["sink_type"],
+            "policy": kwargs.get("policy", "canonical"),
+            "enabled": kwargs.get("enabled", True),
+            "schedule_enabled": kwargs.get("schedule_enabled", False),
+            "schedule_config": kwargs.get("schedule", {}),
+            "config": kwargs.get("config", {}),
+        }
+
     async def get_ingestion_source(self, source_id):
         self.calls.append(("get_ingestion_source", source_id))
         return {
@@ -254,6 +272,28 @@ class FakeServerMediaService:
         raise ValueError("Server document versions are not available yet.")
 
 
+class FakePolicyEnforcer:
+    def __init__(self, denied_reason: str | None = None):
+        self.denied_reason = denied_reason
+        self.calls = []
+
+    @classmethod
+    def deny(cls, reason_code: str) -> "FakePolicyEnforcer":
+        return cls(denied_reason=reason_code)
+
+    def require_allowed(self, *, action_id: str) -> None:
+        self.calls.append(action_id)
+        if self.denied_reason is None:
+            return
+        raise PolicyDeniedError(
+            action_id=action_id,
+            reason_code=self.denied_reason,
+            user_message=f"{action_id} denied",
+            effective_source="server",
+            authority_owner="server",
+        )
+
+
 @pytest.mark.asyncio
 async def test_scope_service_normalizes_local_media_search_results():
     scope_service = MediaReadingScopeService(
@@ -272,6 +312,21 @@ async def test_scope_service_normalizes_local_media_search_results():
     assert result["items"][0]["id"] == "local:media:12"
     assert result["items"][0]["backing_media_id"] == 12
     assert result["items"][0]["reading_progress"] is None
+
+
+@pytest.mark.asyncio
+async def test_scope_service_records_local_media_read_action_before_normalizing_results():
+    policy_enforcer = FakePolicyEnforcer()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    result = await scope_service.search_media(mode="local", query="pdf")
+
+    assert result["items"][0]["id"] == "local:media:12"
+    assert policy_enforcer.calls == ["media.reading.list.local"]
 
 
 @pytest.mark.asyncio
@@ -376,6 +431,56 @@ async def test_scope_service_routes_server_ingestion_source_operations_and_norma
     assert items[0]["id"] == "server:file_artifact:55"
     assert triggered["job_id"] == 123
     assert uploaded["job_id"] == 124
+
+
+@pytest.mark.asyncio
+async def test_scope_service_save_and_remove_use_explicit_reading_list_actions():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(local_service=None, server_service=server, policy_enforcer=policy)
+
+    await scope.save_to_read_it_later(mode="server", media_id=41)
+    await scope.remove_from_read_it_later(mode="server", media_id=41)
+
+    assert policy.calls == [
+        "collections.reading_list.create.server",
+        "collections.reading_list.delete.server",
+    ]
+    assert ("update_media_metadata", 41, {"status": "saved"}) in server.calls
+    assert ("update_media_metadata", 41, {"status": "archived"}) in server.calls
+
+
+@pytest.mark.asyncio
+async def test_scope_service_can_create_server_ingestion_source():
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(local_service=None, server_service=server)
+
+    created = await scope.create_ingestion_source(
+        mode="server",
+        source_type="git_repository",
+        sink_type="media",
+        policy="canonical",
+        config={"repo_url": "https://example.com/repo.git"},
+    )
+
+    assert created["entity_kind"] == "ingestion_source"
+    assert created["source_type"] == "git_repository"
+
+
+@pytest.mark.asyncio
+async def test_media_scope_service_denies_server_ingestion_sources_when_server_is_unreachable():
+    policy_enforcer = FakePolicyEnforcer.deny("server_unreachable")
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await scope_service.list_ingestion_sources(mode="server")
+
+    assert exc.value.reason_code == "server_unreachable"
+    assert policy_enforcer.calls == ["media.ingestion_sources.list.server"]
 
 
 @pytest.mark.asyncio
