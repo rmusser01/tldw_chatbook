@@ -7,6 +7,7 @@ from tldw_chatbook.tldw_api.watchlists_schemas import (
     SourceCreateRequest,
     SourceDeleteResponse,
     SourceResponse,
+    SourceUpdateRequest,
 )
 
 
@@ -31,6 +32,26 @@ def test_source_create_request_only_allows_first_slice_source_types():
 
     with pytest.raises(ValidationError):
         SourceCreateRequest(
+            name="AI",
+            url="https://example.com/feed.xml",
+            source_type="forum",
+        )
+
+
+def test_source_update_request_keeps_first_slice_surface():
+    request = SourceUpdateRequest(
+        name="AI",
+        url="https://example.com/feed.xml",
+        source_type="site",
+        active=False,
+    )
+
+    assert request.source_type == "site"
+    assert "group_ids" not in SourceUpdateRequest.model_fields
+    assert "settings" not in SourceUpdateRequest.model_fields
+
+    with pytest.raises(ValidationError):
+        SourceUpdateRequest(
             name="AI",
             url="https://example.com/feed.xml",
             source_type="forum",
