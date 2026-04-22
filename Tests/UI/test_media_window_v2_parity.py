@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button
+from textual.widgets import Button, Collapsible
 
 from tldw_chatbook.Event_Handlers.media_events import (
     MediaAnalysisSaveEvent,
@@ -112,6 +112,52 @@ async def test_media_viewer_updates_saved_button_state_from_normalized_record():
         assert button.label == "Save for Later"
         assert button.disabled is True
         assert button.has_class("hidden") is True
+
+
+@pytest.mark.asyncio
+async def test_media_viewer_read_it_later_button_emits_toggle_event():
+    class TestMediaViewerPanel(MediaViewerPanel):
+        def populate_providers(self) -> None:
+            pass
+
+    class MediaViewerPanelApp(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: list[MediaReadItLaterToggleEvent] = []
+
+        def compose(self) -> ComposeResult:
+            yield TestMediaViewerPanel(SimpleNamespace())
+
+        @on(MediaReadItLaterToggleEvent)
+        def record_toggle(self, event: MediaReadItLaterToggleEvent) -> None:
+            self.events.append(event)
+
+    app = MediaViewerPanelApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one(MediaViewerPanel)
+        panel.load_media(
+            {
+                "id": "local:media:7",
+                "source_id": "7",
+                "title": "Saved Item",
+                "supports_read_it_later": True,
+                "is_read_it_later": True,
+            }
+        )
+        await pilot.pause()
+
+        panel.query_one(Collapsible).collapsed = False
+        await pilot.pause()
+
+        button = panel.query_one("#read-it-later-button", Button)
+        button.press()
+        await pilot.pause()
+
+        assert len(app.events) == 1
+        event = app.events[0]
+        assert event.record_id == "local:media:7"
+        assert event.media_id == "7"
+        assert event.save_for_later is False
 
 
 @pytest.mark.asyncio
@@ -343,6 +389,46 @@ async def test_media_window_toggle_keeps_selection_when_record_still_matches_fil
     assert window.runtime_state.selected_record_id == "local:media:7"
     scope_service.list_read_it_later.assert_awaited()
     scope_service.search_media.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_media_window_server_toggle_keeps_selection_when_off_page_in_non_saved_view():
+    scope_service = Mock()
+    scope_service.remove_from_read_it_later = AsyncMock(
+        return_value={"id": "server:reading_item:118", "source_id": "118", "is_read_it_later": False}
+    )
+    scope_service.search_media = AsyncMock(
+        return_value={
+            "items": [
+                {"id": f"server:reading_item:{index}", "media_type": "article", "title": f"Article {index}"}
+                for index in range(200, 220)
+            ],
+            "total": 40,
+        }
+    )
+    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window.active_media_type = "article"
+    window.list_panel.current_page = 2
+    window.runtime_state.selected_record_id = "server:reading_item:118"
+    window.viewer_panel.media_data = {
+        "id": "server:reading_item:118",
+        "source_id": "118",
+        "backend": "server",
+        "supports_read_it_later": True,
+        "is_read_it_later": True,
+    }
+
+    await window._handle_read_it_later_toggle_async(
+        MediaReadItLaterToggleEvent(
+            record_id="server:reading_item:118",
+            media_id="118",
+            save_for_later=False,
+        )
+    )
+
+    assert window.runtime_state.selected_record_id == "server:reading_item:118"
+    scope_service.search_media.assert_awaited()
+    scope_service.list_read_it_later.assert_not_called()
 
 
 @pytest.mark.asyncio
