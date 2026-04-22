@@ -200,7 +200,9 @@ class MediaWindow(Container):
             self.runtime_state.browse_items = []
             self.runtime_state.detail_by_record_id.clear()
             self.runtime_state.reading_progress_by_record_id.clear()
-        if hasattr(self.list_panel, "selected_id"):
+        if hasattr(self, "list_panel"):
+            self.update_search_results([], 1, 1)
+        if hasattr(self, "list_panel") and hasattr(self.list_panel, "selected_id"):
             self.list_panel.selected_id = None
         self.viewer_panel.clear_display()
         self._show_empty_state()

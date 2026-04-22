@@ -6,6 +6,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
+from unittest.mock import call
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -402,6 +403,10 @@ async def test_media_window_prequery_normalizes_invalid_server_saved_context_and
     assert window.runtime_state.active_browse_subview == "all"
     assert window.runtime_state.selected_record_id is None
     assert [item["id"] for item in window.runtime_state.browse_items] == ["server:reading_item:200"]
+    assert window.list_panel.load_items.call_args_list[:2] == [
+        call([], 1, 1),
+        call(window.runtime_state.browse_items, 1, 1),
+    ]
     app.notify.assert_called_once_with(
         "Read-it-later is only available in server mode from All Media.",
         severity="warning",
