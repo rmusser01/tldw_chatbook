@@ -77,7 +77,7 @@ def test_local_service_search_media_uses_db_backed_saved_filter_spy():
     db = SpyReadItLaterDb()
     service = LocalMediaReadingService(db)
 
-    payload = service.search_media(read_it_later_only=True, media_ids_filter=[1, 2, 4])
+    payload = service.search_media(read_it_later_only=True, media_ids_filter=["1", 2, "4"])
 
     assert db.saved_filters == [{"include_deleted": False, "include_trash": False}]
     assert db.search_calls[0]["media_ids_filter"] == [2]

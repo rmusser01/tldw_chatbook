@@ -524,6 +524,14 @@ class TestDatabaseCRUDAndSync:
             assert fetched["zoom_level"] == 1.1
             assert fetched["cfi"] == "epubcfi(/6/2[chapter]!/4/2/6)"
             assert fetched["percentage"] == 40.0
+
+            saved_state = reopened_db.save_media_to_read_it_later(media_id)
+            fetched_saved_state = reopened_db.get_media_read_it_later_state(media_id)
+            assert saved_state["media_id"] == media_id
+            assert saved_state["is_read_it_later"] is True
+            assert fetched_saved_state is not None
+            assert fetched_saved_state["media_id"] == media_id
+            assert fetched_saved_state["is_read_it_later"] is True
         finally:
             reopened_db.close_connection()
 

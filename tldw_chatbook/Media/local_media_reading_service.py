@@ -24,6 +24,12 @@ class LocalMediaReadingService:
     def _unsupported_ingestion_sources(self) -> ValueError:
         return ValueError("Local ingestion sources are not available yet.")
 
+    def _normalize_media_id_filter(self, media_ids: Any) -> list[int]:
+        normalized: list[int] = []
+        for media_id in media_ids or []:
+            normalized.append(self._coerce_media_id(media_id))
+        return normalized
+
     def search_media(
         self,
         *,
@@ -34,17 +40,20 @@ class LocalMediaReadingService:
     ) -> dict[str, Any]:
         db = self._require_db()
 
-        media_ids_filter = filters.get("media_ids_filter")
+        caller_media_ids_filter = filters.get("media_ids_filter")
+        media_ids_filter = self._normalize_media_id_filter(caller_media_ids_filter)
         if filters.get("read_it_later_only", False):
-            saved_media_ids = db.list_read_it_later_media_ids(
-                include_deleted=bool(filters.get("include_deleted", False)),
-                include_trash=bool(filters.get("include_trash", False)),
+            saved_media_ids = self._normalize_media_id_filter(
+                db.list_read_it_later_media_ids(
+                    include_deleted=bool(filters.get("include_deleted", False)),
+                    include_trash=bool(filters.get("include_trash", False)),
+                )
             )
-            if media_ids_filter is None:
-                media_ids_filter = saved_media_ids
-            else:
+            if caller_media_ids_filter is not None:
                 saved_id_set = set(saved_media_ids)
                 media_ids_filter = [media_id for media_id in media_ids_filter if media_id in saved_id_set]
+            else:
+                media_ids_filter = saved_media_ids
             if not media_ids_filter:
                 return {
                     "items": [],

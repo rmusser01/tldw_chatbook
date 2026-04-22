@@ -1038,13 +1038,15 @@ class MediaDatabase:
 
             if current_db_version == target_version:
                 logging.debug("Database schema is up to date.")
-                # Ensure the read-it-later table exists even if schema version matches
+                # Ensure FTS and the read-it-later table exist even if schema version matches
                 try:
-                    conn.executescript(self._LOCAL_ONLY_TABLES_SQL)
+                    conn.executescript(
+                        f"{self._FTS_TABLES_SQL}\n{self._LOCAL_ONLY_TABLES_SQL}"
+                    )
                     conn.commit()
-                    logging.debug("Verified read-it-later table exists.")
+                    logging.debug("Verified FTS and read-it-later tables exist.")
                 except sqlite3.Error as fts_err:
-                    logging.warning(f"Could not verify/create read-it-later table on already correct schema version: {fts_err}")
+                    logging.warning(f"Could not verify/create FTS or read-it-later tables on already correct schema version: {fts_err}")
                 return
 
             if current_db_version > target_version:
