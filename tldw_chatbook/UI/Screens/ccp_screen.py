@@ -1080,6 +1080,11 @@ class CCPScreen(BaseAppScreen):
 
     def _current_runtime_backend(self) -> str:
         """Resolve the active runtime backend for CCP-launched chats."""
+        getter = getattr(self.app_instance, "get_authoritative_runtime_source", None)
+        if callable(getter):
+            normalized = str(getter() or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
         candidates = (
             getattr(getattr(self, "state", None), "runtime_backend", None),
             getattr(self, "runtime_backend", None),

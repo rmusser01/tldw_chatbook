@@ -17,6 +17,8 @@ from textual.css.query import NoMatches
 #
 # Local Imports
 from ..Widgets.enhanced_settings_sidebar import EnhancedSettingsSidebar
+from ..Widgets.compact_model_bar import CompactModelBar
+from ..Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 # Right sidebar removed - functionality moved to settings_sidebar
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
@@ -83,6 +85,7 @@ class ChatWindowEnhanced(Container):
     _send_button: Optional[Button] = None
     _attachment_indicator: Optional[Static] = None
     _tab_container: Optional['ChatTabContainer'] = None
+    _task_cards: Optional[ChatTaskCards] = None
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the chat window with modular handlers.
@@ -137,6 +140,13 @@ class ChatWindowEnhanced(Container):
             logger.info(f"Set initial sidebar display to {sidebar.display}")
         except Exception as e:
             logger.debug(f"Could not set initial sidebar state: {e}")
+
+        # Show empty state and hide chat log initially (no messages yet)
+        try:
+            chat_log = self.query_one("#chat-log")
+            chat_log.display = False
+        except NoMatches:
+            pass
     
     # Message Handlers using Textual's Message System
     
@@ -208,6 +218,10 @@ class ChatWindowEnhanced(Container):
                 self._tab_container = self.query_one(ChatTabContainer)
             except NoMatches:
                 self._tab_container = None
+        try:
+            self._task_cards = self.query_one(ChatTaskCards)
+        except NoMatches:
+            self._task_cards = None
     
     async def _configure_widget_visibility(self) -> None:
         """Configure visibility of optional widgets based on settings."""
@@ -277,17 +291,95 @@ class ChatWindowEnhanced(Container):
         except NoMatches:
             return None
 
+    def _get_task_cards(self) -> Optional[ChatTaskCards]:
+        """Get the inline task surface widget."""
+        return self._task_cards
+
+    def sync_task_resume_state(self, task_state) -> None:
+        """Sync the inline task surface from screen state."""
+        task_cards = self._get_task_cards()
+        if task_cards is not None:
+            task_cards.sync_state(task_state)
+
+    def hide_empty_state(self) -> None:
+        """Hide the empty state widget when messages are present."""
+        try:
+            empty_state = self.query_one("#chat-empty-state", Static)
+            empty_state.add_class("hidden")
+        except NoMatches:
+            pass
+        try:
+            chat_log = self.query_one("#chat-log")
+            chat_log.display = True
+        except NoMatches:
+            pass
+
+    def show_empty_state(self) -> None:
+        """Show the empty state widget when no messages are present."""
+        try:
+            empty_state = self.query_one("#chat-empty-state", Static)
+            empty_state.remove_class("hidden")
+        except NoMatches:
+            pass
+        try:
+            chat_log = self.query_one("#chat-log")
+            chat_log.display = False
+        except NoMatches:
+            pass
+
+    def _has_sendable_content(self) -> bool:
+        """Return True when pressing Send can produce a visible chat action."""
+        if not self.is_send_button:
+            return False
+
+        chat_input = self._get_chat_input()
+        if chat_input is not None:
+            text_value = getattr(chat_input, "text", None)
+            if text_value is None:
+                text_value = getattr(chat_input, "value", "")
+            if str(text_value).strip():
+                return True
+
+        chat_log = self._get_chat_log()
+        if chat_log is None:
+            return False
+
+        try:
+            from ..Widgets.Chat_Widgets.chat_message import ChatMessage
+            from ..Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+
+            all_messages = []
+            for widget_type in (ChatMessage, ChatMessageEnhanced):
+                try:
+                    all_messages.extend(list(chat_log.query(widget_type)))
+                except Exception:
+                    pass
+
+            if not all_messages:
+                return False
+
+            all_messages.sort(
+                key=lambda msg: getattr(msg, "_mount_time", 0)
+            )
+            last_message = all_messages[-1]
+            return bool(last_message.has_class("-user"))
+        except Exception:
+            return False
+
     # Event Handlers using @on decorators for cleaner code
-    
+
     @on(Button.Pressed, "#send-stop-chat")
     async def handle_send_stop_button_press(self, event: Button.Pressed) -> None:
         """Handle send/stop button press.
-        
+
         Args:
             event: The button press event
         """
         event.stop()  # Prevent bubbling
+        should_hide_empty_state = self._has_sendable_content()
         await self.handle_send_stop_button(self.app_instance, event)
+        if should_hide_empty_state:
+            self.hide_empty_state()
     
     @on(Button.Pressed, "#attach-image")
     async def handle_attach_image_press(self, event: Button.Pressed) -> None:
@@ -368,7 +460,9 @@ class ChatWindowEnhanced(Container):
             "send-stop-chat",
             "attach-image",
             "chat-mic",
-            "clear-image"
+            "clear-image",
+            "toggle-chat-left-sidebar",
+            "toggle-chat-right-sidebar",
         }
         if button_id in decorator_handled_buttons:
             # Already handled by @on decorator, skip
@@ -669,9 +763,13 @@ class ChatWindowEnhanced(Container):
 
         # Main Chat Content Area
         with Container(id="chat-main-content"):
+            # Compact model bar - always visible above chat
+            yield CompactModelBar(self.app_instance, id="compact-model-bar")
+            yield ChatTaskCards(id="chat-task-surface")
+
             # Check if tabs are enabled
             enable_tabs = get_cli_setting("chat_defaults", "enable_tabs", False)
-            
+
             if enable_tabs:
                 logger.info("Chat tabs are enabled - using ChatTabContainer in enhanced mode")
                 # Use the tab container for multiple sessions
@@ -679,7 +777,13 @@ class ChatWindowEnhanced(Container):
                 tab_container.enhanced_mode = True  # Flag for enhanced features
                 yield tab_container
             else:
-                # Legacy single-session mode
+                # Legacy single-session mode - empty state + chat log
+                yield Static(
+                    "Welcome to tldw chatbook\n\n"
+                    "Start a conversation by typing below.\n\n"
+                    "Tip: Press Ctrl+P for the command palette",
+                    id="chat-empty-state",
+                )
                 yield VerticalScroll(id="chat-log")
                 
                 # Image attachment indicator (always present, controlled via CSS)
@@ -690,28 +794,32 @@ class ChatWindowEnhanced(Container):
                 
                 # Input area with all buttons (visibility controlled in on_mount)
                 with Horizontal(id="chat-input-area"):
-                    yield TextArea(id="chat-input", classes="chat-input")
-                    
+                    yield TextArea(
+                        id="chat-input",
+                        classes="chat-input",
+                    )
+
                     # Microphone button (visibility controlled via CSS/on_mount)
                     yield Button(
-                        get_char("🎤", "⚫"),
+                        "Voice",
                         id="mic-button",
                         classes="mic-button",
                         tooltip="Voice input (Ctrl+M)"
                     )
-                    
+
                     # Send/Stop button (label updated via reactive watcher)
                     yield Button(
-                        get_char(EMOJI_SEND, FALLBACK_SEND),  # Default to send
+                        "Send",
                         id="send-stop-chat",
                         classes="send-button",
-                        tooltip="Send message"  # Default tooltip
+                        variant="primary",
+                        tooltip="Send message"
                     )
-                    
+
                     # Attach button (visibility controlled via CSS/on_mount)
                     yield Button(
-                        "📎", 
-                        id="attach-image", 
+                        "Attach",
+                        id="attach-image",
                         classes="action-button attach-button",
                         tooltip="Attach file"
                     )
@@ -736,19 +844,11 @@ class ChatWindowEnhanced(Container):
     
     def _clear_attachment_state(self) -> None:
         """Clear all attachment state."""
-        self.pending_image = None
-        self.pending_attachment = None
-        self._update_attachment_ui()
+        self.attachment_handler.clear_attachment_state()
     
     def _update_attachment_ui(self) -> None:
         """Update attachment indicator UI based on current state."""
-        if self._attachment_indicator:
-            if self.pending_image:
-                from pathlib import Path
-                path = Path(self.pending_image.get('path', ''))
-                self._attachment_indicator.update(f"📎 {path.name}")
-            else:
-                self._attachment_indicator.update("")
+        self.attachment_handler.update_attachment_ui()
     
     async def toggle_attach_button_visibility(self, show: bool) -> None:
         """Toggle the visibility of the attach file button.
@@ -817,8 +917,7 @@ class ChatWindowEnhanced(Container):
         
         Triggers the reactive watcher to update the button UI.
         """
-        # Trigger reactive watcher by reassigning
-        self.is_send_button = self.is_send_button
+        self.input_handler.update_button_state()
     
     def watch_is_send_button(self, is_send: bool) -> None:
         """React to button state changes.
@@ -881,11 +980,7 @@ class ChatWindowEnhanced(Container):
             app_instance: The app instance
             event: The button press event
         """
-        if self.is_send_button:
-            await self.input_handler.handle_enhanced_send_button(event)
-        else:
-            from ..Event_Handlers.Chat_Events import chat_events
-            await chat_events.handle_stop_chat_generation_pressed(app_instance, event)
+        await self.input_handler.handle_send_stop_button(event)
     
     async def handle_mic_button(self, app_instance, event: Button.Pressed) -> None:
         """Handle microphone button click.

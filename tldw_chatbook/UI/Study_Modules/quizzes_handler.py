@@ -32,6 +32,11 @@ class StudyQuizzesController:
         self._suppress_quiz_change_events: bool = False
 
     def _current_mode(self) -> str:
+        getter = getattr(self.app_instance, "get_authoritative_runtime_source", None)
+        if callable(getter):
+            normalized = str(getter() or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
         candidates = (
             getattr(self.window, "runtime_backend", None),
             getattr(self.app_instance, "runtime_backend", None),
@@ -112,10 +117,29 @@ class StudyQuizzesController:
             return {"scope_type": self._scope_type(), "workspace_id": None}
         return self._scope_arguments()
 
+    def _policy_action_allowed(self, action_id: str) -> bool:
+        checker = getattr(self.app_instance, "require_ui_action_allowed", None)
+        if not callable(checker):
+            return True
+        decision = checker(
+            action_id=action_id,
+            scope_type=self._scope_type(),
+        )
+        return bool(getattr(decision, "allowed", False))
+
     def _sync_quiz_controls(self) -> None:
         configure_controls = getattr(self.window, "_configure_quizzes_lifecycle_controls", None)
         if callable(configure_controls):
             configure_controls()
+
+    def _notify_shell_state_changed(self) -> None:
+        notifier = getattr(self.window, "_notify_shell_state_changed", None)
+        if callable(notifier):
+            notifier()
+
+    @staticmethod
+    def _is_blank_select_value(value: Any) -> bool:
+        return value in {None, "", False, Select.BLANK} or str(value).startswith("Select.")
 
     def _attempt_active(self) -> bool:
         return self.current_attempt_id is not None and bool(self.current_attempt_questions)
@@ -133,7 +157,7 @@ class StudyQuizzesController:
             quiz_select = self.window.query_one("#quiz-select", Select)
             self._suppress_quiz_change_events = True
             quiz_select.set_options([("No quizzes available", Select.BLANK)])
-            quiz_select.value = Select.BLANK
+            quiz_select.clear()
         except Exception:
             pass
         finally:
@@ -148,7 +172,7 @@ class StudyQuizzesController:
         try:
             history_select = self.window.query_one("#quiz-attempt-history-select", Select)
             history_select.set_options([("No attempt history", Select.BLANK)])
-            history_select.value = Select.BLANK
+            history_select.clear()
         except Exception:
             pass
 
@@ -163,6 +187,7 @@ class StudyQuizzesController:
         self._set_attempt_history_summary("")
         self._set_attempt_status(message)
         self._sync_quiz_controls()
+        self._notify_shell_state_changed()
 
     def _scope_service(self) -> Optional[QuizScopeService]:
         service = getattr(self.app_instance, "study_quiz_scope_service", None)
@@ -196,9 +221,22 @@ class StudyQuizzesController:
         except Exception:
             return None
         value = getattr(quiz_select, "value", None)
-        if value in {None, "", Select.BLANK}:
+        if self._is_blank_select_value(value):
             return None
         return str(value)
+
+    def selected_quiz_label(self) -> Optional[str]:
+        selected_quiz_id = self._selected_quiz_id()
+        if selected_quiz_id is None:
+            return None
+        try:
+            quiz_select = self.window.query_one("#quiz-select", Select)
+        except Exception:
+            return None
+        for option in getattr(quiz_select, "_options", []):
+            if len(option) >= 2 and str(option[1]) == selected_quiz_id:
+                return str(option[0] or "").strip() or None
+        return None
 
     def _set_attempt_status(self, message: str) -> None:
         try:
@@ -224,7 +262,7 @@ class StudyQuizzesController:
         except Exception:
             return None
         value = getattr(history_select, "value", None)
-        if value in {None, "", Select.BLANK}:
+        if self._is_blank_select_value(value):
             return None
         return str(value)
 
@@ -265,6 +303,7 @@ class StudyQuizzesController:
         self._set_attempt_status(message)
         self._set_attempt_history_summary("")
         self._sync_quiz_controls()
+        self._notify_shell_state_changed()
 
     async def _wait_for_widgets(self) -> bool:
         for _ in range(25):
@@ -340,13 +379,14 @@ class StudyQuizzesController:
             elif self.has_quizzes:
                 quiz_select.value = str(available_values[0])
             else:
-                quiz_select.value = Select.BLANK
+                quiz_select.clear()
         finally:
             self._suppress_quiz_change_events = False
 
         await self.refresh_questions()
         await self.refresh_attempt_history()
         self._sync_quiz_controls()
+        self._notify_shell_state_changed()
 
     async def refresh_questions(self) -> None:
         service = self._scope_service()
@@ -390,6 +430,7 @@ class StudyQuizzesController:
             self._set_attempt_question("")
             self.window.query_one("#quiz-answer-input", Input).value = ""
             self._set_attempt_status("Ready to manage selected quiz.")
+        self._notify_shell_state_changed()
 
     async def refresh_attempt_history(
         self,
@@ -412,7 +453,7 @@ class StudyQuizzesController:
         if quiz_id is None:
             self.current_attempt_history = []
             history_select.set_options([("No attempt history", Select.BLANK)])
-            history_select.value = Select.BLANK
+            history_select.clear()
             self._set_attempt_history_summary("")
             return
 
@@ -434,8 +475,9 @@ class StudyQuizzesController:
         ]
         if not options:
             history_select.set_options([("No attempt history", Select.BLANK)])
-            history_select.value = Select.BLANK
+            history_select.clear()
             self._set_attempt_history_summary("")
+            self._notify_shell_state_changed()
             return
 
         history_select.set_options(options)
@@ -446,6 +488,7 @@ class StudyQuizzesController:
             history_select.value = str(selected_before)
         else:
             history_select.value = str(options[0][1])
+        self._notify_shell_state_changed()
 
     async def delete_quiz(self) -> None:
         service = self._scope_service()
@@ -483,6 +526,7 @@ class StudyQuizzesController:
         await self.refresh_quizzes(preserve_selection=False)
         if self.has_quizzes:
             self._set_attempt_status("Quiz deleted.")
+        self._notify_shell_state_changed()
 
     async def delete_question(self) -> None:
         service = self._scope_service()
@@ -529,6 +573,7 @@ class StudyQuizzesController:
 
         await self.refresh_quizzes(preserve_selection=True, preferred_selection=quiz_id)
         self._set_attempt_status("Question deleted.")
+        self._notify_shell_state_changed()
 
     async def create_quiz(self) -> None:
         service = self._scope_service()
@@ -569,6 +614,7 @@ class StudyQuizzesController:
         created_id = str(created.get("backing_id") or created.get("record_id") or Select.BLANK)
         await self.refresh_quizzes(preserve_selection=False, preferred_selection=created_id)
         self._set_attempt_status(f"Quiz '{created.get('name', name)}' created.")
+        self._notify_shell_state_changed()
 
     async def create_question(self) -> None:
         service = self._scope_service()
@@ -623,6 +669,7 @@ class StudyQuizzesController:
         correct_answer_widget.value = ""
         await self.refresh_questions()
         self._set_attempt_status("Question created.")
+        self._notify_shell_state_changed()
 
     async def start_attempt(self) -> None:
         service = self._scope_service()
@@ -641,6 +688,8 @@ class StudyQuizzesController:
             self._notify("Select a quiz before starting an attempt.")
             return
 
+        if not self._policy_action_allowed(f"quiz.attempt.create.{self._current_mode()}"):
+            return
         try:
             attempt = await service.start_attempt(
                 mode=self._current_mode(),
@@ -664,6 +713,7 @@ class StudyQuizzesController:
 
         self._show_current_question()
         self._sync_quiz_controls()
+        self._notify_shell_state_changed()
 
     def _show_current_question(self) -> None:
         if not self.current_attempt_questions:
@@ -709,6 +759,7 @@ class StudyQuizzesController:
             answer_widget.value = ""
             self._show_current_question()
             self._sync_quiz_controls()
+            self._notify_shell_state_changed()
             return
 
         try:
@@ -738,6 +789,7 @@ class StudyQuizzesController:
             preferred_selection=submitted_attempt_id or None,
         )
         self._sync_quiz_controls()
+        self._notify_shell_state_changed()
 
     async def load_selected_attempt(self) -> None:
         service = self._scope_service()
@@ -796,6 +848,7 @@ class StudyQuizzesController:
                     summary_lines.append(f"Points: {points_awarded}")
         self._set_attempt_history_summary("\n".join(summary_lines))
         self._sync_quiz_controls()
+        self._notify_shell_state_changed()
 
     async def handle_quiz_changed(self) -> None:
         if self._suppress_quiz_change_events:
@@ -807,6 +860,7 @@ class StudyQuizzesController:
         await self.refresh_questions()
         await self.refresh_attempt_history()
         self._sync_quiz_controls()
+        self._notify_shell_state_changed()
 
     def handle_scope_changed(self) -> None:
         """Reset controller-local state before scoped study data reloads."""

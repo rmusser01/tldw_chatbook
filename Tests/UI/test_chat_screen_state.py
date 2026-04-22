@@ -5,6 +5,7 @@ import pytest
 
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, MessageData, TabState
 
@@ -210,6 +211,43 @@ class TestTabStateManager:
 
 class TestChatScreenRestore:
     @pytest.mark.asyncio
+    async def test_restore_tab_sessions_does_not_overwrite_authoritative_runtime_source(self):
+        mock_app = Mock()
+        mock_app.get_current_screen_state = Mock(return_value={})
+        mock_app.notify = Mock()
+        mock_app.runtime_policy = Mock(state=RuntimeSourceState(active_source="local"))
+        mock_app.current_runtime_backend = "local"
+        mock_app.runtime_backend = "local"
+
+        screen = ChatScreen(mock_app)
+        screen.chat_state = ChatScreenState(
+            tabs=[
+                TabState(
+                    tab_id="saved-tab-1",
+                    title="Remote Session",
+                    conversation_id="conv-restore",
+                    runtime_backend="server",
+                    is_ephemeral=False,
+                ),
+            ],
+            active_tab_id="saved-tab-1",
+            tab_order=["saved-tab-1"],
+        )
+
+        default_session = Mock()
+        default_session.session_data = ChatSessionData(tab_id="default", title="Default")
+
+        tab_container = Mock()
+        tab_container.sessions = {"default": default_session}
+        tab_container.close_tab = AsyncMock()
+        tab_container.create_new_tab = AsyncMock(return_value="saved-tab-1")
+        tab_container.switch_to_tab = AsyncMock()
+
+        await screen._restore_tab_sessions(tab_container)
+
+        assert mock_app.runtime_policy.state.active_source == "local"
+
+    @pytest.mark.asyncio
     async def test_restore_tab_sessions_preserves_first_duplicate_and_remaps_active_tab(self):
         mock_app = Mock()
         mock_app.get_current_screen_state = Mock(return_value={})
@@ -262,3 +300,45 @@ class TestChatScreenRestore:
         assert restored_session.session_data.conversation_id == "conv-restore"
         assert restored_session.session_data.runtime_backend == "server"
         assert screen.chat_state.active_tab_id == "live-tab-1"
+
+    @pytest.mark.asyncio
+    async def test_restore_messages_shows_chat_log_when_messages_are_restored(self):
+        mock_app = Mock()
+        mock_app.get_current_screen_state = Mock(return_value={})
+        mock_app.notify = Mock()
+
+        screen = ChatScreen(mock_app)
+        screen.chat_state = ChatScreenState(
+            tabs=[
+                TabState(
+                    tab_id="default",
+                    title="Chat",
+                    is_active=True,
+                    messages=[
+                        MessageData(
+                            message_id="msg-1",
+                            role="user",
+                            content="hello",
+                            timestamp=datetime(2026, 4, 21, 12, 0, 0),
+                        )
+                    ],
+                )
+            ],
+            active_tab_id="default",
+            tab_order=["default"],
+        )
+
+        chat_log = Mock()
+        chat_log.mount = AsyncMock()
+        chat_log.scroll_end = Mock()
+        mock_app.query_one = Mock(return_value=chat_log)
+
+        screen.chat_window = Mock()
+        screen.chat_window.hide_empty_state = Mock()
+        screen.chat_window.query = Mock(return_value=[])
+
+        await screen._restore_messages()
+
+        chat_log.mount.assert_awaited()
+        chat_log.scroll_end.assert_called_once_with(animate=False)
+        screen.chat_window.hide_empty_state.assert_called_once()

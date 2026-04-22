@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Optional
 
-from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
+from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..tldw_api import (
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
@@ -23,7 +23,7 @@ class ServerStudyService:
 
     @classmethod
     def from_config(cls, app_config: Mapping[str, Any]) -> "ServerStudyService":
-        return cls(client=build_tldw_api_client_from_config(app_config))
+        return cls(client=build_runtime_api_client_from_config(app_config))
 
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:

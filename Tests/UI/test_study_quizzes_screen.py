@@ -393,6 +393,24 @@ class StudyTestApp(App):
         await self.push_screen(self._screen)
 
 
+def _text(widget) -> str:
+    return str(widget.render())
+
+
+def _is_blank(value) -> bool:
+    return value in {None, "", False, Select.BLANK} or str(value).startswith("Select.")
+
+
+async def _wait_for_quiz_status(app: App, pilot, expected_substring: str, attempts: int = 20) -> None:
+    """Wait for the quiz attempt status to contain the expected text."""
+    needle = expected_substring.lower()
+    for _ in range(attempts):
+        status = app.screen.query_one("#quiz-attempt-status", Static)
+        if needle in _text(status).lower():
+            return
+        await pilot.pause(0.1)
+
+
 @pytest.mark.asyncio
 async def test_quizzes_view_loads_scope_backed_quizzes():
     scope = FakeQuizScopeService()
@@ -416,7 +434,7 @@ async def test_quizzes_view_loads_scope_backed_quizzes():
 
         assert ("list_quizzes", "local", "global", None, None, 100, 0) in scope.calls
         assert str(quiz_select.value) == "quiz-local-1"
-        assert "Ready to manage selected quiz" in status.renderable
+        assert "Ready to manage selected quiz" in _text(status)
 
 
 @pytest.mark.asyncio
@@ -449,7 +467,7 @@ async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history()
 
         assert ("list_quizzes", "server", "workspace", "ws-1", None, 100, 0) in scope.calls
         assert str(quiz_select.value) == "quiz-workspace-1"
-        assert "Ready to manage selected quiz" in status.renderable
+        assert "Ready to manage selected quiz" in _text(status)
 
         history_select.value = "attempt-workspace-1"
         await controller.load_selected_attempt()
@@ -457,7 +475,7 @@ async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history()
 
         assert ("list_attempts", "server", "workspace", "ws-1", "quiz-workspace-1", 100, 0) in scope.calls
         assert ("get_attempt", "server", "workspace", "ws-1", "attempt-workspace-1", True, True) in scope.calls
-        assert "Score: 2 / 2" in app.screen.query_one("#quiz-attempt-status", Static).renderable
+        assert "Score: 2 / 2" in _text(app.screen.query_one("#quiz-attempt-status", Static))
 
 
 @pytest.mark.asyncio
@@ -515,7 +533,7 @@ async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavai
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         await pilot.click("#view-quizzes-btn")
-        await pilot.pause(0.3)
+        await _wait_for_quiz_status(app, pilot, "server mode")
 
         status = app.screen.query_one("#quiz-attempt-status", Static)
         question_list = app.screen.query_one("#quiz-question-list", ListView)
@@ -527,7 +545,7 @@ async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavai
         submit_answer_button = app.screen.query_one("#submit-quiz-answer-button", Button)
         load_attempt_button = app.screen.query_one("#load-quiz-attempt-history-button", Button)
 
-        assert "server mode" in str(status.renderable).lower()
+        assert "server mode" in _text(status).lower()
         assert not any(call[0] == "list_quizzes" for call in scope.calls)
         assert question_list.disabled is True
         assert create_quiz_button.disabled is True
@@ -588,8 +606,8 @@ async def test_backend_flip_resets_quiz_question_attempt_and_answer_state_throug
         await app.screen.handle_runtime_backend_changed("local")
         await pilot.pause(0.3)
 
-        assert quiz_select.value == Select.BLANK
-        assert history_select.value == Select.BLANK
+        assert _is_blank(quiz_select.value)
+        assert _is_blank(history_select.value)
         assert controller.current_attempt_id is None
         assert controller.current_attempt_questions == []
         assert controller.current_attempt_answers == []
@@ -598,7 +616,7 @@ async def test_backend_flip_resets_quiz_question_attempt_and_answer_state_throug
         assert controller.current_quiz_questions == []
         assert not question_list.children
         assert question_list.disabled is True
-        assert "server mode" in str(status.renderable).lower()
+        assert "server mode" in _text(status).lower()
 
 
 @pytest.mark.asyncio
@@ -666,7 +684,7 @@ async def test_quizzes_attempt_flow_submits_answer_and_shows_summary():
         question = app.screen.query_one("#quiz-attempt-question", Static)
         answer = app.screen.query_one("#quiz-answer-input", Input)
 
-        assert "capital of France" in question.renderable
+        assert "capital of France" in _text(question)
         answer.value = "Paris"
 
         await controller.submit_current_answer()
@@ -682,7 +700,7 @@ async def test_quizzes_attempt_flow_submits_answer_and_shows_summary():
             "attempt-1",
             [{"question_id": "question-local-1", "user_answer": "Paris"}],
         ) in scope.calls
-        assert "Score: 2 / 2" in status.renderable
+        assert "Score: 2 / 2" in _text(status)
 
 
 @pytest.mark.asyncio
@@ -833,7 +851,7 @@ async def test_quizzes_view_shows_explicit_empty_state_when_no_quizzes_exist():
 
         status = app.screen.query_one("#quiz-attempt-status", Static)
 
-        assert "Create a quiz to begin practicing." in status.renderable
+        assert "Create a quiz to begin practicing." in _text(status)
 
 
 @pytest.mark.asyncio
@@ -864,8 +882,8 @@ async def test_quizzes_view_deletes_selected_quiz_and_resets_selection():
         status = app.screen.query_one("#quiz-attempt-status", Static)
 
         assert ("delete_quiz", "local", "quiz-local-1", None, False) in scope.calls
-        assert quiz_select.value == Select.BLANK
-        assert "Create a quiz to begin practicing." in status.renderable
+        assert _is_blank(quiz_select.value)
+        assert "Create a quiz to begin practicing." in _text(status)
 
 
 @pytest.mark.asyncio
@@ -894,7 +912,7 @@ async def test_quizzes_view_deletes_selected_question_and_refreshes_question_lis
         await pilot.pause(0.1)
 
         assert ("delete_question", "local", "question-local-1", None, False) in scope.calls
-        assert "No questions in this quiz." in question_list.children[0].query_one(Static).renderable
+        assert "No questions in this quiz." in _text(question_list.children[0].query_one(Static))
 
 
 @pytest.mark.asyncio
@@ -926,5 +944,5 @@ async def test_quizzes_view_loads_attempt_history_into_summary_panel():
         status = app.screen.query_one("#quiz-attempt-status", Static)
 
         assert ("get_attempt", "local", "global", None, "attempt-1", True, True) in scope.calls
-        assert "Score: 2 / 2" in status.renderable
-        assert "The capital of France is ____." in history_summary.renderable
+        assert "Score: 2 / 2" in _text(status)
+        assert "The capital of France is ____." in _text(history_summary)

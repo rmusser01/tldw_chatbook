@@ -24,9 +24,16 @@ class QuizScopeService:
 
     _ALLOWED_SCOPE_TYPES = {"global", "workspace"}
 
-    def __init__(self, *, local_service: Any = None, server_service: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any = None,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
+        self.policy_enforcer = policy_enforcer
 
     def _resolve_backend(self, mode: Optional[str]) -> QuizBackend:
         normalized_mode = str(mode or "local").strip().lower()
@@ -48,6 +55,30 @@ class QuizScopeService:
         if inspect.isawaitable(result):
             return await result
         return result
+
+    def _enforce_policy(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=action_id)
+
+    @staticmethod
+    def _quiz_action_id(backend: QuizBackend, action: str) -> str:
+        return f"quiz.{action}.{backend.value}"
+
+    @staticmethod
+    def _quiz_question_action_id(backend: QuizBackend, action: str) -> str:
+        return f"quiz.question.{action}.{backend.value}"
+
+    @staticmethod
+    def _quiz_attempt_action_id(backend: QuizBackend, action: str) -> str:
+        return f"quiz.attempt.{action}.{backend.value}"
+
+    @staticmethod
+    def _quiz_question_mutation_action_id(backend: QuizBackend) -> str:
+        # The audited registry currently exposes question-level list/detail rows
+        # but not question create/update/delete rows, so mutations proxy through
+        # the question-detail surface rather than the broader quiz resource.
+        return f"quiz.question.detail.{backend.value}"
 
     @classmethod
     def _normalize_scope(self, scope_type: Optional[str], workspace_id: Optional[str]) -> tuple[str, Optional[str]]:
@@ -103,6 +134,7 @@ class QuizScopeService:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         backend = self._resolve_backend(mode)
+        self._enforce_policy(self._quiz_action_id(backend, "list"))
         service = self._service_for(backend)
         normalized_q = str(q or "").strip() or None
         normalized_scope_type, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
@@ -139,6 +171,7 @@ class QuizScopeService:
         passing_score: Optional[int] = None,
     ) -> dict[str, Any]:
         backend = self._resolve_backend(mode)
+        self._enforce_policy(self._quiz_action_id(backend, "create"))
         service = self._service_for(backend)
         normalized_scope_type, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
         if backend is QuizBackend.LOCAL and normalized_scope_type == "workspace":
@@ -163,6 +196,7 @@ class QuizScopeService:
         hard_delete: bool = False,
     ) -> bool:
         backend = self._resolve_backend(mode)
+        self._enforce_policy(self._quiz_action_id(backend, "delete"))
         service = self._service_for(backend)
         result = await self._maybe_await(
             service.delete_quiz(
@@ -186,6 +220,7 @@ class QuizScopeService:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         backend = self._resolve_backend(mode)
+        self._enforce_policy(self._quiz_question_action_id(backend, "list"))
         service = self._service_for(backend)
         normalized_q = str(q or "").strip() or None
         records = await self._maybe_await(
@@ -208,6 +243,7 @@ class QuizScopeService:
         **payload: Any,
     ) -> dict[str, Any]:
         backend = self._resolve_backend(mode)
+        self._enforce_policy(self._quiz_question_mutation_action_id(backend))
         service = self._service_for(backend)
         result = await self._maybe_await(service.create_question(quiz_id, **payload))
         return normalize_quiz_question_record(backend.value, result)
@@ -222,6 +258,7 @@ class QuizScopeService:
         hard_delete: bool = False,
     ) -> bool:
         backend = self._resolve_backend(mode)
+        self._enforce_policy(self._quiz_question_mutation_action_id(backend))
         service = self._service_for(backend)
         kwargs: dict[str, Any] = {
             "expected_version": expected_version,
@@ -243,6 +280,7 @@ class QuizScopeService:
         quiz_id: str | int,
     ) -> dict[str, Any]:
         backend = self._resolve_backend(mode)
+        self._enforce_policy(self._quiz_attempt_action_id(backend, "create"))
         normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
         if backend is QuizBackend.LOCAL and normalized_scope_type == "workspace":
             raise ValueError("Workspace Study is unavailable in local mode")
@@ -260,6 +298,7 @@ class QuizScopeService:
         answers: list[dict[str, Any]],
     ) -> dict[str, Any]:
         backend = self._resolve_backend(mode)
+        self._enforce_policy(self._quiz_attempt_action_id(backend, "observe"))
         normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
         if backend is QuizBackend.LOCAL and normalized_scope_type == "workspace":
             raise ValueError("Workspace Study is unavailable in local mode")
@@ -278,6 +317,7 @@ class QuizScopeService:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         backend = self._resolve_backend(mode)
+        self._enforce_policy(self._quiz_attempt_action_id(backend, "observe"))
         normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
         if backend is QuizBackend.LOCAL and normalized_scope_type == "workspace":
             raise ValueError("Workspace Study is unavailable in local mode")
@@ -297,6 +337,7 @@ class QuizScopeService:
         include_answers: bool = False,
     ) -> dict[str, Any]:
         backend = self._resolve_backend(mode)
+        self._enforce_policy(self._quiz_attempt_action_id(backend, "observe"))
         normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
         if backend is QuizBackend.LOCAL and normalized_scope_type == "workspace":
             raise ValueError("Workspace Study is unavailable in local mode")

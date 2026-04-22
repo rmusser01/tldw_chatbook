@@ -33,13 +33,12 @@ from ...Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 from ...Chatbooks.chatbook_models import ChatbookManifest, ContentType
 from ...Chatbooks.conflict_resolver import ConflictResolution
 from ...Chatbooks.server_chatbook_service import (
-    ServerChatbookService,
     build_server_import_selections_from_manifest,
     build_server_job_record,
-    build_tldw_api_client_from_config,
     get_server_import_blockers_from_manifest,
     record_server_job,
 )
+from ...runtime_policy.bootstrap import build_server_chatbook_service
 from ...Widgets.enhanced_file_picker import EnhancedFileOpen
 
 if TYPE_CHECKING:
@@ -704,8 +703,7 @@ class ImportProgressStep(WizardStep):
                     from ...config import load_settings
                     config = load_settings()
 
-                api_client = build_tldw_api_client_from_config(config)
-                service = ServerChatbookService(api_client)
+                service = build_server_chatbook_service(app_config=config)
                 try:
                     server_selections = build_server_import_selections_from_manifest(
                         manifest,
@@ -772,7 +770,8 @@ class ImportProgressStep(WizardStep):
                     await self._show_completion()
                     return
                 finally:
-                    await api_client.close()
+                    if service.client is not None:
+                        await service.client.close()
             
             # Create importer
             db_config = self.wizard.app_instance.config_data.get("database", {})

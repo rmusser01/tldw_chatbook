@@ -229,7 +229,10 @@ class TLDWAPIClient:
                 pass # Ignore if response is not JSON or detail not found
 
             if e.response.status_code == 401:
-                raise AuthenticationError(f"Authentication failed: {error_detail}")
+                raise AuthenticationError(
+                    f"Authentication failed: {error_detail}",
+                    response_data=response_data,
+                )
             elif e.response.status_code == 422: # Unprocessable Entity (Pydantic validation error)
                 raise APIRequestError(f"Validation Error: {error_detail}", response_data=response_data)
             raise APIResponseError(e.response.status_code, error_detail, response_data=response_data)
@@ -269,9 +272,13 @@ class TLDWAPIClient:
                 if isinstance(response_data, dict) and "detail" in response_data:
                      error_detail = response_data["detail"]
             except Exception:
+                response_data = {"raw_text": response_text}
                 pass
             if e.response.status_code == 401:
-                raise AuthenticationError(f"Authentication failed: {error_detail}")
+                raise AuthenticationError(
+                    f"Authentication failed: {error_detail}",
+                    response_data=response_data if isinstance(response_data, dict) else None,
+                )
             raise APIResponseError(e.response.status_code, error_detail, response_data={"raw_text": response_text})
         except httpx.RequestError as e:
             raise APIConnectionError(f"Connection error to {url}: {e}")

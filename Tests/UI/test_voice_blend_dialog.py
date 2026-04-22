@@ -4,58 +4,67 @@ from textual.app import App
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog, VoiceBlendEntry
 
 
-class TestApp(App):
+class VoiceBlendDialogApp(App):
     """Test app for voice blend dialog"""
     
     def compose(self):
         yield VoiceBlendDialog()
 
 
+async def _type_into_widget(pilot, widget, text: str, *, clear: bool = False) -> None:
+    """Focus a text input widget and enter text using the current Pilot API."""
+    widget.focus()
+    await pilot.pause()
+
+    if clear and hasattr(widget, "clear"):
+        widget.clear()
+        await pilot.pause()
+
+    await pilot.press(*text)
+    await pilot.pause()
+
+
 @pytest.mark.asyncio
 async def test_voice_blend_dialog_create():
     """Test creating a new voice blend"""
-    app = TestApp()
+    app = VoiceBlendDialogApp()
     async with app.run_test() as pilot:
         # Get the dialog
         dialog = app.query_one(VoiceBlendDialog)
+        captured = {}
         
         # Fill in the form
         name_input = dialog.query_one("#blend-name-input")
-        await pilot.click(name_input)
-        await pilot.press("ctrl+a")
-        await pilot.type("My Test Blend")
+        name_input.value = "My Test Blend"
         
         desc_input = dialog.query_one("#blend-description-input")
-        await pilot.click(desc_input)
-        await pilot.type("A test voice blend")
+        desc_input.value = "A test voice blend"
         
         # Set voice and weight
         voice_select = dialog.query_one("#voice-select-0")
         voice_select.value = "af_bella"
         
         weight_input = dialog.query_one("#weight-input-0")
-        await pilot.click(weight_input)
-        await pilot.press("ctrl+a")
-        await pilot.type("1.0")
+        weight_input.value = "1.0"
         
-        # Save
-        save_btn = dialog.query_one("#save-btn")
-        await pilot.click(save_btn)
-        
-        # Check that dialog was dismissed with result
-        # (In actual test, we'd check the returned value)
+        dialog.dismiss = lambda result: captured.setdefault("result", result)
+        dialog.save_blend()
+
+        assert captured["result"]["name"] == "My Test Blend"
+        assert captured["result"]["description"] == "A test voice blend"
+        assert captured["result"]["voices"] == [("af_bella", 1.0)]
 
 
 @pytest.mark.asyncio
 async def test_voice_blend_dialog_multiple_voices():
     """Test creating a blend with multiple voices"""
-    app = TestApp()
+    app = VoiceBlendDialogApp()
     async with app.run_test() as pilot:
         dialog = app.query_one(VoiceBlendDialog)
         
         # Add another voice
-        add_btn = dialog.query_one("#add-voice-btn")
-        await pilot.click(add_btn)
+        await dialog.add_voice_entry()
+        await pilot.pause()
         
         # Should now have 2 voice entries
         entries = dialog.query(VoiceBlendEntry)
@@ -66,29 +75,28 @@ async def test_voice_blend_dialog_multiple_voices():
         voice_select_1.value = "am_michael"
         
         weight_input_1 = dialog.query_one("#weight-input-1")
-        await pilot.click(weight_input_1)
-        await pilot.type("0.5")
+        await _type_into_widget(pilot, weight_input_1, "0.5", clear=True)
 
 
 @pytest.mark.asyncio
 async def test_voice_blend_dialog_remove_voice():
     """Test removing a voice entry"""
-    app = TestApp()
+    app = VoiceBlendDialogApp()
     async with app.run_test() as pilot:
         dialog = app.query_one(VoiceBlendDialog)
         
         # Add two more voices
-        add_btn = dialog.query_one("#add-voice-btn")
-        await pilot.click(add_btn)
-        await pilot.click(add_btn)
+        await dialog.add_voice_entry()
+        await dialog.add_voice_entry()
+        await pilot.pause()
         
         # Should have 3 entries
         entries = dialog.query(VoiceBlendEntry)
         assert len(entries) == 3
         
         # Remove the middle one
-        remove_btn = dialog.query_one("#remove-voice-1")
-        await pilot.click(remove_btn)
+        await dialog.on_voice_blend_entry_removed(VoiceBlendEntry.Removed(entries[1]))
+        await pilot.pause()
         
         # Should have 2 entries now
         entries = dialog.query(VoiceBlendEntry)
@@ -98,7 +106,7 @@ async def test_voice_blend_dialog_remove_voice():
 @pytest.mark.asyncio
 async def test_voice_blend_dialog_cancel():
     """Test canceling the dialog"""
-    app = TestApp()
+    app = VoiceBlendDialogApp()
     async with app.run_test() as pilot:
         dialog = app.query_one(VoiceBlendDialog)
         
@@ -112,7 +120,7 @@ async def test_voice_blend_dialog_cancel():
 @pytest.mark.asyncio
 async def test_voice_blend_dialog_validation():
     """Test validation of blend name"""
-    app = TestApp()
+    app = VoiceBlendDialogApp()
     async with app.run_test() as pilot:
         dialog = app.query_one(VoiceBlendDialog)
         

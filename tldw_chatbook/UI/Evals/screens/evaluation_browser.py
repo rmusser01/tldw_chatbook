@@ -15,10 +15,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from ....Evaluations_Interop import (
     EvaluationScopeService,
-    LocalEvaluationsService,
-    ServerEvaluationsService,
 )
-from ....Evals.eval_orchestrator import EvaluationOrchestrator
 from ..navigation.nav_bar import EvalNavigationBar, EvalStatus, QuickAction
 
 if TYPE_CHECKING:
@@ -129,7 +126,6 @@ class EvaluationBrowserScreen(Screen):
         self.app_instance = app_instance
         self.view_mode = view_mode
         self.nav_bar: Optional[EvalNavigationBar] = None
-        self._scope_service_cache: Optional[EvaluationScopeService] = None
         self.evaluations: List[Dict[str, Any]] = []
         self.datasets_by_id: Dict[str, Dict[str, Any]] = {}
         self.runs: List[Dict[str, Any]] = []
@@ -230,31 +226,7 @@ class EvaluationBrowserScreen(Screen):
         service = getattr(self.app_instance, "evaluation_scope_service", None)
         if service is not None:
             return service
-        if self._scope_service_cache is not None:
-            return self._scope_service_cache
-
-        local_service = None
-        try:
-            local_service = LocalEvaluationsService(
-                db=EvaluationOrchestrator(client_id="eval_browser").db
-            )
-        except Exception:
-            logger.warning("Local evaluation service unavailable for evaluation browser", exc_info=True)
-
-        try:
-            server_service = ServerEvaluationsService.from_config(self.app_instance.app_config)
-        except Exception:
-            logger.warning("Server evaluation service unavailable for evaluation browser", exc_info=True)
-            server_service = ServerEvaluationsService(client=None)
-
-        if local_service is None and getattr(server_service, "client", None) is None:
-            return None
-
-        self._scope_service_cache = EvaluationScopeService(
-            local_service=local_service,
-            server_service=server_service,
-        )
-        return self._scope_service_cache
+        return None
 
     def _notify(self, message: str, severity: str = "warning") -> None:
         notifier = getattr(self.app_instance, "notify", None)
@@ -341,7 +313,7 @@ class EvaluationBrowserScreen(Screen):
             self.nav_bar.set_status(EvalStatus.RUNNING)
 
         if scope is None:
-            context.update("Evaluation browser is unavailable because no local or server evaluation backend could be initialized.")
+            context.update("Evaluation browser is unavailable because the app-owned evaluation scope service is unavailable.")
             self._set_empty_tables()
             if self.nav_bar:
                 self.nav_bar.set_status(EvalStatus.ERROR)

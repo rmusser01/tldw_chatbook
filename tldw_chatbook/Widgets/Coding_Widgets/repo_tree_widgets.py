@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 from typing import Optional, Dict, List, Set, Callable
+import hashlib
 import os
 from pathlib import Path
 
@@ -19,6 +20,12 @@ from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Static
 
 logger = logger.bind(module="repo_tree_widgets")
+
+
+def _safe_dom_id(prefix: str, path: str) -> str:
+    """Build a Textual-safe DOM id from an arbitrary repository path."""
+    digest = hashlib.sha1(path.encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}-{digest}"
 
 
 class TreeNodeSelected(Message):
@@ -129,7 +136,7 @@ class TreeNode(Widget):
                 yield Button(
                     "▶",
                     classes="tree-expand-btn",
-                    id=f"expand-{self.path}"
+                    id=_safe_dom_id("expand", self.path)
                 )
             else:
                 yield Static("", classes="tree-expand-spacer")
@@ -137,7 +144,7 @@ class TreeNode(Widget):
             # Column 3: Checkbox
             yield Checkbox(
                 value=self.selected,
-                id=f"select-{self.path}",
+                id=_safe_dom_id("select", self.path),
                 classes="tree-checkbox"
             )
             
@@ -344,7 +351,7 @@ class TreeView(VerticalScroll):
                 is_directory=is_dir,
                 level=level,
                 size=size,
-                id=f"node-{path}"
+                id=_safe_dom_id("node", path)
             )
             
             self.nodes[path] = node
@@ -379,7 +386,7 @@ class TreeView(VerticalScroll):
                 is_directory=is_dir,
                 level=node.level + 1,
                 size=size,
-                id=f"node-{child_path}"
+                id=_safe_dom_id("node", child_path)
             )
             
             self.nodes[child_path] = child_node

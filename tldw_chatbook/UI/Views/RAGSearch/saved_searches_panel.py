@@ -31,18 +31,28 @@ class SavedSearchesPanel(Container):
             with Horizontal(classes="saved-searches-header"):
                 yield Static("💾 Saved Searches", classes="saved-searches-title")
                 yield Button("+", id="new-saved-search", classes="new-search-button", tooltip="Save current search")
-            
-            if self.saved_searches:
-                yield ListView(id="saved-searches-list", classes="saved-searches-list-enhanced")
+
+            list_classes = "saved-searches-list-enhanced"
+            empty_state_classes = "empty-saved-searches"
+            if not self.saved_searches:
+                list_classes += " hidden"
             else:
-                yield Static(
-                    "No saved searches yet.\nPerform a search and click 'Save Search' to store it.",
-                    classes="empty-saved-searches"
-                )
+                empty_state_classes += " hidden"
+
+            yield ListView(id="saved-searches-list", classes=list_classes)
+            yield Static(
+                "No saved searches yet.\nPerform a search and click 'Save Search' to store it.",
+                id="saved-searches-empty-state",
+                classes=empty_state_classes,
+            )
             
             with Horizontal(classes="saved-search-actions-enhanced"):
                 yield Button("📥 Load", id="load-saved-search", classes="saved-action-button", disabled=True)
                 yield Button("🗑️ Delete", id="delete-saved-search", classes="saved-action-button danger", disabled=True)
+
+    def on_mount(self) -> None:
+        """Populate the list view after the widget mounts."""
+        self.run_worker(self.refresh_list(), exclusive=True)
     
     def _load_saved_searches(self) -> Dict[str, Dict[str, Any]]:
         """Load saved searches from user data"""
@@ -91,7 +101,8 @@ class SavedSearchesPanel(Container):
             logger.info(f"Removed oldest saved search to maintain limit: {oldest_name}")
             
         self._persist_saved_searches()
-        self.refresh_list()
+        if self.is_mounted:
+            self.run_worker(self.refresh_list(), exclusive=True)
     
     def _persist_saved_searches(self) -> None:
         """Save searches to disk"""
@@ -102,11 +113,18 @@ class SavedSearchesPanel(Container):
     
     async def refresh_list(self) -> None:
         """Refresh the saved searches list"""
-        # Check if we have a list view or need to show empty state
         try:
             list_view = self.query_one("#saved-searches-list", ListView)
+            empty_state = self.query_one("#saved-searches-empty-state", Static)
             await list_view.clear()
-            
+
+            if self.saved_searches:
+                list_view.remove_class("hidden")
+                empty_state.add_class("hidden")
+            else:
+                list_view.add_class("hidden")
+                empty_state.remove_class("hidden")
+
             for name, data in self.saved_searches.items():
                 created = datetime.fromisoformat(data['created_at']).strftime("%Y-%m-%d %H:%M")
                 list_item = ListItem(
@@ -118,6 +136,5 @@ class SavedSearchesPanel(Container):
             self.query_one("#load-saved-search").disabled = True
             self.query_one("#delete-saved-search").disabled = True
         except NoMatches:
-            # List view doesn't exist, we're showing empty state
-            logger.debug("Saved searches list view not found, showing empty state")
+            logger.debug("Saved searches panel mounted without expected child widgets")
             pass

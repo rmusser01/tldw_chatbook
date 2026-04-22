@@ -100,7 +100,7 @@ FALLBACK_TITLE_NOTE = "[N]"
 EMOJI_TITLE_SEARCH = "🔍"
 FALLBACK_TITLE_SEARCH = "[S]"
 
-EMOJI_SEND = "▶" # Or "➡️"
+EMOJI_SEND = "▶ Send"
 FALLBACK_SEND = "Send"
 
 EMOJI_SIDEBAR_TOGGLE = "☰"
@@ -134,7 +134,7 @@ CROSS_FALLBACK = "[FAIL]"
 SPARKLES_EMOJI = "✨"
 SPARKLES_FALLBACK = "*"
 
-EMOJI_STOP = "⏹️"  # Or "🛑"
+EMOJI_STOP = "⏹ Stop"
 FALLBACK_STOP = "Stop"
 
 EMOJI_WRITE_FOR_ME = "💡"  # Suggestion button

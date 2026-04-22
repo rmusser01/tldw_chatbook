@@ -32,6 +32,11 @@ class StudyFlashcardsController:
         self.has_decks: bool = False
 
     def _current_mode(self) -> str:
+        getter = getattr(self.app_instance, "get_authoritative_runtime_source", None)
+        if callable(getter):
+            normalized = str(getter() or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
         candidates = (
             getattr(self.window, "runtime_backend", None),
             getattr(self.app_instance, "runtime_backend", None),
@@ -112,6 +117,16 @@ class StudyFlashcardsController:
             return {"scope_type": self._scope_type(), "workspace_id": None}
         return self._scope_arguments()
 
+    def _policy_action_allowed(self, action_id: str) -> bool:
+        checker = getattr(self.app_instance, "require_ui_action_allowed", None)
+        if not callable(checker):
+            return True
+        decision = checker(
+            action_id=action_id,
+            scope_type=self._scope_type(),
+        )
+        return bool(getattr(decision, "allowed", False))
+
     def _review_session_mode(self) -> str:
         stored_mode = str(self.current_review_session_mode or "").strip().lower()
         if stored_mode in {"local", "server"}:
@@ -179,13 +194,17 @@ class StudyFlashcardsController:
             "review_session_id": self.current_review_session_id,
         }
 
+    @staticmethod
+    def _is_blank_select_value(value: Any) -> bool:
+        return value in {None, "", False, Select.BLANK} or str(value).startswith("Select.")
+
     def _selected_deck_id(self) -> Optional[str]:
         try:
             deck_select = self.window.query_one("#deck-select", Select)
         except Exception:
             return None
         value = getattr(deck_select, "value", None)
-        if value in {None, "", Select.BLANK}:
+        if self._is_blank_select_value(value):
             return None
         return str(value)
 
@@ -204,7 +223,7 @@ class StudyFlashcardsController:
         except Exception:
             return None
         value = getattr(target_select, "value", None)
-        if value in {None, "", Select.BLANK}:
+        if self._is_blank_select_value(value):
             return None
         selected_deck_id = self._selected_deck_id()
         for deck in self.current_decks:
@@ -243,7 +262,7 @@ class StudyFlashcardsController:
         try:
             deck_select = self.window.query_one("#deck-select", Select)
             deck_select.set_options([("No decks available", Select.BLANK)])
-            deck_select.value = Select.BLANK
+            deck_select.clear()
         except Exception:
             pass
         try:
@@ -284,13 +303,13 @@ class StudyFlashcardsController:
         ]
         if not options:
             target_select.set_options([("No target decks available", Select.BLANK)])
-            target_select.value = Select.BLANK
+            target_select.clear()
             return
 
         target_select.set_options(options)
         valid_values = {option[1] for option in options}
-        if getattr(target_select, "value", None) not in valid_values:
-            target_select.value = Select.BLANK
+        if str(getattr(target_select, "value", "")) not in {str(value) for value in valid_values}:
+            target_select.clear()
 
     def _update_lifecycle_controls(self) -> None:
         self._reconcile_live_selection_state()
@@ -351,11 +370,11 @@ class StudyFlashcardsController:
         show_answer_button = self.window.query_one("#show-answer-button", Button)
         rating_buttons = [self.window.query_one(f"#review-rating-{rating}", Button) for rating in range(6)]
         return {
-            "status": str(self.window.query_one("#review-status", Static).renderable),
-            "front": str(front_widget.renderable),
-            "back": str(back_widget.renderable),
+            "status": str(self.window.query_one("#review-status", Static).render()),
+            "front": str(front_widget.render()),
+            "back": str(back_widget.render()),
             "show_back": bool(back_widget.display),
-            "intervals": str(intervals_widget.renderable),
+            "intervals": str(intervals_widget.render()),
             "show_answer_enabled": not show_answer_button.disabled,
             "ratings_enabled": all(not button.disabled for button in rating_buttons),
         }
@@ -458,7 +477,7 @@ class StudyFlashcardsController:
         elif selected_before in available_values:
             deck_select.value = selected_before
         else:
-            deck_select.value = Select.BLANK
+            deck_select.clear()
 
         self.selected_deck_record = self._selected_deck_record()
         self._sync_move_target_options()
@@ -545,6 +564,8 @@ class StudyFlashcardsController:
             self._notify("Deck name is required.")
             return
 
+        if not self._policy_action_allowed(f"study.deck.create.{self._current_mode()}"):
+            return
         try:
             created = await service.create_deck(
                 mode=self._current_mode(),

@@ -17,8 +17,9 @@ from textual.containers import Container
 from ..Constants import ALL_TLDW_API_OPTION_CONTAINERS
 from ..UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as IngestWindow
 from ..config import get_cli_setting
+from ..runtime_policy.bootstrap import build_runtime_api_client
 from ..tldw_api import (
-    TLDWAPIClient, ProcessVideoRequest, ProcessAudioRequest,
+    ProcessVideoRequest, ProcessAudioRequest,
     APIConnectionError, APIRequestError, APIResponseError, AuthenticationError,
     MediaItemProcessResult, ProcessedMediaWikiPage, BatchMediaProcessResponse,
     ProcessPDFRequest, ProcessEbookRequest, ProcessDocumentRequest,
@@ -568,14 +569,12 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
             return
 
     status_area.load_text("Connecting to TLDW API and sending request...")
-    # Determine if auth_token is a Bearer token or API key based on auth_method
-    if auth_method == "custom_token":
-        # Custom token is treated as Bearer token
-        api_client = TLDWAPIClient(base_url=endpoint_url)
-        api_client.bearer_token = auth_token
-    else:
-        # Config token is treated as API key
-        api_client = TLDWAPIClient(base_url=endpoint_url, token=auth_token)
+    api_client = build_runtime_api_client(
+        app_config=getattr(app, "app_config", {}),
+        endpoint_url=endpoint_url,
+        auth_token=auth_token,
+        auth_method=auth_method,
+    )
     overwrite_db = common_data.get("overwrite_existing_db", False)  # From common_data
 
     # Worker and callbacks remain largely the same but need to use the correct UI element IDs for this tab

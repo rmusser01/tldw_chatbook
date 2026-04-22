@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual.app import App, ComposeResult
 
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.CCP_Modules import PersonaMessage
 from tldw_chatbook.UI.Screens.ccp_screen import CCPScreen, CCPScreenState
 from tldw_chatbook.Widgets.CCP_Widgets import (
@@ -52,6 +53,16 @@ class TestCCPScreenState:
         assert state.selected_character_id is None
         assert state.selected_persona_id is None
         assert state.selected_conversation_id is None
+
+    def test_current_runtime_backend_prefers_authoritative_runtime_policy(self, mock_app_instance):
+        mock_app_instance.runtime_policy = Mock(state=RuntimeSourceState(active_source="server"))
+        mock_app_instance.current_runtime_backend = "local"
+        mock_app_instance.runtime_backend = "local"
+        mock_app_instance.get_authoritative_runtime_source = Mock(return_value="server")
+
+        screen = CCPScreen(mock_app_instance)
+
+        assert screen._current_runtime_backend() == "server"
 
     def test_mode_switch_clears_selected_entity_and_session(self):
         state = CCPScreenState(

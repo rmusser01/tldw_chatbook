@@ -23,6 +23,10 @@ from tldw_chatbook.UI.Screens.notes_screen import NotesScreen
 from tldw_chatbook.Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPanel
 
 
+def _text(widget: Static) -> str:
+    return str(widget.render())
+
+
 class NotesScreenTestApp(App[None]):
     def __init__(self, screen: NotesScreen, notes_service: Mock):
         super().__init__()
@@ -198,6 +202,57 @@ class TestNotesScreenMethods:
         assert screen.state.selected_workspace_artifact_id == "artifact-5"
         assert screen.state.selected_workspace_artifact_version == 8
         assert screen.state.auto_save_enabled is False
+
+    @pytest.mark.asyncio
+    async def test_refresh_server_scope_prefers_scope_service_list_path(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = replace(screen.state, scope_type=ScopeType.SERVER_NOTE, search_query="")
+        screen._populate_scope_list_if_available = AsyncMock()  # type: ignore[method-assign]
+        mock_app_instance.notes_scope_service.list_notes = AsyncMock(
+            return_value={"items": [{"id": "server-note-1", "title": "Remote"}]}
+        )
+        mock_app_instance.server_notes_workspace_service.list_server_notes = AsyncMock(
+            return_value={"items": [{"id": "server-note-direct", "title": "Bypass"}]}
+        )
+
+        await screen._refresh_server_scope()
+
+        mock_app_instance.notes_scope_service.list_notes.assert_awaited_once_with(
+            scope=ScopeType.SERVER_NOTE.value,
+            limit=200,
+            offset=0,
+            user_id="default_user",
+        )
+        mock_app_instance.server_notes_workspace_service.list_server_notes.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_load_workspace_context_prefers_scope_service(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        mock_app_instance.notes_scope_service.load_workspace_context = AsyncMock(
+            return_value={
+                "workspace": {"id": "workspace-1", "name": "Workspace"},
+                "notes": [],
+                "sources": [],
+                "artifacts": [],
+            }
+        )
+        mock_app_instance.server_notes_workspace_service.load_workspace_context = AsyncMock(
+            return_value={
+                "workspace": {"id": "workspace-1", "name": "Bypass"},
+                "notes": [],
+                "sources": [],
+                "artifacts": [],
+            }
+        )
+
+        payload = await screen._load_workspace_context_payload("workspace-1", use_cache=False)
+
+        assert payload["workspace"]["name"] == "Workspace"
+        mock_app_instance.notes_scope_service.load_workspace_context.assert_awaited_once_with(
+            scope=ScopeType.WORKSPACE.value,
+            workspace_id="workspace-1",
+        )
+        mock_app_instance.server_notes_workspace_service.load_workspace_context.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_on_mount_consumes_pending_workspace_return_context(self, mock_app_instance):
@@ -593,10 +648,10 @@ class TestNotesScreenMethods:
     @pytest.mark.asyncio
     async def test_refresh_server_scope_uses_server_search_when_query_present(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
-        mock_app_instance.server_notes_workspace_service.search_server_notes = AsyncMock(
+        mock_app_instance.notes_scope_service.search_notes = AsyncMock(
             return_value={"items": [{"id": "server-2", "title": "Alpha", "content": "Body", "version": 3}]}
         )
-        mock_app_instance.server_notes_workspace_service.list_server_notes = AsyncMock(
+        mock_app_instance.notes_scope_service.list_notes = AsyncMock(
             return_value={"items": [{"id": "server-1", "title": "Other", "content": "Body", "version": 1}]}
         )
         screen.state = NotesScreenState(
@@ -606,18 +661,19 @@ class TestNotesScreenMethods:
 
         await screen._refresh_server_scope()
 
-        mock_app_instance.server_notes_workspace_service.search_server_notes.assert_awaited_once_with(
+        mock_app_instance.notes_scope_service.search_notes.assert_awaited_once_with(
+            scope=ScopeType.SERVER_NOTE.value,
             query="alpha",
             limit=200,
             offset=0,
         )
-        mock_app_instance.server_notes_workspace_service.list_server_notes.assert_not_called()
+        mock_app_instance.notes_scope_service.list_notes.assert_not_called()
         assert [note["id"] for note in screen.state.notes_list] == ["server-2"]
 
     @pytest.mark.asyncio
     async def test_refresh_workspace_scope_filters_loaded_selected_workspace_notes_in_memory(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
-        mock_app_instance.server_notes_workspace_service.load_workspace_context = AsyncMock(
+        mock_app_instance.notes_scope_service.load_workspace_context = AsyncMock(
             return_value={
                 "workspace": {"id": "ws-1", "name": "Research", "version": 2},
                 "notes": [
@@ -629,7 +685,6 @@ class TestNotesScreenMethods:
                 "artifacts": [],
             }
         )
-        mock_app_instance.server_notes_workspace_service.search_workspace_notes = AsyncMock()
         screen.state = NotesScreenState(
             scope_type=ScopeType.WORKSPACE,
             workspace_subview=WorkspaceSubview.NOTES,
@@ -639,8 +694,10 @@ class TestNotesScreenMethods:
 
         await screen._refresh_workspace_scope()
 
-        mock_app_instance.server_notes_workspace_service.load_workspace_context.assert_awaited_once_with("ws-1")
-        mock_app_instance.server_notes_workspace_service.search_workspace_notes.assert_not_called()
+        mock_app_instance.notes_scope_service.load_workspace_context.assert_awaited_once_with(
+            scope=ScopeType.WORKSPACE.value,
+            workspace_id="ws-1",
+        )
         assert [note["id"] for note in screen.state.notes_list] == [1]
 
     @pytest.mark.asyncio
@@ -965,7 +1022,7 @@ class TestNotesScreenMethods:
 
             assert sync_button.display is False
             assert top_save_button.display is True
-            assert str(title.renderable) == "Server Note Details"
+            assert _text(title) == "Server Note Details"
 
             screen._set_state(
                 scope_type=ScopeType.WORKSPACE,
@@ -977,7 +1034,7 @@ class TestNotesScreenMethods:
             assert panel.display is not False
             assert top_save_button.display is False
             assert export_actions.display is False
-            assert str(title.renderable) == "Workspace Details"
+            assert _text(title) == "Workspace Details"
 
     @pytest.mark.asyncio
     async def test_workspace_details_panel_open_study_button_uses_workspace_scope(self, mock_app_instance):

@@ -557,7 +557,22 @@ class NotesScreen(BaseAppScreen):
             return
         self._set_state(server_notes_loading=True, server_notes_refreshing=True, server_notes_error=None)
         try:
-            if self.state.search_query:
+            if self.notes_scope_service is not None:
+                if self.state.search_query:
+                    payload = await self.notes_scope_service.search_notes(
+                        scope=ScopeType.SERVER_NOTE.value,
+                        query=self.state.search_query,
+                        limit=200,
+                        offset=0,
+                    )
+                else:
+                    payload = await self.notes_scope_service.list_notes(
+                        scope=ScopeType.SERVER_NOTE.value,
+                        limit=200,
+                        offset=0,
+                        user_id=self.notes_user_id,
+                    )
+            elif self.state.search_query:
                 payload = await service.search_server_notes(
                     query=self.state.search_query,
                     limit=200,
@@ -601,7 +616,10 @@ class NotesScreen(BaseAppScreen):
                     artifacts=self._workspace_context_payload["artifacts"],
                 )
             else:
-                items = await service.list_workspaces()
+                if self.notes_scope_service is not None:
+                    items = await self.notes_scope_service.list_workspaces()
+                else:
+                    items = await service.list_workspaces()
                 self._workspace_context_payload = {
                     "workspace": {},
                     "notes": [],
@@ -674,7 +692,13 @@ class NotesScreen(BaseAppScreen):
         service = self.server_notes_workspace_service or getattr(self.notes_scope_service, "server_service", None)
         if service is None:
             raise ValueError("Workspace service is not configured.")
-        context = await service.load_workspace_context(workspace_id)
+        if self.notes_scope_service is not None:
+            context = await self.notes_scope_service.load_workspace_context(
+                scope=ScopeType.WORKSPACE.value,
+                workspace_id=workspace_id,
+            )
+        else:
+            context = await service.load_workspace_context(workspace_id)
         self._workspace_context_payload = {
             "workspace": dict(context.get("workspace", {}) or {}),
             "notes": list(context.get("notes", []) or []),
@@ -1252,10 +1276,19 @@ class NotesScreen(BaseAppScreen):
             self._notify("Unsaved changes require confirmation before switching notes.", severity="warning")
             return navigation
         service = self.server_notes_workspace_service or getattr(self.notes_scope_service, "server_service", None)
-        if service is None or not hasattr(service, "get_server_note"):
+        if service is None:
             self._notify("Server note service is not configured.", severity="warning")
             return None
-        note_details = await service.get_server_note(note_id)
+        if self.notes_scope_service is not None:
+            note_details = await self.notes_scope_service.get_note_detail(
+                scope=ScopeType.SERVER_NOTE.value,
+                note_id=note_id,
+                user_id=self.notes_user_id,
+            )
+        elif hasattr(service, "get_server_note"):
+            note_details = await service.get_server_note(note_id)
+        else:
+            note_details = None
         if not note_details:
             return None
         await self._hydrate_editor_for_server_note(note_id, note_details)

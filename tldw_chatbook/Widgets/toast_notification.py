@@ -72,7 +72,7 @@ class ToastNotification(Widget):
             yield Static(self.message, classes="toast-message")
             
             # Close button
-            yield Button("×", id="toast-close", classes="toast-close", variant="plain")
+            yield Button("×", id="toast-close", classes="toast-close")
     
     def on_mount(self) -> None:
         """Start auto-dismiss timer when mounted."""
@@ -141,8 +141,7 @@ class ToastManager(Widget):
         
     def compose(self) -> ComposeResult:
         """Compose the toast container."""
-        with Vertical(id="toast-stack", classes="toast-stack"):
-            pass
+        yield Vertical(id="toast-stack", classes="toast-stack")
     
     def show_toast(
         self,
@@ -157,7 +156,7 @@ class ToastManager(Widget):
         """
         # Remove oldest toast if at limit
         if len(self.active_toasts) >= self.MAX_TOASTS:
-            oldest = self.active_toasts[0]
+            oldest = self.active_toasts.pop(0)
             oldest.dismiss()
         
         # Create new toast

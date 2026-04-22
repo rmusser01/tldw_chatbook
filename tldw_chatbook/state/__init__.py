@@ -3,6 +3,8 @@ State management module for tldw_chatbook application.
 Provides centralized state containers following best practices.
 """
 
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+
 from .app_state import AppState
 from .navigation_state import NavigationState
 from .chat_state import ChatState, ChatSession
@@ -16,5 +18,6 @@ __all__ = [
     'ChatSession',
     'NotesState',
     'Note',
+    'RuntimeSourceState',
     'UIState',
 ]

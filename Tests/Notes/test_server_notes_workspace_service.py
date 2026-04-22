@@ -3,6 +3,7 @@ import pytest
 from tldw_chatbook.Notes.server_notes_workspace_service import (
     ServerNotesWorkspaceService,
 )
+from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
 class FakeClient:
@@ -91,6 +92,28 @@ class FakeClient:
         }
 
 
+class FakePolicyEnforcer:
+    def __init__(self, denied_reason: str | None = None):
+        self.denied_reason = denied_reason
+        self.calls = []
+
+    @classmethod
+    def deny(cls, reason_code: str) -> "FakePolicyEnforcer":
+        return cls(denied_reason=reason_code)
+
+    def require_allowed(self, *, action_id: str) -> None:
+        self.calls.append(action_id)
+        if self.denied_reason is None:
+            return
+        raise PolicyDeniedError(
+            action_id=action_id,
+            reason_code=self.denied_reason,
+            user_message=f"{action_id} denied",
+            effective_source="local",
+            authority_owner="shared",
+        )
+
+
 @pytest.mark.asyncio
 async def test_service_serializes_workspace_note_keywords_for_update():
     service = ServerNotesWorkspaceService(client=FakeClient())
@@ -103,6 +126,25 @@ async def test_service_serializes_workspace_note_keywords_for_update():
     )
 
     assert payload.keywords_json == '["alpha", "beta"]'
+
+
+@pytest.mark.asyncio
+async def test_server_notes_workspace_service_denies_workspace_mutation_when_source_is_wrong():
+    policy_enforcer = FakePolicyEnforcer.deny("wrong_source")
+    service = ServerNotesWorkspaceService(
+        client=FakeClient(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await service.save_workspace_note(
+            workspace_id="ws-1",
+            title="Draft",
+            content="Body",
+        )
+
+    assert exc.value.reason_code == "wrong_source"
+    assert policy_enforcer.calls == ["notes.create.workspace"]
 
 
 def test_service_server_note_update_payload_omits_keywords_when_not_supplied():

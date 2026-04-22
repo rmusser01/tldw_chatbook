@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
-from textual.widgets import DataTable, Input, Select, TextArea
+from textual.widgets import DataTable, Input, Select, Static, TextArea
 
 from tldw_chatbook.UI.Evals.evals_window_v3 import EvalsWindowV3
 from tldw_chatbook.UI.Evals.screens import EvaluationBrowserScreen
@@ -246,3 +246,20 @@ async def test_evaluation_browser_screen_shows_local_target_selector_and_results
         assert "server_eval" in detail.text
         with pytest.raises(Exception):
             results_app.screen.query_one("#create-run-button")
+
+
+@pytest.mark.asyncio
+async def test_evaluation_browser_screen_requires_app_owned_scope_service():
+    app_instance = SimpleNamespace(
+        current_runtime_backend="local",
+        runtime_backend=None,
+        app_config={},
+        notify=lambda *args, **kwargs: None,
+    )
+    app = EvaluationBrowserTestApp(app_instance=app_instance, view_mode="manage")
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        context = app.screen.query_one("#browser-context", Static)
+
+        assert "app-owned evaluation scope service is unavailable" in str(context.render())

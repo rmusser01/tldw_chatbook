@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Study_Interop.quiz_scope_service import QuizScopeService
+from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
 class FakeLocalQuizService:
@@ -259,6 +260,28 @@ class PagedFakeServerQuizService:
         return {"id": "quiz-created", "name": name, "description": description, "workspace_id": workspace_id}
 
 
+class FakePolicyEnforcer:
+    def __init__(self, denied_reason: str | None = None):
+        self.denied_reason = denied_reason
+        self.calls = []
+
+    @classmethod
+    def deny(cls, reason_code: str) -> "FakePolicyEnforcer":
+        return cls(denied_reason=reason_code)
+
+    def require_allowed(self, *, action_id: str) -> None:
+        self.calls.append(action_id)
+        if self.denied_reason is None:
+            return
+        raise PolicyDeniedError(
+            action_id=action_id,
+            reason_code=self.denied_reason,
+            user_message=f"{action_id} denied",
+            effective_source="local",
+            authority_owner="server",
+        )
+
+
 @pytest.mark.asyncio
 async def test_quiz_scope_service_routes_quiz_list_by_backend():
     scope = QuizScopeService(
@@ -272,6 +295,63 @@ async def test_quiz_scope_service_routes_quiz_list_by_backend():
     assert local_quizzes[0]["record_id"] == "local:quiz:quiz-local-1"
     assert server_quizzes[0]["record_id"] == "server:quiz:7"
     assert server_quizzes[0]["time_limit_seconds"] == 300
+
+
+@pytest.mark.asyncio
+async def test_quiz_scope_service_denies_server_quiz_create_when_runtime_policy_blocks_it():
+    policy_enforcer = FakePolicyEnforcer.deny("wrong_source")
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(),
+        server_service=FakeServerQuizService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await scope.create_quiz(
+            mode="server",
+            scope_type="global",
+            name="Remote quiz",
+            description="Body",
+        )
+
+    assert exc.value.reason_code == "wrong_source"
+    assert policy_enforcer.calls == ["quiz.create.server"]
+
+
+@pytest.mark.asyncio
+async def test_quiz_scope_service_keeps_normalizing_server_attempts_after_policy_passes():
+    policy_enforcer = FakePolicyEnforcer()
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(),
+        server_service=FakeServerQuizService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    started = await scope.start_attempt(mode="server", quiz_id=7)
+
+    assert started["record_id"] == "server:quiz_attempt:41"
+    assert policy_enforcer.calls == ["quiz.attempt.create.server"]
+
+
+@pytest.mark.asyncio
+async def test_quiz_scope_service_routes_question_mutations_through_question_policy_proxy():
+    policy_enforcer = FakePolicyEnforcer()
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(),
+        server_service=FakeServerQuizService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    created = await scope.create_question(
+        mode="local",
+        quiz_id="quiz-local-1",
+        question_type="fill_blank",
+        question_text="The capital of France is ____.",
+        correct_answer="Paris",
+    )
+
+    assert created["record_id"] == "local:quiz_question:question-local-1"
+    assert policy_enforcer.calls == ["quiz.question.detail.local"]
 
 
 @pytest.mark.asyncio

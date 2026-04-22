@@ -1,133 +1,148 @@
-"""
-Subscription Screen
-Screen wrapper for Subscription functionality in screen-based navigation.
-"""
+"""Subscription screen implementation."""
 
-from textual.screen import Screen
+from __future__ import annotations
+
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from loguru import logger
 from textual.app import ComposeResult
 from textual.reactive import reactive
-from typing import Optional, List, Dict, Any
-from loguru import logger
+from textual.widgets import Static
+
+from ..Navigation.base_app_screen import BaseAppScreen
+from ..SubscriptionWindow import SubscriptionWindow
+
+if TYPE_CHECKING:
+    from tldw_chatbook.app import TldwCli
 
 
-class SubscriptionScreen(Screen):
-    """Screen wrapper for Subscription management functionality."""
-    
-    # Screen-specific state
+class SubscriptionScreen(BaseAppScreen):
+    """Screen wrapper for subscription management."""
+
     subscriptions: reactive[List[Dict[str, Any]]] = reactive([])
     active_subscription: reactive[Optional[Dict[str, Any]]] = reactive(None)
     is_checking_updates: reactive[bool] = reactive(False)
     last_check_time: reactive[Optional[str]] = reactive(None)
-    
-    def compose(self) -> ComposeResult:
-        """Compose the Subscription screen."""
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
+        super().__init__(app_instance, "subscriptions", **kwargs)
+        self.subscription_window: Optional[SubscriptionWindow] = None
+
+    def compose_content(self) -> ComposeResult:
+        """Compose the subscription management window."""
         logger.info("Composing Subscription screen")
-        
-        # Check if SubscriptionWindow is available
+        self.subscription_window = SubscriptionWindow(self.app_instance, classes="window")
+        yield self.subscription_window
+
+    def _get_subscription_window(self) -> Optional[SubscriptionWindow]:
+        if self.subscription_window is not None:
+            return self.subscription_window
+
         try:
-            from ..SubscriptionWindow import SubscriptionWindow
-            yield SubscriptionWindow()
-        except ImportError:
-            # Fallback if dependencies not installed
-            from textual.widgets import Static
-            yield Static(
-                "[yellow]Subscription features require additional dependencies.[/yellow]\n"
-                "Install with: pip install -e '.[subscriptions]'",
-                classes="subscription-unavailable"
+            self.subscription_window = self.query_one(SubscriptionWindow)
+        except Exception:
+            return None
+        return self.subscription_window
+
+    def _sync_state_from_window(self) -> None:
+        """Mirror key runtime state from the mounted window."""
+        subscription_window = self._get_subscription_window()
+        if subscription_window is None or subscription_window.db is None:
+            return
+
+        try:
+            subscriptions = subscription_window.db.get_all_subscriptions(include_inactive=False)
+            self.subscriptions = list(subscriptions)
+            self.active_subscription = next(
+                (
+                    subscription
+                    for subscription in self.subscriptions
+                    if subscription.get("id") == subscription_window.selected_subscription
+                ),
+                None,
             )
-    
+            self.is_checking_updates = bool(
+                subscription_window.scheduler_worker
+                and subscription_window.scheduler_worker.is_running
+            )
+            stats = subscription_window.db.get_subscription_stats()
+            self.last_check_time = stats.get("last_check_time")
+        except Exception as exc:
+            logger.warning(f"Unable to sync subscription screen state: {exc}")
+
     async def on_mount(self) -> None:
-        """Initialize Subscription features when screen is mounted."""
+        """Capture initial state after the subscription window mounts."""
         logger.info("Subscription screen mounted")
-        
-        # Try to get the Subscription window if available
-        try:
-            from ..SubscriptionWindow import SubscriptionWindow
-            subscription_window = self.query_one(SubscriptionWindow)
-            
-            # Load subscriptions
-            if hasattr(subscription_window, 'load_subscriptions'):
-                subs = await subscription_window.load_subscriptions()
-                self.subscriptions = subs
-            
-            # Initialize subscription features
-            if hasattr(subscription_window, 'initialize'):
-                await subscription_window.initialize()
-        except (ImportError, Exception) as e:
-            logger.warning(f"Subscription features unavailable: {e}")
-    
+        self._sync_state_from_window()
+
     async def on_screen_suspend(self) -> None:
-        """Clean up when screen is suspended (navigated away)."""
+        """Stop background subscription polling when the screen is suspended."""
         logger.debug("Subscription screen suspended")
-        
-        # Stop any update checks
-        if self.is_checking_updates:
-            try:
-                from ..SubscriptionWindow import SubscriptionWindow
-                subscription_window = self.query_one(SubscriptionWindow)
-                if hasattr(subscription_window, 'stop_update_check'):
-                    await subscription_window.stop_update_check()
-            except (ImportError, Exception):
-                pass
-            
-            self.is_checking_updates = False
-    
+
+        subscription_window = self._get_subscription_window()
+        if (
+            subscription_window is not None
+            and subscription_window.scheduler_worker is not None
+            and subscription_window.scheduler_worker.is_running
+        ):
+            await subscription_window.scheduler_worker.stop_scheduler()
+
+        self.is_checking_updates = False
+
     async def on_screen_resume(self) -> None:
-        """Restore state when screen is resumed."""
+        """Refresh subscription data when returning to the screen."""
         logger.debug("Subscription screen resumed")
-        
-        # Refresh subscriptions list
+
+        subscription_window = self._get_subscription_window()
+        if subscription_window is None:
+            return
+
         try:
-            from ..SubscriptionWindow import SubscriptionWindow
-            subscription_window = self.query_one(SubscriptionWindow)
-            if hasattr(subscription_window, 'refresh_subscriptions'):
-                subs = await subscription_window.refresh_subscriptions()
-                self.subscriptions = subs
-        except (ImportError, Exception):
-            pass
-    
+            await subscription_window.refresh_subscription_list()
+            await subscription_window.refresh_dashboard()
+            await subscription_window.load_new_items()
+        except Exception as exc:
+            logger.warning(f"Unable to refresh subscription screen: {exc}")
+
+        self._sync_state_from_window()
+
     def add_subscription(self, url: str, name: str, check_interval: int = 3600) -> None:
-        """Add a new subscription."""
+        """Add a new subscription to the local screen state."""
         new_subscription = {
             "url": url,
             "name": name,
             "check_interval": check_interval,
             "last_checked": None,
-            "is_active": True
+            "is_active": True,
         }
-        
-        # Add to local list
-        current_subs = list(self.subscriptions)
-        current_subs.append(new_subscription)
-        self.subscriptions = current_subs
-        
+        current_subscriptions = list(self.subscriptions)
+        current_subscriptions.append(new_subscription)
+        self.subscriptions = current_subscriptions
         logger.info(f"Added subscription: {name} ({url})")
-    
+
     def remove_subscription(self, subscription_id: int) -> None:
-        """Remove a subscription."""
-        # Remove from local list
+        """Remove a subscription from the local screen state."""
         if 0 <= subscription_id < len(self.subscriptions):
-            subs = list(self.subscriptions)
-            removed = subs.pop(subscription_id)
-            self.subscriptions = subs
+            subscriptions = list(self.subscriptions)
+            removed = subscriptions.pop(subscription_id)
+            self.subscriptions = subscriptions
             logger.info(f"Removed subscription: {removed.get('name', 'Unknown')}")
-    
+
     def toggle_subscription(self, subscription_id: int) -> None:
-        """Toggle a subscription's active state."""
+        """Toggle a subscription's active state in the local screen state."""
         if 0 <= subscription_id < len(self.subscriptions):
-            subs = list(self.subscriptions)
-            subs[subscription_id]["is_active"] = not subs[subscription_id].get("is_active", True)
-            self.subscriptions = subs
-            
-            state = "activated" if subs[subscription_id]["is_active"] else "deactivated"
-            logger.info(f"Subscription {subs[subscription_id].get('name', 'Unknown')} {state}")
-    
+            subscriptions = list(self.subscriptions)
+            subscriptions[subscription_id]["is_active"] = not subscriptions[subscription_id].get(
+                "is_active",
+                True,
+            )
+            self.subscriptions = subscriptions
+            state = "activated" if subscriptions[subscription_id]["is_active"] else "deactivated"
+            logger.info(f"Subscription {subscriptions[subscription_id].get('name', 'Unknown')} {state}")
+
     async def check_for_updates(self) -> None:
-        """Check all active subscriptions for updates."""
+        """Record a manual update check in the screen state."""
         self.is_checking_updates = True
         logger.info("Checking subscriptions for updates...")
-        
-        # This would be implemented by SubscriptionWindow
-        # Just updating state here for UI purposes
-        from datetime import datetime
         self.last_check_time = datetime.now().isoformat()

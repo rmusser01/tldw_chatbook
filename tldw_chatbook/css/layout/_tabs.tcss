@@ -76,3 +76,23 @@
     width: auto;
     height: 1;
 }
+
+/* Group separators - visually heavier than within-group separators */
+.tab-group-separator {
+    color: $accent;
+    padding: 0 2;
+    width: auto;
+    height: 1;
+    text-style: bold;
+}
+
+/* Group separator in button-based tab bar */
+#tabs .tab-group-separator {
+    width: auto;
+    min-width: 3;
+    height: 100%;
+    background: transparent;
+    color: $accent;
+    border: none;
+    padding: 0 1;
+}

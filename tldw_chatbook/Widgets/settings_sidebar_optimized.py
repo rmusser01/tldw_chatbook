@@ -79,6 +79,13 @@ def _create_basic_settings(id_prefix: str, defaults: dict) -> ComposeResult:
     available_providers = list(providers_models.keys())
     default_provider = defaults.get("provider", available_providers[0] if available_providers else "")
     default_model = defaults.get("model", "")
+    provider_value = (
+        default_provider
+        if default_provider in available_providers
+        else available_providers[0]
+        if available_providers
+        else Select.BLANK
+    )
     
     # Quick Settings - minimal set for basic usage
     with Container(classes="basic-settings-container"):
@@ -88,19 +95,28 @@ def _create_basic_settings(id_prefix: str, defaults: dict) -> ComposeResult:
         yield Select(
             [(provider, provider) for provider in available_providers],
             prompt="Select Provider…",
-            value=default_provider if default_provider in available_providers else None,
+            value=provider_value,
+            allow_blank=not available_providers,
             id=f"{id_prefix}-api-provider",
             classes="provider-select"
         )
         
         # Model selection (will be populated based on provider)
-        provider_models = providers_models.get(default_provider, [])
+        provider_models = providers_models.get(provider_value, []) if provider_value != Select.BLANK else []
         model_options = [(model, model) for model in provider_models]
+        model_value = (
+            default_model
+            if default_model in provider_models
+            else provider_models[0]
+            if provider_models
+            else Select.BLANK
+        )
         
         yield Select(
             model_options,
             prompt="Select Model…",
-            value=default_model if default_model in provider_models else None,
+            value=model_value,
+            allow_blank=not provider_models,
             id=f"{id_prefix}-api-model",
             classes="model-select"
         )

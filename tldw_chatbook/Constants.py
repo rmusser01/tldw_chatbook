@@ -33,6 +33,15 @@ TAB_CUSTOMIZE = "customize"
 ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,
             TAB_EVALS, TAB_LLM, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_CODING, TAB_STATS, TAB_CUSTOMIZE]
 
+# Visual grouping for tab bar (presentation only, does not affect ALL_TABS order)
+TAB_GROUPS = {
+    "Workspace": [TAB_CHAT, TAB_CODING, TAB_CHATBOOKS],
+    "Content": [TAB_NOTES, TAB_MEDIA, TAB_INGEST, TAB_SEARCH, TAB_SUBSCRIPTIONS],
+    "Characters": [TAB_CCP, TAB_STUDY],
+    "AI Config": [TAB_LLM, TAB_STTS, TAB_EVALS],
+    "System": [TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, TAB_LOGS, TAB_STATS],
+}
+
 # Subscription types
 SUBSCRIPTION_TYPES = [
     "rss",
@@ -100,12 +109,12 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 /* Generic .sidebar (used by #chat-left-sidebar and potentially others) */
 .sidebar {
     dock: left;
-    width: 25%; /* <-- CHANGE to percentage (adjust 20% to 35% as needed) */
-    min-width: 20; /* <-- ADD a minimum width to prevent it becoming unusable */
-    max-width: 80; /* <-- ADD a maximum width (optional) */
+    width: 25%;
+    min-width: 35;
+    max-width: 80;
     background: $boost;
     padding: 1 2;
-    border-right: thick $background-darken-1;
+    border-right: solid $surface;
     height: 100%;
     overflow-y: auto;
     overflow-x: hidden;
@@ -146,7 +155,7 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 }
 
 /* Common sidebar elements */
-.sidebar-title { text-style: bold underline; margin-bottom: 1; width: 100%; text-align: center; }
+.sidebar-title { text-style: bold; margin-bottom: 1; width: 100%; text-align: left; }
 .sidebar-label { margin-top: 1; text-style: bold; }
 .sidebar-input { width: 100%; margin-bottom: 1; }
 .sidebar-textarea { width: 100%; border: round $surface; margin-bottom: 1; }
@@ -591,7 +600,7 @@ ChatMessage > Vertical {
 }
 ChatMessage.-user > Vertical {
     background: $boost; /* Different background for user */
-    border: round $accent;
+    border: round $surface-lighten-1;
 }
 .message-header {
     width: 100%;

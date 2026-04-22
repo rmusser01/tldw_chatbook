@@ -138,7 +138,7 @@ async def test_embeddings_window_loads_server_collection_stats_on_selection():
         count_widget = app.window.query_one("#embeddings-collection-count", Static)
         metadata_widget = app.window.query_one("#embeddings-collection-metadata", TextArea)
 
-        assert "12" in str(count_widget.renderable)
+        assert "12" in str(count_widget.render())
         assert "1536" in metadata_widget.text
         assert ("get_collection_detail", "server", "remote_embeddings") in scope.calls
 

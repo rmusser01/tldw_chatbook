@@ -191,6 +191,56 @@ class TabState:
 
 
 @dataclass
+class TaskResumeState:
+    """Serializable summary of the current agentic task state."""
+
+    summary: str = ""
+    last_step: str = ""
+    pending_approval: Optional[Dict[str, Any]] = None
+    diff_summary: str = ""
+    next_action: str = ""
+
+    def has_resume_content(self) -> bool:
+        """Return True when the resume panel should be visible."""
+        return any(
+            (
+                self.summary.strip(),
+                self.last_step.strip(),
+                self.diff_summary.strip(),
+                self.next_action.strip(),
+            )
+        )
+
+    def has_pending_approval(self) -> bool:
+        """Return True when an approval prompt should be shown."""
+        return bool(self.pending_approval)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            'summary': self.summary,
+            'last_step': self.last_step,
+            'pending_approval': self.pending_approval,
+            'diff_summary': self.diff_summary,
+            'next_action': self.next_action,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> 'TaskResumeState':
+        """Create from dictionary."""
+        if not data:
+            return cls()
+
+        return cls(
+            summary=data.get('summary', ''),
+            last_step=data.get('last_step', ''),
+            pending_approval=data.get('pending_approval'),
+            diff_summary=data.get('diff_summary', ''),
+            next_action=data.get('next_action', ''),
+        )
+
+
+@dataclass
 class ChatScreenState:
     """
     Complete state for the chat screen.
@@ -221,6 +271,7 @@ class ChatScreenState:
     show_timestamps: bool = True
     show_avatars: bool = True
     compact_mode: bool = False
+    task_resume_state: TaskResumeState = field(default_factory=TaskResumeState)
     
     # Metadata
     last_saved: Optional[datetime] = None
@@ -318,6 +369,7 @@ class ChatScreenState:
             'show_timestamps': self.show_timestamps,
             'show_avatars': self.show_avatars,
             'compact_mode': self.compact_mode,
+            'task_resume_state': self.task_resume_state.to_dict(),
             'last_saved': self.last_saved.isoformat() if self.last_saved else None,
             'version': self.version,
         }
@@ -344,6 +396,7 @@ class ChatScreenState:
             show_timestamps=data.get('show_timestamps', True),
             show_avatars=data.get('show_avatars', True),
             compact_mode=data.get('compact_mode', False),
+            task_resume_state=TaskResumeState.from_dict(data.get('task_resume_state')),
             last_saved=last_saved,
             version=data.get('version', '1.0'),
         )

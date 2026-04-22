@@ -101,28 +101,46 @@ class StatsScreen(Screen):
                 self.error_message = "Unable to access application instance"
                 return
         logger.info("StatsScreen mounted, loading statistics...")
-        # Set loading state and trigger initial display
+        self._start_statistics_load()
+
+    def _start_statistics_load(self) -> None:
+        """Begin loading statistics and render the loading state on the UI thread."""
+        self.stats_data = None
+        self.error_message = None
         self.is_loading = True
+        if self.is_mounted:
+            self.call_after_refresh(self.refresh_stats_display)
         self.load_statistics()
+
+    def _apply_statistics_result(
+        self,
+        stats_data: Optional[Dict[str, Any]],
+        error_message: Optional[str],
+    ) -> None:
+        """Apply worker results on the main thread."""
+        self.stats_data = stats_data
+        self.error_message = error_message
+        self.is_loading = False
         
     @work(thread=True)
     def load_statistics(self) -> None:
         """Load user statistics in a background thread."""
+        stats_data: Optional[Dict[str, Any]] = None
+        error_message: Optional[str] = None
+
         try:
             logger.info("Starting statistics load...")
-            self.is_loading = True
-            self.error_message = None
             
             # Get database instance
             if not hasattr(self.app_instance, 'characters_rag_db'):
                 logger.error("App instance does not have characters_rag_db attribute")
-                self.error_message = "Database connection not initialized"
+                error_message = "Database connection not initialized"
                 return
                 
             db = self.app_instance.characters_rag_db
             if not db:
                 logger.error("Database instance is None")
-                self.error_message = "Database not available"
+                error_message = "Database not available"
                 return
             
             logger.info(f"Database instance obtained: {type(db)}")
@@ -133,14 +151,13 @@ class StatsScreen(Screen):
             
             logger.info(f"Statistics calculated: {len(stats)} items")
             
-            # Update reactive attribute
-            self.stats_data = stats
+            stats_data = stats
             
         except Exception as e:
             logger.error(f"Error loading user statistics: {e}", exc_info=True)
-            self.error_message = f"Error loading statistics: {str(e)}"
+            error_message = f"Error loading statistics: {str(e)}"
         finally:
-            self.is_loading = False
+            self.app.call_from_thread(self._apply_statistics_result, stats_data, error_message)
             logger.info("Statistics loading complete")
     
     def compose(self) -> ComposeResult:
@@ -158,15 +175,21 @@ class StatsScreen(Screen):
     
     def watch_is_loading(self, is_loading: bool) -> None:
         """React to loading state changes."""
-        self.refresh_stats_display()
+        del is_loading
+        if self.is_mounted:
+            self.call_after_refresh(self.refresh_stats_display)
     
     def watch_stats_data(self, stats_data: Optional[Dict[str, Any]]) -> None:
         """React to stats data changes."""
-        self.refresh_stats_display()
+        del stats_data
+        if self.is_mounted:
+            self.call_after_refresh(self.refresh_stats_display)
     
     def watch_error_message(self, error_message: Optional[str]) -> None:
         """React to error message changes."""
-        self.refresh_stats_display()
+        del error_message
+        if self.is_mounted:
+            self.call_after_refresh(self.refresh_stats_display)
     
     def refresh_stats_display(self) -> None:
         """Refresh the statistics display based on current state."""
@@ -454,7 +477,7 @@ class StatsScreen(Screen):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "retry-stats-button":
-            self.load_statistics()
+            self._start_statistics_load()
 
 #
 #

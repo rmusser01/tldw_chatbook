@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
+from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..tldw_api import ChatbookExportRequest, ChatbookImportRequest, TLDWAPIClient
 from .chatbook_models import ChatbookManifest, ContentType
 
@@ -18,21 +19,44 @@ def _utc_now_iso() -> str:
 
 
 def build_tldw_api_client_from_config(config: Mapping[str, Any]) -> TLDWAPIClient:
-    """Build a TLDW API client from application config data."""
-    api_config = dict(config.get("tldw_api", {}))
-    base_url = api_config.get("base_url") or api_config.get("api_url")
-    if not base_url:
-        raise ValueError("TLDW API base URL is not configured.")
+    """Backwards-compatible proxy to the authoritative runtime-policy client factory."""
+    return build_runtime_api_client_from_config(config)
 
-    auth_token = api_config.get("auth_token") or api_config.get("api_key")
-    auth_mode = str(api_config.get("auth_mode", "api_key")).lower()
 
-    if auth_mode in {"bearer", "custom_token"}:
-        client = TLDWAPIClient(base_url=base_url)
-        client.bearer_token = auth_token
-        return client
+def _normalize_selection_key(key: SelectionKey) -> str:
+    if isinstance(key, ContentType):
+        return key.value
+    return str(key).strip().lower()
 
-    return TLDWAPIClient(base_url=base_url, token=auth_token)
+
+def normalize_server_content_selections(
+    selections: Optional[Mapping[SelectionKey, Iterable[Any]]],
+) -> Dict[str, List[str]]:
+    normalized: Dict[str, List[str]] = {}
+    if not selections:
+        return normalized
+
+    for key, raw_ids in selections.items():
+        normalized_key = _normalize_selection_key(key)
+        if not normalized_key or raw_ids is None:
+            continue
+
+        normalized_ids = [str(item).strip() for item in raw_ids if str(item).strip()]
+        if normalized_ids:
+            normalized[normalized_key] = normalized_ids
+
+    return normalized
+
+
+def find_unsupported_server_import_types(
+    selections: Optional[Mapping[SelectionKey, Iterable[Any]]],
+) -> List[str]:
+    normalized = normalize_server_content_selections(selections)
+    return sorted(
+        key
+        for key, ids in normalized.items()
+        if ids and key not in ServerChatbookService.SUPPORTED_SERVER_IMPORT_TYPES
+    )
 
 
 def build_server_import_selections_from_manifest(
@@ -60,13 +84,12 @@ def get_server_import_blockers_from_manifest(
     import_media: bool = False,
     import_embeddings: bool = False,
 ) -> List[str]:
-    service = ServerChatbookService(client=None)
     selections = build_server_import_selections_from_manifest(
         manifest,
         import_media=import_media,
         import_embeddings=import_embeddings,
     )
-    return service.validate_server_import_selection(selections)
+    return find_unsupported_server_import_types(selections)
 
 
 def build_server_job_record(
@@ -116,38 +139,19 @@ class ServerChatbookService:
         return self.client
 
     def _normalize_selection_key(self, key: SelectionKey) -> str:
-        if isinstance(key, ContentType):
-            return key.value
-        return str(key).strip().lower()
+        return _normalize_selection_key(key)
 
     def normalize_content_selections(
         self,
         selections: Optional[Mapping[SelectionKey, Iterable[Any]]],
     ) -> Dict[str, List[str]]:
-        normalized: Dict[str, List[str]] = {}
-        if not selections:
-            return normalized
-
-        for key, raw_ids in selections.items():
-            normalized_key = self._normalize_selection_key(key)
-            if not normalized_key or raw_ids is None:
-                continue
-
-            normalized_ids = [str(item).strip() for item in raw_ids if str(item).strip()]
-            if normalized_ids:
-                normalized[normalized_key] = normalized_ids
-
-        return normalized
+        return normalize_server_content_selections(selections)
 
     def validate_server_import_selection(
         self,
         selections: Optional[Mapping[SelectionKey, Iterable[Any]]],
     ) -> List[str]:
-        normalized = self.normalize_content_selections(selections)
-        return sorted(
-            key for key, ids in normalized.items()
-            if ids and key not in self.SUPPORTED_SERVER_IMPORT_TYPES
-        )
+        return find_unsupported_server_import_types(selections)
 
     def build_export_request_payload(
         self,

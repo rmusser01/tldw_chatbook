@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
+from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
 class FakeLocalNotes:
@@ -136,6 +137,28 @@ class FakeServerNotes:
         return {"workspace": {"id": workspace_id}}
 
 
+class FakePolicyEnforcer:
+    def __init__(self, denied_reason: str | None = None):
+        self.denied_reason = denied_reason
+        self.calls = []
+
+    @classmethod
+    def deny(cls, reason_code: str) -> "FakePolicyEnforcer":
+        return cls(denied_reason=reason_code)
+
+    def require_allowed(self, *, action_id: str) -> None:
+        self.calls.append(action_id)
+        if self.denied_reason is None:
+            return
+        raise PolicyDeniedError(
+            action_id=action_id,
+            reason_code=self.denied_reason,
+            user_message=f"{action_id} denied",
+            effective_source="local",
+            authority_owner="server",
+        )
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_server_note_save_to_server_service():
     scope_service = NotesScopeService(
@@ -152,6 +175,57 @@ async def test_scope_service_routes_server_note_save_to_server_service():
     )
 
     assert scope_service.server_service.saved_ids == ["note-1"]
+
+
+@pytest.mark.asyncio
+async def test_notes_scope_service_denies_server_create_when_active_source_is_local():
+    policy_enforcer = FakePolicyEnforcer.deny("wrong_source")
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await scope_service.save_note(
+            scope=ScopeType.SERVER_NOTE,
+            title="Remote",
+            content="Body",
+        )
+
+    assert exc.value.reason_code == "wrong_source"
+    assert policy_enforcer.calls == ["notes.create.server"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scope", "kwargs", "expected_action_id"),
+    [
+        (ScopeType.LOCAL_NOTE, {"user_id": "user-1"}, "notes.create.local"),
+        (ScopeType.SERVER_NOTE, {}, "notes.create.server"),
+        (ScopeType.WORKSPACE, {"workspace_id": "ws-1"}, "notes.create.workspace"),
+    ],
+)
+async def test_notes_scope_service_uses_distinct_create_policy_actions_per_scope(
+    scope,
+    kwargs,
+    expected_action_id,
+):
+    policy_enforcer = FakePolicyEnforcer()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    await scope_service.save_note(
+        scope=scope,
+        title="Draft",
+        content="Body",
+        **kwargs,
+    )
+
+    assert policy_enforcer.calls == [expected_action_id]
 
 
 @pytest.mark.asyncio

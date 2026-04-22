@@ -192,6 +192,23 @@ from tldw_chatbook.Media import (
     MediaReadingScopeService,
     ServerMediaReadingService,
 )
+from tldw_chatbook.Evaluations_Interop import (
+    EvaluationScopeService,
+    LocalEvaluationsService,
+    ServerEvaluationsService,
+)
+from tldw_chatbook.runtime_policy.bootstrap import (
+    add_runtime_policy_snapshot,
+    load_runtime_policy_for_app,
+    reconcile_saved_screen_state,
+    set_authoritative_runtime_source,
+)
+from tldw_chatbook.runtime_policy.engine import PolicyEngine
+from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
+from tldw_chatbook.state import AppState
+from .Evals.eval_orchestrator import EvaluationOrchestrator
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
@@ -1132,6 +1149,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.app_state = AppState()
+        self.runtime_policy = load_runtime_policy_for_app(self)
+        self.service_policy_enforcer = ServicePolicyEnforcer.from_runtime_policy_context(
+            self.runtime_policy
+        )
+        self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
         self.loguru_logger = loguru_logger
@@ -1247,6 +1270,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.media_reading_scope_service = MediaReadingScopeService(
             local_service=self.local_media_reading_service,
             server_service=self.server_media_reading_service,
+            policy_enforcer=self.service_policy_enforcer,
         )
 
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
@@ -1286,12 +1310,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.chachanotes_db = None # Explicitly set to None
 
         try:
-            self.server_notes_workspace_service = ServerNotesWorkspaceService.from_config(self.app_config)
+            self.server_notes_workspace_service = ServerNotesWorkspaceService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         except ValueError:
-            self.server_notes_workspace_service = ServerNotesWorkspaceService(client=None)
+            self.server_notes_workspace_service = ServerNotesWorkspaceService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         self.notes_scope_service = NotesScopeService(
             local_notes_service=self.notes_service,
             server_service=self.server_notes_workspace_service,
+            policy_enforcer=self.service_policy_enforcer,
         )
         try:
             self.server_rag_admin_service = ServerRAGAdminService.from_config(self.app_config)
@@ -1304,7 +1335,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.rag_admin_scope_service = RAGAdminScopeService(
             local_service=self.local_rag_admin_service,
             server_service=self.server_rag_admin_service,
+            policy_enforcer=self.service_policy_enforcer,
         )
+        self._wire_evaluation_services()
         self._wire_study_services()
         self._wire_character_persona_services()
         self._notes_tab_initializer = NotesTabInitializer(self)
@@ -1357,6 +1390,33 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.chachanotes_db,
             server_service=self.server_character_persona_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_evaluation_services(self) -> None:
+        self.local_evaluation_service = None
+        try:
+            self.evaluation_orchestrator = EvaluationOrchestrator(client_id="tldw_cli_app")
+            self.local_evaluation_service = LocalEvaluationsService(self.evaluation_orchestrator.db)
+        except Exception:
+            logger.warning("Local evaluation service unavailable during app wiring", exc_info=True)
+            self.evaluation_orchestrator = None
+
+        try:
+            self.server_evaluation_service = ServerEvaluationsService.from_config(self.app_config)
+        except ValueError:
+            self.server_evaluation_service = ServerEvaluationsService(client=None)
+
+        has_local = self.local_evaluation_service is not None
+        has_server = getattr(self.server_evaluation_service, "client", None) is not None
+        if not has_local and not has_server:
+            self.evaluation_scope_service = None
+            return
+
+        self.evaluation_scope_service = EvaluationScopeService(
+            local_service=self.local_evaluation_service,
+            server_service=self.server_evaluation_service,
+            policy_enforcer=self.service_policy_enforcer,
         )
 
     def _wire_study_services(self) -> None:
@@ -1373,10 +1433,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.study_scope_service = StudyScopeService(
             local_service=self.local_study_service,
             server_service=self.server_study_service,
+            policy_enforcer=self.service_policy_enforcer,
         )
         self.study_quiz_scope_service = QuizScopeService(
             local_service=self.local_quiz_service,
             server_service=self.server_quiz_service,
+            policy_enforcer=self.service_policy_enforcer,
         )
 
     def _resolve_initial_media_runtime_backend(self) -> str:
@@ -1390,15 +1452,77 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 return normalized
         return "local"
 
+    def get_authoritative_runtime_source(self) -> str:
+        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        if isinstance(runtime_state, RuntimeSourceState):
+            normalized = str(runtime_state.active_source or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
+        return self._resolve_initial_media_runtime_backend()
+
+    def require_ui_action_allowed(
+        self,
+        *,
+        action_id: str,
+        scope_type: str | None = None,
+    ) -> PolicyDecision:
+        state = None
+        policy_enforcer = getattr(self, "service_policy_enforcer", None)
+        if policy_enforcer is not None and hasattr(policy_enforcer, "current_state"):
+            state = policy_enforcer.current_state()
+        if not isinstance(state, RuntimeSourceState):
+            runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+            if isinstance(runtime_state, RuntimeSourceState):
+                state = runtime_state
+
+        if not isinstance(state, RuntimeSourceState):
+            decision = PolicyDecision(
+                allowed=False,
+                reason_code="authority_denied",
+                user_message="Runtime policy state is unavailable.",
+                effective_source="unknown",
+                authority_owner="unknown",
+            )
+            notifier = getattr(self, "notify", None)
+            if callable(notifier):
+                notifier(decision.user_message, severity="warning")
+            return decision
+
+        engine = getattr(self, "ui_policy_engine", None)
+        if engine is None:
+            engine = PolicyEngine(CAPABILITY_REGISTRY)
+            self.ui_policy_engine = engine
+
+        decision = engine.evaluate(
+            action_id=action_id,
+            state=state,
+            scope_type=scope_type,
+        )
+        if not decision.allowed:
+            notifier = getattr(self, "notify", None)
+            if callable(notifier):
+                notifier(decision.user_message, severity="warning")
+        return decision
+
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
         normalized_backend = str(runtime_backend or "").strip().lower()
         if normalized_backend in {"local", "server"}:
-            self.current_runtime_backend = normalized_backend
-            self.runtime_backend = normalized_backend
+            if getattr(self, "runtime_policy", None) is not None:
+                set_authoritative_runtime_source(self, normalized_backend)
+            else:
+                self.current_runtime_backend = normalized_backend
+                self.runtime_backend = normalized_backend
+
+        resolved_backend = normalized_backend
+        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        if runtime_state is not None:
+            resolved_backend = str(runtime_state.active_source or normalized_backend).strip().lower()
+        elif resolved_backend not in {"local", "server"}:
+            resolved_backend = str(getattr(self, "current_runtime_backend", "local") or "local").strip().lower()
         active_screen = getattr(self, "screen", None)
         callback = getattr(active_screen, "handle_runtime_backend_changed", None)
         if callable(callback):
-            await callback(normalized_backend)
+            await callback(resolved_backend)
 
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:
@@ -1779,13 +1903,64 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Screen-based navigation is used exclusively - no tab-based UI components needed
         return widgets
-    
+
+    def _resolve_screen_navigation_target(self, target: str):
+        """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
+        from .UI.Screens.stts_screen import STTSScreen
+        from .UI.Screens.study_screen import StudyScreen
+        from .UI.Screens.chatbooks_screen import ChatbooksScreen
+        from .UI.Screens.subscription_screen import SubscriptionScreen
+
+        screen_aliases = {
+            TAB_CCP: "ccp",
+            "conversation": "ccp",
+            TAB_LLM: "llm",
+            "subscription": "subscriptions",
+        }
+        canonical_screen = screen_aliases.get(target, target)
+
+        tab_aliases = {
+            "ccp": TAB_CCP,
+            "conversation": TAB_CCP,
+            TAB_CCP: TAB_CCP,
+            "llm": TAB_LLM,
+            TAB_LLM: TAB_LLM,
+            "subscription": TAB_SUBSCRIPTIONS,
+            "subscriptions": TAB_SUBSCRIPTIONS,
+        }
+        canonical_tab = tab_aliases.get(target, tab_aliases.get(canonical_screen, canonical_screen))
+
+        screen_map = {
+            "chat": ChatScreen,
+            "ingest": MediaIngestScreen,
+            "coding": CodingScreen,
+            "conversation": ConversationScreen,
+            "ccp": ConversationScreen,
+            "media": MediaScreen,
+            "notes": NotesScreen,
+            "search": SearchScreen,
+            "evals": EvalsScreen,
+            "tools_settings": ToolsSettingsScreen,
+            "llm": LLMScreen,
+            "customize": CustomizeScreen,
+            "logs": LogsScreen,
+            "stats": StatsScreen,
+            "stts": STTSScreen,
+            "study": StudyScreen,
+            "chatbooks": ChatbooksScreen,
+            "subscription": SubscriptionScreen,
+            "subscriptions": SubscriptionScreen,
+        }
+
+        return canonical_screen, canonical_tab, screen_map.get(canonical_screen)
+        
 
     @on(NavigateToScreen)
     async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
         """Handle navigation to a different screen using switch_screen for better performance."""
-        screen_name = message.screen_name
-        logger.info(f"Navigating to screen: {screen_name}")
+        requested_screen = message.screen_name
+        screen_name, current_tab_value, screen_class = self._resolve_screen_navigation_target(requested_screen)
+        logger.info(f"Navigating to screen: {requested_screen}")
         previous_tab = self.current_tab
         
         # Save state of current screen before switching
@@ -1793,6 +1968,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if current_screen and hasattr(current_screen, 'save_state'):
             try:
                 state = current_screen.save_state()
+                if isinstance(state, dict):
+                    state = add_runtime_policy_snapshot(state, self.runtime_policy.state)
                 # Store state in a dictionary keyed by screen name
                 if not hasattr(self, '_screen_states'):
                     self._screen_states = {}
@@ -1802,38 +1979,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             except Exception as e:
                 logger.error(f"Error saving screen state: {e}")
         
-        # Import the new screens
-        from .UI.Screens.stts_screen import STTSScreen
-        from .UI.Screens.study_screen import StudyScreen
-        from .UI.Screens.chatbooks_screen import ChatbooksScreen
-        from .UI.Screens.subscription_screen import SubscriptionScreen
-        
-        # Complete map of all screen names to screen classes
-        screen_map = {
-            'chat': ChatScreen,
-            'ingest': MediaIngestScreen,  # Using the rebuilt window through the screen wrapper
-            'coding': CodingScreen,
-            'conversation': ConversationScreen,
-            'ccp': ConversationScreen,  # Alias for Conv/Char
-            'media': MediaScreen,
-            'notes': NotesScreen,
-            'search': SearchScreen,
-            'evals': EvalsScreen,
-            'tools_settings': ToolsSettingsScreen,
-            'llm': LLMScreen,
-            'customize': CustomizeScreen,
-            'logs': LogsScreen,
-            'stats': StatsScreen,
-            'stts': STTSScreen,  # Speech-to-Text/Text-to-Speech
-            'study': StudyScreen,  # Study features
-            'chatbooks': ChatbooksScreen,  # Chatbooks management
-            'subscription': SubscriptionScreen,  # Subscription management
-            'subscriptions': SubscriptionScreen,  # Alias for consistency
-        }
-        
-        screen_class = screen_map.get(screen_name)
         if screen_class:
-            if previous_tab == TAB_NOTES and previous_tab != screen_name:
+            if previous_tab == TAB_NOTES and previous_tab != current_tab_value:
                 await self._notes_tab_initializer.on_tab_hidden()
 
             # Create a fresh screen instance (per Textual best practices)
@@ -1843,24 +1990,31 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             if hasattr(self, '_screen_states') and screen_name in self._screen_states:
                 if hasattr(new_screen, 'restore_state'):
                     try:
-                        new_screen.restore_state(self._screen_states[screen_name])
-                        logger.debug(f"Restored state for screen: {screen_name}")
+                        restored_state = reconcile_saved_screen_state(
+                            self._screen_states[screen_name],
+                            self.runtime_policy.state,
+                        )
+                        if restored_state is None:
+                            self._screen_states.pop(screen_name, None)
+                            logger.info(f"Dropped saved state for screen due to runtime policy mismatch: {screen_name}")
+                        else:
+                            new_screen.restore_state(restored_state)
+                            logger.debug(f"Restored state for screen: {screen_name}")
                     except Exception as e:
                         logger.error(f"Error restoring screen state: {e}")
             
             # Use switch_screen to replace the current screen
             await self.switch_screen(new_screen)
             
-            # Update current_tab to track the active screen
-            # The watcher will skip processing due to _use_screen_navigation flag
-            self.current_tab = screen_name
+            # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
+            self.current_tab = current_tab_value
 
-            if screen_name == TAB_NOTES and previous_tab != screen_name:
+            if current_tab_value == TAB_NOTES and previous_tab != current_tab_value:
                 await self._notes_tab_initializer.on_tab_shown()
             
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
-            logger.error(f"Unknown screen requested: {screen_name}")
+            logger.error(f"Unknown screen requested: {requested_screen}")
     
     @on(ChatMessage.Action)
     async def handle_chat_message_action(self, event: ChatMessage.Action) -> None:
@@ -4726,80 +4880,38 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await self._splash_screen_widget.remove()
             self._splash_screen_widget = None
         
-        # Always use screen-based navigation
-            # Determine initial screen based on _initial_tab_value
-            initial_tab = getattr(self, '_initial_tab_value', 'chat')
-            
-            # Import the new screens
-            from .UI.Screens.stts_screen import STTSScreen
-            from .UI.Screens.study_screen import StudyScreen
-            from .UI.Screens.chatbooks_screen import ChatbooksScreen
-            from .UI.Screens.subscription_screen import SubscriptionScreen
-            
-            # Map tab IDs to screen classes
-            screen_map = {
-                'chat': ChatScreen,
-                'ingest': MediaIngestScreen,
-                'coding': CodingScreen,
-                'ccp': ConversationScreen,
-                'media': MediaScreen,
-                'notes': NotesScreen,
-                'search': SearchScreen,
-                'evals': EvalsScreen,
-                'tools_settings': ToolsSettingsScreen,
-                'llm': LLMScreen,
-                'customize': CustomizeScreen,
-                'logs': LogsScreen,
-                'stats': StatsScreen,
-                'stts': STTSScreen,
-                'study': StudyScreen,
-                'chatbooks': ChatbooksScreen,
-                'subscriptions': SubscriptionScreen,
-            }
-            
-            # Get the appropriate screen class
-            screen_class = screen_map.get(initial_tab, ChatScreen)
-            
-            # Push the initial screen (must use push for first screen after splash)
-            await self.push_screen(screen_class(self))
-            logger.info(f"Screen navigation: Pushed initial {screen_class.__name__} after splash")
-            
-            # For screen navigation, set up a buffered logging handler
-            # that will store logs until the LogsWindow is ready
-            self._setup_buffered_logging()
-            return
-        
-        # Check if main UI widgets already exist (avoid duplicate IDs)
+        # Mount the shared app chrome before pushing the first screen so
+        # persistent navigation is available after splash startup too.
         existing_ids = {widget.id for widget in self.screen._nodes if widget.id}
-        
-        # Create and mount the main UI components after splash screen is closed
         main_ui_widgets = self._create_main_ui_widgets()
-        
-        # Only mount widgets that don't already exist
         widgets_to_mount = []
         for widget in main_ui_widgets:
             if widget.id not in existing_ids:
                 widgets_to_mount.append(widget)
             else:
                 logger.debug(f"Skipping duplicate widget with ID: {widget.id}")
-        
+
         if widgets_to_mount:
             await self.mount(*widgets_to_mount)
-        
-        # Now that the main UI is mounted, set up logging if it was deferred
-        if not self._rich_log_handler:
-            self.loguru_logger.debug("Setting up logging after splash screen closed")
-            logging_start = time.perf_counter()
-            self._setup_logging()
-            if self._rich_log_handler:
-                self.loguru_logger.debug("Starting RichLogHandler processor task...")
-                self._rich_log_handler.start_processor(self)
-            log_histogram("app_splash_deferred_logging_duration_seconds", time.perf_counter() - logging_start,
-                         documentation="Time to set up logging after splash screen")
-        
-        # Now schedule post-mount setup and hide inactive windows
+
+        initial_tab = getattr(self, "_initial_tab_value", "chat")
+        resolved_screen_name, _resolved_tab, screen_class = self._resolve_screen_navigation_target(initial_tab)
+        if screen_class is None:
+            resolved_screen_name = "chat"
+            screen_class = ChatScreen
+
+        # Push the initial screen after the shared navigation is mounted.
+        await self.push_screen(screen_class(self))
+        logger.info(
+            f"Screen navigation: Pushed initial {screen_class.__name__} after splash"
+            f" (target={resolved_screen_name})"
+        )
+
+        # Screen navigation uses buffered logging until the Logs screen is ready.
+        self._setup_buffered_logging()
+
+        # Finish deferred startup work once the mounted screen has rendered.
         self.call_after_refresh(self._post_mount_setup)
-        self.call_after_refresh(self.hide_inactive_windows)
     
 
     @on(Checkbox.Changed, "#chat-strip-thinking-tags-checkbox")

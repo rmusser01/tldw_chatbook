@@ -35,11 +35,10 @@ from ..Widgets.SmartContentTree import SmartContentTree, ContentNodeData, Conten
 from ...Chatbooks.chatbook_creator import ChatbookCreator
 from ...Chatbooks.chatbook_models import ContentType
 from ...Chatbooks.server_chatbook_service import (
-    ServerChatbookService,
     build_server_job_record,
-    build_tldw_api_client_from_config,
     record_server_job,
 )
+from ...runtime_policy.bootstrap import build_server_chatbook_service
 
 if TYPE_CHECKING:
     from ...app import TldwCli
@@ -652,8 +651,7 @@ class ProgressStep(WizardStep):
                 config = load_settings()
 
             if execution_mode == "server":
-                api_client = build_tldw_api_client_from_config(config)
-                service = ServerChatbookService(api_client)
+                service = build_server_chatbook_service(app_config=config)
                 try:
                     self._update_status("status-validate", "completed", "✓ Prepared server export")
                     self._update_status("status-conversations", "active", "⟳ Sending export request...")
@@ -709,7 +707,8 @@ class ProgressStep(WizardStep):
                     await self._show_server_completion(job_result)
                     return
                 finally:
-                    await api_client.close()
+                    if service.client is not None:
+                        await service.client.close()
             
             db_config = config.get("database", {})
             db_paths = {

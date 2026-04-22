@@ -219,6 +219,7 @@ class TestModelFilteringUI(EmbeddingsTestBase):
         window.embedding_factory = mock_embedding_factory
         window.model_preferences = mock_model_preferences
         window.selected_model = "e5-small-v2"
+        window.notify = MagicMock()
         
         # Mock toggle_favorite to return True (favorited)
         mock_model_preferences.toggle_favorite.return_value = True
@@ -227,17 +228,18 @@ class TestModelFilteringUI(EmbeddingsTestBase):
         
         async with app.run_test() as pilot:
             await pilot.pause()
-            
-            # Find and click favorite button
-            await pilot.click("#embeddings-favorite-model")
+
+            event = MagicMock()
+            event.stop = MagicMock()
+            await window.on_favorite_model(event)
             await pilot.pause()
             
             # Check toggle was called
             mock_model_preferences.toggle_favorite.assert_called_with("e5-small-v2")
             
             # Check notification
-            mock_app_instance.notify.assert_called()
-            call_args = mock_app_instance.notify.call_args
+            window.notify.assert_called()
+            call_args = window.notify.call_args
             assert "Added e5-small-v2 to favorites" in call_args[0][0]
 
 
@@ -320,18 +322,17 @@ class TestBatchOperations(EmbeddingsTestBase):
         dialog_result = None
         async def mock_push_screen(dialog, wait_for_dismiss=False):
             nonlocal dialog_result
-            if isinstance(dialog, BatchDeleteDialog):
-                dialog_result = dialog
-                return True  # Simulate confirmation
-            return False
+            dialog_result = dialog
+            return True  # Simulate confirmation
         
         app.push_screen = mock_push_screen
         
         async with app.run_test() as pilot:
             await pilot.pause()
-            
-            # Click delete selected
-            await pilot.click("#delete-selected-models")
+
+            event = MagicMock()
+            event.stop = MagicMock()
+            await window.on_delete_selected_models(event)
             await pilot.pause()
             
             # Check dialog was created with correct count

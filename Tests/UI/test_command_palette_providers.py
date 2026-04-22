@@ -247,11 +247,12 @@ class TestTabNavigationProvider:
         async for hit in tab_provider.discover():
             hits.append(hit)
         
-        assert len(hits) == 5  # Popular tabs defined in discover method
+        assert len(hits) == 6  # Popular tabs defined in discover method
         tab_names = [hit.text for hit in hits]
         assert any("Chat" in name for name in tab_names)
         assert any("Character Chat" in name for name in tab_names)
         assert any("Notes" in name for name in tab_names)
+        assert any("Customize" in name for name in tab_names)
     
     @pytest.mark.asyncio
     async def test_search_shows_all_tabs(self, tab_provider):
@@ -260,8 +261,8 @@ class TestTabNavigationProvider:
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
         
-        # Should show all 12 tabs
-        assert len(hits) == 12
+        # Should show all 13 tabs
+        assert len(hits) == 13
         
         # Check that all major tabs are present
         tab_texts = [hit.text for hit in hits]
@@ -269,6 +270,7 @@ class TestTabNavigationProvider:
         assert any("Character Chat" in text for text in tab_texts)
         assert any("Tools & Settings" in text for text in tab_texts)
         assert any("LLM Management" in text for text in tab_texts)
+        assert any("Coding" in text for text in tab_texts)
     
     def test_switch_tab_success(self, tab_provider):
         """Test successful tab switching."""

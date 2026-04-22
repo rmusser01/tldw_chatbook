@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
+from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
 class FakeLocalService:
@@ -31,6 +32,28 @@ class FakeServerService:
     async def get_collection_detail(self, collection_name):
         self.calls.append(("get_collection_detail", collection_name))
         return dict(self.collection_detail[collection_name])
+
+
+class FakePolicyEnforcer:
+    def __init__(self, denied_reason: str | None = None):
+        self.denied_reason = denied_reason
+        self.calls = []
+
+    @classmethod
+    def deny(cls, reason_code: str) -> "FakePolicyEnforcer":
+        return cls(denied_reason=reason_code)
+
+    def require_allowed(self, *, action_id: str) -> None:
+        self.calls.append(action_id)
+        if self.denied_reason is None:
+            return
+        raise PolicyDeniedError(
+            action_id=action_id,
+            reason_code=self.denied_reason,
+            user_message=f"{action_id} denied",
+            effective_source="local",
+            authority_owner="server",
+        )
 
 
 @pytest.mark.asyncio
@@ -71,6 +94,22 @@ async def test_scope_service_routes_template_list_by_backend():
     assert local_records[0]["record_id"] == "local:chunking_template:local-demo"
     assert server_records[0]["backend"] == "server"
     assert server_records[0]["tags"] == ["rag"]
+
+
+@pytest.mark.asyncio
+async def test_rag_admin_scope_service_denies_server_template_listing_in_local_mode():
+    policy_enforcer = FakePolicyEnforcer.deny("wrong_source")
+    scope = RAGAdminScopeService(
+        local_service=FakeLocalService(),
+        server_service=FakeServerService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await scope.list_templates(mode="server")
+
+    assert exc.value.reason_code == "wrong_source"
+    assert policy_enforcer.calls == ["rag.template.list.server"]
 
 
 @pytest.mark.asyncio

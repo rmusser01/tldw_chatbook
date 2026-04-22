@@ -5,6 +5,7 @@ Download manager for HuggingFace model files with progress tracking.
 
 import asyncio
 import queue
+import tempfile
 import threading
 from typing import Dict, List, Optional, Any
 from pathlib import Path
@@ -160,10 +161,24 @@ class DownloadManager(Container):
         """
         super().__init__(**kwargs)
         self.download_dir = download_dir or Path.home() / "Downloads" / "tldw_models"
-        self.download_dir.mkdir(parents=True, exist_ok=True)
         self.download_queue = queue.Queue()
         self.download_tasks = []
         self._shutdown = threading.Event()
+
+    def _ensure_download_root(self) -> Path:
+        """Create the configured download root or fall back to a writable temp dir."""
+        try:
+            self.download_dir.mkdir(parents=True, exist_ok=True)
+            return self.download_dir
+        except OSError as exc:
+            fallback_dir = Path(tempfile.gettempdir()) / "tldw_models"
+            fallback_dir.mkdir(parents=True, exist_ok=True)
+            logger.warning(
+                f"Download directory {self.download_dir} unavailable ({exc}); "
+                f"using fallback {fallback_dir}"
+            )
+            self.download_dir = fallback_dir
+            return self.download_dir
     
     def compose(self) -> ComposeResult:
         """Compose the download manager UI."""
@@ -329,7 +344,7 @@ class DownloadManager(Container):
         size = file_info.get("size", 0)
         
         # Create destination path
-        model_dir = self.download_dir / repo_id.replace("/", "_")
+        model_dir = self._ensure_download_root() / repo_id.replace("/", "_")
         model_dir.mkdir(parents=True, exist_ok=True)
         destination = model_dir / filename
         

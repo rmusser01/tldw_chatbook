@@ -198,15 +198,15 @@ class EnhancedSettingsSidebar(Container):
         }
     
     def compose(self) -> ComposeResult:
-        """Compose the enhanced sidebar UI."""
+        """Compose the enhanced sidebar UI with two collapsible sections."""
         with VerticalScroll(id=f"{self.id_prefix}-left-sidebar", classes="sidebar enhanced-sidebar"):
             # Header with title and controls
             with Container(classes="sidebar-header"):
-                yield Static("⚙️ Chat Settings", classes="sidebar-title")
-                yield Button("↩️", id=f"{self.id_prefix}-reset-all", 
-                           classes="reset-button", 
+                yield Static("Chat Settings", classes="sidebar-title")
+                yield Button("↩️", id=f"{self.id_prefix}-reset-all",
+                           classes="reset-button",
                            tooltip="Reset all settings to defaults")
-            
+
             # Preset selector bar
             with Horizontal(classes="preset-bar"):
                 for preset_id, preset in self.presets.items():
@@ -216,32 +216,32 @@ class EnhancedSettingsSidebar(Container):
                         classes=f"preset-button {'active' if preset_id == self.active_preset else ''}",
                         tooltip=preset.description
                     )
-            
-            # Search bar
-            with Container(classes="search-container"):
-                yield Input(
-                    placeholder="🔍 Search settings...",
-                    id=f"{self.id_prefix}-settings-search",
-                    classes="search-input"
-                )
-            
-            # Tabbed content for organization
-            with TabbedContent(id=f"{self.id_prefix}-settings-tabs"):
-                # Essentials Tab
-                with TabPane("⭐ Essentials", id=f"{self.id_prefix}-tab-essentials"):
-                    yield from self._compose_essentials_tab()
-                
-                # Features Tab  
-                with TabPane("🚀 Features", id=f"{self.id_prefix}-tab-features"):
-                    yield from self._compose_features_content()
-                
-                # Advanced Tab
-                with TabPane("🔧 Advanced", id=f"{self.id_prefix}-tab-advanced"):
-                    yield from self._compose_advanced_content()
-                
-                # Search Tab (hidden by default, shown when searching)
-                with TabPane("🔍 Search Results", id=f"{self.id_prefix}-tab-search"):
-                    yield Container(id=f"{self.id_prefix}-search-results", classes="search-results")
+
+            # --- Session section (open by default) ---
+            with Collapsible(
+                title="Session",
+                collapsed=False,
+                id=f"{self.id_prefix}-session-section",
+                classes="setting-group setting-group-essential"
+            ):
+                # Provider & Model (kept for sidebar use; compact bar is the primary)
+                yield from self._compose_provider_section()
+                # System prompt
+                yield from self._compose_core_settings()
+                # Current chat details
+                yield from self._compose_chat_details()
+
+            # --- Advanced section (collapsed by default) ---
+            with Collapsible(
+                title="Advanced",
+                collapsed=True,
+                id=f"{self.id_prefix}-advanced-section",
+                classes="setting-group setting-group-advanced"
+            ):
+                # Features: RAG, Notes, Image Gen, Search Media
+                yield from self._compose_features_content()
+                # Model parameters, tools, penalties
+                yield from self._compose_advanced_content()
     
     def _compose_essentials_tab(self) -> ComposeResult:
         """Compose the essentials tab content."""
@@ -321,67 +321,54 @@ class EnhancedSettingsSidebar(Container):
                            classes="temp-indicator")
     
     def _compose_core_settings(self) -> ComposeResult:
-        """Compose core settings section."""
+        """Compose core settings section (system prompt, streaming, etc).
+
+        Note: Temperature is NOT included here because it's already in the
+        Provider & Model section and the CompactModelBar.
+        """
         self.logger.debug("Composing core settings")
-        defaults = self.config.get(f"{self.id_prefix}_defaults", 
+        defaults = self.config.get(f"{self.id_prefix}_defaults",
                                   self.config.get("chat_defaults", {}))
-        
-        with Collapsible(
-            title="⚡ Core Settings",
-            collapsed=False,
-            id=f"{self.id_prefix}-core-section",
-            classes="setting-group setting-group-essential"
-        ):
-            # Temperature
-            yield Label("Temperature", classes="setting-label")
-            yield Input(
-                placeholder="e.g., 0.7",
-                id=f"{self.id_prefix}-temperature",
-                value=str(defaults.get("temperature", 0.7)),
-                classes="setting-input"
-            )
-            
-            # System prompt
-            yield Label("System Prompt", classes="setting-label")
-            system_prompt_classes = "sidebar-textarea"
-            if self.id_prefix == "chat":
-                system_prompt_classes += " chat-system-prompt-styling"
-            yield TextArea(
-                id=f"{self.id_prefix}-system-prompt",
-                text=defaults.get("system_prompt", ""),
-                classes=system_prompt_classes
-            )
-            
-            # Streaming toggle
-            yield Checkbox(
-                "Enable Streaming",
-                id=f"{self.id_prefix}-streaming-enabled-checkbox",
-                value=True,
-                classes="streaming-toggle",
-                tooltip="Enable/disable streaming responses. When disabled, responses appear all at once."
-            )
-            
-            # Show attach button toggle (only for chat)
-            if self.id_prefix == "chat":
-                try:
-                    from ..config import get_cli_setting
-                    show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
-                    self.logger.debug(f"Got show_attach_button: {show_attach_button}")
-                    yield Checkbox(
-                        "Show Attach File Button",
-                        id=f"{self.id_prefix}-show-attach-button-checkbox",
-                        value=show_attach_button,
-                        classes="attach-toggle"
-                    )
-                except Exception as e:
-                    self.logger.error(f"Error getting show_attach_button setting: {e}", exc_info=True)
-                    # Fallback checkbox with default value
-                    yield Checkbox(
-                        "Show Attach File Button",
-                        id=f"{self.id_prefix}-show-attach-button-checkbox",
-                        value=True,
-                        classes="attach-toggle"
-                    )
+
+        # System prompt
+        yield Label("System Prompt", classes="setting-label")
+        system_prompt_classes = "sidebar-textarea"
+        if self.id_prefix == "chat":
+            system_prompt_classes += " chat-system-prompt-styling"
+        yield TextArea(
+            id=f"{self.id_prefix}-system-prompt",
+            text=defaults.get("system_prompt", ""),
+            classes=system_prompt_classes
+        )
+
+        # Streaming toggle
+        yield Checkbox(
+            "Enable Streaming",
+            id=f"{self.id_prefix}-streaming-enabled-checkbox",
+            value=True,
+            classes="streaming-toggle",
+            tooltip="Enable/disable streaming responses."
+        )
+
+        # Show attach button toggle (only for chat)
+        if self.id_prefix == "chat":
+            try:
+                from ..config import get_cli_setting
+                show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
+                yield Checkbox(
+                    "Show Attach File Button",
+                    id=f"{self.id_prefix}-show-attach-button-checkbox",
+                    value=show_attach_button,
+                    classes="attach-toggle"
+                )
+            except Exception as e:
+                self.logger.error(f"Error getting show_attach_button setting: {e}", exc_info=True)
+                yield Checkbox(
+                    "Show Attach File Button",
+                    id=f"{self.id_prefix}-show-attach-button-checkbox",
+                    value=True,
+                    classes="attach-toggle"
+                )
     
     def _compose_chat_details(self) -> ComposeResult:
         """Compose current chat details section."""

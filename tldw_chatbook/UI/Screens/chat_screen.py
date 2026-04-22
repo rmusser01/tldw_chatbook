@@ -15,7 +15,7 @@ from textual.reactive import reactive
 from textual.css.query import QueryError
 
 from ..Navigation.base_app_screen import BaseAppScreen
-from .chat_screen_state import ChatScreenState, TabState, MessageData
+from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
 from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_models import ChatSessionData
 from ...Utils.chat_diagnostics import ChatDiagnostics
@@ -56,27 +56,27 @@ class ChatScreen(BaseAppScreen):
     
     @on(Select.Changed, "#chat-api-provider")
     async def handle_provider_change(self, event: Select.Changed) -> None:
-        """Handle API provider change and update model dropdown."""
+        """Handle API provider change and update model dropdown + compact bar."""
         logger.info(f"API provider changed to: {event.value}")
-        
+
         try:
             from tldw_chatbook.config import get_cli_providers_and_models
-            
+
             # Get the new provider's models
             providers_models = get_cli_providers_and_models()
             new_provider = str(event.value)
             available_models = providers_models.get(new_provider, [])
             logger.info(f"Found {len(available_models)} models for provider {new_provider}")
-            
+
             # Find the model select widget within the chat window
             if self.chat_window:
                 try:
                     model_select = self.chat_window.query_one("#chat-api-model", Select)
-                    
+
                     # Update options
                     new_model_options = [(model, model) for model in available_models]
                     model_select.set_options(new_model_options)
-                    
+
                     # Set to first model or blank if no models
                     if available_models:
                         model_select.value = available_models[0]
@@ -84,14 +84,22 @@ class ChatScreen(BaseAppScreen):
                     else:
                         model_select.value = Select.BLANK
                         logger.info("No models available, set to BLANK")
-                    
+
                     model_select.prompt = "Select Model..." if available_models else "No models available"
                     logger.info(f"Successfully updated model dropdown with {len(available_models)} models")
                 except Exception as e:
                     logger.error(f"Could not find model select widget: {e}")
+
+                # Sync to compact model bar
+                try:
+                    from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
+                    compact_bar = self.chat_window.query_one("#compact-model-bar", CompactModelBar)
+                    compact_bar.sync_from_sidebar(provider=new_provider)
+                except Exception:
+                    logger.debug("Compact bar not found for provider sync")
             else:
                 logger.error("chat_window is None")
-                
+
         except Exception as e:
             logger.error(f"Error updating model dropdown: {e}", exc_info=True)
     
@@ -126,6 +134,7 @@ class ChatScreen(BaseAppScreen):
         
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
+        self.set_timer(0.05, self.sync_task_resume_state)
     
     def save_state(self) -> Dict[str, Any]:
         """
@@ -276,6 +285,7 @@ class ChatScreen(BaseAppScreen):
             
             # Restore conversation messages
             await self._restore_messages()
+            self.sync_task_resume_state()
             
             logger.info("Chat state restoration complete")
             
@@ -709,6 +719,10 @@ class ChatScreen(BaseAppScreen):
             
             # Find the chat log container (it's a VerticalScroll)
             chat_log = None
+            log_selectors = [
+                "#chat-log",
+                ".chat-log",
+            ]
             
             # Try the direct approach first
             try:
@@ -719,20 +733,15 @@ class ChatScreen(BaseAppScreen):
             
             # If not found, try other approaches
             if not chat_log:
-                log_selectors = [
-                    "#chat-log",
-                    ".chat-log"
-                ]
-            
-            for selector in log_selectors:
-                try:
-                    containers = self.chat_window.query(selector)
-                    if containers:
-                        chat_log = containers.first()
-                        logger.debug(f"Found chat log container for restoration: {selector}")
-                        break
-                except Exception as e:
-                    logger.debug(f"Could not find chat log with {selector}: {e}")
+                for selector in log_selectors:
+                    try:
+                        containers = self.chat_window.query(selector)
+                        if containers:
+                            chat_log = containers.first()
+                            logger.debug(f"Found chat log container for restoration: {selector}")
+                            break
+                    except Exception as e:
+                        logger.debug(f"Could not find chat log with {selector}: {e}")
             
             if not chat_log:
                 logger.warning("Could not find chat log container to restore messages")
@@ -771,6 +780,14 @@ class ChatScreen(BaseAppScreen):
                     logger.error(f"Error restoring message {i}: {e}")
             
             logger.info(f"Successfully restored {len(active_tab.messages)} messages")
+
+            if self.chat_window and hasattr(self.chat_window, "hide_empty_state"):
+                self.chat_window.hide_empty_state()
+            else:
+                try:
+                    chat_log.display = True
+                except Exception:
+                    pass
             
             # Scroll to bottom to show latest messages
             chat_log.scroll_end(animate=False)
@@ -990,7 +1007,18 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
+        self.sync_task_resume_state()
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
+
+    def set_task_resume_state(self, task_state: TaskResumeState) -> None:
+        """Update the persisted task resume state and sync it into the chat UI."""
+        self.chat_state.task_resume_state = task_state
+        self.sync_task_resume_state()
+
+    def sync_task_resume_state(self) -> None:
+        """Push the current task resume state into the chat window when available."""
+        if self.chat_window:
+            self.chat_window.sync_task_resume_state(self.chat_state.task_resume_state)
     
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """

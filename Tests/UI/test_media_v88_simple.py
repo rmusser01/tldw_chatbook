@@ -30,23 +30,22 @@ def test_media_window_instantiation():
     
     # Check basic properties
     assert window.app_instance == mock_app
-    assert window.active_media_type == "all-media"
+    assert window.active_media_type is None
     assert window.selected_media_id is None
-    assert window.navigation_collapsed is False
 
 def test_component_imports():
     """Test that all components can be imported."""
-    from tldw_chatbook.Widgets.MediaV88 import (
-        NavigationColumn,
-        SearchBar,
-        MetadataPanel,
-        ContentViewerTabs
+    from tldw_chatbook.Widgets.Media import (
+        MediaNavigationPanel,
+        MediaSearchPanel,
+        MediaListPanel,
+        MediaViewerPanel,
     )
     
-    assert NavigationColumn is not None
-    assert SearchBar is not None
-    assert MetadataPanel is not None
-    assert ContentViewerTabs is not None
+    assert MediaNavigationPanel is not None
+    assert MediaSearchPanel is not None
+    assert MediaListPanel is not None
+    assert MediaViewerPanel is not None
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

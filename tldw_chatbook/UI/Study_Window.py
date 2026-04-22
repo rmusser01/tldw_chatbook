@@ -628,9 +628,10 @@ class LearningMapWidget(Widget):
 class StudyWindow(Container):
     """Main Study window containing all sub-windows"""
     
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+    def __init__(self, app_instance: 'TldwCli', *, show_sidebar: bool = True, **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.show_sidebar = show_sidebar
         self.flashcards_controller = StudyFlashcardsController(self)
         self.quizzes_controller = StudyQuizzesController(self)
     
@@ -706,16 +707,16 @@ class StudyWindow(Container):
     
     def compose(self) -> ComposeResult:
         """Compose the Study window"""
-        # Sidebar
-        with Vertical(classes="study-sidebar"):
-            yield Label("Study Menu", classes="section-title")
-            yield Button("📚 Structured Learning", id="view-structured-btn", classes="sidebar-button", variant="primary")
-            yield Button("🗂️ Anki/Flashcards", id="view-flashcards-btn", classes="sidebar-button")
-            yield Button("📝 Quizzes", id="view-quizzes-btn", classes="sidebar-button")
-            yield Button("🧠 Mindmaps", id="view-mindmaps-btn", classes="sidebar-button")
-            yield Button("📖 Course Creation", id="view-course-btn", classes="sidebar-button")
-            yield Button("📋 Study Guide", id="view-study-guide-btn", classes="sidebar-button")
-            yield Button("🗺️ Learning Map", id="view-learning-map-btn", classes="sidebar-button")
+        if self.show_sidebar:
+            with Vertical(classes="study-sidebar"):
+                yield Label("Study Menu", classes="section-title")
+                yield Button("📚 Structured Learning", id="view-structured-btn", classes="sidebar-button", variant="primary")
+                yield Button("🗂️ Anki/Flashcards", id="view-flashcards-btn", classes="sidebar-button")
+                yield Button("📝 Quizzes", id="view-quizzes-btn", classes="sidebar-button")
+                yield Button("🧠 Mindmaps", id="view-mindmaps-btn", classes="sidebar-button")
+                yield Button("📖 Course Creation", id="view-course-btn", classes="sidebar-button")
+                yield Button("📋 Study Guide", id="view-study-guide-btn", classes="sidebar-button")
+                yield Button("🗺️ Learning Map", id="view-learning-map-btn", classes="sidebar-button")
         
         # Content area
         with Vertical(classes="study-content"):
@@ -776,6 +777,12 @@ class StudyWindow(Container):
             banner.display = False
         except Exception:
             return
+
+    def _notify_shell_state_changed(self) -> None:
+        screen = getattr(self, "screen", None)
+        notifier = getattr(screen, "sync_shell_from_window", None)
+        if callable(notifier):
+            notifier()
     
     def watch_current_view(self, old_view: str, new_view: str) -> None:
         """Handle view changes"""
@@ -812,9 +819,13 @@ class StudyWindow(Container):
             self.call_after_refresh(self._schedule_flashcards_refresh)
         elif new_view == "quizzes":
             self.call_after_refresh(self._schedule_quizzes_refresh)
+        else:
+            self.call_after_refresh(self._notify_shell_state_changed)
     
     def update_button_states(self, active_view: str) -> None:
         """Update sidebar button variants based on active view"""
+        if not self.show_sidebar:
+            return
         buttons = {
             "structured_learning": "#view-structured-btn",
             "flashcards": "#view-flashcards-btn",
@@ -866,13 +877,16 @@ class StudyWindow(Container):
     def on_mount(self) -> None:
         """Initialize the window"""
         # Set up initial state
-        self.update_button_states("structured_learning")
+        if self.show_sidebar:
+            self.update_button_states("structured_learning")
         self._sync_scope_banner()
+        self._notify_shell_state_changed()
         
         # Note: Study functionality now uses ChaChaNotes_DB from the app instance
 
     def on_show(self) -> None:
         self._sync_scope_banner()
+        self._notify_shell_state_changed()
     
     def _is_server_mode(self) -> bool:
         candidates = (
@@ -906,10 +920,12 @@ class StudyWindow(Container):
     def _schedule_flashcards_refresh(self) -> None:
         self.run_worker(self.flashcards_controller.initialize_view(), exclusive=True)
         self.call_after_refresh(self._configure_flashcards_lifecycle_controls)
+        self.call_after_refresh(self._notify_shell_state_changed)
 
     def _schedule_quizzes_refresh(self) -> None:
         self.run_worker(self.quizzes_controller.initialize_view(), exclusive=True)
         self.call_after_refresh(self._configure_quizzes_lifecycle_controls)
+        self.call_after_refresh(self._notify_shell_state_changed)
 
     def _configure_quizzes_lifecycle_controls(self) -> None:
         try:

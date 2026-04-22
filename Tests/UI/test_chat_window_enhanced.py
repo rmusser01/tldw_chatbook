@@ -101,6 +101,42 @@ class TestChatWindowFileAttachmentUI:
 
         event.stop.assert_called_once()
         mock_chat_window.attachment_handler.handle_attach_image_button.assert_awaited_once_with(event)
+
+    @pytest.mark.asyncio
+    async def test_send_press_keeps_empty_state_visible_when_no_sendable_content(self):
+        """Empty state should remain visible when send is pressed with nothing to send."""
+        mock_chat_window = Mock()
+        mock_chat_window.is_send_button = True
+        mock_chat_window._has_sendable_content = Mock(return_value=False)
+        mock_chat_window.hide_empty_state = Mock()
+        mock_chat_window.handle_send_stop_button = AsyncMock(return_value=None)
+
+        event = Mock()
+        event.stop = Mock()
+
+        await ChatWindowEnhanced.handle_send_stop_button_press(mock_chat_window, event)
+
+        event.stop.assert_called_once()
+        mock_chat_window.handle_send_stop_button.assert_awaited_once_with(mock_chat_window.app_instance, event)
+        mock_chat_window.hide_empty_state.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_press_hides_empty_state_when_sendable_content_exists(self):
+        """Empty state should hide only when a real send can proceed."""
+        mock_chat_window = Mock()
+        mock_chat_window.is_send_button = True
+        mock_chat_window._has_sendable_content = Mock(return_value=True)
+        mock_chat_window.hide_empty_state = Mock()
+        mock_chat_window.handle_send_stop_button = AsyncMock(return_value=None)
+
+        event = Mock()
+        event.stop = Mock()
+
+        await ChatWindowEnhanced.handle_send_stop_button_press(mock_chat_window, event)
+
+        event.stop.assert_called_once()
+        mock_chat_window.handle_send_stop_button.assert_awaited_once_with(mock_chat_window.app_instance, event)
+        mock_chat_window.hide_empty_state.assert_called_once()
     
     def test_attachment_preview_panel(self, mock_app, mock_chat_window):
         """Test attachment preview panel displays attached files."""

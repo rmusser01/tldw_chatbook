@@ -43,7 +43,7 @@ from ..Local_Ingestion import (
     get_supported_extensions,
     FileIngestionError,
 )
-from ..tldw_api import TLDWAPIClient
+from ..runtime_policy.bootstrap import build_runtime_api_client
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Widgets.Media import MediaIngestionSourcePanel
 
@@ -138,7 +138,7 @@ class LocalIngestionPanel(ScrollableContainer):
     """
     
     # Reactive properties
-    selected_files: reactive[List[Path]] = reactive([])
+    selected_files: reactive[List[Path]] = reactive(list)
     processing: reactive[bool] = reactive(False)
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
@@ -527,14 +527,15 @@ class RemoteIngestionPanel(ScrollableContainer):
             
             # Initialize API client if needed
             if not self.api_client:
-                # Get API configuration from app config
-                api_config = self.app_instance.app_config.get("tldw_api", {})
-                api_url = api_config.get("url", "http://localhost:8000")
-                api_key = api_config.get("api_key")
-                
-                self.api_client = TLDWAPIClient(
-                    base_url=api_url,
-                    api_key=api_key
+                api_config = getattr(self.app_instance, "app_config", {}).get("tldw_api", {})
+                self.api_client = build_runtime_api_client(
+                    app_config=getattr(self.app_instance, "app_config", {}),
+                    endpoint_url=(
+                        api_config.get("base_url")
+                        or api_config.get("api_url")
+                        or api_config.get("url")
+                        or "http://localhost:8000"
+                    ),
                 )
             
             # Prepare request based on media type
@@ -736,7 +737,8 @@ class MediaIngestWindowRebuilt(Widget):
     @on(TabbedContent.TabActivated)
     def handle_tab_change(self, event: TabbedContent.TabActivated) -> None:
         """Handle tab switching."""
-        self.current_tab = "local" if event.tab.id == "local-tab" else "sources"
+        tabs = self.query_one(TabbedContent)
+        self.current_tab = "local" if tabs.active == "local-tab" else "sources"
         logger.debug(f"Switched to {self.current_tab} tab")
         self.run_worker(self.refresh_backend_view(), exclusive=True)
     
