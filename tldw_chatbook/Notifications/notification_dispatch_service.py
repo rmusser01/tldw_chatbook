@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
+
 from .client_notifications_db import ClientNotificationsDB
-from tldw_chatbook.Utils.NotificationHelper import show_notification
 
 
 class NotificationDispatchService:
@@ -37,7 +38,30 @@ class NotificationDispatchService:
         return row
 
     def _try_toast_or_notify(self, *, app: Any, message: str, severity: str) -> None:
-        show_notification(app, message, severity=self._normalize_severity(severity))
+        notify_severity = self._normalize_severity(severity)
+        show_toast = getattr(app, "show_toast", None)
+        if callable(show_toast):
+            try:
+                timeout = 5.0 if notify_severity != "error" else None
+                show_toast(
+                    message=message,
+                    severity=self._toast_severity(notify_severity),
+                    timeout=timeout,
+                    persistent=(timeout is None),
+                )
+                return
+            except Exception as exc:
+                logger.warning("Failed to show toast notification: {}", exc)
+
+        notify = getattr(app, "notify", None)
+        if callable(notify):
+            try:
+                notify(message, severity=notify_severity, timeout=None)
+            except Exception as exc:
+                logger.warning("Failed to send fallback notification: {}", exc)
+            return
+
+        logger.debug("Notification delivery skipped: app has no toast or notify hook")
 
     def _normalize_severity(self, severity: str) -> str:
         return {
@@ -48,3 +72,10 @@ class NotificationDispatchService:
             "error": "error",
             "success": "information",
         }.get(severity, severity)
+
+    def _toast_severity(self, severity: str) -> str:
+        return {
+            "information": "info",
+            "warning": "warning",
+            "error": "error",
+        }.get(severity, "info")

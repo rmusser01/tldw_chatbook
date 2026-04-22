@@ -96,7 +96,7 @@ class ClientNotificationsDB(BaseDB):
         if include_dismissed:
             query += " ORDER BY id DESC LIMIT ?"
         else:
-            query += " ORDER BY is_dismissed ASC, id DESC LIMIT ?"
+            query += " WHERE is_dismissed = 0 ORDER BY id DESC LIMIT ?"
         params: list[Any] = [limit]
 
         with self._get_connection() as conn:

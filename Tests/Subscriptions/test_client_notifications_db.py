@@ -15,6 +15,8 @@ def test_client_notifications_store_round_trips_read_and_dismiss(tmp_path):
     )
     db.mark_read(row["id"], is_read=True)
     db.dismiss(row["id"], is_dismissed=True)
-    stored = db.list(limit=10)[0]
+    assert db.list(limit=10) == []
+
+    stored = db.list(include_dismissed=True, limit=10)[0]
     assert stored["is_read"] is True
     assert stored["is_dismissed"] is True
