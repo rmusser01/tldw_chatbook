@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from .types import (
     ActionKind,
     AuthorityOwner,
@@ -9,6 +7,7 @@ from .types import (
     OfflinePolicy,
     PolicyDeniedError,
     RequiredSource,
+    runtime_policy_dataclass,
 )
 
 
@@ -39,7 +38,7 @@ def _entry(
     )
 
 
-@dataclass(frozen=True, slots=True)
+@runtime_policy_dataclass(frozen=True, slots=True)
 class CapabilitySourceSeed:
     action_id_suffix: str
     required_source: RequiredSource
@@ -47,7 +46,7 @@ class CapabilitySourceSeed:
     offline_policy: OfflinePolicy = "available"
 
 
-@dataclass(frozen=True, slots=True)
+@runtime_policy_dataclass(frozen=True, slots=True)
 class CapabilityActionSeed:
     action_id_suffix: str
     action_kind: ActionKind
@@ -56,7 +55,7 @@ class CapabilityActionSeed:
     display_name: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@runtime_policy_dataclass(frozen=True, slots=True)
 class CapabilityResourceSeed:
     action_namespace: str
     actions: tuple[CapabilityActionSeed, ...]
@@ -64,7 +63,7 @@ class CapabilityResourceSeed:
     sources: tuple[CapabilitySourceSeed, ...] = ()
 
 
-@dataclass(frozen=True, slots=True)
+@runtime_policy_dataclass(frozen=True, slots=True)
 class CapabilitySeed:
     capability_id: str
     display_name: str
@@ -151,6 +150,12 @@ STATUS = _action("status", "detail")
 CRUD_ACTIONS = (LIST, DETAIL, CREATE, UPDATE, DELETE)
 DISCOVER_TRIGGER_OBSERVE_ACTIONS = (LIST, LAUNCH, OBSERVE)
 DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS = (LIST, CONFIGURE, LAUNCH, OBSERVE)
+MCP_LOCAL_GOVERNANCE_ACTIONS = (LIST, CONFIGURE, APPROVE, OBSERVE)
+MCP_SERVER_GOVERNANCE_ACTIONS = _combine_action_sets(MCP_LOCAL_GOVERNANCE_ACTIONS, (LAUNCH,))
+MCP_INVENTORY_ACTIONS = (LIST, OBSERVE)
+MCP_EXTERNAL_PROFILE_ACTIONS = (LIST, CONFIGURE, LAUNCH, TRIGGER, OBSERVE)
+MCP_CONTROL_PLANE_ACTIONS = (LIST, CONFIGURE, TRIGGER, OBSERVE)
+MCP_CREDENTIAL_ACTIONS = (LIST, CONFIGURE, OBSERVE)
 
 LOCAL_SOURCE = CapabilitySourceSeed("local", "local", "local")
 SERVER_SOURCE = CapabilitySourceSeed("server", "server", "server")
@@ -409,6 +414,13 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=LOCAL_ONLY_SOURCES,
         resources=(
             _resource("mcp.runtime", actions=(LIST, CONFIGURE, LAUNCH, TRIGGER, OBSERVE)),
+            _resource("mcp.inventory", actions=MCP_INVENTORY_ACTIONS),
+            _resource("mcp.external_profiles", actions=MCP_EXTERNAL_PROFILE_ACTIONS),
+            _resource(
+                "mcp.governance",
+                actions=MCP_LOCAL_GOVERNANCE_ACTIONS,
+                domain_id="mcp_governance",
+            ),
         ),
     ),
     _capability(
@@ -417,7 +429,30 @@ AUDITED_CAPABILITY_SEEDS = (
         "mcp_governance",
         sources=REMOTE_ONLY_SOURCES,
         resources=(
-            _resource("mcp.governance", actions=(LIST, CONFIGURE, LAUNCH, APPROVE, OBSERVE)),
+            _resource(
+                "mcp.runtime",
+                actions=(OBSERVE,),
+                domain_id="mcp_runtime",
+            ),
+            _resource(
+                "mcp.inventory",
+                actions=MCP_INVENTORY_ACTIONS,
+                domain_id="mcp_runtime",
+            ),
+            _resource(
+                "mcp.tools",
+                actions=(TRIGGER,),
+                domain_id="mcp_runtime",
+            ),
+            _resource("mcp.catalogs", actions=MCP_CONTROL_PLANE_ACTIONS),
+            _resource("mcp.external_servers", actions=MCP_CONTROL_PLANE_ACTIONS),
+            _resource("mcp.credentials", actions=MCP_CREDENTIAL_ACTIONS),
+            _resource(
+                "mcp.governance",
+                actions=MCP_SERVER_GOVERNANCE_ACTIONS,
+            ),
+            _resource("mcp.effective_access", actions=(OBSERVE,)),
+            _resource("mcp.advanced", actions=MCP_CONTROL_PLANE_ACTIONS),
         ),
     ),
     _capability(

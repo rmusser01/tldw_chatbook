@@ -7,7 +7,19 @@ import pytest
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer, classify_backend_exception
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_ACTION_MATRIX, CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
-from tldw_chatbook.tldw_api.exceptions import APIResponseError, AuthenticationError
+
+
+class AuthenticationError(Exception):
+    def __init__(self, message: str, response_data=None):
+        super().__init__(message)
+        self.response_data = response_data or {}
+
+
+class APIResponseError(Exception):
+    def __init__(self, status_code: int, message: str, response_data=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_data = response_data or {}
 
 
 def _action_kinds(*kinds: str) -> frozenset[str]:
@@ -155,13 +167,13 @@ EXPECTED_AUDITED_CAPABILITIES = {
         },
     },
     "local_mcp_runtime": {
-        "expected_domain_ids": {"mcp_runtime"},
+        "expected_domain_ids": {"mcp_governance", "mcp_runtime"},
         "expected_action_kinds_by_source": {
             "local": DISCOVER_CONFIGURE_TRIGGER_OBSERVE,
         },
     },
     "remote_mcp_control_plane_governance": {
-        "expected_domain_ids": {"mcp_governance"},
+        "expected_domain_ids": {"mcp_governance", "mcp_runtime"},
         "expected_action_kinds_by_source": {
             "server": DISCOVER_CONFIGURE_TRIGGER_OBSERVE,
         },
@@ -320,6 +332,17 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         evaluations.run.update.server
     """),
     "local_mcp_runtime": _action_ids("""
+        mcp.external_profiles.configure.local
+        mcp.external_profiles.launch.local
+        mcp.external_profiles.list.local
+        mcp.external_profiles.observe.local
+        mcp.external_profiles.trigger.local
+        mcp.governance.approve.local
+        mcp.governance.configure.local
+        mcp.governance.list.local
+        mcp.governance.observe.local
+        mcp.inventory.list.local
+        mcp.inventory.observe.local
         mcp.runtime.configure.local
         mcp.runtime.launch.local
         mcp.runtime.list.local
@@ -434,11 +457,31 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         rag.template.update.server
     """),
     "remote_mcp_control_plane_governance": _action_ids("""
+        mcp.advanced.configure.server
+        mcp.advanced.list.server
+        mcp.advanced.observe.server
+        mcp.advanced.trigger.server
+        mcp.catalogs.configure.server
+        mcp.catalogs.list.server
+        mcp.catalogs.observe.server
+        mcp.catalogs.trigger.server
+        mcp.credentials.configure.server
+        mcp.credentials.list.server
+        mcp.credentials.observe.server
+        mcp.effective_access.observe.server
+        mcp.external_servers.configure.server
+        mcp.external_servers.list.server
+        mcp.external_servers.observe.server
+        mcp.external_servers.trigger.server
         mcp.governance.approve.server
         mcp.governance.configure.server
         mcp.governance.launch.server
         mcp.governance.list.server
         mcp.governance.observe.server
+        mcp.inventory.list.server
+        mcp.inventory.observe.server
+        mcp.runtime.observe.server
+        mcp.tools.trigger.server
     """),
     "research_search_provider_surfaces": _action_ids("""
         research.search.providers.configure.local
@@ -623,6 +666,18 @@ def test_client_notifications_capability_exposes_queue_update_local():
     assert "notifications.queue.update.local" in action_ids
 
 
+def test_runtime_policy_registers_canonical_unified_mcp_action_ids():
+    assert "mcp.runtime.list.local" in CAPABILITY_REGISTRY
+    assert "mcp.inventory.list.local" in CAPABILITY_REGISTRY
+    assert "mcp.catalogs.configure.server" in CAPABILITY_REGISTRY
+    assert "mcp.external_servers.observe.server" in CAPABILITY_REGISTRY
+
+
+def test_runtime_policy_preserves_coarse_mcp_aliases_during_rollout():
+    assert "mcp.runtime.trigger.local" in CAPABILITY_REGISTRY
+    assert "mcp.governance.launch.server" in CAPABILITY_REGISTRY
+
+
 def _collect_registry_action_kinds_by_source(entries) -> dict[str, frozenset[str]]:
     action_kinds_by_source: dict[str, set[str]] = {}
     for entry in entries:
@@ -700,6 +755,46 @@ def test_policy_engine_denies_remote_only_action_in_local_mode():
 
     assert decision.allowed is False
     assert decision.reason_code == "wrong_source"
+
+
+def test_policy_engine_can_evaluate_against_explicit_runtime_state_override():
+    engine = PolicyEngine(CAPABILITY_REGISTRY)
+    authoritative_state = RuntimeSourceState(
+        active_source="local",
+        active_server_id="https://server.example.com/api",
+        server_configured=True,
+        server_reachability="reachable",
+        server_auth_state="authenticated",
+    )
+    selected_destination_state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="https://server.example.com/api",
+        server_configured=True,
+        server_reachability="reachable",
+        server_auth_state="authenticated",
+    )
+
+    decision = engine.evaluate(
+        action_id="mcp.inventory.list.server",
+        state=authoritative_state,
+        runtime_state_override=selected_destination_state,
+    )
+
+    assert decision.allowed is True
+    assert decision.effective_source == "server"
+    assert authoritative_state.active_source == "local"
+
+
+def test_policy_engine_falls_back_to_explicit_runtime_state_override_when_state_is_omitted():
+    engine = PolicyEngine(CAPABILITY_REGISTRY)
+    decision = engine.evaluate(
+        action_id="mcp.inventory.list.server",
+        runtime_state_override=RuntimeSourceState(active_source="local"),
+    )
+
+    assert decision.allowed is False
+    assert decision.reason_code == "wrong_source"
+    assert decision.effective_source == "local"
 
 
 def test_policy_engine_denies_unknown_action_ids_without_raising():
