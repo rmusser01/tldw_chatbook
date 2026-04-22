@@ -1,4 +1,9 @@
 import asyncio
+import sys
+import types
+from dataclasses import dataclass
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import AsyncMock, Mock
@@ -12,10 +17,37 @@ from tldw_chatbook.Event_Handlers.media_events import (
     MediaAnalysisSaveEvent,
     MediaReadItLaterToggleEvent,
 )
+
+
+@dataclass(frozen=True)
+class ReadItLaterContextCapability:
+    available: bool
+    aggregate_only: bool
+    reason: str | None = None
+
+
+_media_package = sys.modules.setdefault("tldw_chatbook.Media", types.ModuleType("tldw_chatbook.Media"))
+_media_package.__path__ = []
+_media_scope_module = types.ModuleType("tldw_chatbook.Media.media_reading_scope_service")
+_media_scope_module.ALLOWED_SERVER_CREATE_SOURCE_TYPES = ("archive_snapshot", "git_repository")
+_media_scope_module.ReadItLaterContextCapability = ReadItLaterContextCapability
+sys.modules["tldw_chatbook.Media.media_reading_scope_service"] = _media_scope_module
+_media_package.media_reading_scope_service = _media_scope_module
+
 from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
-from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 from tldw_chatbook.Widgets.Media.media_search_panel import MediaBrowseSubviewChangedEvent, MediaSearchPanel
 from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
+
+
+_MEDIA_RUNTIME_STATE_PATH = (
+    Path(__file__).resolve().parents[2] / "tldw_chatbook" / "UI" / "Screens" / "media_runtime_state.py"
+)
+_MEDIA_RUNTIME_STATE_SPEC = spec_from_file_location("test_media_runtime_state_module", _MEDIA_RUNTIME_STATE_PATH)
+assert _MEDIA_RUNTIME_STATE_SPEC is not None and _MEDIA_RUNTIME_STATE_SPEC.loader is not None
+_media_runtime_state_module = module_from_spec(_MEDIA_RUNTIME_STATE_SPEC)
+sys.modules[_MEDIA_RUNTIME_STATE_SPEC.name] = _media_runtime_state_module
+_MEDIA_RUNTIME_STATE_SPEC.loader.exec_module(_media_runtime_state_module)
+MediaRuntimeState = _media_runtime_state_module.MediaRuntimeState
 
 
 def _build_media_window(*, runtime_backend: str = "local", scope_service: Optional[Mock] = None):
@@ -28,6 +60,21 @@ def _build_media_window(*, runtime_backend: str = "local", scope_service: Option
     )
     window = MediaWindow(app)
     window.runtime_state = app.media_runtime_state
+    if scope_service is None or "get_read_it_later_context_capability" not in app.media_reading_scope_service.__dict__:
+        def capability_for_context(*, mode=None, media_type_slug=None):
+            normalized_mode = str(mode or runtime_backend).strip().lower() or "local"
+            normalized_type = str(media_type_slug or window.active_media_type or "all-media").strip().lower() or "all-media"
+            if normalized_mode != "server":
+                return ReadItLaterContextCapability(available=True, aggregate_only=False, reason=None)
+            if normalized_type == "all-media":
+                return ReadItLaterContextCapability(available=True, aggregate_only=True, reason=None)
+            return ReadItLaterContextCapability(
+                available=False,
+                aggregate_only=True,
+                reason="Read-it-later is only available in server mode from All Media.",
+            )
+
+        app.media_reading_scope_service.get_read_it_later_context_capability = Mock(side_effect=capability_for_context)
     if not isinstance(app.media_reading_scope_service.search_media, AsyncMock):
         app.media_reading_scope_service.search_media = AsyncMock(return_value={"items": [], "total": 0})
     window.viewer_panel = Mock()
@@ -321,6 +368,44 @@ async def test_media_window_uses_explicit_saved_view_search_for_read_it_later_su
 
     scope_service.list_read_it_later.assert_awaited_once()
     scope_service.search_media.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_media_window_prequery_normalizes_invalid_server_saved_context_and_requeries_all():
+    scope_service = Mock()
+    scope_service.get_read_it_later_context_capability.side_effect = [
+        ReadItLaterContextCapability(
+            available=False,
+            aggregate_only=True,
+            reason="Read-it-later is only available in server mode from All Media.",
+        ),
+        ReadItLaterContextCapability(available=True, aggregate_only=True, reason=None),
+    ]
+    scope_service.search_media = AsyncMock(
+        return_value={
+            "items": [{"id": "server:reading_item:200", "media_type": "article", "title": "Article 200"}],
+            "total": 1,
+        }
+    )
+    window, app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window.active_media_type = "article"
+    window.runtime_state.active_browse_subview = "read-it-later"
+    window.runtime_state.selected_record_id = "server:reading_item:41"
+    window.runtime_state.browse_items = [{"id": "server:reading_item:41", "title": "Stale Saved"}]
+
+    tasks = []
+    window.run_worker = lambda coro, exclusive=True: tasks.append(asyncio.create_task(coro))
+
+    window._perform_search("article", "", "")
+    await asyncio.gather(*tasks)
+
+    assert window.runtime_state.active_browse_subview == "all"
+    assert window.runtime_state.selected_record_id is None
+    assert [item["id"] for item in window.runtime_state.browse_items] == ["server:reading_item:200"]
+    app.notify.assert_called_once_with(
+        "Read-it-later is only available in server mode from All Media.",
+        severity="warning",
+    )
 
 
 @pytest.mark.asyncio

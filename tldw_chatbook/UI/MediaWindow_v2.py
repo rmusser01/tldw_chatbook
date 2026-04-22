@@ -5,6 +5,7 @@ This is a refactored version that uses the new component-based architecture.
 """
 
 import inspect
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from textual import on
 from textual.app import ComposeResult
@@ -168,34 +169,57 @@ class MediaWindow(Container):
             return "all"
         return str(getattr(runtime_state, "active_browse_subview", "all") or "all")
 
-    def _saved_view_available_for_context(self) -> bool:
-        """Saved-view browsing is aggregate-only for server mode."""
-        if self._runtime_backend() != "server":
-            return True
-        return (self.active_media_type or "all-media") == "all-media"
+    def _read_it_later_capability(self) -> Any:
+        """Return the shared read-it-later capability for the active browse context."""
+        scope_service = self._scope_service()
+        if scope_service is None:
+            return SimpleNamespace(available=True, aggregate_only=False, reason=None)
+        return scope_service.get_read_it_later_context_capability(
+            mode=self._runtime_backend(),
+            media_type_slug=self.active_media_type or "all-media",
+        )
 
     def _sync_saved_view_controls(self) -> None:
         """Keep the search panel's browse-subview controls aligned with runtime state."""
         if not hasattr(self, "search_panel"):
             return
-        self.search_panel.set_saved_view_enabled(self._saved_view_available_for_context())
+        capability = self._read_it_later_capability()
+        self.search_panel.set_saved_view_enabled(bool(getattr(capability, "available", True)))
         self.search_panel.set_browse_subview(self._active_browse_subview())
 
-    def _reset_invalid_saved_view_for_context(self) -> bool:
-        """Reset invalid saved-view state and notify the user once."""
-        if self._active_browse_subview() != "read-it-later":
-            return False
-        if self._saved_view_available_for_context():
+    def _normalize_saved_view_context(self) -> bool:
+        """Reset invalid saved-view state, clear stale browse caches, and notify once."""
+        capability = self._read_it_later_capability()
+        if self._active_browse_subview() != "read-it-later" or bool(getattr(capability, "available", True)):
             return False
 
+        self.selected_media_id = None
         if self.runtime_state is not None:
             self.runtime_state.active_browse_subview = "all"
+            self.runtime_state.selected_record_id = None
+            self.runtime_state.browse_items = []
+            self.runtime_state.detail_by_record_id.clear()
+            self.runtime_state.reading_progress_by_record_id.clear()
+        if hasattr(self.list_panel, "selected_id"):
+            self.list_panel.selected_id = None
+        self.viewer_panel.clear_display()
+        self._show_empty_state()
         self._sync_saved_view_controls()
-        self.app_instance.notify(
-            "Read-it-later is only available in server mode from All Media.",
-            severity="warning",
-        )
+        reason = getattr(capability, "reason", None)
+        if reason:
+            self.app_instance.notify(reason, severity="warning")
         return True
+
+    def _sync_saved_view_context_on_entry(self) -> None:
+        """Normalize restored saved-view state when the screen becomes visible."""
+        if self._normalize_saved_view_context() and self.active_media_type:
+            self._perform_search(
+                self.active_media_type,
+                getattr(self.search_panel, "search_term", ""),
+                getattr(self.search_panel, "keyword_filter", ""),
+            )
+            return
+        self._sync_saved_view_controls()
 
     def _record_backend(self, record: Optional[Dict[str, Any]] = None) -> str:
         """Resolve backend from a normalized record or current runtime state."""
@@ -431,7 +455,8 @@ class MediaWindow(Container):
             self.viewer_panel.media_data = None
         self.viewer_panel.clear_display()
         self._show_empty_state()
-        self._sync_saved_view_controls()
+        if not self._normalize_saved_view_context():
+            self._sync_saved_view_controls()
 
     async def load_reading_progress(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Load and cache reading progress for a normalized media record."""
@@ -532,6 +557,7 @@ class MediaWindow(Container):
         
         # Don't activate initial view here - let activate_initial_view handle it
         
+        self.call_after_refresh(self._sync_saved_view_context_on_entry)
         # Check initial size for responsiveness
         self.call_after_refresh(self.check_responsive_layout)
 
@@ -591,7 +617,7 @@ class MediaWindow(Container):
         if self.runtime_state is not None:
             self.runtime_state.active_browse_subview = str(event.subview or "all")
 
-        if self._reset_invalid_saved_view_for_context() and self.active_media_type:
+        if self._normalize_saved_view_context() and self.active_media_type:
             self._perform_search(
                 self.active_media_type,
                 self.search_panel.search_term,
@@ -1266,7 +1292,7 @@ class MediaWindow(Container):
             self.runtime_state.keyword_filter = ""
             self.runtime_state.selected_record_id = None
 
-        self._reset_invalid_saved_view_for_context()
+        self._normalize_saved_view_context()
         
         # Update navigation panel
         self.nav_panel.selected_type = type_slug
@@ -1348,11 +1374,13 @@ class MediaWindow(Container):
                 if type_slug in ["collections-tags", "multi-item-review"]:
                     logger.info(f"Skipping search for special window: {type_slug}")
                     return
-                
-                # Set loading state
-                self.list_panel.set_loading(True)
-                if self._reset_invalid_saved_view_for_context():
+
+                if not self._normalize_saved_view_context():
                     self._sync_saved_view_controls()
+
+                # Set loading state after any stale-state cleanup so the corrected
+                # context becomes authoritative before fresh results are loaded.
+                self.list_panel.set_loading(True)
 
                 results, total_matches = await self._execute_browse_query_async(
                     type_slug=type_slug,
