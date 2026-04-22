@@ -256,7 +256,23 @@ class LocalExternalMCPProfile:
         }
 
     @classmethod
-    def from_dict(cls, data: Any) -> "LocalExternalMCPProfile":
+    def from_input_dict(cls, data: Any) -> "LocalExternalMCPProfile":
+        if not isinstance(data, Mapping):
+            return cls(profile_id="", command="")
+        raw_args = data.get("args")
+        args = tuple(str(item).strip() for item in raw_args) if isinstance(raw_args, list) else ()
+        return cls(
+            profile_id=_text(data.get("profile_id")),
+            command=_text(data.get("command")),
+            args=args,
+            env_placeholders=_coerce_mapping(data.get("env_placeholders")),
+            env_literals=_coerce_mapping(data.get("env_literals")),
+            created_at=_iso_to_datetime(data.get("created_at")),
+            updated_at=_iso_to_datetime(data.get("updated_at")),
+        )
+
+    @classmethod
+    def from_storage_dict(cls, data: Any) -> "LocalExternalMCPProfile":
         if not isinstance(data, Mapping):
             return cls(profile_id="", command="")
         raw_args = data.get("args")
@@ -281,6 +297,10 @@ class LocalExternalMCPProfile:
             created_at=_iso_to_datetime(data.get("created_at")),
             updated_at=_iso_to_datetime(data.get("updated_at")),
         )
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "LocalExternalMCPProfile":
+        return cls.from_input_dict(data)
 
 
 @dataclass(frozen=True)
@@ -345,7 +365,7 @@ class LocalMCPStoreState:
         profiles = tuple(
             profile
             for profile in (
-                LocalExternalMCPProfile.from_dict(item)
+                LocalExternalMCPProfile.from_storage_dict(item)
                 for item in (profiles_raw if isinstance(profiles_raw, list) else [])
             )
             if profile.profile_id and profile.command
