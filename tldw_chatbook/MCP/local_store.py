@@ -19,6 +19,27 @@ _SECRET_VALUE_PATTERNS = (
     re.compile(r"^xox[baprs]-[A-Za-z0-9-]{12,}$"),
     re.compile(r"^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+$"),
 )
+_SAFE_LITERAL_VALUES = {
+    "0",
+    "1",
+    "true",
+    "false",
+    "yes",
+    "no",
+    "on",
+    "off",
+    "enabled",
+    "disabled",
+    "debug",
+    "info",
+    "warning",
+    "warn",
+    "error",
+    "critical",
+    "trace",
+}
+_SAFE_INTEGER_PATTERN = re.compile(r"^[0-9]{1,5}$")
+_SAFE_DECIMAL_PATTERN = re.compile(r"^[0-9]{1,4}\.[0-9]{1,2}$")
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
@@ -79,6 +100,17 @@ def _looks_like_raw_secret_value(value: str) -> bool:
     return any(pattern.fullmatch(value) for pattern in _SECRET_VALUE_PATTERNS)
 
 
+def _is_safe_literal_value(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in _SAFE_LITERAL_VALUES:
+        return True
+    if _SAFE_INTEGER_PATTERN.fullmatch(normalized):
+        return True
+    if _SAFE_DECIMAL_PATTERN.fullmatch(normalized):
+        return True
+    return False
+
+
 def _sanitize_env_placeholders(env: Mapping[str, Any] | None) -> dict[str, str]:
     sanitized: dict[str, str] = {}
     for raw_key, raw_value in (env or {}).items():
@@ -103,6 +135,10 @@ def _sanitize_env_literals(env: Mapping[str, Any] | None) -> dict[str, str]:
             raise ValueError(f"Secret-bearing env key '{key}' cannot be stored as a literal")
         if _looks_like_raw_secret_value(value):
             raise ValueError(f"Literal env key '{key}' looks like a raw secret and cannot be persisted")
+        if not _is_safe_literal_value(value):
+            raise ValueError(
+                f"Literal env key '{key}' must use an explicit safe operational literal or an env placeholder"
+            )
         sanitized[key] = value
     return sanitized
 

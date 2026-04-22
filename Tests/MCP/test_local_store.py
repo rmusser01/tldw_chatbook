@@ -78,6 +78,21 @@ def test_local_store_rejects_raw_secret_like_literal_values_under_neutral_keys(t
     assert not (tmp_path / "local_mcp_store.json").exists()
 
 
+def test_local_store_rejects_arbitrary_literal_strings_under_neutral_keys(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+
+    with pytest.raises(ValueError):
+        store.save_profile(
+            LocalExternalMCPProfile(
+                profile_id="profile-a",
+                command="python",
+                env_literals={"SERVICE_ENDPOINT": "example-service-prod"},
+            )
+        )
+
+    assert not (tmp_path / "local_mcp_store.json").exists()
+
+
 def test_local_store_rejects_non_placeholder_secret_env_entries_even_when_declared_as_placeholders(tmp_path):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
 
