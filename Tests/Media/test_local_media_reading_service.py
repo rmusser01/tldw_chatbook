@@ -119,6 +119,32 @@ def test_local_service_search_media_read_it_later_only_enriches_saved_state(memo
     assert payload["items"][0]["saved_at"] is not None
 
 
+def test_local_service_search_media_enriches_saved_state_on_normal_browse(memory_db_factory):
+    db = memory_db_factory()
+    kept_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    db.save_media_to_read_it_later(kept_id)
+
+    service = LocalMediaReadingService(db)
+    payload = service.search_media()
+
+    assert payload["items"][0]["id"] == kept_id
+    assert payload["items"][0]["is_read_it_later"] is True
+    assert payload["items"][0]["saved_at"] is not None
+
+
+def test_local_service_get_media_detail_enriches_saved_state(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    db.save_media_to_read_it_later(media_id)
+
+    service = LocalMediaReadingService(db)
+    detail = service.get_media_detail(media_id)
+
+    assert detail["id"] == media_id
+    assert detail["is_read_it_later"] is True
+    assert detail["saved_at"] is not None
+
+
 def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])

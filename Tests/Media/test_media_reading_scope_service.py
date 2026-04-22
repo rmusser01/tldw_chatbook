@@ -1,9 +1,11 @@
 import pytest
 
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import (
     MediaReadingBackend,
     MediaReadingScopeService,
 )
+from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -401,6 +403,32 @@ async def test_scope_service_normalizes_server_detail_and_fetches_progress_by_ba
     assert result["backing_media_id"] == 99
     assert result["reading_progress"]["backing_media_id"] == 99
     assert result["reading_progress"]["percent_complete"] == 25.0
+
+
+@pytest.mark.asyncio
+async def test_scope_service_local_detail_carries_saved_state_from_local_service():
+    db = Database(db_path=":memory:", client_id="scope_detail_saved")
+    try:
+        media_id, _, _ = db.add_media_with_keywords(
+            title="Saved Local Detail",
+            content="A",
+            media_type="article",
+            keywords=[],
+        )
+        db.save_media_to_read_it_later(media_id)
+
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db),
+            server_service=FakeServerMediaService(),
+        )
+
+        result = await scope_service.get_media_detail(mode="local", media_id=media_id)
+
+        assert result["id"] == f"local:media:{media_id}"
+        assert result["is_read_it_later"] is True
+        assert result["read_it_later_saved_at"] is not None
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio

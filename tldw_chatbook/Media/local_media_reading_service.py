@@ -40,6 +40,9 @@ class LocalMediaReadingService:
         enriched["read_it_later_saved_at"] = state.get("saved_at")
         return enriched
 
+    def _enrich_rows_with_read_it_later_state(self, rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        return [self._enrich_with_read_it_later_state(row) for row in rows]
+
     def search_media(
         self,
         *,
@@ -87,9 +90,7 @@ class LocalMediaReadingService:
             include_trash=bool(filters.get("include_trash", False)),
             include_deleted=bool(filters.get("include_deleted", False)),
         )
-        items = list(rows)[offset:offset + limit]
-        if filters.get("read_it_later_only", False):
-            items = [self._enrich_with_read_it_later_state(row) for row in items]
+        items = self._enrich_rows_with_read_it_later_state(list(rows)[offset:offset + limit])
         return {
             "items": items,
             "total": total,
@@ -99,11 +100,12 @@ class LocalMediaReadingService:
 
     def get_media_detail(self, media_id: Any, *, include_deleted: bool = False, include_trash: bool = False) -> Any:
         db = self._require_db()
-        return db.get_media_by_id(
+        detail = db.get_media_by_id(
             self._coerce_media_id(media_id),
             include_deleted=include_deleted,
             include_trash=include_trash,
         )
+        return self._enrich_with_read_it_later_state(detail)
 
     def update_media_metadata(self, media_id: Any, **metadata: Any) -> Any:
         db = self._require_db()
