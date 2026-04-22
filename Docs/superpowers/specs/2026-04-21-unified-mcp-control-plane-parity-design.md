@@ -342,6 +342,38 @@ Rules:
 - the UI never merges records from different configured servers into one list
 - mutation actions must carry the currently selected scope context explicitly
 
+### 2a. Configured Server Target Model
+
+Explicit server switching requires a real configured-target model, not just a transient `active_server_id`.
+
+Required record:
+
+- `ConfiguredServerTarget`
+
+Minimum fields:
+
+- `server_id`
+- `label`
+- `base_url`
+- `auth_mode`
+- `auth_reference`
+- `is_default`
+- `last_known_server_label`
+- `last_known_reachability`
+- `last_known_auth_state`
+- `last_connected_at`
+- `updated_at`
+
+Rules:
+
+- configured server targets live in dedicated Chatbook-owned storage
+- `auth_reference` points to existing config-backed or secure token material; it must not require duplicating raw secrets into a second ad hoc store
+- only one configured target is active in the Unified MCP destination at a time
+- switching targets changes the server pane authority context but does not mutate the app-wide runtime source
+- the first implementation may bootstrap the initial `ConfiguredServerTarget` from the existing single `tldw_api` config block
+- until a richer multi-target settings surface exists, that bootstrap path is the compatibility bridge for current installs
+- once the dedicated target registry exists, Unified MCP server selection reads from that registry rather than deriving identity directly from one global `tldw_api.base_url`
+
 ### 2b. Server Scope Discovery And Reset Contract
 
 Server scope switching cannot be a UI-only toggle. It must be backed by an authenticated access-context model.
@@ -374,6 +406,8 @@ This vertical needs a top-level orchestrator plus two source-specific service fa
 Recommended structure:
 
 - `UnifiedMCPControlPlaneService`
+- `UnifiedMCPContextStore`
+- `ConfiguredServerTargetStore`
 - `LocalMCPControlService`
 - `ServerUnifiedMCPService`
 - MCP destination controllers/panels under a dedicated UI module family
@@ -383,10 +417,23 @@ Responsibilities:
 #### `UnifiedMCPControlPlaneService`
 
 - holds current destination source/scope state
+- holds current destination-local MCP context, distinct from app-global runtime source state
 - dispatches operations to local or server services
 - normalizes section models for the UI
 - applies source/scope labels
 - owns screen-state persistence for MCP control plane context
+
+#### `UnifiedMCPContextStore`
+
+- persists Unified MCP destination-local selection state
+- restores MCP context without relying on the app-wide `runtime_policy_snapshot`
+- partitions persisted state by selected server target where applicable
+
+#### `ConfiguredServerTargetStore`
+
+- owns configured server target records
+- resolves available targets for the explicit server selector
+- handles compatibility bootstrap from legacy single-target config
 
 #### `LocalMCPControlService`
 
@@ -582,58 +629,60 @@ The destination needs action-level MCP entries that distinguish at least:
 
 Those entries should not remain a coarse pair of broad MCP buckets forever. The target model is a single authoritative registry of fixed action codes for this destination, with policy checks happening at action level rather than at vague feature-family level.
 
-Minimum action-code matrix for this vertical:
+Minimum action-code matrix for this vertical, normalized to the current Chatbook runtime-policy convention of `<resource>.<action>.<source>`:
 
 - local overview:
-  - `mcp.local.overview.observe`
+  - `mcp.runtime.observe.local`
 - local inventory:
-  - `mcp.local.inventory.list`
-  - `mcp.local.inventory.observe`
+  - `mcp.inventory.list.local`
+  - `mcp.inventory.observe.local`
 - local external profiles:
-  - `mcp.local.external_profiles.list`
-  - `mcp.local.external_profiles.configure`
-  - `mcp.local.external_profiles.launch`
-  - `mcp.local.external_profiles.trigger`
-  - `mcp.local.external_profiles.observe`
+  - `mcp.external_profiles.list.local`
+  - `mcp.external_profiles.configure.local`
+  - `mcp.external_profiles.launch.local`
+  - `mcp.external_profiles.trigger.local`
+  - `mcp.external_profiles.observe.local`
 - local governance:
-  - `mcp.local.governance.list`
-  - `mcp.local.governance.configure`
-  - `mcp.local.governance.approve`
-  - `mcp.local.governance.observe`
+  - `mcp.governance.list.local`
+  - `mcp.governance.configure.local`
+  - `mcp.governance.approve.local`
+  - `mcp.governance.observe.local`
 - server overview:
-  - `mcp.server.overview.observe`
+  - `mcp.runtime.observe.server`
 - server inventory:
-  - `mcp.server.inventory.list`
-  - `mcp.server.inventory.observe`
-  - `mcp.server.tools.trigger`
+  - `mcp.inventory.list.server`
+  - `mcp.inventory.observe.server`
+  - `mcp.tools.trigger.server`
 - server catalogs:
-  - `mcp.server.catalogs.list`
-  - `mcp.server.catalogs.configure`
-  - `mcp.server.catalogs.trigger`
-  - `mcp.server.catalogs.observe`
+  - `mcp.catalogs.list.server`
+  - `mcp.catalogs.configure.server`
+  - `mcp.catalogs.trigger.server`
+  - `mcp.catalogs.observe.server`
 - server external servers:
-  - `mcp.server.external_servers.list`
-  - `mcp.server.external_servers.configure`
-  - `mcp.server.external_servers.trigger`
-  - `mcp.server.external_servers.observe`
+  - `mcp.external_servers.list.server`
+  - `mcp.external_servers.configure.server`
+  - `mcp.external_servers.trigger.server`
+  - `mcp.external_servers.observe.server`
 - server credentials and bindings:
-  - `mcp.server.credentials.list`
-  - `mcp.server.credentials.configure`
-  - `mcp.server.credentials.observe`
+  - `mcp.credentials.list.server`
+  - `mcp.credentials.configure.server`
+  - `mcp.credentials.observe.server`
 - server governance:
-  - `mcp.server.governance.list`
-  - `mcp.server.governance.configure`
-  - `mcp.server.governance.approve`
-  - `mcp.server.governance.observe`
+  - `mcp.governance.list.server`
+  - `mcp.governance.configure.server`
+  - `mcp.governance.approve.server`
+  - `mcp.governance.observe.server`
 - server effective policy/external access:
-  - `mcp.server.effective_access.observe`
+  - `mcp.effective_access.observe.server`
 - server advanced administration:
-  - `mcp.server.advanced.list`
-  - `mcp.server.advanced.configure`
-  - `mcp.server.advanced.trigger`
-  - `mcp.server.advanced.observe`
+  - `mcp.advanced.list.server`
+  - `mcp.advanced.configure.server`
+  - `mcp.advanced.trigger.server`
+  - `mcp.advanced.observe.server`
 
-The exact registry schema may still use resource/action pairs internally, but these canonical action codes are the required planning contract for this vertical. UI visibility, enabled-state decisions, service preflight checks, and hard-stop enforcement must all derive from this same authoritative registry.
+The exact registry schema may still use resource/action pairs internally, but these canonical ids must remain in the existing registry shape rather than introducing a second MCP-specific naming convention. UI visibility, enabled-state decisions, service preflight checks, and hard-stop enforcement must all derive from this same authoritative registry.
+
+Backward-compatible aliasing from the current coarse MCP buckets is acceptable during rollout, but all new Unified MCP code should target the canonical ids above.
 
 The policy layer must also support an explicit MCP-destination source context rather than using only the app-global runtime source.
 
@@ -646,6 +695,7 @@ Recommended design rule:
 - server scope selection does not grant authority by itself; it only shapes which permitted records and mutations are available
 - invalid or unregistered MCP actions are rejected centrally rather than silently tolerated by individual screens
 - UI affordances should be driven from the same action registry used by enforcement so that visibility and execution rules do not drift apart
+- MCP-destination source switching must not call the app-wide authoritative runtime source setter; it operates on destination-local context only
 
 ### 7. Secret Handling
 
@@ -703,6 +753,28 @@ Persist destination UI state for:
 - selected section
 - last selected record ids per section where useful
 
+This state must be persisted as a Unified MCP destination-local context record rather than piggybacking on the app-wide `runtime_policy_snapshot`.
+
+Required record:
+
+- `UnifiedMCPContext`
+
+Minimum fields:
+
+- `selected_source`
+- `selected_active_server_id`
+- `selected_server_scope_kind`
+- `selected_server_scope_ref`
+- `selected_section`
+- `per_server_state`
+
+Rules:
+
+- `UnifiedMCPContext` is restored independently of the app-global runtime source snapshot
+- MCP context restore must not be invalidated solely because the app-global source changed elsewhere
+- `per_server_state` may remember last-valid section and scope selections by `server_id`, but only for records that still pass scope validation
+- destination-local source switching must update `UnifiedMCPContext` without mutating the app-global runtime source state
+
 Do not persist:
 
 - live server connection assumptions
@@ -748,6 +820,8 @@ The service/client layers should be heavily unit-tested so the TUI layer can sta
 The exact filenames can vary, but the design should push toward these boundaries:
 
 - `tldw_chatbook/MCP/unified_control_plane_service.py`
+- `tldw_chatbook/MCP/unified_context_store.py`
+- `tldw_chatbook/MCP/server_target_store.py`
 - `tldw_chatbook/MCP/local_control_service.py`
 - `tldw_chatbook/MCP/server_unified_service.py`
 - `tldw_chatbook/MCP/local_store.py`
@@ -763,6 +837,8 @@ Existing files that should be extended rather than bypassed:
 - `tldw_chatbook/config.py`
 - `tldw_chatbook/runtime_policy/registry.py`
 - `tldw_chatbook/runtime_policy/enforcement.py`
+- `tldw_chatbook/runtime_policy/bootstrap.py`
+- `tldw_chatbook/runtime_policy/source_state.py`
 
 ## Execution Slices
 
@@ -772,10 +848,12 @@ This is one vertical, but it is too large to land safely as one undifferentiated
 
 - new Unified MCP destination
 - source switch
+- configured server target registry/bootstrap
+- destination-local MCP context persistence
 - server scope switch
 - service scaffolding
 - server API client scaffolding
-- runtime-policy support for destination-scoped source evaluation
+- runtime-policy support for destination-scoped source evaluation using canonical MCP action ids
 - local/server overview and inventory browse
 
 ### Slice 2: Catalogs and external servers
@@ -812,12 +890,14 @@ This vertical is successful when all of the following are true:
 - Chatbook exposes one Unified MCP destination
 - that destination has explicit `Local` and `Server` panes
 - when multiple server targets are configured, the destination supports explicit active-server switching without mixed cross-server views
+- configured server targets are backed by a dedicated Chatbook-owned target registry rather than being derived only from one global `tldw_api.base_url`
 - the `Server` pane has explicit `Personal`, `Team`, `Org`, and `System/Admin` scope switching where permitted
 - the `Local` pane controls Chatbook-owned local MCP runtime and local external MCP profiles
 - the `Server` pane exposes real server-side Unified MCP administration surfaces rather than only status/discovery
 - server catalogs, external servers, approvals, and governance controls are manageable from Chatbook according to the user's actual permissions
 - source and scope remain explicit at all times
 - MCP control-plane visibility and mutation blocking are driven by a single authoritative action registry with fixed action codes
+- Unified MCP context persistence remains independent of the app-global runtime source snapshot
 - no merged local/server MCP record list is presented
 - server-owned mutable records remain server-authoritative
 
