@@ -16,6 +16,8 @@ class WatchlistBackend(str, Enum):
 class WatchlistScopeService:
     """Route watchlist actions to the active local/server backend."""
 
+    _EDITABLE_SOURCE_FIELDS = ("name", "url", "source_type", "active", "tags")
+
     def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
         self.local_service = local_service
         self.server_service = server_service
@@ -90,6 +92,22 @@ class WatchlistScopeService:
         cleaned.pop("group_ids", None)
         return cleaned
 
+    @classmethod
+    def _editable_write_payload(cls, payload: Mapping[str, Any]) -> tuple[dict[str, Any], Any]:
+        editable: dict[str, Any] = {}
+        name = payload.get("name")
+        if name in (None, "") and "title" in payload:
+            name = payload.get("title")
+        if name not in (None, ""):
+            editable["name"] = name
+        for field in cls._EDITABLE_SOURCE_FIELDS:
+            if field == "name":
+                continue
+            if field in payload:
+                editable[field] = payload[field]
+        existing_settings = payload.get("existing_settings", payload.get("settings"))
+        return editable, existing_settings
+
     async def list_watch_items(
         self,
         *,
@@ -122,12 +140,12 @@ class WatchlistScopeService:
         service = self._service_for_mode(normalized_mode)
         item_id = cleaned.pop("id", None)
         source_id = cleaned.pop("source_id", None)
-        existing_settings = cleaned.pop("existing_settings", cleaned.pop("settings", None))
+        editable_fields, existing_settings = self._editable_write_payload(cleaned)
 
         if item_id not in (None, "") or source_id not in (None, ""):
             self._enforce_policy(self._action_id(normalized_mode, "update"))
             resolved_id = self._parse_source_id(item_id if item_id not in (None, "") else source_id, mode=normalized_mode)
-            update_kwargs = dict(cleaned)
+            update_kwargs = dict(editable_fields)
             if existing_settings is not None:
                 update_kwargs["existing_settings"] = existing_settings
             return await self._maybe_await(
@@ -138,7 +156,7 @@ class WatchlistScopeService:
             )
 
         self._enforce_policy(self._action_id(normalized_mode, "create"))
-        return await self._maybe_await(service.create_source(**cleaned))
+        return await self._maybe_await(service.create_source(**editable_fields))
 
     async def delete_watch_item(
         self,

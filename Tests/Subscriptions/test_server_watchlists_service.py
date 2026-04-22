@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from tldw_chatbook.Subscriptions.server_watchlists_service import ServerWatchlistsService
 from tldw_chatbook.tldw_api import SourceResponse
@@ -80,6 +81,93 @@ class FakeClient:
         }
 
 
+class ForumReadClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    async def list_watchlist_sources(self, **kwargs):
+        self.calls.append(("list_watchlist_sources", kwargs))
+        return {
+            "items": [
+                {
+                    "id": 21,
+                    "name": "Forum Thread",
+                    "url": "https://example.com/forum",
+                    "source_type": "forum",
+                    "active": True,
+                    "tags": ["community"],
+                    "group_ids": [2],
+                    "settings": {"forum": {"limit": 25}},
+                    "status": "active",
+                    "created_at": "2026-04-21T01:00:00Z",
+                    "updated_at": "2026-04-21T01:00:00Z",
+                },
+                {
+                    "id": 22,
+                    "name": "Site Source",
+                    "url": "https://example.com",
+                    "source_type": "site",
+                    "active": True,
+                    "tags": ["web"],
+                    "group_ids": [],
+                    "settings": {"site": {"depth": 1}},
+                    "status": "active",
+                    "created_at": "2026-04-21T01:00:00Z",
+                    "updated_at": "2026-04-21T01:00:00Z",
+                },
+            ],
+            "total": 2,
+        }
+
+
+class PagedDetailClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    async def list_watchlist_sources(self, **kwargs):
+        self.calls.append(("list_watchlist_sources", kwargs))
+        page = kwargs["page"]
+        size = kwargs["size"]
+        if page == 1:
+            return {
+                "items": [
+                    {
+                        "id": index,
+                        "name": f"Feed {index}",
+                        "url": f"https://example.com/{index}.xml",
+                        "source_type": "rss",
+                        "active": True,
+                        "tags": [],
+                        "group_ids": [],
+                        "settings": {"rss": {"limit": 10}},
+                        "status": "active",
+                        "created_at": "2026-04-21T01:00:00Z",
+                        "updated_at": "2026-04-21T01:00:00Z",
+                    }
+                    for index in range(1, size + 1)
+                ],
+                "total": 250,
+            }
+        return {
+            "items": [
+                {
+                    "id": 250,
+                    "name": "Later Feed",
+                    "url": "https://example.com/later.xml",
+                    "source_type": "rss",
+                    "active": True,
+                    "tags": ["later"],
+                    "group_ids": [],
+                    "settings": {"rss": {"limit": 10}},
+                    "status": "active",
+                    "created_at": "2026-04-21T01:00:00Z",
+                    "updated_at": "2026-04-21T01:00:00Z",
+                }
+            ],
+            "total": 250,
+        }
+
+
 @pytest.mark.asyncio
 async def test_server_watchlists_service_omits_group_ids_and_preserves_settings_on_update():
     client = FakeClient()
@@ -145,3 +233,42 @@ async def test_server_watchlists_service_normalizes_list_results():
         "created_at": "2026-04-21T01:00:00Z",
         "updated_at": "2026-04-21T01:05:00Z",
     }
+
+
+@pytest.mark.asyncio
+async def test_server_watchlists_service_filters_forum_sources_from_list_and_rejects_detail():
+    client = ForumReadClient()
+    service = ServerWatchlistsService(client=client)
+
+    payload = await service.list_sources()
+
+    assert [item["source_id"] for item in payload["items"]] == [22]
+    assert payload["items"][0]["source_type"] == "site"
+
+    with pytest.raises(ValueError, match="Unsupported server watchlist source type"):
+        await service.get_source_detail(21)
+
+
+@pytest.mark.asyncio
+async def test_server_watchlists_service_paginates_detail_lookup_until_source_found():
+    client = PagedDetailClient()
+    service = ServerWatchlistsService(client=client)
+
+    detail = await service.get_source_detail(250)
+
+    assert detail["id"] == "server:watchlist_source:250"
+    assert client.calls == [
+        ("list_watchlist_sources", {"q": None, "tags": None, "page": 1, "size": 200}),
+        ("list_watchlist_sources", {"q": None, "tags": None, "page": 2, "size": 200}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_watchlists_service_rejects_unsupported_update_source_types():
+    client = FakeClient()
+    service = ServerWatchlistsService(client=client)
+
+    with pytest.raises(ValidationError):
+        await service.update_source(17, source_type="atom")
+
+    assert client.calls == []

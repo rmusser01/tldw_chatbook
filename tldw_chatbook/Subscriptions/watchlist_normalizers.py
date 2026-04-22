@@ -6,6 +6,9 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+_ALLOWED_WATCHLIST_SOURCE_TYPES = {"rss", "site"}
+_LEGACY_LOCAL_SOURCE_TYPE_MAP = {"url": "site"}
+
 
 def build_watchlist_item_id(backend: str, entity_kind: str, source_id: Any) -> str:
     return f"{str(backend)}:{str(entity_kind)}:{str(source_id)}"
@@ -95,10 +98,16 @@ def _local_status_summary(row: Mapping[str, Any]) -> str:
     return "active"
 
 
-def _normalize_local_source_type(db_source_type: Any) -> str | None:
-    normalized = str(db_source_type) if db_source_type not in (None, "") else None
-    if normalized == "url":
-        return "site"
+def normalize_watchlist_source_type(raw_source_type: Any, *, backend: str) -> str:
+    if raw_source_type in (None, ""):
+        raise ValueError(f"Unsupported {backend} watchlist source type: {raw_source_type}")
+
+    normalized = str(raw_source_type).strip().lower()
+    if backend == "local":
+        normalized = _LEGACY_LOCAL_SOURCE_TYPE_MAP.get(normalized, normalized)
+
+    if normalized not in _ALLOWED_WATCHLIST_SOURCE_TYPES:
+        raise ValueError(f"Unsupported {backend} watchlist source type: {raw_source_type}")
     return normalized
 
 
@@ -110,7 +119,7 @@ def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "entity_kind": "subscription",
         "source_id": source_id,
         "title": row["name"],
-        "source_type": _normalize_local_source_type(row.get("type")),
+        "source_type": normalize_watchlist_source_type(row.get("type"), backend="local"),
         "url": row["source"],
         "active": bool(row["is_active"]) and not bool(row["is_paused"]),
         "tags": _coerce_tags(row.get("tags")),
@@ -130,7 +139,7 @@ def normalize_server_watchlist_source(source: Mapping[str, Any] | Any) -> dict[s
         "entity_kind": "watchlist_source",
         "source_id": source_id,
         "title": source_mapping.get("name") or "",
-        "source_type": source_mapping.get("source_type"),
+        "source_type": normalize_watchlist_source_type(source_mapping.get("source_type"), backend="server"),
         "url": str(source_mapping.get("url")) if source_mapping.get("url") is not None else None,
         "active": bool(source_mapping.get("active", True)),
         "tags": _coerce_tags(source_mapping.get("tags")),
@@ -150,4 +159,5 @@ __all__ = [
     "build_watchlist_item_id",
     "normalize_local_subscription_row",
     "normalize_server_watchlist_source",
+    "normalize_watchlist_source_type",
 ]

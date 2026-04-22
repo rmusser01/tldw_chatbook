@@ -5,23 +5,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Optional
 
-from pydantic import AnyUrl, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
-from ..tldw_api import SourceCreateRequest, TLDWAPIClient
+from ..tldw_api import SourceCreateRequest, SourceUpdateRequest, TLDWAPIClient
 from .watchlist_normalizers import normalize_server_watchlist_source
 
 _UNSET = object()
 
 
-class _ExtendedSourceUpdateRequest(BaseModel):
+class _ExtendedSourceUpdateRequest(SourceUpdateRequest):
     model_config = ConfigDict(extra="forbid")
-
-    name: str | None = Field(default=None, min_length=1, max_length=200)
-    url: AnyUrl | None = None
-    source_type: str | None = None
-    active: bool | None = None
-    tags: list[str] | None = None
     settings: dict[str, Any] | None = None
 
 
@@ -69,6 +63,24 @@ class ServerWatchlistsService:
             payload[key] = value
         return payload
 
+    @staticmethod
+    def _payload_to_mapping(payload: Any) -> dict[str, Any]:
+        if hasattr(payload, "model_dump"):
+            payload = payload.model_dump(mode="json")
+        if isinstance(payload, Mapping):
+            return dict(payload)
+        return {}
+
+    @staticmethod
+    def _filtered_normalized_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized_items: list[dict[str, Any]] = []
+        for item in items:
+            try:
+                normalized_items.append(normalize_server_watchlist_source(item))
+            except ValueError:
+                continue
+        return normalized_items
+
     async def list_sources(
         self,
         *,
@@ -78,17 +90,29 @@ class ServerWatchlistsService:
         size: int = 50,
     ) -> dict[str, Any]:
         response = await self._require_client().list_watchlist_sources(q=q, tags=tags, page=page, size=size)
-        payload = response.model_dump(mode="json") if hasattr(response, "model_dump") else response
-        items = [normalize_server_watchlist_source(item) for item in self._coerce_items(payload)]
+        payload = self._payload_to_mapping(response)
+        items = self._filtered_normalized_items(self._coerce_items(payload))
         total = payload.get("total", len(items)) if isinstance(payload, Mapping) else len(items)
         return {"items": items, "total": total, "page": page, "size": size}
 
     async def get_source_detail(self, source_id: int) -> dict[str, Any]:
-        response = await self._require_client().list_watchlist_sources(page=1, size=200)
-        payload = response.model_dump(mode="json") if hasattr(response, "model_dump") else response
-        for item in self._coerce_items(payload):
-            if int(item.get("id")) == int(source_id):
-                return normalize_server_watchlist_source(item)
+        page = 1
+        size = 200
+        while True:
+            response = await self._require_client().list_watchlist_sources(q=None, tags=None, page=page, size=size)
+            payload = self._payload_to_mapping(response)
+            items = self._coerce_items(payload)
+            for item in items:
+                if int(item.get("id")) == int(source_id):
+                    return normalize_server_watchlist_source(item)
+            total = payload.get("total") if isinstance(payload, Mapping) else None
+            if not items:
+                break
+            if isinstance(total, int) and page * size >= total:
+                break
+            if len(items) < size and total in (None, "", 0):
+                break
+            page += 1
         raise ValueError(f"Server watchlist source {source_id} was not found.")
 
     async def create_source(
@@ -123,16 +147,24 @@ class ServerWatchlistsService:
         existing_settings: Any = None,
     ) -> dict[str, Any]:
         self._reject_forum_source_type(source_type)
-        payload = _ExtendedSourceUpdateRequest(
+        normalized_source_type = (
+            str(source_type).strip().lower() if source_type is not _UNSET else _UNSET
+        )
+        validated = SourceUpdateRequest(
             **self._with_optional_fields(
                 name=name,
                 url=url,
-                source_type=str(source_type).strip().lower() if source_type is not _UNSET else _UNSET,
+                source_type=normalized_source_type,
                 active=active,
                 tags=tags,
-                settings=dict(existing_settings) if isinstance(existing_settings, Mapping) else existing_settings,
             )
         )
+        payload_dict = validated.model_dump(exclude_none=True, mode="json")
+        if isinstance(existing_settings, Mapping):
+            payload_dict["settings"] = dict(existing_settings)
+        elif existing_settings is not None:
+            payload_dict["settings"] = existing_settings
+        payload = _ExtendedSourceUpdateRequest(**payload_dict)
         response = await self._require_client().update_watchlist_source(int(source_id), payload)
         return normalize_server_watchlist_source(response)
 

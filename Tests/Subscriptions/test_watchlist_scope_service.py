@@ -98,6 +98,65 @@ class FakeSubscriptionsDB:
         }
 
 
+class MixedTypeSubscriptionsDB:
+    def get_all_subscriptions(self, include_inactive=True):
+        assert include_inactive is True
+        return [
+            {
+                "id": 3,
+                "name": "Docs Site",
+                "type": "url",
+                "source": "https://example.com/docs",
+                "is_active": 1,
+                "is_paused": 0,
+                "tags": "docs,reference",
+                "last_checked": "2026-04-21T03:00:00Z",
+                "created_at": "2026-04-20T01:00:00Z",
+                "updated_at": "2026-04-21T02:00:00Z",
+            },
+            {
+                "id": 4,
+                "name": "RSS Feed",
+                "type": "rss",
+                "source": "https://example.com/feed.xml",
+                "is_active": 1,
+                "is_paused": 0,
+                "tags": "rss",
+                "last_checked": "2026-04-21T03:30:00Z",
+                "created_at": "2026-04-20T01:00:00Z",
+                "updated_at": "2026-04-21T02:30:00Z",
+            },
+            {
+                "id": 5,
+                "name": "Legacy Atom Feed",
+                "type": "atom",
+                "source": "https://example.com/atom.xml",
+                "is_active": 1,
+                "is_paused": 0,
+                "tags": "legacy",
+                "last_checked": "2026-04-21T04:00:00Z",
+                "created_at": "2026-04-20T01:00:00Z",
+                "updated_at": "2026-04-21T03:00:00Z",
+            },
+        ]
+
+    def get_subscription(self, subscription_id):
+        if subscription_id == 5:
+            return {
+                "id": 5,
+                "name": "Legacy Atom Feed",
+                "type": "atom",
+                "source": "https://example.com/atom.xml",
+                "is_active": 1,
+                "is_paused": 0,
+                "tags": "legacy",
+                "last_checked": "2026-04-21T04:00:00Z",
+                "created_at": "2026-04-20T01:00:00Z",
+                "updated_at": "2026-04-21T03:00:00Z",
+            }
+        return None
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_local_and_server_actions_with_watchlists_action_ids():
     policy = FakePolicy()
@@ -169,3 +228,57 @@ async def test_local_watchlists_service_maps_db_url_type_back_to_site_contract()
     assert items[0]["source_type"] == "site"
     assert detail["source_type"] == "site"
     assert items[0]["tags"] == ["docs", "reference"]
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_filters_unsupported_db_types_from_list_and_rejects_detail():
+    service = LocalWatchlistsService(db_factory=MixedTypeSubscriptionsDB)
+
+    items = await service.list_sources()
+
+    assert [item["source_id"] for item in items] == [3, 4]
+    assert [item["source_type"] for item in items] == ["site", "rss"]
+
+    with pytest.raises(ValueError, match="Unsupported local watchlist source type"):
+        await service.get_source_detail(5)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_round_trips_normalized_detail_payload_to_editable_fields_only():
+    server = FakeServerWatchlists()
+    scope = WatchlistScopeService(local_service=FakeLocalSubscriptions(), server_service=server)
+
+    updated = await scope.save_watch_item(
+        runtime_backend="server",
+        payload={
+            "id": "server:watchlist_source:7",
+            "backend": "server",
+            "entity_kind": "watchlist_source",
+            "source_id": 7,
+            "title": "Renamed Source",
+            "source_type": "site",
+            "url": "https://example.com/updated",
+            "active": False,
+            "tags": ["docs"],
+            "group_ids": [99],
+            "settings": {"rss": {"limit": 25}},
+            "status_summary": "active",
+            "last_checked_or_scraped_at": "2026-04-21T04:00:00Z",
+            "created_at": "2026-04-20T01:00:00Z",
+            "updated_at": "2026-04-21T04:00:00Z",
+        },
+    )
+
+    assert server.calls[0] == (
+        "update_source",
+        7,
+        {
+            "name": "Renamed Source",
+            "url": "https://example.com/updated",
+            "source_type": "site",
+            "active": False,
+            "tags": ["docs"],
+            "existing_settings": {"rss": {"limit": 25}},
+        },
+    )
+    assert updated["id"] == "server:watchlist_source:7"

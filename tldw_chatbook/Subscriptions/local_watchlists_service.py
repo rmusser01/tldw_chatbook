@@ -34,10 +34,13 @@ class LocalWatchlistsService:
 
     async def list_sources(self) -> list[dict[str, Any]]:
         db = self._db()
-        return [
-            normalize_local_subscription_row(row)
-            for row in db.get_all_subscriptions(include_inactive=True)
-        ]
+        items: list[dict[str, Any]] = []
+        for row in db.get_all_subscriptions(include_inactive=True):
+            try:
+                items.append(normalize_local_subscription_row(row))
+            except ValueError:
+                continue
+        return items
 
     async def get_source_detail(self, source_id: int) -> dict[str, Any]:
         row = self._db().get_subscription(int(source_id))
