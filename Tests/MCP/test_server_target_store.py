@@ -158,6 +158,26 @@ def test_target_store_normalizes_invalid_status_values_before_persisting(tmp_pat
     assert restored.last_known_auth_state is None
 
 
+def test_target_store_normalizes_invalid_status_values_on_direct_save(tmp_path):
+    store = ConfiguredServerTargetStore(tmp_path / "server_targets.json")
+    target = ConfiguredServerTarget(
+        server_id="server-a",
+        label="Server A",
+        base_url="https://server-a.example/api",
+        last_known_reachability="BROKEN",
+        last_known_auth_state="INVALID",
+    )
+
+    store.save_targets([target])
+    raw_payload = (tmp_path / "server_targets.json").read_text(encoding="utf-8")
+    restored = store.list_targets()[0]
+
+    assert "BROKEN" not in raw_payload
+    assert "INVALID" not in raw_payload
+    assert restored.last_known_reachability is None
+    assert restored.last_known_auth_state is None
+
+
 def test_target_store_resolves_active_target_by_default_target_and_explicit_server_id(tmp_path):
     store = ConfiguredServerTargetStore(tmp_path / "server_targets.json")
     default_target = ConfiguredServerTarget(

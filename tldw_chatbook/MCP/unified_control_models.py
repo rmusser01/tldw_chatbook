@@ -196,6 +196,16 @@ class ConfiguredServerTarget:
         normalized_base_url = self.base_url.rstrip("/")
         object.__setattr__(self, "base_url", normalized_base_url)
         object.__setattr__(self, "auth_mode", _coerce_choice(self.auth_mode, valid_values=_VALID_AUTH_MODES, default="api_key"))
+        object.__setattr__(
+            self,
+            "last_known_reachability",
+            _optional_choice(self.last_known_reachability, valid_values=_VALID_REACHABILITY_STATES),
+        )
+        object.__setattr__(
+            self,
+            "last_known_auth_state",
+            _optional_choice(self.last_known_auth_state, valid_values=_VALID_AUTH_STATES),
+        )
 
     def with_status(self, status: TargetStatusMetadata) -> "ConfiguredServerTarget":
         return replace(
