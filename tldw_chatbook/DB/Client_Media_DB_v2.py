@@ -98,7 +98,7 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 3  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 4  # Define the version this code supports
     
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
@@ -117,11 +117,16 @@ class MediaDatabase:
             'function': '_apply_migration_v2_to_v3',
             'description': 'Add local reading progress store'
         },
+        3: {
+            'to_version': 4,
+            'function': '_apply_migration_v3_to_v4',
+            'description': 'Add local read-it-later store'
+        },
         # Future migrations: just add new entries here
-        # 3: {
-        #     'to_version': 4,
-        #     'function': '_apply_migration_v3_to_v4',
-        #     'description': 'Description of v4 changes'
+        # 4: {
+        #     'to_version': 5,
+        #     'function': '_apply_migration_v4_to_v5',
+        #     'description': 'Description of v5 changes'
         # },
     }
 
@@ -988,7 +993,6 @@ class MediaDatabase:
         try:
             migration_sql = f"""
             {self._READING_PROGRESS_TABLE_SQL}
-            {self._LOCAL_ONLY_TABLES_SQL}
             UPDATE schema_version SET version = 3;
             """
 
@@ -1003,6 +1007,26 @@ class MediaDatabase:
             logging.error(f"[Migration v2->v3] Unexpected error during migration: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during migration v2->v3: {e}") from e
 
+    def _apply_migration_v3_to_v4(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 3 to version 4 (adds local read-it-later state)."""
+        logging.info(f"Applying migration from version 3 to 4 (read-it-later store) to DB: {self.db_path_str}...")
+        try:
+            migration_sql = f"""
+            {self._LOCAL_ONLY_TABLES_SQL}
+            UPDATE schema_version SET version = 4;
+            """
+
+            with self.transaction():
+                logging.debug("[Migration v3->v4] Creating MediaReadItLaterState table...")
+                conn.executescript(migration_sql)
+                logging.info("[Migration v3->v4] MediaReadItLaterState migration applied successfully.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v3->v4] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v3->v4 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v3->v4] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v3->v4: {e}") from e
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -1014,15 +1038,13 @@ class MediaDatabase:
 
             if current_db_version == target_version:
                 logging.debug("Database schema is up to date.")
-                # Ensure FTS and local-only tables exist even if schema version matches
+                # Ensure the read-it-later table exists even if schema version matches
                 try:
-                    conn.executescript(
-                        f"{self._FTS_TABLES_SQL}\n{self._READING_PROGRESS_TABLE_SQL}\n{self._LOCAL_ONLY_TABLES_SQL}"
-                    )
+                    conn.executescript(self._LOCAL_ONLY_TABLES_SQL)
                     conn.commit()
-                    logging.debug("Verified FTS and local-only tables exist.")
+                    logging.debug("Verified read-it-later table exists.")
                 except sqlite3.Error as fts_err:
-                    logging.warning(f"Could not verify/create local tables on already correct schema version: {fts_err}")
+                    logging.warning(f"Could not verify/create read-it-later table on already correct schema version: {fts_err}")
                 return
 
             if current_db_version > target_version:

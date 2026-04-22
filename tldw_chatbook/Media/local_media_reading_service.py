@@ -36,10 +36,15 @@ class LocalMediaReadingService:
 
         media_ids_filter = filters.get("media_ids_filter")
         if filters.get("read_it_later_only", False):
-            media_ids_filter = db.list_read_it_later_media_ids(
+            saved_media_ids = db.list_read_it_later_media_ids(
                 include_deleted=bool(filters.get("include_deleted", False)),
                 include_trash=bool(filters.get("include_trash", False)),
             )
+            if media_ids_filter is None:
+                media_ids_filter = saved_media_ids
+            else:
+                saved_id_set = set(saved_media_ids)
+                media_ids_filter = [media_id for media_id in media_ids_filter if media_id in saved_id_set]
             if not media_ids_filter:
                 return {
                     "items": [],

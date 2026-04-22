@@ -32,6 +32,58 @@ def memory_db_factory():
             pass
 
 
+class SpyReadItLaterDb:
+    def __init__(self):
+        self.saved_filters = []
+        self.search_calls = []
+
+    def list_read_it_later_media_ids(self, *, include_deleted=False, include_trash=False):
+        self.saved_filters.append(
+            {
+                "include_deleted": include_deleted,
+                "include_trash": include_trash,
+            }
+        )
+        return [2, 3]
+
+    def search_media_db(
+        self,
+        *,
+        search_query=None,
+        search_fields=None,
+        media_types=None,
+        date_range=None,
+        must_have_keywords=None,
+        must_not_have_keywords=None,
+        sort_by="last_modified_desc",
+        media_ids_filter=None,
+        page=1,
+        results_per_page=20,
+        include_trash=False,
+        include_deleted=False,
+    ):
+        self.search_calls.append(
+            {
+                "search_query": search_query,
+                "media_ids_filter": media_ids_filter,
+                "include_trash": include_trash,
+                "include_deleted": include_deleted,
+            }
+        )
+        return ([{"id": media_id} for media_id in (media_ids_filter or [])], len(media_ids_filter or []))
+
+
+def test_local_service_search_media_uses_db_backed_saved_filter_spy():
+    db = SpyReadItLaterDb()
+    service = LocalMediaReadingService(db)
+
+    payload = service.search_media(read_it_later_only=True, media_ids_filter=[1, 2, 4])
+
+    assert db.saved_filters == [{"include_deleted": False, "include_trash": False}]
+    assert db.search_calls[0]["media_ids_filter"] == [2]
+    assert [item["id"] for item in payload["items"]] == [2]
+
+
 def test_local_service_search_media_uses_db_backed_saved_filter(memory_db_factory):
     db = memory_db_factory()
     kept_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])

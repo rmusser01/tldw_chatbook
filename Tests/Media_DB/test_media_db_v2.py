@@ -505,7 +505,7 @@ class TestDatabaseCRUDAndSync:
 
         reopened_db = Database(db_path=temp_db_path, client_id="schema_client")
         try:
-            assert get_schema_version(reopened_db) == 3
+            assert get_schema_version(reopened_db) == 4
             reopened_db.upsert_reading_progress(
                 media_id,
                 {
@@ -551,6 +551,19 @@ class TestDatabaseCRUDAndSync:
         )
         db_instance.save_media_to_read_it_later(media_id)
         db_instance.soft_delete_media(media_id)
+
+        ids = db_instance.list_read_it_later_media_ids()
+        assert media_id not in ids
+
+    def test_trashed_local_media_is_hidden_from_saved_view_by_default(self, db_instance):
+        media_id, _, _ = db_instance.add_media_with_keywords(
+            title="Reader",
+            content="Hello",
+            media_type="article",
+            keywords=[],
+        )
+        db_instance.save_media_to_read_it_later(media_id)
+        db_instance.mark_as_trash(media_id)
 
         ids = db_instance.list_read_it_later_media_ids()
         assert media_id not in ids
