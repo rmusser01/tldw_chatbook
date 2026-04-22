@@ -169,6 +169,14 @@ class MediaWindow(Container):
             return "all"
         return str(getattr(runtime_state, "active_browse_subview", "all") or "all")
 
+    def _effective_media_type_slug(self) -> str:
+        """Return the active or restored media-type context for capability checks."""
+        if self.active_media_type:
+            return str(self.active_media_type)
+        runtime_state = getattr(self, "runtime_state", None)
+        restored_type = getattr(runtime_state, "active_media_type", None) if runtime_state is not None else None
+        return str(restored_type or "all-media")
+
     def _read_it_later_capability(self) -> Any:
         """Return the shared read-it-later capability for the active browse context."""
         scope_service = self._scope_service()
@@ -176,7 +184,7 @@ class MediaWindow(Container):
             return SimpleNamespace(available=True, aggregate_only=False, reason=None)
         return scope_service.get_read_it_later_context_capability(
             mode=self._runtime_backend(),
-            media_type_slug=self.active_media_type or "all-media",
+            media_type_slug=self._effective_media_type_slug(),
         )
 
     def _sync_saved_view_controls(self) -> None:
@@ -214,9 +222,10 @@ class MediaWindow(Container):
 
     def _sync_saved_view_context_on_entry(self) -> None:
         """Normalize restored saved-view state when the screen becomes visible."""
-        if self._normalize_saved_view_context() and self.active_media_type:
+        effective_type_slug = self._effective_media_type_slug()
+        if self._normalize_saved_view_context() and effective_type_slug:
             self._perform_search(
-                self.active_media_type,
+                effective_type_slug,
                 getattr(self.search_panel, "search_term", ""),
                 getattr(self.search_panel, "keyword_filter", ""),
             )
