@@ -4,10 +4,13 @@ from typing import Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual import on
+from textual.app import App, ComposeResult
 
 from tldw_chatbook.Event_Handlers.media_events import MediaAnalysisSaveEvent
 from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
+from tldw_chatbook.Widgets.Media.media_search_panel import MediaBrowseSubviewChangedEvent, MediaSearchPanel
 from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
 
 
@@ -206,6 +209,7 @@ async def test_media_window_uses_explicit_saved_view_search_for_read_it_later_su
     await asyncio.gather(*tasks)
 
     scope_service.list_read_it_later.assert_awaited_once()
+    scope_service.search_media.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -216,7 +220,36 @@ async def test_media_window_forces_server_saved_view_back_to_all_media_when_type
     window.activate_media_type("article", "Article")
 
     assert window.runtime_state.active_browse_subview == "all"
-    app.notify.assert_called()
+    app.notify.assert_called_once_with(
+        "Read-it-later is only available in server mode from All Media.",
+        severity="warning",
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_search_panel_programmatic_browse_sync_does_not_emit_change_event():
+    class MediaSearchPanelApp(App[None]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: list[str] = []
+
+        def compose(self) -> ComposeResult:
+            yield MediaSearchPanel(SimpleNamespace())
+
+        @on(MediaBrowseSubviewChangedEvent)
+        def record_browse_subview_changed(self, event: MediaBrowseSubviewChangedEvent) -> None:
+            self.events.append(event.subview)
+
+    app = MediaSearchPanelApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one(MediaSearchPanel)
+
+        panel.set_browse_subview("read-it-later")
+        await pilot.pause()
+        panel.set_browse_subview("all")
+        await pilot.pause()
+
+        assert app.events == []
 
 
 def test_media_viewer_metadata_display_includes_reading_progress_for_backed_records():

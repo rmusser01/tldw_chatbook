@@ -168,6 +168,7 @@ class MediaSearchPanel(Container):
         """Initialize the search panel."""
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self._synchronizing_browse_subview = False
         
     def compose(self) -> ComposeResult:
         """Compose the search panel UI."""
@@ -264,7 +265,11 @@ class MediaSearchPanel(Container):
         try:
             browse_select = self.query_one("#browse-subview-select", Select)
             if browse_select.value != browse_subview:
-                browse_select.value = browse_subview
+                self._synchronizing_browse_subview = True
+                try:
+                    browse_select.value = browse_subview
+                finally:
+                    self._synchronizing_browse_subview = False
         except Exception:
             pass
         self._update_active_filters()
@@ -320,7 +325,10 @@ class MediaSearchPanel(Container):
     @on(Select.Changed, "#browse-subview-select")
     def handle_browse_subview_changed(self, event: Select.Changed) -> None:
         """Handle browse subview changes."""
-        self.browse_subview = str(event.value or "all")
+        new_subview = str(event.value or "all")
+        if self._synchronizing_browse_subview or new_subview == self.browse_subview:
+            return
+        self.browse_subview = new_subview
         self.post_message(MediaBrowseSubviewChangedEvent(self.browse_subview))
     
     @on(Button.Pressed, "#search-button")
