@@ -41,6 +41,9 @@ _SAFE_LITERAL_VALUES = {
 _SAFE_INTEGER_PATTERN = re.compile(r"^[0-9]{1,5}$")
 _SAFE_DECIMAL_PATTERN = re.compile(r"^[0-9]{1,4}\.[0-9]{1,2}$")
 _SAFE_URL_LITERAL_PATTERN = re.compile(r"^https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[^\s]*)?$", re.IGNORECASE)
+_LEGACY_SAFE_URL_LITERAL_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^\s]{1,255}$")
+_LEGACY_SAFE_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_LEGACY_SAFE_PATH_PATTERN = re.compile(r"^(?:~|/)[A-Za-z0-9._/@:+-]{1,255}$")
 
 
 def _datetime_to_iso(value: datetime | None) -> str | None:
@@ -129,9 +132,38 @@ def _coerce_legacy_env(legacy_env: Mapping[str, Any] | None) -> tuple[dict[str, 
             continue
         if _looks_like_raw_secret_value(value):
             continue
-        if _is_safe_literal_value(value):
+        if _is_legacy_safe_literal_value(value):
             literals[key] = value
     return placeholders, literals
+
+
+def _is_legacy_safe_literal_value(value: str) -> bool:
+    stripped = value.strip()
+    if _is_safe_literal_value(stripped):
+        return True
+    if _LEGACY_SAFE_URL_LITERAL_PATTERN.fullmatch(stripped):
+        return True
+    if _LEGACY_SAFE_PATH_PATTERN.fullmatch(stripped):
+        return True
+    if _LEGACY_SAFE_TOKEN_PATTERN.fullmatch(stripped):
+        return True
+    return False
+
+
+def _sanitize_legacy_env_literals(env: Mapping[str, Any] | None) -> dict[str, str]:
+    sanitized: dict[str, str] = {}
+    for raw_key, raw_value in (env or {}).items():
+        key = _text(raw_key)
+        value = _text(raw_value)
+        if not key or not value:
+            continue
+        if _is_secret_bearing_env_key(key):
+            continue
+        if _looks_like_raw_secret_value(value):
+            continue
+        if _is_legacy_safe_literal_value(value):
+            sanitized[key] = value
+    return sanitized
 
 
 def _sanitize_env_placeholders(env: Mapping[str, Any] | None) -> dict[str, str]:
@@ -173,6 +205,7 @@ class LocalExternalMCPProfile:
     args: tuple[str, ...] = ()
     env_placeholders: dict[str, str] = field(default_factory=dict)
     env_literals: dict[str, str] = field(default_factory=dict)
+    legacy_env_literals: dict[str, str] = field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -182,15 +215,18 @@ class LocalExternalMCPProfile:
         object.__setattr__(self, "args", tuple(_text(item) for item in self.args if _text(item)))
         env_placeholders = _sanitize_env_placeholders(self.env_placeholders)
         env_literals = _sanitize_env_literals(self.env_literals)
-        duplicate_keys = set(env_placeholders) & set(env_literals)
+        legacy_env_literals = _sanitize_legacy_env_literals(self.legacy_env_literals)
+        duplicate_keys = (set(env_placeholders) & set(env_literals)) | (set(env_placeholders) & set(legacy_env_literals)) | (set(env_literals) & set(legacy_env_literals))
         if duplicate_keys:
             raise ValueError(f"Duplicate env keys across placeholders and literals: {sorted(duplicate_keys)}")
         object.__setattr__(self, "env_placeholders", env_placeholders)
         object.__setattr__(self, "env_literals", env_literals)
+        object.__setattr__(self, "legacy_env_literals", legacy_env_literals)
 
     @property
     def env(self) -> dict[str, str]:
-        merged = dict(self.env_literals)
+        merged = dict(self.legacy_env_literals)
+        merged.update(self.env_literals)
         merged.update(self.env_placeholders)
         return merged
 
@@ -202,6 +238,7 @@ class LocalExternalMCPProfile:
             "env": self.env,
             "env_placeholders": dict(self.env_placeholders),
             "env_literals": dict(self.env_literals),
+            "legacy_env_literals": dict(self.legacy_env_literals),
             "created_at": _datetime_to_iso(self.created_at),
             "updated_at": _datetime_to_iso(self.updated_at),
         }
@@ -213,6 +250,7 @@ class LocalExternalMCPProfile:
             "args": list(self.args),
             "env_placeholders": dict(self.env_placeholders),
             "env_literals": dict(self.env_literals),
+            "legacy_env_literals": dict(self.legacy_env_literals),
             "created_at": _datetime_to_iso(self.created_at),
             "updated_at": _datetime_to_iso(self.updated_at),
         }
@@ -225,19 +263,21 @@ class LocalExternalMCPProfile:
         args = tuple(str(item).strip() for item in raw_args) if isinstance(raw_args, list) else ()
         raw_env_placeholders = _coerce_mapping(data.get("env_placeholders"))
         raw_env_literals = _coerce_mapping(data.get("env_literals"))
+        raw_legacy_env_literals = _coerce_mapping(data.get("legacy_env_literals"))
         legacy_env = _coerce_mapping(data.get("env"))
         if legacy_env:
             legacy_placeholders, legacy_literals = _coerce_legacy_env(legacy_env)
             for key, value in legacy_placeholders.items():
                 raw_env_placeholders.setdefault(key, value)
             for key, value in legacy_literals.items():
-                raw_env_literals.setdefault(key, value)
+                raw_legacy_env_literals.setdefault(key, value)
         return cls(
             profile_id=_text(data.get("profile_id")),
             command=_text(data.get("command")),
             args=args,
             env_placeholders=raw_env_placeholders,
             env_literals=raw_env_literals,
+            legacy_env_literals=raw_legacy_env_literals,
             created_at=_iso_to_datetime(data.get("created_at")),
             updated_at=_iso_to_datetime(data.get("updated_at")),
         )
@@ -378,6 +418,7 @@ class LocalMCPStore:
             args=profile.args,
             env_placeholders=profile.env_placeholders,
             env_literals=profile.env_literals,
+            legacy_env_literals=profile.legacy_env_literals,
             created_at=profile.created_at or (existing_profile.created_at if existing_profile else now),
             updated_at=now,
         )

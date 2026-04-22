@@ -9,7 +9,6 @@ through the Model Context Protocol.
 
 import asyncio
 import ast
-import inspect
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
@@ -27,30 +26,6 @@ except ImportError:
 
 from loguru import logger
 
-_MODULE_TOOL_METHOD_NAMES = {
-    "chat_with_character": "chat_with_character",
-    "perform_rag_search": "search_rag",
-    "search_conversations": "search_conversations",
-    "list_available_characters": "list_characters",
-    "get_conversation_history": "get_conversation_history",
-    "export_conversation": "export_conversation",
-}
-
-_SERVER_WRAPPER_TOOL_NAMES = (
-    "chat_with_llm",
-    "create_note",
-    "search_notes",
-    "ingest_media",
-)
-
-_RESOURCE_METHOD_SPECS = {
-    "get_conversation_resource": {"uri": "conversation://{conversation_id}", "name": "get_conversation"},
-    "get_note_resource": {"uri": "note://{note_id}", "name": "get_note"},
-    "get_character_resource": {"uri": "character://{character_id}", "name": "get_character"},
-    "get_media_resource": {"uri": "media://{media_id}", "name": "get_media"},
-    "get_rag_chunk_resource": {"uri": "rag-chunk://{chunk_id}", "name": "get_rag_chunk"},
-}
-
 
 def _first_doc_line(value: str | None) -> str:
     if not value:
@@ -58,83 +33,52 @@ def _first_doc_line(value: str | None) -> str:
     return value.strip().splitlines()[0].strip()
 
 
-def _load_class_method_docs(cls: type) -> dict[str, str]:
-    source_path = inspect.getsourcefile(cls)
-    if not source_path:
-        return {}
-    return _load_class_method_docs_from_path(Path(source_path), cls.__name__)
+def _load_server_module_ast() -> ast.Module:
+    return ast.parse(Path(__file__).read_text(encoding="utf-8"))
 
 
-def _load_class_method_docs_from_path(source_path: Path, class_name: str) -> dict[str, str]:
-    if not source_path:
-        return {}
-    module_node = ast.parse(Path(source_path).read_text(encoding="utf-8"))
+def _extract_registered_entries(method_name: str, decorator_name: str) -> list[dict[str, Any]]:
+    module_node = _load_server_module_ast()
     for node in module_node.body:
-        if isinstance(node, ast.ClassDef) and node.name == class_name:
-            docs: dict[str, str] = {}
-            for child in node.body:
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    docs[child.name] = _first_doc_line(ast.get_docstring(child))
-            return docs
-    return {}
-
-
-def _load_nested_register_docs(method_name: str) -> dict[str, str]:
-    source_path = inspect.getsourcefile(TldwMCPServer)
-    if not source_path:
-        return {}
-    module_node = ast.parse(Path(source_path).read_text(encoding="utf-8"))
-    docs: dict[str, str] = {}
-    for node in module_node.body:
-        if isinstance(node, ast.ClassDef) and node.name == TldwMCPServer.__name__:
-            for child in node.body:
-                if isinstance(child, ast.FunctionDef) and child.name == method_name:
-                    for nested in child.body:
-                        if isinstance(nested, ast.AsyncFunctionDef):
-                            docs[nested.name] = _first_doc_line(ast.get_docstring(nested))
-                    return docs
-    return {}
-
-
-def _describe_local_tools() -> list[dict[str, Any]]:
-    tool_docs = _load_class_method_docs_from_path(Path(__file__).with_name("tools.py"), "MCPTools")
-    wrapper_docs = _load_nested_register_docs("_register_tools")
-    entries = []
-    for method_name, tool_name in _MODULE_TOOL_METHOD_NAMES.items():
-        description = tool_docs.get(method_name, "")
-        entries.append({"name": tool_name, "description": description})
-    for tool_name in _SERVER_WRAPPER_TOOL_NAMES:
-        entries.append({"name": tool_name, "description": wrapper_docs.get(tool_name, "")})
-    return entries
+        if not isinstance(node, ast.ClassDef) or node.name != "TldwMCPServer":
+            continue
+        for child in node.body:
+            if not isinstance(child, ast.FunctionDef) or child.name != method_name:
+                continue
+            entries: list[dict[str, Any]] = []
+            for nested in child.body:
+                if not isinstance(nested, ast.AsyncFunctionDef):
+                    continue
+                for decorator in nested.decorator_list:
+                    if not isinstance(decorator, ast.Call):
+                        continue
+                    func = decorator.func
+                    if not isinstance(func, ast.Attribute) or func.attr != decorator_name:
+                        continue
+                    entry = {
+                        "name": nested.name,
+                        "description": _first_doc_line(ast.get_docstring(nested)),
+                    }
+                    if decorator_name == "resource" and decorator.args:
+                        first_arg = decorator.args[0]
+                        if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+                            entry["uri"] = first_arg.value
+                    entries.append(entry)
+                    break
+            return entries
+    return []
 
 
 def _describe_local_resources() -> list[dict[str, Any]]:
-    resource_docs = _load_class_method_docs_from_path(Path(__file__).with_name("resources.py"), "MCPResources")
-    entries = []
-    for method_name, spec in _RESOURCE_METHOD_SPECS.items():
-        entries.append(
-            {
-                "uri": spec["uri"],
-                "name": spec["name"],
-                "description": resource_docs.get(method_name, ""),
-            }
-        )
-    return entries
+    return _extract_registered_entries("_register_resources", "resource")
 
 
 def _describe_local_prompts() -> list[dict[str, Any]]:
-    prompt_docs = _load_class_method_docs_from_path(Path(__file__).with_name("prompts.py"), "MCPPrompts")
-    entries = []
-    for method_name, description in prompt_docs.items():
-        if not method_name.endswith("_prompt"):
-            continue
-        entries.append(
-            {
-                "name": method_name.removesuffix("_prompt"),
-                "description": description,
-            }
-        )
-    return entries
+    return _extract_registered_entries("_register_prompts", "prompt")
+
+
+def _describe_local_tools() -> list[dict[str, Any]]:
+    return _extract_registered_entries("_register_tools", "tool")
 
 
 def describe_local_mcp_capabilities() -> dict[str, Any]:

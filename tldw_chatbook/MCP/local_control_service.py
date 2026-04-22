@@ -80,7 +80,7 @@ class LocalMCPControlService:
             raise KeyError(f"Unknown profile_id: {profile_id}")
 
         client = self._get_client()
-        resolved_env = self._resolve_profile_env(profile)
+        resolved_env = self._build_spawn_env(profile)
         connected = await client.connect_to_server(
             profile.profile_id,
             profile.command,
@@ -112,8 +112,10 @@ class LocalMCPControlService:
             self.client = MCPClient()
         return self.client
 
-    def _resolve_profile_env(self, profile: LocalExternalMCPProfile) -> dict[str, str]:
-        resolved_env = dict(profile.env_literals)
+    def _build_spawn_env(self, profile: LocalExternalMCPProfile) -> dict[str, str]:
+        resolved_env = dict(os.environ)
+        resolved_env.update(profile.legacy_env_literals)
+        resolved_env.update(profile.env_literals)
         for key, placeholder in profile.env_placeholders.items():
             match = _ENV_PLACEHOLDER_PATTERN.fullmatch(placeholder)
             if not match:

@@ -109,7 +109,7 @@ def test_local_control_service_uses_real_local_manifest_helper_by_default():
 
     assert inventory == manifest
     assert any(tool["name"] == "search_rag" for tool in inventory["tools"])
-    assert any(tool["description"] == "Perform RAG search across ingested media." for tool in inventory["tools"])
+    assert any(tool["description"] == "Search the RAG database for relevant content." for tool in inventory["tools"])
     assert any(resource["uri"] == "note://{note_id}" for resource in inventory["resources"])
     assert any(prompt["name"] == "summarize_conversation" for prompt in inventory["prompts"])
 
@@ -118,29 +118,43 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
     server_path = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "MCP" / "server.py"
     module_node = ast.parse(server_path.read_text(encoding="utf-8"))
 
-    def _registered_names(method_name: str) -> list[str]:
+    def _registered_entries(method_name: str, decorator_name: str) -> list[dict[str, str]]:
         for node in module_node.body:
             if isinstance(node, ast.ClassDef) and node.name == "TldwMCPServer":
                 for child in node.body:
                     if isinstance(child, ast.FunctionDef) and child.name == method_name:
-                        names: list[str] = []
+                        entries: list[dict[str, str]] = []
                         for nested in child.body:
-                            if isinstance(nested, ast.AsyncFunctionDef):
-                                names.append(nested.name)
-                        return names
+                            if not isinstance(nested, ast.AsyncFunctionDef):
+                                continue
+                            for decorator in nested.decorator_list:
+                                if not isinstance(decorator, ast.Call):
+                                    continue
+                                func = decorator.func
+                                if not isinstance(func, ast.Attribute) or func.attr != decorator_name:
+                                    continue
+                                entry = {
+                                    "name": nested.name,
+                                    "description": (ast.get_docstring(nested) or "").strip().splitlines()[0].strip(),
+                                }
+                                if decorator_name == "resource":
+                                    entry["uri"] = decorator.args[0].value
+                                entries.append(entry)
+                                break
+                        return entries
         return []
 
     helper_manifest = describe_local_mcp_capabilities()
-    helper_tool_names = [item["name"] for item in helper_manifest["tools"]]
-    helper_resource_names = [item["name"] for item in helper_manifest["resources"]]
-    helper_prompt_names = [item["name"] for item in helper_manifest["prompts"]]
+    expected_tools = _registered_entries("_register_tools", "tool")
+    expected_resources = _registered_entries("_register_resources", "resource")
+    expected_prompts = _registered_entries("_register_prompts", "prompt")
 
-    assert set(helper_tool_names) == set(_registered_names("_register_tools"))
-    assert len(helper_tool_names) == len(_registered_names("_register_tools"))
-    assert set(helper_resource_names) == set(_registered_names("_register_resources")[:5])
-    assert len(helper_resource_names) == len(_registered_names("_register_resources")[:5])
-    assert set(helper_prompt_names) == set(_registered_names("_register_prompts"))
-    assert len(helper_prompt_names) == len(_registered_names("_register_prompts"))
+    assert helper_manifest["tools"] == expected_tools
+    assert helper_manifest["resources"] == expected_resources
+    assert helper_manifest["prompts"] == expected_prompts
+    assert any(item["uri"] == "note://{note_id}" for item in helper_manifest["resources"])
+    assert any(item["description"] == "Search notes by content or title." for item in helper_manifest["tools"])
+    assert any(item["description"] == "Generate a prompt to summarize a conversation." for item in helper_manifest["prompts"])
 
 
 def test_local_control_service_exposes_overview_external_servers_and_governance():
@@ -182,12 +196,13 @@ async def test_local_control_service_connects_profile_and_persists_discovery_sna
     client = FakeMCPClient()
     service = LocalMCPControlService(store=store, client=client, manifest_provider=lambda: {})
 
-    with patch.dict(os.environ, {"API_KEY": "resolved-api-key"}, clear=True):
+    with patch.dict(os.environ, {"API_KEY": "resolved-api-key", "PATH": "/usr/bin"}, clear=True):
         snapshot = await service.connect_profile("profile-a")
 
     assert client.connected[0]["server_id"] == "profile-a"
     assert client.connected[0]["env"]["API_KEY"] == "resolved-api-key"
     assert client.connected[0]["env"]["LOG_LEVEL"] == "debug"
+    assert client.connected[0]["env"]["PATH"] == "/usr/bin"
     assert store.discovery_snapshots["profile-a"]["tools"][0]["name"] == "remote_tool"
     assert snapshot["prompts"][0]["name"] == "remote_prompt"
 

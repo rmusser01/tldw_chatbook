@@ -120,6 +120,8 @@ def test_local_store_loads_legacy_env_payload_and_drops_unsafe_entries(tmp_path)
                         "args": ["-m", "demo.server"],
                         "env": {
                             "SERVICE_URL": "https://api.example.com",
+                            "MODEL_NAME": "gpt-4o-mini",
+                            "SOCKET_PATH": "/tmp/mcp-demo.sock",
                             "API_KEY": "sk-live-super-secret-value",
                             "LOG_LEVEL": "debug",
                         },
@@ -134,8 +136,19 @@ def test_local_store_loads_legacy_env_payload_and_drops_unsafe_entries(tmp_path)
 
     assert restored is not None
     assert restored.env["SERVICE_URL"] == "https://api.example.com"
+    assert restored.env["MODEL_NAME"] == "gpt-4o-mini"
+    assert restored.env["SOCKET_PATH"] == "/tmp/mcp-demo.sock"
     assert restored.env["LOG_LEVEL"] == "debug"
     assert "API_KEY" not in restored.env
+
+    LocalMCPStore(path).save_profile(restored)
+    round_tripped = LocalMCPStore(path).get_profile("profile-a")
+
+    assert round_tripped is not None
+    assert round_tripped.env["SERVICE_URL"] == "https://api.example.com"
+    assert round_tripped.env["MODEL_NAME"] == "gpt-4o-mini"
+    assert round_tripped.env["SOCKET_PATH"] == "/tmp/mcp-demo.sock"
+    assert "API_KEY" not in round_tripped.env
 
 
 def test_local_store_persists_discovery_snapshots_and_governance_updates(tmp_path):
