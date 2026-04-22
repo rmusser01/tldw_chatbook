@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import inspect
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -10,10 +11,18 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
-from textual.widgets import Button, Checkbox, Input, Label, ListItem, ListView, Static
+from textual.widgets import Button, Checkbox, Input, Label, ListItem, ListView, Select, Static
 
 if TYPE_CHECKING:
     from ...app import TldwCli
+
+
+ALLOWED_CREATE_SOURCE_TYPES = ("archive_snapshot", "git_repository")
+CREATE_SOURCE_TYPE_OPTIONS = [
+    ("Archive Snapshot", "archive_snapshot"),
+    ("Git Repository", "git_repository"),
+]
+CREATE_SOURCE_POLICY_OPTIONS = [("Canonical", "canonical")]
 
 
 class MediaIngestionSourcePanel(ScrollableContainer):
@@ -78,6 +87,10 @@ class MediaIngestionSourcePanel(ScrollableContainer):
     MediaIngestionSourcePanel Input {
         margin-bottom: 1;
     }
+
+    MediaIngestionSourcePanel Select {
+        margin-bottom: 1;
+    }
     """
 
     runtime_backend: reactive[str] = reactive("local")
@@ -94,6 +107,28 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         yield Static("Server ingestion sources require server mode.", id="source-panel-disabled")
         with Horizontal(id="source-panel-main"):
             with Vertical(classes="source-column"):
+                yield Label("Create Source", classes="source-section-title")
+                create_source_type = Select(
+                    options=CREATE_SOURCE_TYPE_OPTIONS,
+                    prompt="Select source type...",
+                    id="create-source-type",
+                )
+                create_source_type.value = ALLOWED_CREATE_SOURCE_TYPES[0]
+                yield create_source_type
+                create_policy_type = Select(
+                    options=CREATE_SOURCE_POLICY_OPTIONS,
+                    prompt="Select policy...",
+                    id="create-policy-type",
+                )
+                create_policy_type.value = CREATE_SOURCE_POLICY_OPTIONS[0][1]
+                yield create_policy_type
+                yield Input(
+                    value="{}",
+                    placeholder='Config JSON, e.g. {"repo_url": "https://example.com/repo.git"}',
+                    id="create-config-input",
+                )
+                with Horizontal(classes="source-actions"):
+                    yield Button("Create Source", id="create-source-btn")
                 yield Label("Sources", classes="source-section-title")
                 yield ListView(id="source-list")
                 with Horizontal(classes="source-actions"):
@@ -137,6 +172,24 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         sink_type = str(source.get("sink_type") or "")
         return "archive" in source_type or "archive" in sink_type
 
+    def _set_create_controls_disabled(self, disabled: bool) -> None:
+        self.query_one("#create-source-type", Select).disabled = disabled
+        self.query_one("#create-policy-type", Select).disabled = disabled
+        self.query_one("#create-config-input", Input).disabled = disabled
+        self.query_one("#create-source-btn", Button).disabled = disabled
+
+    def _source_index_for_identity(self, source_identity: Any) -> Optional[int]:
+        source_identity_str = str(source_identity or "")
+        if not source_identity_str:
+            return None
+
+        for index, source in enumerate(self.sources):
+            if str(source.get("id") or "") == source_identity_str:
+                return index
+            if str(self._source_id_value(source) or "") == source_identity_str:
+                return index
+        return None
+
     async def _clear_list_view(self, selector: str) -> ListView:
         list_view = self.query_one(selector, ListView)
         await list_view.clear()
@@ -148,13 +201,14 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         disabled_copy.display = not enabled
         main_panel.display = enabled
 
-    async def refresh_for_mode(self) -> None:
+    async def refresh_for_mode(self, *, preferred_source_id: Any = None) -> None:
         """Refresh the panel for the current runtime backend."""
         if self.runtime_state is not None:
             self.runtime_backend = str(getattr(self.runtime_state, "runtime_backend", self.runtime_backend) or "local")
 
         if self.runtime_backend != "server":
             self._show_server_ui(False)
+            self._set_create_controls_disabled(True)
             self.sources = []
             self.selected_source = None
             await self._clear_list_view("#source-list")
@@ -166,8 +220,10 @@ class MediaIngestionSourcePanel(ScrollableContainer):
             return
 
         self._show_server_ui(True)
+        self._set_create_controls_disabled(False)
 
         if self.scope_service is None:
+            self._set_create_controls_disabled(True)
             self.query_one("#source-detail", Static).update("Media source service is unavailable.")
             return
 
@@ -176,7 +232,10 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         await self._load_source_list()
 
         if self.sources:
-            await self.select_source(0)
+            selected_index = self._source_index_for_identity(preferred_source_id)
+            if selected_index is None:
+                selected_index = 0
+            await self.select_source(selected_index)
         else:
             self.selected_source = None
             self.query_one("#source-detail", Static).update("No server ingestion sources found.")
@@ -201,6 +260,7 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         if index < 0 or index >= len(self.sources):
             return
 
+        self.query_one("#source-list", ListView).index = index
         self.selected_source = dict(self.sources[index])
         self._update_source_detail()
         await self._load_source_items()
@@ -278,6 +338,51 @@ class MediaIngestionSourcePanel(ScrollableContainer):
     @on(Button.Pressed, "#refresh-sources-btn")
     def handle_refresh_sources(self) -> None:
         self.run_worker(self.refresh_for_mode(), exclusive=True)
+
+    @on(Button.Pressed, "#create-source-btn")
+    def handle_create_source(self) -> None:
+        self.run_worker(self._create_source(), exclusive=True)
+
+    async def _create_source(self) -> None:
+        if self.runtime_backend != "server":
+            self._set_create_controls_disabled(True)
+            self.notify("Server ingestion sources require server mode.", severity="warning")
+            return
+
+        if self.scope_service is None:
+            self.notify("Media source service is unavailable.", severity="error")
+            return
+
+        source_type = str(self.query_one("#create-source-type", Select).value or "")
+        if source_type not in ALLOWED_CREATE_SOURCE_TYPES:
+            self.notify("This source type is not available from Chatbook yet.", severity="warning")
+            return
+
+        config_text = self.query_one("#create-config-input", Input).value.strip() or "{}"
+        try:
+            config = json.loads(config_text)
+        except json.JSONDecodeError:
+            self.notify("Config must be valid JSON.", severity="error")
+            return
+
+        if not isinstance(config, dict):
+            self.notify("Config must be a JSON object.", severity="error")
+            return
+
+        policy = str(self.query_one("#create-policy-type", Select).value or "canonical") or "canonical"
+        created = await self._maybe_await(
+            self.scope_service.create_ingestion_source(
+                mode="server",
+                source_type=source_type,
+                sink_type="media",
+                policy=policy,
+                config=config,
+            )
+        )
+        created_source = dict(created or {})
+        created_identity = created_source.get("id") or self._source_id_value(created_source)
+        await self.refresh_for_mode(preferred_source_id=created_identity)
+        self.notify("Source created", severity="information")
 
     @on(Button.Pressed, "#sync-source-btn")
     def handle_sync_source(self) -> None:

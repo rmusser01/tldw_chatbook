@@ -10,7 +10,7 @@ from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 @pytest.mark.asyncio
 async def test_ingest_window_does_not_construct_api_client_for_server_mode(monkeypatch):
     ctor = Mock()
-    monkeypatch.setattr("tldw_chatbook.UI.MediaIngestWindowRebuilt.TLDWAPIClient", ctor)
+    monkeypatch.setattr("tldw_chatbook.UI.MediaIngestWindowRebuilt.build_runtime_api_client", ctor)
 
     app = SimpleNamespace(media_runtime_state=MediaRuntimeState(runtime_backend="server"))
     ingest_window = MediaIngestWindowRebuilt(app)
@@ -24,4 +24,24 @@ async def test_ingest_window_does_not_construct_api_client_for_server_mode(monke
 
     ctor.assert_not_called()
     assert ingest_window.source_panel.runtime_backend == "server"
+    ingest_window.source_panel.refresh_for_mode.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ingest_window_refresh_backend_view_preserves_local_refresh_behavior(monkeypatch):
+    ctor = Mock()
+    monkeypatch.setattr("tldw_chatbook.UI.MediaIngestWindowRebuilt.build_runtime_api_client", ctor)
+
+    app = SimpleNamespace(media_runtime_state=MediaRuntimeState(runtime_backend="local"))
+    ingest_window = MediaIngestWindowRebuilt(app)
+    ingest_window.runtime_state = app.media_runtime_state
+    ingest_window.source_panel = SimpleNamespace(
+        runtime_backend="server",
+        refresh_for_mode=AsyncMock(),
+    )
+
+    await ingest_window.refresh_backend_view()
+
+    ctor.assert_not_called()
+    assert ingest_window.source_panel.runtime_backend == "local"
     ingest_window.source_panel.refresh_for_mode.assert_awaited_once()
