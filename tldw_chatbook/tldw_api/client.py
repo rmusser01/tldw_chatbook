@@ -157,6 +157,7 @@ from .research_runs_schemas import (
     ResearchRunCreateRequest,
     ResearchRunListItemResponse,
     ResearchRunResponse,
+    ResearchRunStreamEvent,
 )
 from .writing_manuscript_schemas import (
     ManuscriptChapterCreateRequest,
@@ -384,7 +385,8 @@ class TLDWAPIClient:
         endpoint: str,
         *,
         params: Optional[Dict[str, Any]] = None,
-    ) -> AsyncGenerator[MediaIngestJobStreamEvent, None]:
+        event_model: Any = MediaIngestJobStreamEvent,
+    ) -> AsyncGenerator[Any, None]:
         client = await self._get_client()
         url = f"{self.base_url}{endpoint}"
 
@@ -404,7 +406,7 @@ class TLDWAPIClient:
                     line = raw_line.strip()
                     if not line:
                         if data_lines:
-                            yield self._build_sse_event(event_name, event_id, data_lines)
+                            yield self._build_sse_event(event_name, event_id, data_lines, event_model=event_model)
                         event_name = "message"
                         event_id = None
                         data_lines = []
@@ -426,7 +428,7 @@ class TLDWAPIClient:
                         data_lines.append(value)
 
                 if data_lines:
-                    yield self._build_sse_event(event_name, event_id, data_lines)
+                    yield self._build_sse_event(event_name, event_id, data_lines, event_model=event_model)
         except httpx.HTTPStatusError as e:
             error_detail = str(e)
             response_text = ""
@@ -448,13 +450,15 @@ class TLDWAPIClient:
         event_name: str,
         event_id: str | None,
         data_lines: list[str],
-    ) -> MediaIngestJobStreamEvent:
+        *,
+        event_model: Any = MediaIngestJobStreamEvent,
+    ) -> Any:
         raw_data = "\n".join(data_lines)
         try:
             data: dict[str, Any] | str | None = json.loads(raw_data)
         except json.JSONDecodeError:
             data = raw_data
-        return MediaIngestJobStreamEvent(event=event_name, id=event_id, data=data)
+        return event_model(event=event_name, id=event_id, data=data)
 
     async def list_server_notes(self, limit: int = 100, offset: int = 0, include_keywords: bool = True) -> Dict[str, Any]:
         return await self._request(
@@ -1117,6 +1121,19 @@ class TLDWAPIClient:
             ),
         )
         return ResearchRunResponse.model_validate(payload)
+
+    async def stream_research_run_events(
+        self,
+        session_id: str,
+        *,
+        after_id: int = 0,
+    ) -> AsyncGenerator[ResearchRunStreamEvent, None]:
+        async for event in self._stream_sse_request(
+            f"/api/v1/research/runs/{session_id}/events/stream",
+            params={"after_id": after_id},
+            event_model=ResearchRunStreamEvent,
+        ):
+            yield event
 
     async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
         response = await self._request(

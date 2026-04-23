@@ -248,6 +248,7 @@ _EXPORT_GROUPS = (
             "ResearchRunListItemResponse",
             "ResearchRunResponse",
             "ResearchRunSnapshotResponse",
+            "ResearchRunStreamEvent",
         ),
     ),
     (

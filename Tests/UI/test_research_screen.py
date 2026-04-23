@@ -58,6 +58,30 @@ class FakeResearchScopeService:
         self.calls.append(("pause_run", mode, run_id))
         return SimpleNamespace(id=run_id, query="Paused", status="running", control_state="paused")
 
+    async def stream_run_events(self, run_id, *, mode, after_id=0):
+        self.calls.append(("stream_run_events", mode, run_id, after_id))
+        if mode == "local":
+            raise ValueError("Local research live events are not available in this slice.")
+        yield {
+            "event": "snapshot",
+            "id": "3",
+            "data": {
+                "run": {
+                    "id": run_id,
+                    "query": "Server query",
+                    "status": "running",
+                    "phase": "collecting",
+                    "control_state": "running",
+                    "progress_message": "Collecting sources",
+                }
+            },
+        }
+        yield {
+            "event": "progress",
+            "id": "4",
+            "data": {"progress_message": "Synthesizing answer"},
+        }
+
 
 @pytest.mark.asyncio
 async def test_research_controller_routes_runs_by_source():
@@ -89,3 +113,34 @@ async def test_research_window_loads_and_selects_runs_without_mixed_sources():
     assert [run.id for run in server_runs] == ["server-run"]
     assert window.current_source == "server"
     assert window.selected_run.id == "server-run"
+
+
+@pytest.mark.asyncio
+async def test_research_window_watches_selected_server_run_events():
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service)
+    window = ResearchWindow(app)
+
+    server_runs = await window.switch_source("server")
+    window.select_run(server_runs[0])
+
+    events = await window.watch_selected_run_events(after_id=3)
+
+    assert [event["event"] for event in events] == ["snapshot", "progress"]
+    assert ("stream_run_events", "server", "server-run", 3) in service.calls
+    assert "Synthesizing answer" in window.status_message
+
+
+@pytest.mark.asyncio
+async def test_research_window_reports_local_live_events_unavailable():
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service)
+    window = ResearchWindow(app)
+
+    local_runs = await window.load_runs("local")
+    window.select_run(local_runs[0])
+
+    events = await window.watch_selected_run_events()
+
+    assert events == []
+    assert "Local research live events" in window.status_message

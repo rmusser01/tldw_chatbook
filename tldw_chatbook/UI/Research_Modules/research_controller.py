@@ -56,3 +56,8 @@ class ResearchController:
     async def get_bundle(self, source: str, run_id: str) -> dict[str, Any]:
         service = self._require_scope_service()
         return await self._maybe_await(service.get_bundle(run_id, mode=source))
+
+    async def stream_run_events(self, source: str, run_id: str, *, after_id: int = 0):
+        service = self._require_scope_service()
+        async for event in service.stream_run_events(run_id, mode=source, after_id=after_id):
+            yield event

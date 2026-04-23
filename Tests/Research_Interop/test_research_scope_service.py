@@ -1,6 +1,6 @@
 """Tests for local/server Research Sessions scope routing."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -10,7 +10,7 @@ from tldw_chatbook.Research_Interop import (
     ResearchScopeService,
     ServerResearchService,
 )
-from tldw_chatbook.tldw_api import ResearchRunResponse
+from tldw_chatbook.tldw_api import ResearchRunResponse, ResearchRunStreamEvent
 
 
 @pytest.mark.asyncio
@@ -90,6 +90,43 @@ async def test_server_research_service_delegates_to_tldw_client():
 
 
 @pytest.mark.asyncio
+async def test_server_research_service_streams_events_as_plain_dicts():
+    async def fake_stream():
+        yield ResearchRunStreamEvent(
+            event="snapshot",
+            id="3",
+            data={"run": {"id": "rs-server", "status": "running", "phase": "collecting"}},
+        )
+        yield ResearchRunStreamEvent(
+            event="progress",
+            id="4",
+            data={"progress_message": "Synthesizing"},
+        )
+
+    client = AsyncMock()
+    client.stream_research_run_events = Mock(return_value=fake_stream())
+    service = ServerResearchService(client=client)
+
+    events = [
+        event async for event in service.stream_run_events("rs-server", after_id=3)
+    ]
+
+    assert events == [
+        {
+            "event": "snapshot",
+            "id": "3",
+            "data": {"run": {"id": "rs-server", "status": "running", "phase": "collecting"}},
+        },
+        {
+            "event": "progress",
+            "id": "4",
+            "data": {"progress_message": "Synthesizing"},
+        },
+    ]
+    client.stream_research_run_events.assert_called_once_with("rs-server", after_id=3)
+
+
+@pytest.mark.asyncio
 async def test_research_scope_service_routes_without_cross_source_mutation(tmp_path):
     local_service = LocalResearchService(ResearchDatabase(tmp_path / "research.db", client_id="tester"))
     server_service = AsyncMock()
@@ -142,3 +179,48 @@ async def test_research_scope_service_enforces_action_level_policy(tmp_path):
         "research.runs.observe.server",
         "research.runs.update.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_research_scope_service_streams_server_events_with_policy(tmp_path):
+    class RecordingPolicyEnforcer:
+        def __init__(self):
+            self.action_ids = []
+
+        def require_allowed(self, *, action_id):
+            self.action_ids.append(action_id)
+
+    async def fake_stream():
+        yield {"event": "snapshot", "id": "3", "data": {"run": {"id": "rs-server"}}}
+        yield {"event": "progress", "id": "4", "data": {"progress_message": "Synthesizing"}}
+
+    local_service = LocalResearchService(ResearchDatabase(tmp_path / "research.db", client_id="tester"))
+    server_service = Mock()
+    server_service.stream_run_events = Mock(return_value=fake_stream())
+    policy = RecordingPolicyEnforcer()
+    scope = ResearchScopeService(
+        local_service=local_service,
+        server_service=server_service,
+        policy_enforcer=policy,
+    )
+
+    events = [
+        event async for event in scope.stream_run_events("rs-server", mode="server", after_id=3)
+    ]
+
+    assert events[0]["event"] == "snapshot"
+    assert events[1]["data"]["progress_message"] == "Synthesizing"
+    assert policy.action_ids == ["research.runs.observe.server"]
+    server_service.stream_run_events.assert_called_once_with("rs-server", after_id=3)
+
+
+@pytest.mark.asyncio
+async def test_research_scope_service_rejects_local_live_events(tmp_path):
+    scope = ResearchScopeService(
+        local_service=LocalResearchService(ResearchDatabase(tmp_path / "research.db", client_id="tester")),
+        server_service=Mock(),
+    )
+
+    with pytest.raises(ValueError, match="Local research live events"):
+        async for _event in scope.stream_run_events("local-run", mode="local"):
+            pass

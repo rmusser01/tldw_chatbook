@@ -112,3 +112,10 @@ class ServerResearchService:
                 ResearchCheckpointPatchApproveRequest(patch_payload=patch_payload),
             ),
         )
+
+    async def stream_run_events(self, run_id: str, *, after_id: int = 0):
+        async for event in self._require_client().stream_research_run_events(run_id, after_id=after_id):
+            if hasattr(event, "model_dump"):
+                yield event.model_dump(exclude_none=True, mode="json")
+            else:
+                yield event

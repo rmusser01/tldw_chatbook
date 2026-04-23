@@ -47,6 +47,7 @@ class ResearchWindow(Vertical):
                 with Horizontal(id="research-run-actions"):
                     yield Button("Resume", id="research-resume-run")
                     yield Button("Pause", id="research-pause-run")
+                    yield Button("Watch Events", id="research-watch-events")
                     yield Button("Cancel", id="research-cancel-run", variant="error")
 
     def save_state(self) -> dict[str, Any]:
@@ -104,6 +105,25 @@ class ResearchWindow(Vertical):
         self.select_run(updated)
         return updated
 
+    async def watch_selected_run_events(self, *, after_id: int = 0) -> list[dict[str, Any]]:
+        run_id = self._selected_run_id()
+        events: list[dict[str, Any]] = []
+        try:
+            async for event in self.controller.stream_run_events(
+                self.current_source,
+                run_id,
+                after_id=after_id,
+            ):
+                event_data = dict(event or {})
+                events.append(event_data)
+                self._apply_stream_event(event_data)
+        except Exception as exc:
+            self._set_status(str(exc))
+            return events
+        if not events:
+            self._set_status("Research event stream ended without events.")
+        return events
+
     async def _refresh_run_list(self) -> None:
         if not self.is_mounted:
             return
@@ -132,6 +152,33 @@ class ResearchWindow(Vertical):
             self.query_one("#research-run-detail", Static).update(detail)
         except Exception:
             pass
+
+    def _apply_stream_event(self, event: dict[str, Any]) -> None:
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if event.get("event") == "snapshot" and isinstance(data, dict) and isinstance(data.get("run"), dict):
+            run_payload = dict(data["run"])
+            run_payload.setdefault("query", self._record_get(self.selected_run, "query", ""))
+            self.select_run(run_payload)
+        message = self._stream_event_message(event)
+        self._set_status(message)
+        if self.is_mounted:
+            try:
+                current_detail = str(self.query_one("#research-run-detail", Static).render())
+                self.query_one("#research-run-detail", Static).update(f"{current_detail}\n{message}")
+            except Exception:
+                pass
+
+    def _stream_event_message(self, event: dict[str, Any]) -> str:
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        event_name = str(event.get("event") or "event")
+        event_id = event.get("id")
+        if isinstance(data, dict):
+            progress_message = data.get("progress_message")
+            if not progress_message and isinstance(data.get("run"), dict):
+                progress_message = data["run"].get("progress_message")
+            if progress_message:
+                return f"Research event {event_name} {event_id or ''}: {progress_message}".strip()
+        return f"Research event {event_name} {event_id or ''}".strip()
 
     def _set_status(self, message: str) -> None:
         self.status_message = message
@@ -195,6 +242,10 @@ class ResearchWindow(Vertical):
     @on(Button.Pressed, "#research-resume-run")
     async def _on_resume_pressed(self, _event: Button.Pressed) -> None:
         await self.resume_selected_run()
+
+    @on(Button.Pressed, "#research-watch-events")
+    async def _on_watch_events_pressed(self, _event: Button.Pressed) -> None:
+        await self.watch_selected_run_events()
 
     @on(Button.Pressed, "#research-cancel-run")
     async def _on_cancel_pressed(self, _event: Button.Pressed) -> None:

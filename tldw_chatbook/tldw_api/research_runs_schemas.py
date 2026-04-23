@@ -121,3 +121,9 @@ class ResearchArtifactResponse(BaseModel):
     artifact_name: str
     content_type: str
     content: Any
+
+
+class ResearchRunStreamEvent(BaseModel):
+    event: str
+    id: str | None = None
+    data: dict[str, Any] | str | None = None

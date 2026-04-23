@@ -1,6 +1,6 @@
 """Tests for deep research run endpoint wiring on the shared TLDW API client."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -10,6 +10,7 @@ from tldw_chatbook.tldw_api import (
     ResearchRunCreateRequest,
     ResearchRunListItemResponse,
     ResearchRunResponse,
+    ResearchRunStreamEvent,
     TLDWAPIClient,
 )
 
@@ -133,3 +134,40 @@ async def test_research_artifact_bundle_and_checkpoint_methods_use_server_paths(
     assert client._request.await_args_list[2].kwargs == {
         "json_data": {"patch_payload": {"approved": True}},
     }
+
+
+@pytest.mark.asyncio
+async def test_research_run_event_stream_uses_server_sse_path():
+    async def fake_stream():
+        yield ResearchRunStreamEvent(
+            event="snapshot",
+            id="3",
+            data={
+                "run": _run_payload(run_id="rs_6"),
+                "latest_event_id": 3,
+                "checkpoint": None,
+                "artifacts": [],
+            },
+        )
+        yield ResearchRunStreamEvent(
+            event="progress",
+            id="4",
+            data={"event_id": 4, "progress_message": "Synthesizing"},
+        )
+
+    client = TLDWAPIClient("http://example.test", "token")
+    client._stream_sse_request = Mock(return_value=fake_stream())
+
+    events = [
+        event async for event in client.stream_research_run_events("rs_6", after_id=3)
+    ]
+
+    assert events[0].event == "snapshot"
+    assert events[0].data["latest_event_id"] == 3
+    assert events[1].event == "progress"
+    assert events[1].data["progress_message"] == "Synthesizing"
+    client._stream_sse_request.assert_called_once_with(
+        "/api/v1/research/runs/rs_6/events/stream",
+        params={"after_id": 3},
+        event_model=ResearchRunStreamEvent,
+    )
