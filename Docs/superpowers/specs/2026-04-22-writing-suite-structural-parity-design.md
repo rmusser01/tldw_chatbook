@@ -65,12 +65,13 @@ The server does **not** currently expose a first-class `manuscript` entity disti
 - A scene may belong to a chapter or directly to a manuscript in the Chatbook target model.
 - Direct manuscript-level scenes appear inline in the manuscript outline alongside chapters.
 - Workflow/status fields are available but optional so low-friction writing remains the default.
-- `Manuscript`, `Chapter`, and `Scene` each have a mutable autosaved working draft plus explicit user-created versions.
+- `Scene` has a mutable autosaved Markdown working draft plus explicit user-created versions.
+- `Manuscript` and `Chapter` have autosaved metadata/structure working state plus explicit user-created versions, but no authored body draft.
 - Normal autosave does not advance the version number.
-- `Create New Version` snapshots the current working draft into the next numbered immutable version.
-- Older versions are read-only until the user explicitly restores or derives a new working draft from them.
+- `Create New Version` snapshots the current entity working state into the next numbered immutable version.
+- Older versions are read-only until the user explicitly restores or derives a new working state from them.
 - Delete is soft-delete with trash and restore.
-- Reorder chapters/scenes and move scenes between chapters/manuscript parents are first-class in v1.
+- Reorder chapters/scenes and move scenes between chapters/manuscript parents are first-class where the active source supports them.
 
 ## In Scope
 
@@ -110,7 +111,7 @@ The server does **not** currently expose a first-class `manuscript` entity disti
 
 ### Option A: Structural-authoring first
 
-Use dedicated entities for `Project -> Manuscript -> Chapter/Scene`, with source-separated local/server stores, autosaved working drafts, manual versions, soft-delete, reorder/move support, and optional status fields.
+Use dedicated entities for `Project -> Manuscript/Unassigned Chapters -> Chapter/Scene`, with source-separated local/server stores, autosaved scene drafts, autosaved container metadata/structure state, manual versions, soft-delete, reorder/move support, and optional status fields.
 
 Why chosen:
 
@@ -166,6 +167,8 @@ Chatbook target entities:
 - `WritingTrashEntry`
 - `WritingOutlineNode`
 
+`WritingDraft` is a normalized working-state record. Only scene drafts carry Markdown body content; manuscript and chapter working state carries metadata plus structural membership/order fields.
+
 Hierarchy:
 
 ```text
@@ -174,15 +177,21 @@ Project
     Chapter
       Scene
     Scene
+  Unassigned Chapters
+    Chapter
+      Scene
 ```
 
 Rules:
 
 - Project is required for every manuscript.
 - A project can have multiple manuscripts.
+- A project can have unassigned chapters outside any manuscript.
+- The `Unassigned Chapters` bucket is a presentation node, not a manuscript.
 - A manuscript can contain chapters and direct scenes.
 - A chapter can contain scenes.
-- A scene cannot exist without a manuscript.
+- A scene can exist under a chapter; that chapter may be assigned to a manuscript or remain project-level and unassigned.
+- A direct manuscript-level scene cannot exist without a manuscript.
 - A direct manuscript-level scene has no chapter parent.
 - A chapter body is assembled from its ordered scenes.
 - A scene body is Markdown.
@@ -197,6 +206,7 @@ The current server manuscript contract maps into the target model as follows:
 | Manuscript | `ManuscriptPart` |
 | Chapter | `ManuscriptChapter` |
 | Scene | `ManuscriptScene` |
+| Unassigned chapters | `ManuscriptStructureResponse.unassigned_chapters` |
 | Outline reorder | `/projects/{project_id}/reorder` |
 | Soft delete | server delete routes that soft-delete |
 | Optimistic lock | `expected_version` header |
@@ -213,6 +223,9 @@ Contract-honest handling:
 
 - Direct manuscript-level scene creation/move is available locally.
 - In server mode, direct manuscript-level scene creation/move is disabled centrally unless the server contract adds parentless scene support.
+- Server `unassigned_chapters` are rendered in the project-level `Unassigned Chapters` bucket.
+- The adapter must not drop unassigned chapters and must not invent a hidden manuscript to contain them.
+- Assigning or unassigning a chapter to/from a manuscript is allowed only through a verified chapter parent update path.
 - The server adapter may display server chapters without scenes and server scenes under chapters, but it must not invent hidden chapters to fake direct scene support.
 - Server scene reorder within the existing chapter may use the reorder endpoint when verified.
 - Server scene reparenting between chapters is disabled centrally unless a verified endpoint supports changing the scene parent.
@@ -227,7 +240,9 @@ Contract-honest handling:
 | --- | --- | --- |
 | Project CRUD | Supported | Supported through `ManuscriptProject` |
 | Multiple manuscripts per project | Supported | Supported by mapping manuscripts to `ManuscriptPart` |
+| Project-level unassigned chapters | Supported | Supported through `unassigned_chapters` |
 | Chapter CRUD | Supported | Supported through `ManuscriptChapter` |
+| Chapter assign/unassign to manuscript | Supported | Supported only through verified chapter `part_id` update/reorder paths |
 | Scene CRUD under chapter | Supported | Supported through `ManuscriptScene` |
 | Direct manuscript-level scenes | Supported | Disabled until server supports parentless scenes |
 | Scene reorder within current parent | Supported | Supported only where current reorder contract verifies cleanly |
@@ -268,10 +283,11 @@ The first TUI should be pragmatic and source-explicit:
 - project browser
 - manuscript browser inside selected project
 - outline tree/list for chapters and scenes
+- project-level `Unassigned Chapters` bucket when the active source returns or supports unassigned chapters
 - detail/editor panel for selected entity
 - Markdown editor for scene working draft
 - metadata panel for title, summary/synopsis, optional status, and word counts
-- versions panel for current working draft, historical read-only versions, `Create New Version`, and restore actions
+- versions panel for current working state, historical read-only versions, `Create New Version`, and restore actions
 - trash view for soft-deleted writing records
 
 The UI should not be a full prose IDE in v1. It should make structural authoring credible and stable first.
@@ -281,20 +297,32 @@ The UI should not be a full prose IDE in v1. It should make structural authoring
 The outline shows:
 
 - manuscripts under a project
+- unassigned chapters under a project-level bucket
 - chapters under a manuscript
 - scenes under chapters
 - direct manuscript-level scenes inline alongside chapters
+
+The unassigned-chapter bucket is source-owned structural state:
+
+- it is shown only as a project-level bucket
+- it is not treated as a manuscript
+- its chapters can be assigned to a manuscript when the active source supports chapter parent updates
+- its scenes remain normal chapter-owned scenes
 
 Ordering is source-owned. Reorder and move operations are saved through the current source service. UI state should update after confirmed success unless an explicit optimistic update and rollback path is tested.
 
 ### Version Behavior
 
-Working draft:
+Working state:
 
 - mutable
 - autosaved
 - source-owned
 - not a historical version by itself
+- for scenes, contains Markdown body content plus scene metadata
+- for chapters, contains chapter metadata plus ordered child scene membership and assembled read-only preview
+- for manuscripts, contains manuscript metadata plus ordered child chapter/direct-scene membership and assembled read-only preview
+- never creates authored body content for chapters or manuscripts
 
 Manual version:
 
@@ -305,7 +333,7 @@ Manual version:
 
 Restore:
 
-- copies historical version content into the working draft
+- copies the historical version payload into the entity working state
 - does not mutate the historical version
 - does not advance the version number until the user creates another version
 
@@ -326,7 +354,7 @@ Chapter version:
 - restore copies chapter metadata and, where supported, restores ordering/membership for existing child scenes
 - restore does not recreate missing scenes
 - restore does not delete extra current scenes unless a later exact-structure restore mode is explicitly designed
-- if referenced scenes are missing, deleted, or cannot be reparented in the active source, restore reports a conflict and leaves the working draft unchanged
+- if referenced scenes are missing, deleted, or cannot be reparented in the active source, restore reports a conflict and leaves the chapter working state unchanged
 
 Manuscript version:
 
@@ -335,7 +363,7 @@ Manuscript version:
 - restore copies manuscript metadata and, where supported, restores ordering/membership for existing chapters and direct manuscript-level scenes
 - restore does not recreate missing child records
 - restore does not delete extra current child records unless a later exact-structure restore mode is explicitly designed
-- if the active source cannot support a stored direct scene or scene reparent operation, restore reports a capability conflict and leaves the working draft unchanged
+- if the active source cannot support a stored direct scene or scene reparent operation, restore reports a capability conflict and leaves the manuscript working state unchanged
 
 This keeps local manual versions useful without turning container restore into implicit destructive child editing.
 
@@ -362,8 +390,8 @@ High-impact failures should emit a notification and keep the relevant inline err
 
 ### Version Errors
 
-- Failed `Create New Version` leaves the working draft unchanged.
-- Failed restore leaves the historical version read-only and the working draft unchanged.
+- Failed `Create New Version` leaves the working state unchanged.
+- Failed restore leaves the historical version read-only and the working state unchanged.
 - Version numbers must not skip on failure.
 
 ### Reorder And Move Errors
@@ -405,9 +433,9 @@ Responsibilities:
 4. Local service returns normalized records.
 5. UI updates browse/detail/editor state from normalized records.
 
-Autosave updates only the working draft.
+Autosave updates only the current entity working state.
 
-`Create New Version` snapshots the current working draft into the next immutable version.
+`Create New Version` snapshots the current entity working state into the next immutable version.
 
 ### Server Mode
 
@@ -427,11 +455,12 @@ Cover:
 
 - project-required manuscript creation
 - one project to many manuscripts
+- project-level unassigned chapter creation and assignment to a manuscript
 - chapter and scene creation
 - direct manuscript-level scenes
 - scene move between chapters and manuscript parent
 - reorder chapters and scenes
-- autosave working drafts
+- autosave scene working drafts and container metadata/structure working state
 - explicit version creation
 - read-only historical versions
 - restore from version
@@ -451,6 +480,8 @@ Cover:
 - chapter mapping
 - scene mapping
 - structure normalization
+- unassigned chapter normalization without fake manuscripts
+- chapter assign/unassign mapping through verified `part_id` update paths
 - reorder payloads
 - optimistic-lock headers
 - soft-delete mapping
@@ -482,6 +513,7 @@ Cover:
 - dirty editor source-switch handling
 - project and manuscript browser state
 - outline display with inline chapters and direct scenes
+- outline display for project-level unassigned chapters
 - Markdown editing
 - autosave behavior
 - manual version creation
@@ -511,7 +543,7 @@ Cover:
 5. Scope service and capability gates.
 6. Source-switched TUI shell.
 7. Project and manuscript browse/detail/create/update/delete/restore.
-8. Outline tree/list with chapters and scenes.
+8. Outline tree/list with manuscripts, unassigned chapters, chapters, and scenes.
 9. Scene Markdown editor and autosave.
 10. Reorder and move operations.
 11. Manual versions and read-only historical view.
@@ -521,8 +553,9 @@ Cover:
 ## Acceptance Criteria
 
 - Chatbook has a `Writing Suite` destination or screen reachable from the app.
-- Local mode works offline for project, manuscript, chapter, scene, draft, manual-version, soft-delete, restore, reorder, and supported move flows.
+- Local mode works offline for project, manuscript, chapter, scene, scene draft, container working state, manual-version, soft-delete, restore, reorder, and supported move flows.
 - Server mode lists and mutates supported server project, part-as-manuscript, chapter, scene, structure, reorder, and soft-delete records without writing local records.
+- Server unassigned chapters are visible in a project-level bucket and are never dropped or represented as fake manuscripts.
 - Server unsupported actions are disabled centrally and clearly explained.
 - Markdown content is preserved locally and through the server adapter convention when possible.
 - Historical versions are read-only until explicit restore or draft derivation.
