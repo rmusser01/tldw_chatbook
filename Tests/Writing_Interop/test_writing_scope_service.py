@@ -48,13 +48,29 @@ class FakeBackend:
         self.calls.append(("create_version", entity_kind, entity_id, kwargs))
         return {"entity_kind": entity_kind, "entity_id": entity_id, "source": self.label}
 
+    async def list_versions(self, entity_kind, entity_id, **kwargs):
+        self.calls.append(("list_versions", entity_kind, entity_id, kwargs))
+        return [{"entity_kind": entity_kind, "entity_id": entity_id, "source": self.label}]
+
+    async def get_version(self, version_id, **kwargs):
+        self.calls.append(("get_version", version_id, kwargs))
+        return {"id": version_id, "source": self.label}
+
     async def restore_version_to_working_state(self, version_id, **kwargs):
         self.calls.append(("restore_version_to_working_state", version_id, kwargs))
         return {"id": version_id, "source": self.label}
 
+    async def restore_project(self, project_id, **kwargs):
+        self.calls.append(("restore_project", project_id, kwargs))
+        return {"id": project_id, "source": self.label}
+
     async def restore_scene(self, scene_id, **kwargs):
         self.calls.append(("restore_scene", scene_id, kwargs))
         return {"id": scene_id, "source": self.label}
+
+    async def list_trash(self, project_id=None, **kwargs):
+        self.calls.append(("list_trash", project_id, kwargs))
+        return [{"project_id": project_id, "source": self.label}]
 
 
 class FakePolicy:
@@ -261,6 +277,24 @@ async def test_server_scene_reparent_is_blocked_before_backend_call():
 
 
 @pytest.mark.asyncio
+async def test_move_scene_local_server_mode_uses_server_reparent_gate():
+    server = FakeBackend("server")
+    service = WritingScopeService(local_service=FakeBackend("local"), server_service=server)
+
+    with pytest.raises(WritingCapabilityError) as exc_info:
+        await service.move_scene_local(
+            "scene-1",
+            None,
+            "chapter-2",
+            mode="server",
+            expected_version=2,
+        )
+
+    assert exc_info.value.reason == REASON_SCENE_REPARENT
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
 async def test_policy_action_ids_are_checked_for_top_level_crud_actions():
     local = FakeBackend("local")
     server = FakeBackend("server")
@@ -303,4 +337,38 @@ async def test_policy_action_ids_are_checked_for_top_level_crud_actions():
         "writing.chapters.delete.server",
         "writing.scenes.create.local",
         "writing.scenes.create.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_policy_action_ids_cover_restore_version_and_trash_actions():
+    local = FakeBackend("local")
+    policy = FakePolicy()
+    service = WritingScopeService(
+        local_service=local,
+        server_service=FakeBackend("server"),
+        policy_enforcer=policy,
+    )
+
+    await service.restore_project("project-1", mode="local", expected_version=1)
+    await service.restore_scene("scene-1", mode="local", expected_version=1)
+    await service.create_version("scene", "scene-1", mode="local")
+    await service.list_versions("scene", "scene-1", mode="local")
+    await service.get_version("version-1", mode="local", entity_kind="scene")
+    await service.restore_version_to_working_state(
+        "version-1",
+        mode="local",
+        entity_kind="scene",
+        expected_version=2,
+    )
+    await service.list_trash("project-1", mode="local")
+
+    assert policy.calls == [
+        "writing.projects.update.local",
+        "writing.scenes.update.local",
+        "writing.scenes.update.local",
+        "writing.scenes.detail.local",
+        "writing.scenes.detail.local",
+        "writing.scenes.update.local",
+        "writing.projects.list.local",
     ]

@@ -51,6 +51,13 @@ class WritingScopeService:
         ("scenes", "delete"): "writing.scenes.delete",
     }
 
+    _ENTITY_RESOURCES: dict[str, str] = {
+        "project": "projects",
+        "manuscript": "manuscripts",
+        "chapter": "chapters",
+        "scene": "scenes",
+    }
+
     def __init__(
         self,
         *,
@@ -99,6 +106,12 @@ class WritingScopeService:
         if action_prefix is None:
             return
         self.policy_enforcer.require_allowed(action_id=f"{action_prefix}.{mode.value}")
+
+    def _resource_for_entity_kind(self, entity_kind: str) -> str:
+        try:
+            return self._ENTITY_RESOURCES[entity_kind]
+        except KeyError as exc:
+            raise ValueError(f"Invalid writing entity kind: {entity_kind}") from exc
 
     def get_capability(
         self,
@@ -302,6 +315,7 @@ class WritingScopeService:
         expected_version: int | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, resource="projects", action="update")
         self._require_capability(
             normalized_mode,
             action="restore_deleted",
@@ -424,6 +438,7 @@ class WritingScopeService:
         expected_version: int | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, resource="manuscripts", action="update")
         self._require_capability(
             normalized_mode,
             action="restore_deleted",
@@ -564,6 +579,7 @@ class WritingScopeService:
         expected_version: int | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, resource="chapters", action="update")
         self._require_capability(
             normalized_mode,
             action="restore_deleted",
@@ -673,6 +689,15 @@ class WritingScopeService:
         expected_version: int | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != WritingBackend.LOCAL:
+            return await self.move_scene(
+                scene_id,
+                manuscript_id,
+                chapter_id,
+                mode=normalized_mode,
+                expected_version=expected_version,
+                sort_order=sort_order,
+            )
         self._enforce_policy(normalized_mode, resource="scenes", action="update")
         return await self._call(
             mode=normalized_mode,
@@ -724,6 +749,15 @@ class WritingScopeService:
         sort_order: float | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != WritingBackend.LOCAL:
+            return await self.move_scene(
+                scene_id,
+                manuscript_id,
+                chapter_id,
+                mode=normalized_mode,
+                expected_version=expected_version,
+                sort_order=sort_order,
+            )
         self._enforce_policy(normalized_mode, resource="scenes", action="update")
         return await self._call(
             mode=normalized_mode,
@@ -776,6 +810,7 @@ class WritingScopeService:
         expected_version: int | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, resource="scenes", action="update")
         self._require_capability(
             normalized_mode,
             action="restore_deleted",
@@ -827,6 +862,8 @@ class WritingScopeService:
         label: str | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        resource = self._resource_for_entity_kind(entity_kind)
+        self._enforce_policy(normalized_mode, resource=resource, action="update")
         self._require_capability(
             normalized_mode,
             action="create_version",
@@ -854,6 +891,8 @@ class WritingScopeService:
         offset: int = 0,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        resource = self._resource_for_entity_kind(entity_kind)
+        self._enforce_policy(normalized_mode, resource=resource, action="detail")
         self._require_capability(
             normalized_mode,
             action="list_versions",
@@ -875,13 +914,16 @@ class WritingScopeService:
         version_id: str,
         *,
         mode: WritingBackend | str | None = None,
+        entity_kind: str = "scene",
         include_deleted: bool = False,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        resource = self._resource_for_entity_kind(entity_kind)
+        self._enforce_policy(normalized_mode, resource=resource, action="detail")
         self._require_capability(
             normalized_mode,
             action="get_version",
-            entity_kind="version",
+            entity_kind=entity_kind,
         )
         return await self._call(
             mode=normalized_mode,
@@ -895,13 +937,16 @@ class WritingScopeService:
         version_id: str,
         *,
         mode: WritingBackend | str | None = None,
+        entity_kind: str = "scene",
         expected_version: int | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        resource = self._resource_for_entity_kind(entity_kind)
+        self._enforce_policy(normalized_mode, resource=resource, action="update")
         self._require_capability(
             normalized_mode,
             action="restore_version",
-            entity_kind="version",
+            entity_kind=entity_kind,
         )
         return await self._call(
             mode=normalized_mode,
@@ -919,6 +964,7 @@ class WritingScopeService:
         offset: int = 0,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, resource="projects", action="list")
         self._require_capability(
             normalized_mode,
             action="restore_deleted",
