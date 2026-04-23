@@ -113,6 +113,71 @@ class FakeClient:
         self.calls.append(("upload_ingestion_source_archive", source_id, archive_path))
         return {"status": "queued", "source_id": source_id, "job_id": 124}
 
+    async def reattach_ingestion_source_item(self, source_id, item_id):
+        self.calls.append(("reattach_ingestion_source_item", source_id, item_id))
+        return {
+            "id": item_id,
+            "source_id": source_id,
+            "normalized_relative_path": "chapter-1.md",
+            "sync_status": "synced",
+            "binding": {"media_id": 99},
+        }
+
+    async def create_reading_saved_search(self, request_data):
+        self.calls.append(("create_reading_saved_search", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "id": 9,
+            "name": "Morning",
+            "query": {"status": ["saved"]},
+            "sort": "updated_desc",
+        }
+
+    async def list_reading_saved_searches(self, *, limit=50, offset=0):
+        self.calls.append(("list_reading_saved_searches", limit, offset))
+        return {
+            "items": [
+                {
+                    "id": 9,
+                    "name": "Morning",
+                    "query": {"status": ["saved"]},
+                    "sort": "updated_desc",
+                }
+            ],
+            "total": 1,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def update_reading_saved_search(self, search_id, request_data):
+        self.calls.append(
+            ("update_reading_saved_search", search_id, request_data.model_dump(exclude_none=True, mode="json"))
+        )
+        return {
+            "id": search_id,
+            "name": "Updated",
+            "query": {"status": ["read"]},
+            "sort": "created_desc",
+        }
+
+    async def delete_reading_saved_search(self, search_id):
+        self.calls.append(("delete_reading_saved_search", search_id))
+        return {"ok": True}
+
+    async def link_reading_item_note(self, item_id, request_data):
+        self.calls.append(("link_reading_item_note", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"item_id": item_id, "note_id": "note-uuid-1", "created_at": "2026-04-23T12:00:00Z"}
+
+    async def list_reading_item_note_links(self, item_id):
+        self.calls.append(("list_reading_item_note_links", item_id))
+        return {
+            "item_id": item_id,
+            "links": [{"item_id": item_id, "note_id": "note-uuid-1", "created_at": "2026-04-23T12:00:00Z"}],
+        }
+
+    async def unlink_reading_item_note(self, item_id, note_id):
+        self.calls.append(("unlink_reading_item_note", item_id, note_id))
+        return {"ok": True}
+
     async def submit_media_ingest_jobs(self, request_data, file_paths=None):
         self.calls.append(
             (
@@ -403,6 +468,44 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
         ("list_ingestion_source_items", 7),
         ("trigger_ingestion_source_sync", 7),
         ("upload_ingestion_source_archive", 7, "/tmp/archive.zip"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_ingestion_item_reattach_saved_searches_and_note_links():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    reattached = await service.reattach_ingestion_source_item(7, 55)
+    created = await service.create_reading_saved_search(
+        name="Morning",
+        query={"status": ["saved"]},
+        sort="updated_desc",
+    )
+    listed = await service.list_reading_saved_searches(limit=25, offset=5)
+    updated = await service.update_reading_saved_search(9, name="Updated", query={"status": "read"})
+    deleted = await service.delete_reading_saved_search(9)
+    linked = await service.link_reading_item_note(31, note_id="note-uuid-1")
+    links = await service.list_reading_item_note_links(31)
+    unlinked = await service.unlink_reading_item_note(31, "note-uuid-1")
+
+    assert reattached["binding"] == {"media_id": 99}
+    assert created["name"] == "Morning"
+    assert listed["total"] == 1
+    assert updated["name"] == "Updated"
+    assert deleted == {"ok": True}
+    assert linked["note_id"] == "note-uuid-1"
+    assert links["links"][0]["note_id"] == "note-uuid-1"
+    assert unlinked == {"ok": True}
+    assert client.calls[-8:] == [
+        ("reattach_ingestion_source_item", 7, 55),
+        ("create_reading_saved_search", {"name": "Morning", "query": {"status": ["saved"]}, "sort": "updated_desc"}),
+        ("list_reading_saved_searches", 25, 5),
+        ("update_reading_saved_search", 9, {"name": "Updated", "query": {"status": "read"}}),
+        ("delete_reading_saved_search", 9),
+        ("link_reading_item_note", 31, {"note_id": "note-uuid-1"}),
+        ("list_reading_item_note_links", 31),
+        ("unlink_reading_item_note", 31, "note-uuid-1"),
     ]
 
 

@@ -279,6 +279,45 @@ def normalize_ingestion_source_item(
     }
 
 
+def normalize_reading_saved_search(
+    saved_search: Mapping[str, Any] | Any,
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    search_data = _as_mapping(saved_search)
+    source_id = str(search_data.get("id"))
+    return {
+        "id": build_canonical_media_id(backend, "reading_saved_search", source_id),
+        "backend": backend,
+        "entity_kind": "reading_saved_search",
+        "source_id": source_id,
+        "name": search_data.get("name"),
+        "query": _as_mapping(search_data.get("query")),
+        "sort": search_data.get("sort"),
+        "created_at": _clean_timestamp(search_data.get("created_at")),
+        "updated_at": _clean_timestamp(search_data.get("updated_at")),
+    }
+
+
+def normalize_reading_note_link(
+    link: Mapping[str, Any] | Any,
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    link_data = _as_mapping(link)
+    item_id = str(link_data.get("item_id"))
+    note_id = str(link_data.get("note_id"))
+    return {
+        "id": build_canonical_media_id(backend, "reading_note_link", f"{item_id}:{note_id}"),
+        "backend": backend,
+        "entity_kind": "reading_note_link",
+        "source_id": f"{item_id}:{note_id}",
+        "item_id": item_id,
+        "note_id": note_id,
+        "created_at": _clean_timestamp(link_data.get("created_at")),
+    }
+
+
 def normalize_media_ingest_job(
     job: Mapping[str, Any],
     *,

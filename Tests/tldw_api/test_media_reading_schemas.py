@@ -6,6 +6,8 @@ from tldw_chatbook.tldw_api import (
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
     ReadingProgressUpdate,
+    ReadingSavedSearchCreateRequest,
+    ReadingSavedSearchUpdateRequest,
     ReadingUpdateRequest,
 )
 
@@ -40,3 +42,33 @@ def test_ingestion_source_create_defaults():
 def test_reading_progress_update_serializes_mode_default():
     payload = ReadingProgressUpdate(current_page=3, total_pages=10)
     assert payload.view_mode == "single"
+
+
+def test_reading_saved_search_normalizes_query_and_sort():
+    request = ReadingSavedSearchCreateRequest(
+        name=" Morning ",
+        query={"status": [" saved "], "tags": [" ai "], "favorite": True, "sort": "UPDATED_DESC"},
+        sort="created_desc",
+    )
+
+    assert request.name == "Morning"
+    assert request.query == {
+        "status": ["saved"],
+        "tags": ["ai"],
+        "favorite": True,
+        "sort": "updated_desc",
+    }
+    assert request.sort == "created_desc"
+
+
+def test_reading_saved_search_rejects_unsupported_query_keys():
+    with pytest.raises(Exception, match="unsupported_query_key"):
+        ReadingSavedSearchCreateRequest(name="Bad", query={"workspace_id": "ws-1"})
+
+
+def test_reading_saved_search_update_allows_sparse_patch():
+    request = ReadingSavedSearchUpdateRequest(query={"status": "read"})
+
+    assert request.name is None
+    assert request.query == {"status": "read"}
+    assert request.sort is None

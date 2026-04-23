@@ -136,6 +136,30 @@ async def test_ingestion_source_routes_wire_and_list_methods_are_typed_as_lists(
 
 
 @pytest.mark.asyncio
+async def test_ingestion_source_item_reattach_route_returns_typed_item(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": 55,
+            "source_id": 7,
+            "normalized_relative_path": "chapter-1.md",
+            "sync_status": "synced",
+            "binding": {"media_id": 99},
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    item = await client.reattach_ingestion_source_item(source_id=7, item_id=55)
+
+    assert mocked.await_args.args[:2] == (
+        "POST",
+        "/api/v1/ingestion-sources/7/items/55/reattach",
+    )
+    assert isinstance(item, IngestionSourceItemResponse)
+    assert item.binding == {"media_id": 99}
+
+
+@pytest.mark.asyncio
 async def test_media_ingest_job_routes_wire_form_payload_and_status_controls(monkeypatch):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
@@ -495,6 +519,81 @@ async def test_reading_highlight_routes_wire_crud_paths(monkeypatch):
     assert updated.color == "blue"
     assert isinstance(deleted, api.ReadingHighlightDeleteResponse)
     assert deleted.success is True
+
+
+@pytest.mark.asyncio
+async def test_reading_saved_search_and_note_link_routes_wire_crud(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    saved_search = {
+        "id": 9,
+        "name": "Morning",
+        "query": {"status": ["saved"], "tags": ["ai"]},
+        "sort": "updated_desc",
+    }
+    note_link = {
+        "item_id": 31,
+        "note_id": "note-uuid-1",
+        "created_at": "2026-04-23T12:00:00Z",
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            saved_search,
+            {"items": [saved_search], "total": 1, "limit": 50, "offset": 0},
+            {**saved_search, "name": "Updated"},
+            {"ok": True},
+            note_link,
+            {"item_id": 31, "links": [note_link]},
+            {"ok": True},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    created = await client.create_reading_saved_search(
+        api.ReadingSavedSearchCreateRequest(
+            name="Morning",
+            query={"status": ["saved"], "tags": ["ai"]},
+            sort="updated_desc",
+        )
+    )
+    listed = await client.list_reading_saved_searches(limit=50, offset=0)
+    updated = await client.update_reading_saved_search(
+        9,
+        api.ReadingSavedSearchUpdateRequest(name="Updated"),
+    )
+    deleted = await client.delete_reading_saved_search(9)
+    linked = await client.link_reading_item_note(
+        31,
+        api.ReadingNoteLinkCreateRequest(note_id="note-uuid-1"),
+    )
+    links = await client.list_reading_item_note_links(31)
+    unlinked = await client.unlink_reading_item_note(31, "note-uuid-1")
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/saved-searches")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "name": "Morning",
+        "query": {"status": ["saved"], "tags": ["ai"]},
+        "sort": "updated_desc",
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/saved-searches")
+    assert mocked.await_args_list[1].kwargs["params"] == {"limit": 50, "offset": 0}
+    assert mocked.await_args_list[2].args[:2] == ("PATCH", "/api/v1/reading/saved-searches/9")
+    assert mocked.await_args_list[2].kwargs["json_data"] == {"name": "Updated"}
+    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/reading/saved-searches/9")
+    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/reading/items/31/links/note")
+    assert mocked.await_args_list[4].kwargs["json_data"] == {"note_id": "note-uuid-1"}
+    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/reading/items/31/links")
+    assert mocked.await_args_list[6].args[:2] == (
+        "DELETE",
+        "/api/v1/reading/items/31/links/note/note-uuid-1",
+    )
+
+    assert isinstance(created, api.ReadingSavedSearchResponse)
+    assert isinstance(listed, api.ReadingSavedSearchListResponse)
+    assert isinstance(updated, api.ReadingSavedSearchResponse)
+    assert deleted == {"ok": True}
+    assert isinstance(linked, api.ReadingNoteLinkResponse)
+    assert isinstance(links, api.ReadingNoteLinksListResponse)
+    assert unlinked == {"ok": True}
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,10 @@ from ..tldw_api import (
     MediaIngestJobSubmitRequest,
     ReadingHighlightCreateRequest,
     ReadingHighlightUpdateRequest,
+    ReadingNoteLinkCreateRequest,
     ReadingProgressUpdate,
+    ReadingSavedSearchCreateRequest,
+    ReadingSavedSearchUpdateRequest,
     ReadingUpdateRequest,
     TLDWAPIClient,
 )
@@ -153,11 +156,50 @@ class ServerMediaReadingService:
     async def list_ingestion_source_items(self, source_id: Any) -> Any:
         return await self._require_client().list_ingestion_source_items(int(source_id))
 
+    async def reattach_ingestion_source_item(self, source_id: Any, item_id: Any) -> Any:
+        return await self._require_client().reattach_ingestion_source_item(int(source_id), int(item_id))
+
     async def trigger_ingestion_source_sync(self, source_id: Any) -> Any:
         return await self._require_client().trigger_ingestion_source_sync(int(source_id))
 
     async def upload_ingestion_source_archive(self, source_id: Any, archive_path: str) -> Any:
         return await self._require_client().upload_ingestion_source_archive(int(source_id), archive_path)
+
+    async def create_reading_saved_search(
+        self,
+        *,
+        name: str,
+        query: Mapping[str, Any] | None = None,
+        sort: str | None = None,
+    ) -> Any:
+        request_data = ReadingSavedSearchCreateRequest(
+            name=name,
+            query=dict(query or {}),
+            sort=sort,
+        )
+        return await self._require_client().create_reading_saved_search(request_data)
+
+    async def list_reading_saved_searches(self, *, limit: int = 50, offset: int = 0) -> Any:
+        return await self._require_client().list_reading_saved_searches(limit=limit, offset=offset)
+
+    async def update_reading_saved_search(self, search_id: Any, **changes: Any) -> Any:
+        request_data = ReadingSavedSearchUpdateRequest(
+            **{key: value for key, value in changes.items() if value is not None}
+        )
+        return await self._require_client().update_reading_saved_search(int(search_id), request_data)
+
+    async def delete_reading_saved_search(self, search_id: Any) -> Any:
+        return await self._require_client().delete_reading_saved_search(int(search_id))
+
+    async def link_reading_item_note(self, item_id: Any, *, note_id: str) -> Any:
+        request_data = ReadingNoteLinkCreateRequest(note_id=note_id)
+        return await self._require_client().link_reading_item_note(int(item_id), request_data)
+
+    async def list_reading_item_note_links(self, item_id: Any) -> Any:
+        return await self._require_client().list_reading_item_note_links(int(item_id))
+
+    async def unlink_reading_item_note(self, item_id: Any, note_id: str) -> Any:
+        return await self._require_client().unlink_reading_item_note(int(item_id), str(note_id))
 
     async def submit_media_ingest_jobs(
         self,
