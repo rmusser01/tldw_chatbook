@@ -379,3 +379,43 @@ class RAGAdminScopeService:
                 offset=offset,
             )
         )
+
+    async def reprocess_media(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        media_id: int,
+        perform_chunking: bool = True,
+        generate_embeddings: bool = False,
+        chunk_method: str | None = None,
+        chunk_size: int = 500,
+        chunk_overlap: int = 200,
+        auto_apply_template: bool = False,
+        chunking_template_name: str | None = None,
+        embedding_model: str | None = None,
+        embedding_provider: str | None = None,
+        force_regenerate_embeddings: bool = False,
+        **extra_options: Any,
+    ) -> dict[str, Any]:
+        service = self._server_service_for_mode(mode)
+        kwargs: dict[str, Any] = dict(extra_options)
+        kwargs["perform_chunking"] = perform_chunking
+        if generate_embeddings:
+            kwargs["generate_embeddings"] = generate_embeddings
+        if chunk_method is not None:
+            kwargs["chunk_method"] = chunk_method
+        if chunk_size != 500:
+            kwargs["chunk_size"] = chunk_size
+        if chunk_overlap != 200:
+            kwargs["chunk_overlap"] = chunk_overlap
+        if auto_apply_template:
+            kwargs["auto_apply_template"] = auto_apply_template
+        if chunking_template_name is not None:
+            kwargs["chunking_template_name"] = chunking_template_name
+        if embedding_model is not None:
+            kwargs["embedding_model"] = embedding_model
+        if embedding_provider is not None:
+            kwargs["embedding_provider"] = embedding_provider
+        if force_regenerate_embeddings:
+            kwargs["force_regenerate_embeddings"] = force_regenerate_embeddings
+        return await self._maybe_await(service.reprocess_media(media_id, **kwargs))

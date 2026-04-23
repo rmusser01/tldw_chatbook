@@ -215,3 +215,27 @@ class MediaEmbeddingJobResponse(BaseModel):
 class MediaEmbeddingJobListResponse(BaseModel):
     data: list[dict[str, Any]] = Field(default_factory=list)
     pagination: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReprocessMediaRequest(BaseModel):
+    perform_chunking: bool = True
+    generate_embeddings: bool = False
+    chunk_method: Optional[str] = None
+    chunk_size: int = 500
+    chunk_overlap: int = 200
+    auto_apply_template: bool = False
+    chunking_template_name: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embedding_provider: Optional[str] = None
+    force_regenerate_embeddings: bool = False
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ReprocessMediaResponse(BaseModel):
+    media_id: int
+    status: str
+    message: str
+    chunks_created: Optional[int] = None
+    embeddings_started: bool = False
+    job_id: Optional[str] = None

@@ -14,6 +14,7 @@ from ..tldw_api import (
     ChunkingTemplateUpdateRequest,
     GenerateMediaEmbeddingsRequest,
     MediaEmbeddingsSearchRequest,
+    ReprocessMediaRequest,
     TLDWAPIClient,
 )
 
@@ -258,3 +259,34 @@ class ServerRAGAdminService:
                 offset=offset,
             )
         )
+
+    async def reprocess_media(
+        self,
+        media_id: int,
+        *,
+        perform_chunking: bool = True,
+        generate_embeddings: bool = False,
+        chunk_method: Optional[str] = None,
+        chunk_size: int = 500,
+        chunk_overlap: int = 200,
+        auto_apply_template: bool = False,
+        chunking_template_name: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+        embedding_provider: Optional[str] = None,
+        force_regenerate_embeddings: bool = False,
+        **extra_options: Any,
+    ) -> dict[str, Any]:
+        request = ReprocessMediaRequest(
+            perform_chunking=perform_chunking,
+            generate_embeddings=generate_embeddings,
+            chunk_method=chunk_method,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            auto_apply_template=auto_apply_template,
+            chunking_template_name=chunking_template_name,
+            embedding_model=embedding_model,
+            embedding_provider=embedding_provider,
+            force_regenerate_embeddings=force_regenerate_embeddings,
+            **extra_options,
+        )
+        return self._dump_model(await self._require_client().reprocess_media(media_id, request))

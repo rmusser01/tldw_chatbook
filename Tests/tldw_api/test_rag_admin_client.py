@@ -25,6 +25,8 @@ from tldw_chatbook.tldw_api import (
     MediaEmbeddingsSearchRequest,
     MediaEmbeddingsSearchResponse,
     MediaEmbeddingsStatusResponse,
+    ReprocessMediaRequest,
+    ReprocessMediaResponse,
     TLDWAPIClient,
 )
 
@@ -419,3 +421,50 @@ async def test_media_embedding_admin_routes_wire_and_return_typed_payloads(monke
         "offset": 5,
         "status": "completed",
     }
+
+
+@pytest.mark.asyncio
+async def test_media_reprocess_route_wires_typed_payload(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "media_id": 42,
+            "status": "completed",
+            "message": "Reprocess completed; embeddings regeneration started.",
+            "chunks_created": 8,
+            "embeddings_started": True,
+            "job_id": None,
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    response = await client.reprocess_media(
+        42,
+        ReprocessMediaRequest(
+            perform_chunking=True,
+            generate_embeddings=True,
+            chunk_method="sentences",
+            chunk_size=500,
+            chunk_overlap=100,
+            chunking_template_name="article-template",
+            force_regenerate_embeddings=True,
+        ),
+    )
+
+    assert isinstance(response, ReprocessMediaResponse)
+    assert response.media_id == 42
+    assert response.embeddings_started is True
+    mocked.assert_awaited_once_with(
+        "POST",
+        "/api/v1/media/42/reprocess",
+        json_data={
+            "perform_chunking": True,
+            "generate_embeddings": True,
+            "chunk_method": "sentences",
+            "chunk_size": 500,
+            "chunk_overlap": 100,
+            "force_regenerate_embeddings": True,
+            "auto_apply_template": False,
+            "chunking_template_name": "article-template",
+        },
+    )

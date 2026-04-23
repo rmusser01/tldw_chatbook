@@ -40,6 +40,10 @@ class FakeServerService:
         self.calls.append(("list_media_embedding_jobs", kwargs))
         return {"data": [{"uuid": "job-1", "status": "completed"}], "pagination": {"count": 1}}
 
+    async def reprocess_media(self, media_id, **kwargs):
+        self.calls.append(("reprocess_media", media_id, kwargs))
+        return {"media_id": media_id, "status": "completed", "embeddings_started": True}
+
     async def validate_template_config(self, template_config):
         self.calls.append(("validate_template_config", template_config))
         return {"valid": True}
@@ -141,6 +145,36 @@ async def test_scope_service_routes_media_embedding_operations_to_server_only():
 
     with pytest.raises(ValueError, match="Server retrieval-admin backend is required"):
         await scope.generate_media_embeddings(mode="local", media_id=42)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_media_reprocess_to_server_only():
+    server = FakeServerService()
+    scope = RAGAdminScopeService(local_service=FakeLocalService(), server_service=server)
+
+    response = await scope.reprocess_media(
+        mode="server",
+        media_id=42,
+        perform_chunking=True,
+        generate_embeddings=True,
+        chunking_template_name="article-template",
+    )
+
+    assert response == {"media_id": 42, "status": "completed", "embeddings_started": True}
+    assert server.calls == [
+        (
+            "reprocess_media",
+            42,
+            {
+                "perform_chunking": True,
+                "generate_embeddings": True,
+                "chunking_template_name": "article-template",
+            },
+        )
+    ]
+
+    with pytest.raises(ValueError, match="Server retrieval-admin backend is required"):
+        await scope.reprocess_media(mode="local", media_id=42)
 
 
 @pytest.mark.asyncio

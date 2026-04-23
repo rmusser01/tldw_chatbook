@@ -208,6 +208,8 @@ from .rag_admin_schemas import (
     MediaEmbeddingsSearchRequest,
     MediaEmbeddingsSearchResponse,
     MediaEmbeddingsStatusResponse,
+    ReprocessMediaRequest,
+    ReprocessMediaResponse,
 )
 from .evaluations_schemas import (
     CreateEvaluationRequest,
@@ -2285,6 +2287,18 @@ class TLDWAPIClient:
             params["status"] = status
         response = await self._request("GET", "/api/v1/media/embeddings/jobs", params=params)
         return MediaEmbeddingJobListResponse.model_validate(response)
+
+    async def reprocess_media(
+        self,
+        media_id: int,
+        request_data: ReprocessMediaRequest,
+    ) -> ReprocessMediaResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/reprocess",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReprocessMediaResponse.model_validate(response)
 
     async def create_evaluation_dataset(
         self,

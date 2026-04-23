@@ -314,6 +314,8 @@ _EXPORT_GROUPS = (
             "MediaEmbeddingsSearchResponse",
             "MediaEmbeddingsSearchResult",
             "MediaEmbeddingsStatusResponse",
+            "ReprocessMediaRequest",
+            "ReprocessMediaResponse",
         ),
     ),
     (

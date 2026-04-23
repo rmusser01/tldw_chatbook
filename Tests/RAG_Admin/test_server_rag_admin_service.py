@@ -22,6 +22,8 @@ from tldw_chatbook.tldw_api import (
     MediaEmbeddingsSearchRequest,
     MediaEmbeddingsSearchResponse,
     MediaEmbeddingsStatusResponse,
+    ReprocessMediaRequest,
+    ReprocessMediaResponse,
 )
 
 
@@ -173,6 +175,16 @@ class FakeClient:
             pagination={"limit": 10, "offset": 0, "count": 1},
         )
 
+    async def reprocess_media(self, media_id, request_data):
+        self.calls.append(("reprocess_media", media_id, request_data))
+        return ReprocessMediaResponse(
+            media_id=media_id,
+            status="completed",
+            message="Reprocess completed.",
+            chunks_created=8,
+            embeddings_started=True,
+        )
+
 
 @pytest.mark.asyncio
 async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
@@ -307,3 +319,26 @@ async def test_server_rag_admin_service_exposes_media_embedding_operations():
     assert deleted["status"] == "success"
     assert job["uuid"] == "job-1"
     assert jobs["pagination"]["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_server_rag_admin_service_exposes_media_reprocess():
+    client = FakeClient()
+    service = ServerRAGAdminService(client=client)
+
+    response = await service.reprocess_media(
+        42,
+        perform_chunking=True,
+        generate_embeddings=True,
+        chunk_method="sentences",
+        chunk_size=500,
+        chunk_overlap=100,
+        chunking_template_name="article-template",
+        force_regenerate_embeddings=True,
+    )
+
+    assert client.calls[0][0:2] == ("reprocess_media", 42)
+    assert isinstance(client.calls[0][2], ReprocessMediaRequest)
+    assert client.calls[0][2].chunking_template_name == "article-template"
+    assert response["media_id"] == 42
+    assert response["embeddings_started"] is True
