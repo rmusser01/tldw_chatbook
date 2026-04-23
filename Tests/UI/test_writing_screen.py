@@ -436,6 +436,31 @@ def test_detail_panel_version_list_is_read_only():
     assert "Draft A" in panel.version_preview_text
 
 
+def test_detail_panel_non_entity_selection_clears_editable_entity_state():
+    scope = FakeWritingScopeService()
+    panel = _writing_window(scope).detail_panel
+
+    panel.load_entity(
+        {"source": "local", "kind": "scene", "id": "scene-1", "project_id": "local-project"},
+        scope.entities["scene"],
+    )
+    panel.set_versions(scope.versions)
+    panel.load_node(
+        {
+            "source": "local",
+            "kind": "unassigned_chapters",
+            "id": None,
+            "project_id": "local-project",
+            "title": "Unassigned Chapters",
+        }
+    )
+
+    assert panel.entity is None
+    assert panel.selected_version_id is None
+    assert panel.create_version_enabled is False
+    assert panel.current_payload() == {}
+
+
 @pytest.mark.asyncio
 async def test_window_restore_local_version_updates_working_state_and_detail():
     scope = FakeWritingScopeService()

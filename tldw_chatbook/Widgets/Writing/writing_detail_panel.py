@@ -46,29 +46,20 @@ class WritingDetailPanel(Vertical):
 
     def clear(self) -> None:
         self.selected_node = None
-        self.entity = None
         self.title = "No selection"
         self.detail_text = "Select a project, manuscript, chapter, or scene."
-        self.body_editor_enabled = False
-        self.create_version_enabled = False
-        self.versions = []
-        self.version_labels = []
-        self.selected_version_id = None
-        self.version_preview_text = ""
-        self.trash_entries = []
-        self.trash_labels = []
+        self._clear_editable_state()
         self._refresh_mounted()
 
     def load_node(self, node_data: Mapping[str, Any]) -> None:
         self.selected_node = dict(node_data)
+        self._clear_editable_state()
         self.title = str(node_data.get("title") or "Untitled")
         kind = str(node_data.get("kind") or "item")
         source = str(node_data.get("source") or "local")
         version = node_data.get("version")
         version_text = f"v{version}" if version is not None else "unversioned"
         self.detail_text = f"{kind} from {source} ({version_text})"
-        self.body_editor_enabled = False
-        self.create_version_enabled = False
         self._refresh_mounted()
 
     def load_entity(self, node_data: Mapping[str, Any], entity: Any) -> None:
@@ -139,6 +130,17 @@ class WritingDetailPanel(Vertical):
             self.query_one("#writing-trash-list", Static).update("\n".join(self.trash_labels))
         except Exception:
             pass
+
+    def _clear_editable_state(self) -> None:
+        self.entity = None
+        self.body_editor_enabled = False
+        self.create_version_enabled = False
+        self.versions = []
+        self.version_labels = []
+        self.selected_version_id = None
+        self.version_preview_text = ""
+        self.trash_entries = []
+        self.trash_labels = []
 
     def current_payload(self) -> dict[str, Any]:
         if self.selected_node is None:
