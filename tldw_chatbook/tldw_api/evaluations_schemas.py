@@ -445,3 +445,32 @@ class EvaluationRecipeDatasetValidationResponse(BaseModel):
     dataset_content_hash: str | None = None
 
     model_config = ConfigDict(extra="allow", from_attributes=True)
+
+
+class PipelinePresetCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_\-]+$")
+    config: dict[str, Any]
+
+
+class PipelinePresetResponse(BaseModel):
+    name: str
+    config: dict[str, Any]
+    created_at: int | None = None
+    updated_at: int | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PipelinePresetListResponse(BaseModel):
+    items: list[PipelinePresetResponse] = Field(default_factory=list)
+    total: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PipelineCleanupResponse(BaseModel):
+    expired_count: int
+    deleted_count: int
+    errors: list[str] | None = None
+
+    model_config = ConfigDict(from_attributes=True)

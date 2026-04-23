@@ -24,6 +24,10 @@ from tldw_chatbook.tldw_api import (
     EvaluationRecipeLaunchReadiness,
     EvaluationRecipeManifest,
     EvaluationResponse,
+    PipelineCleanupResponse,
+    PipelinePresetCreate,
+    PipelinePresetListResponse,
+    PipelinePresetResponse,
     EvaluationRunCreateRequest,
     EvaluationRunListResponse,
     EvaluationRunResponse,
@@ -683,3 +687,78 @@ async def test_evaluation_recipe_and_benchmark_discovery_routes_wire(monkeypatch
     assert isinstance(validation, EvaluationRecipeDatasetValidationResponse)
     assert benchmark["name"] == "truthfulqa"
     assert validation.model_extra["coverage"] == {"questions": 2}
+
+
+@pytest.mark.asyncio
+async def test_evaluation_rag_pipeline_preset_and_cleanup_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "name": "baseline",
+                "config": {"chunking": {"method": "sentences"}},
+                "created_at": 1713571200,
+                "updated_at": 1713571300,
+            },
+            {
+                "items": [
+                    {
+                        "name": "baseline",
+                        "config": {"chunking": {"method": "sentences"}},
+                        "created_at": 1713571200,
+                        "updated_at": 1713571300,
+                    }
+                ],
+                "total": 1,
+            },
+            {
+                "name": "baseline",
+                "config": {"chunking": {"method": "sentences"}},
+                "created_at": 1713571200,
+                "updated_at": 1713571300,
+            },
+            {},
+            {"expired_count": 2, "deleted_count": 1, "errors": ["collection_b: locked"]},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    saved = await client.save_evaluation_pipeline_preset(
+        PipelinePresetCreate(
+            name="baseline",
+            config={"chunking": {"method": "sentences"}},
+        )
+    )
+    listed = await client.list_evaluation_pipeline_presets(limit=25, offset=5)
+    fetched = await client.get_evaluation_pipeline_preset("baseline")
+    await client.delete_evaluation_pipeline_preset("baseline")
+    cleanup = await client.cleanup_evaluation_pipeline_collections()
+
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/rag/pipeline/presets",
+    )
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/rag/pipeline/presets",
+    )
+    assert mocked.await_args_list[1].kwargs["params"] == {"limit": 25, "offset": 5}
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/rag/pipeline/presets/baseline",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "DELETE",
+        "/api/v1/evaluations/rag/pipeline/presets/baseline",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/rag/pipeline/cleanup",
+    )
+
+    assert isinstance(saved, PipelinePresetResponse)
+    assert isinstance(listed, PipelinePresetListResponse)
+    assert isinstance(fetched, PipelinePresetResponse)
+    assert isinstance(cleanup, PipelineCleanupResponse)
+    assert listed.items[0].name == "baseline"
+    assert cleanup.errors == ["collection_b: locked"]

@@ -618,3 +618,56 @@ class EvaluationScopeService:
             )
             or {}
         )
+
+    async def save_pipeline_preset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation RAG pipeline preset save")
+        return dict(
+            await self._maybe_await(service.save_pipeline_preset(name=name, config=config))
+            or {}
+        )
+
+    async def list_pipeline_presets(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation RAG pipeline preset list")
+        return dict(
+            await self._maybe_await(service.list_pipeline_presets(limit=limit, offset=offset))
+            or {}
+        )
+
+    async def get_pipeline_preset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation RAG pipeline preset detail")
+        return dict(await self._maybe_await(service.get_pipeline_preset(name)) or {})
+
+    async def delete_pipeline_preset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation RAG pipeline preset delete")
+        await self._maybe_await(service.delete_pipeline_preset(name))
+        return {"status": "deleted", "name": name}
+
+    async def cleanup_pipeline_collections(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation RAG pipeline cleanup")
+        return dict(await self._maybe_await(service.cleanup_pipeline_collections()) or {})

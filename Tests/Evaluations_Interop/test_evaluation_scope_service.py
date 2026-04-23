@@ -322,6 +322,25 @@ class FakeServerEvaluationService:
         self.calls.append(("validate_recipe_dataset", recipe_id, dataset_id, dataset, run_config))
         return {"valid": True, "errors": [], "dataset_id": dataset_id, "sample_count": 2}
 
+    async def save_pipeline_preset(self, *, name, config):
+        self.calls.append(("save_pipeline_preset", name, config))
+        return {"name": name, "config": config, "created_at": 1, "updated_at": 2}
+
+    async def list_pipeline_presets(self, *, limit=50, offset=0):
+        self.calls.append(("list_pipeline_presets", limit, offset))
+        return {"items": [{"name": "baseline", "config": {}}], "total": 1}
+
+    async def get_pipeline_preset(self, name):
+        self.calls.append(("get_pipeline_preset", name))
+        return {"name": name, "config": {}}
+
+    async def delete_pipeline_preset(self, name):
+        self.calls.append(("delete_pipeline_preset", name))
+
+    async def cleanup_pipeline_collections(self):
+        self.calls.append(("cleanup_pipeline_collections",))
+        return {"expired_count": 2, "deleted_count": 1, "errors": ["collection_b: locked"]}
+
 
 @pytest.mark.asyncio
 async def test_scope_service_routes_evaluation_list_by_backend():
@@ -587,3 +606,31 @@ async def test_scope_service_routes_evaluation_catalog_actions_to_server_only():
 
     with pytest.raises(ValueError, match="server-only"):
         await scope.list_benchmarks(mode="local")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_rag_pipeline_preset_actions_to_server_only():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    saved = await scope.save_pipeline_preset(
+        mode="server",
+        name="baseline",
+        config={"chunking": {"method": "sentences"}},
+    )
+    listed = await scope.list_pipeline_presets(mode="server", limit=25, offset=5)
+    fetched = await scope.get_pipeline_preset(mode="server", name="baseline")
+    deleted = await scope.delete_pipeline_preset(mode="server", name="baseline")
+    cleanup = await scope.cleanup_pipeline_collections(mode="server")
+
+    assert saved["name"] == "baseline"
+    assert listed["total"] == 1
+    assert fetched["name"] == "baseline"
+    assert deleted["status"] == "deleted"
+    assert cleanup["deleted_count"] == 1
+    assert server.calls[-4] == ("list_pipeline_presets", 25, 5)
+    assert server.calls[-1] == ("cleanup_pipeline_collections",)
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.save_pipeline_preset(mode="local", name="baseline", config={})

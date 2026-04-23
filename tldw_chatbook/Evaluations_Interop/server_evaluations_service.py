@@ -14,6 +14,7 @@ from ..tldw_api import (
     EvaluationDatasetCreateRequest,
     EvaluationRecipeDatasetValidationRequest,
     EvaluationRunCreateRequest,
+    PipelinePresetCreate,
     SyntheticEvalGenerationRequest,
     SyntheticEvalPromotionRequest,
     SyntheticEvalReviewRequest,
@@ -405,3 +406,36 @@ class ServerEvaluationsService:
         return self._dump_model(
             await self._require_client().validate_evaluation_recipe_dataset(recipe_id, request)
         )
+
+    async def save_pipeline_preset(
+        self,
+        *,
+        name: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        request = PipelinePresetCreate(name=name, config=config)
+        return self._dump_model(
+            await self._require_client().save_evaluation_pipeline_preset(request)
+        )
+
+    async def list_pipeline_presets(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        return self._dump_model(
+            await self._require_client().list_evaluation_pipeline_presets(
+                limit=limit,
+                offset=offset,
+            )
+        )
+
+    async def get_pipeline_preset(self, name: str) -> dict[str, Any]:
+        return self._dump_model(await self._require_client().get_evaluation_pipeline_preset(name))
+
+    async def delete_pipeline_preset(self, name: str) -> None:
+        await self._require_client().delete_evaluation_pipeline_preset(name)
+
+    async def cleanup_pipeline_collections(self) -> dict[str, Any]:
+        return self._dump_model(await self._require_client().cleanup_evaluation_pipeline_collections())

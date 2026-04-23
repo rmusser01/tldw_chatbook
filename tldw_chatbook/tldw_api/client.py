@@ -229,6 +229,10 @@ from .evaluations_schemas import (
     EvaluationRecipeLaunchReadiness,
     EvaluationRecipeManifest,
     EvaluationResponse,
+    PipelineCleanupResponse,
+    PipelinePresetCreate,
+    PipelinePresetListResponse,
+    PipelinePresetResponse,
     EvaluationRunCreateRequest,
     EvaluationRunListResponse,
     EvaluationRunResponse,
@@ -2625,6 +2629,47 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return EvaluationRecipeDatasetValidationResponse.model_validate(response)
+
+    async def save_evaluation_pipeline_preset(
+        self,
+        request_data: PipelinePresetCreate,
+    ) -> PipelinePresetResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/rag/pipeline/presets",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PipelinePresetResponse.model_validate(response)
+
+    async def list_evaluation_pipeline_presets(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> PipelinePresetListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/evaluations/rag/pipeline/presets",
+            params={"limit": limit, "offset": offset},
+        )
+        return PipelinePresetListResponse.model_validate(response)
+
+    async def get_evaluation_pipeline_preset(self, name: str) -> PipelinePresetResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/evaluations/rag/pipeline/presets/{name}",
+        )
+        return PipelinePresetResponse.model_validate(response)
+
+    async def delete_evaluation_pipeline_preset(self, name: str) -> None:
+        await self._request(
+            "DELETE",
+            f"/api/v1/evaluations/rag/pipeline/presets/{name}",
+        )
+
+    async def cleanup_evaluation_pipeline_collections(self) -> PipelineCleanupResponse:
+        response = await self._request("POST", "/api/v1/evaluations/rag/pipeline/cleanup")
+        return PipelineCleanupResponse.model_validate(response)
 
     async def create_flashcard_deck(
         self,
