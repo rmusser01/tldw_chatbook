@@ -264,7 +264,15 @@ from .writing_manuscript_schemas import (
     ReorderRequest,
 )
 from .chat_conversation_schemas import (
+    ConversationCitationsResponse,
+    ConversationShareLinkCreateRequest,
+    ConversationShareLinkResponse,
+    ConversationShareLinkRevokeResponse,
+    ConversationShareLinksResponse,
     ConversationScopeParams,
+    RagContextPersistRequest,
+    RagContextPersistResponse,
+    SharedConversationResolveResponse,
     ConversationUpdateRequest,
     normalize_conversation_state,
 )
@@ -3178,6 +3186,124 @@ class TLDWAPIClient:
         if scope_params is not None:
             params.update(scope_params.model_dump(exclude_none=True, mode="json"))
         return await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/tree", params=params)
+
+    async def create_chat_conversation_share_link(
+        self,
+        conversation_id: str,
+        request_data: ConversationShareLinkCreateRequest,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> ConversationShareLinkResponse:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params = scope_params.model_dump(exclude_none=True, mode="json") if scope_params is not None else None
+        response = await self._request(
+            "POST",
+            f"/api/v1/chat/conversations/{conversation_id}/share-links",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            params=params,
+        )
+        return ConversationShareLinkResponse.model_validate(response)
+
+    async def list_chat_conversation_share_links(
+        self,
+        conversation_id: str,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> ConversationShareLinksResponse:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params = scope_params.model_dump(exclude_none=True, mode="json") if scope_params is not None else None
+        response = await self._request(
+            "GET",
+            f"/api/v1/chat/conversations/{conversation_id}/share-links",
+            params=params,
+        )
+        return ConversationShareLinksResponse.model_validate(response)
+
+    async def revoke_chat_conversation_share_link(
+        self,
+        conversation_id: str,
+        share_id: str,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> ConversationShareLinkRevokeResponse:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params = scope_params.model_dump(exclude_none=True, mode="json") if scope_params is not None else None
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/chat/conversations/{conversation_id}/share-links/{share_id}",
+            params=params,
+        )
+        return ConversationShareLinkRevokeResponse.model_validate(response)
+
+    async def resolve_shared_chat_conversation(
+        self,
+        share_token: str,
+        limit: int = 200,
+    ) -> SharedConversationResolveResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/chat/shared/conversations/{share_token}",
+            params={"limit": limit},
+        )
+        return SharedConversationResolveResponse.model_validate(response)
+
+    async def persist_chat_message_rag_context(
+        self,
+        message_id: str,
+        request_data: RagContextPersistRequest,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> RagContextPersistResponse:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params = scope_params.model_dump(exclude_none=True, mode="json") if scope_params is not None else None
+        response = await self._request(
+            "POST",
+            f"/api/v1/chat/messages/{message_id}/rag-context",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            params=params,
+        )
+        return RagContextPersistResponse.model_validate(response)
+
+    async def get_chat_message_rag_context(
+        self,
+        message_id: str,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params = scope_params.model_dump(exclude_none=True, mode="json") if scope_params is not None else None
+        return await self._request(
+            "GET",
+            f"/api/v1/chat/messages/{message_id}/rag-context",
+            params=params,
+        )
+
+    async def get_chat_conversation_messages_with_context(
+        self,
+        conversation_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        include_rag_context: bool = True,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "include_rag_context": include_rag_context,
+        }
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request(
+            "GET",
+            f"/api/v1/chat/conversations/{conversation_id}/messages-with-context",
+            params=params,
+        )
+
+    async def get_chat_conversation_citations(self, conversation_id: str) -> ConversationCitationsResponse:
+        response = await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/citations")
+        return ConversationCitationsResponse.model_validate(response)
 
     async def start_chat_loop_run(self, request_data: ChatLoopStartRequest) -> ChatLoopStartResponse:
         response = await self._request(

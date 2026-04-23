@@ -105,6 +105,38 @@ class FakeServerConversationService:
         self.calls.append(("get_conversation_tree", (conversation_id,), kwargs))
         return {"conversation": {"id": conversation_id}, "root_threads": [], "pagination": {}, "depth_cap": kwargs["depth_cap"]}
 
+    async def create_share_link(self, conversation_id: str, payload: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("create_share_link", (conversation_id, payload), kwargs))
+        return {"share_id": "share-1", "conversation_id": conversation_id}
+
+    async def list_share_links(self, conversation_id: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("list_share_links", (conversation_id,), kwargs))
+        return {"conversation_id": conversation_id, "links": []}
+
+    async def revoke_share_link(self, conversation_id: str, share_id: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("revoke_share_link", (conversation_id, share_id), kwargs))
+        return {"success": True, "share_id": share_id}
+
+    async def resolve_share_token(self, share_token: str, *, limit: int = 200) -> dict[str, Any]:
+        self.calls.append(("resolve_share_token", (share_token,), {"limit": limit}))
+        return {"conversation_id": "conv-1", "permission": "view", "messages": []}
+
+    async def persist_message_rag_context(self, message_id: str, payload: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("persist_message_rag_context", (message_id, payload), kwargs))
+        return {"success": True, "message_id": message_id}
+
+    async def get_message_rag_context(self, message_id: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("get_message_rag_context", (message_id,), kwargs))
+        return {"rag_context": {"search_query": "alpha"}}
+
+    async def get_messages_with_context(self, conversation_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+        self.calls.append(("get_messages_with_context", (conversation_id,), kwargs))
+        return [{"id": "msg-1", "conversation_id": conversation_id}]
+
+    async def get_conversation_citations(self, conversation_id: str) -> dict[str, Any]:
+        self.calls.append(("get_conversation_citations", (conversation_id,), {}))
+        return {"conversation_id": conversation_id, "citations": [], "total_count": 0}
+
 
 @pytest.mark.asyncio
 async def test_scope_service_defaults_to_local_list_and_enforces_policy() -> None:
@@ -239,6 +271,96 @@ async def test_scope_service_rejects_server_delete_until_contract_exists() -> No
 
     with pytest.raises(ValueError, match="Server chat conversation delete is not available"):
         await service.delete_conversation("conv-1", expected_version=7, mode="server")
+
+    assert local.calls == []
+    assert server.calls == []
+    assert policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_conversation_adjuncts_with_policy() -> None:
+    server = FakeServerConversationService()
+    policy = FakePolicyEnforcer()
+    service = ChatConversationScopeService(local_service=None, server_service=server, policy_enforcer=policy)
+
+    await service.create_share_link(
+        "conv-1",
+        {"ttl_seconds": 600},
+        mode="server",
+        scope_type="workspace",
+        workspace_id="ws-1",
+    )
+    await service.list_share_links("conv-1", mode="server", scope_type="workspace", workspace_id="ws-1")
+    await service.revoke_share_link("conv-1", "share-1", mode="server", scope_type="workspace", workspace_id="ws-1")
+    await service.resolve_share_token("token-1", mode="server", limit=50)
+    await service.persist_message_rag_context(
+        "msg-1",
+        {"message_id": "msg-1", "rag_context": {"search_query": "alpha"}},
+        mode="server",
+        scope_type="workspace",
+        workspace_id="ws-1",
+    )
+    await service.get_message_rag_context("msg-1", mode="server", scope_type="workspace", workspace_id="ws-1")
+    await service.get_messages_with_context(
+        "conv-1",
+        mode="server",
+        limit=25,
+        offset=5,
+        include_rag_context=False,
+        scope_type="workspace",
+        workspace_id="ws-1",
+    )
+    await service.get_conversation_citations("conv-1", mode="server")
+
+    assert server.calls == [
+        (
+            "create_share_link",
+            ("conv-1", {"ttl_seconds": 600}),
+            {"scope_type": "workspace", "workspace_id": "ws-1"},
+        ),
+        ("list_share_links", ("conv-1",), {"scope_type": "workspace", "workspace_id": "ws-1"}),
+        ("revoke_share_link", ("conv-1", "share-1"), {"scope_type": "workspace", "workspace_id": "ws-1"}),
+        ("resolve_share_token", ("token-1",), {"limit": 50}),
+        (
+            "persist_message_rag_context",
+            ("msg-1", {"message_id": "msg-1", "rag_context": {"search_query": "alpha"}}),
+            {"scope_type": "workspace", "workspace_id": "ws-1"},
+        ),
+        ("get_message_rag_context", ("msg-1",), {"scope_type": "workspace", "workspace_id": "ws-1"}),
+        (
+            "get_messages_with_context",
+            ("conv-1",),
+            {
+                "limit": 25,
+                "offset": 5,
+                "include_rag_context": False,
+                "scope_type": "workspace",
+                "workspace_id": "ws-1",
+            },
+        ),
+        ("get_conversation_citations", ("conv-1",), {}),
+    ]
+    assert policy.calls == [
+        "chat.update.server",
+        "chat.detail.server",
+        "chat.update.server",
+        "chat.detail.server",
+        "chat.update.server",
+        "chat.detail.server",
+        "chat.detail.server",
+        "chat.detail.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_local_conversation_adjuncts_before_policy() -> None:
+    local = FakeLocalConversationService()
+    server = FakeServerConversationService()
+    policy = FakePolicyEnforcer()
+    service = ChatConversationScopeService(local_service=local, server_service=server, policy_enforcer=policy)
+
+    with pytest.raises(ValueError, match="requires server mode"):
+        await service.create_share_link("conv-1", {"ttl_seconds": 600}, mode="local")
 
     assert local.calls == []
     assert server.calls == []

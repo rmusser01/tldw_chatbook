@@ -5,7 +5,7 @@ Conversation request and response schemas for the shared TLDW API client.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -260,3 +260,110 @@ class ConversationTreeResponse(BaseModel):
     root_threads: list[ConversationTreeNode]
     pagination: ConversationTreePagination
     depth_cap: int = Field(..., description="Applied depth cap")
+
+
+class ConversationShareLinkCreateRequest(BaseModel):
+    """Request payload for creating a server conversation share link."""
+
+    permission: Literal["view"] = Field("view", description="Share permission")
+    ttl_seconds: int | None = Field(None, ge=300, description="Token lifetime in seconds")
+    label: str | None = Field(None, max_length=80, description="Optional human-readable label")
+
+
+class ConversationShareLinkResponse(BaseModel):
+    share_id: str
+    permission: Literal["view"]
+    created_at: datetime
+    expires_at: datetime
+    token: str
+    share_path: str
+
+
+class ConversationShareLinkListItem(BaseModel):
+    id: str
+    permission: Literal["view"]
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    label: str | None = None
+    share_path: str | None = None
+    token: str | None = None
+
+
+class ConversationShareLinksResponse(BaseModel):
+    conversation_id: str
+    links: list[ConversationShareLinkListItem]
+
+
+class ConversationShareLinkRevokeResponse(BaseModel):
+    success: bool
+    share_id: str
+
+
+class SharedConversationResolveResponse(BaseModel):
+    conversation_id: str
+    title: str | None = None
+    source: str | None = None
+    permission: Literal["view"]
+    shared_by_user_id: str
+    expires_at: datetime
+    messages: list[dict[str, Any]]
+
+
+class RagContextDocument(BaseModel):
+    """A single retrieved document within a persisted RAG context."""
+
+    id: str | None = None
+    source_type: str | None = None
+    title: str | None = None
+    score: float | None = None
+    chunk_id: str | None = None
+    excerpt: str | None = None
+    url: str | None = None
+    page_number: int | None = None
+    line_range: list[int] | None = Field(None, min_length=2, max_length=2)
+    metadata: dict[str, Any] | None = None
+
+    model_config = {"extra": "allow"}
+
+
+class RagContext(BaseModel):
+    """RAG context stored with a chat message for citation persistence."""
+
+    search_query: str
+    search_mode: str | None = "hybrid"
+    settings_snapshot: dict[str, Any] | None = None
+    retrieved_documents: list[RagContextDocument] = Field(default_factory=list)
+    generated_answer: str | None = None
+    citations: list[dict[str, Any]] | None = None
+    claims_verified: list[dict[str, Any]] | None = None
+    timestamp: str | None = None
+    feedback_id: str | None = None
+
+    model_config = {"extra": "allow"}
+
+
+class RagContextPersistRequest(BaseModel):
+    message_id: str
+    rag_context: RagContext
+
+
+class RagContextPersistResponse(BaseModel):
+    success: bool
+    message_id: str
+    error: str | None = None
+
+
+class MessageWithRagContextResponse(BaseModel):
+    id: str
+    conversation_id: str
+    sender: str
+    content: str | None = None
+    timestamp: str | None = None
+    rag_context: dict[str, Any] | None = None
+
+
+class ConversationCitationsResponse(BaseModel):
+    conversation_id: str
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    total_count: int = 0

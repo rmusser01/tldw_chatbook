@@ -46,6 +46,12 @@ class ChatConversationScopeService:
             raise ValueError("Server chat conversation backend is unavailable.")
         return self.server_service
 
+    def _require_server_mode(self, mode: ChatConversationBackend | str | None) -> ChatConversationBackend:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != ChatConversationBackend.SERVER:
+            raise ValueError("Chat conversation server adjunct operation requires server mode.")
+        return normalized_mode
+
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
             return await value
@@ -210,3 +216,144 @@ class ChatConversationScopeService:
         self._enforce_policy(normalized_mode, "delete")
         service = self._service_for_mode(normalized_mode)
         return bool(await self._maybe_await(service.delete_conversation(conversation_id, expected_version)))
+
+    async def create_share_link(
+        self,
+        conversation_id: str,
+        payload: Mapping[str, Any],
+        *,
+        mode: ChatConversationBackend | str | None = None,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "update")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.create_share_link(
+                conversation_id,
+                dict(payload),
+                scope_type=scope_type,
+                workspace_id=workspace_id,
+            )
+        )
+
+    async def list_share_links(
+        self,
+        conversation_id: str,
+        *,
+        mode: ChatConversationBackend | str | None = None,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "detail")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.list_share_links(conversation_id, scope_type=scope_type, workspace_id=workspace_id)
+        )
+
+    async def revoke_share_link(
+        self,
+        conversation_id: str,
+        share_id: str,
+        *,
+        mode: ChatConversationBackend | str | None = None,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "update")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.revoke_share_link(
+                conversation_id,
+                share_id,
+                scope_type=scope_type,
+                workspace_id=workspace_id,
+            )
+        )
+
+    async def resolve_share_token(
+        self,
+        share_token: str,
+        *,
+        mode: ChatConversationBackend | str | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "detail")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.resolve_share_token(share_token, limit=limit))
+
+    async def persist_message_rag_context(
+        self,
+        message_id: str,
+        payload: Mapping[str, Any],
+        *,
+        mode: ChatConversationBackend | str | None = None,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "update")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.persist_message_rag_context(
+                message_id,
+                dict(payload),
+                scope_type=scope_type,
+                workspace_id=workspace_id,
+            )
+        )
+
+    async def get_message_rag_context(
+        self,
+        message_id: str,
+        *,
+        mode: ChatConversationBackend | str | None = None,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "detail")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.get_message_rag_context(message_id, scope_type=scope_type, workspace_id=workspace_id)
+        )
+
+    async def get_messages_with_context(
+        self,
+        conversation_id: str,
+        *,
+        mode: ChatConversationBackend | str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        include_rag_context: bool = True,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "detail")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.get_messages_with_context(
+                conversation_id,
+                limit=limit,
+                offset=offset,
+                include_rag_context=include_rag_context,
+                scope_type=scope_type,
+                workspace_id=workspace_id,
+            )
+        )
+
+    async def get_conversation_citations(
+        self,
+        conversation_id: str,
+        *,
+        mode: ChatConversationBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "detail")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.get_conversation_citations(conversation_id))
