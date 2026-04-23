@@ -36,6 +36,16 @@ def test_scene_direct_manuscript_requires_manuscript_id_and_no_chapter_id():
             title="Scene 1",
         )
 
+    with pytest.raises(ValueError, match="Scene cannot have both chapter_id and manuscript_id"):
+        WritingScene(
+            source="local",
+            id="s-ambiguous",
+            project_id="p-1",
+            chapter_id="c-1",
+            manuscript_id="m-1",
+            title="Ambiguous Scene",
+        )
+
 
 def test_scene_under_unassigned_chapter_allows_chapter_without_manuscript():
     scene = WritingScene(
@@ -58,6 +68,16 @@ def test_container_drafts_do_not_accept_body_markdown():
             entity_id="chapter-1",
             project_id="project-1",
             metadata={"title": "Chapter 1"},
+            body_markdown="# illegal",
+        )
+
+    with pytest.raises(ValueError, match="Only scene drafts"):
+        WritingDraft(
+            source="local",
+            entity_kind="manuscript",
+            entity_id="manuscript-1",
+            project_id="project-1",
+            metadata={"title": "Manuscript 1"},
             body_markdown="# illegal",
         )
 

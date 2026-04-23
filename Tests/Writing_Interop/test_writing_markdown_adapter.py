@@ -48,6 +48,8 @@ def test_server_tiptap_without_wrapper_falls_back_to_content_plain():
 def test_parse_server_content_json_invalid_or_unknown_falls_back():
     assert parse_server_content_json("{not json}") is None
     assert parse_server_content_json('["not-a-dict"]') is None
+    assert server_content_to_markdown(parse_server_content_json("{not json}"), "fallback plain") == "fallback plain"
+    assert server_content_to_markdown(parse_server_content_json('["not-a-dict"]'), "fallback plain") == "fallback plain"
 
     parsed = parse_server_content_json('{"type":"doc","content":[]}')
     assert parsed == {"type": "doc", "content": []}

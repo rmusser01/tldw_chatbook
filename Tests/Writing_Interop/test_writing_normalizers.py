@@ -39,6 +39,8 @@ def test_normalize_local_rows_to_models():
     assert project.id == "p1"
     assert manuscript.project_id == "p1"
     assert chapter.manuscript_id == "m1"
+    assert scene.chapter_id == "c1"
+    assert scene.manuscript_id is None
     assert scene.body_markdown == "Hello"
 
 

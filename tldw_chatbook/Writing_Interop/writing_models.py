@@ -118,6 +118,8 @@ class WritingScene:
         _require_non_empty(self.title, field_name="title")
         if self.chapter_id is None and self.manuscript_id is None:
             raise ValueError("Direct manuscript scene requires manuscript_id")
+        if self.chapter_id is not None and self.manuscript_id is not None:
+            raise ValueError("Scene cannot have both chapter_id and manuscript_id")
 
 
 @dataclass(**_DATACLASS_KWARGS)

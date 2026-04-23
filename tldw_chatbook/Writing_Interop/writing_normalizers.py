@@ -85,13 +85,14 @@ def normalize_local_chapter_row(row: Any) -> WritingChapter:
 
 def normalize_local_scene_row(row: Any) -> WritingScene:
     data = _as_mapping(row)
+    chapter_id = data.get("chapter_id")
     return WritingScene(
         source="local",
         id=str(data.get("id")),
         project_id=str(data.get("project_id")),
         title=str(data.get("title") or "Untitled Scene"),
-        chapter_id=data.get("chapter_id"),
-        manuscript_id=data.get("manuscript_id"),
+        chapter_id=chapter_id,
+        manuscript_id=None if chapter_id is not None else data.get("manuscript_id"),
         body_markdown=str(data.get("body_markdown") or ""),
         synopsis=data.get("synopsis"),
         status=str(data.get("status") or "draft"),
@@ -160,13 +161,14 @@ def normalize_server_scene(value: Any) -> WritingScene:
     content_json = data.get("content_json")
     parsed_content = content if isinstance(content, Mapping) else parse_server_content_json(content_json)
     body_markdown = server_content_to_markdown(parsed_content, data.get("content_plain"))
+    chapter_id = data.get("chapter_id")
     return WritingScene(
         source="server",
         id=str(data.get("id")),
         project_id=str(data.get("project_id")),
         title=str(data.get("title") or "Untitled Scene"),
-        chapter_id=data.get("chapter_id"),
-        manuscript_id=data.get("part_id"),
+        chapter_id=chapter_id,
+        manuscript_id=None if chapter_id is not None else data.get("part_id"),
         body_markdown=body_markdown,
         synopsis=data.get("synopsis"),
         status=str(data.get("status") or "draft"),
