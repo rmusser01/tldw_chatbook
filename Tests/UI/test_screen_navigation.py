@@ -19,36 +19,45 @@ from tldw_chatbook.Notifications.client_notifications_db import ClientNotificati
 from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.server_watchlists_service import ServerWatchlistsService
 from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistScopeService
-from tldw_chatbook.Constants import ALL_TABS
+from tldw_chatbook.Constants import ALL_TABS, TAB_WRITING
+from tldw_chatbook.DB.Writing_DB import WritingDatabase
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
+from tldw_chatbook.UI.Screens.writing_screen import WritingScreen
+from tldw_chatbook.Writing_Interop import (
+    LocalWritingService,
+    ServerWritingService,
+    WritingScopeService,
+)
 
 
 def _build_test_app() -> TldwCli:
     temp_dir = Path(tempfile.mkdtemp())
     notifications_db_path = temp_dir / "notifications.sqlite3"
     subscriptions_db_path = temp_dir / "subscriptions.sqlite3"
+    writing_db_path = temp_dir / "writing.sqlite3"
 
     with patch("tldw_chatbook.app.load_settings", return_value={"tldw_api": {"base_url": "http://localhost:8000"}}):
         with patch("tldw_chatbook.app.get_cli_setting", side_effect=lambda _section, _key, default=None: default):
             with patch("tldw_chatbook.app.load_runtime_policy_for_app", return_value=SimpleNamespace(state=None)):
                 with patch("tldw_chatbook.app.get_notifications_db_path", return_value=notifications_db_path, create=True):
                     with patch("tldw_chatbook.app.get_subscriptions_db_path", return_value=subscriptions_db_path, create=True):
-                        with patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None):
-                            with patch("tldw_chatbook.app.ServerNotesWorkspaceService.from_config", return_value=MagicMock()):
-                                with patch("tldw_chatbook.app.ServerCharacterPersonaService.from_config", return_value=MagicMock()):
-                                    with patch("tldw_chatbook.app.NotesScopeService", return_value=MagicMock()):
-                                        with patch("tldw_chatbook.app.RAGAdminScopeService", return_value=MagicMock()):
-                                            with patch.object(TldwCli, "_wire_evaluation_services", lambda self: None):
-                                                with patch.object(TldwCli, "_wire_study_services", lambda self: None):
-                                                    with patch.object(TldwCli, "_wire_character_persona_services", lambda self: None):
-                                                        with patch.object(TldwCli, "_init_notes_service", lambda self, _user: setattr(self, "notes_service", None)):
-                                                            with patch.object(TldwCli, "_init_prompts_service", lambda self: setattr(self, "prompts_service_initialized", False)):
-                                                                with patch.object(TldwCli, "_init_providers_models", lambda self: setattr(self, "providers_models", {})):
-                                                                    with patch.object(TldwCli, "_init_media_db", lambda self: (setattr(self, "media_db", None), setattr(self, "_media_types_for_ui", ["All Media"]))):
-                                                                        return TldwCli()
+                        with patch("tldw_chatbook.app.get_writing_db_path", return_value=writing_db_path, create=True):
+                            with patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None):
+                                with patch("tldw_chatbook.app.ServerNotesWorkspaceService.from_config", return_value=MagicMock()):
+                                    with patch("tldw_chatbook.app.ServerCharacterPersonaService.from_config", return_value=MagicMock()):
+                                        with patch("tldw_chatbook.app.NotesScopeService", return_value=MagicMock()):
+                                            with patch("tldw_chatbook.app.RAGAdminScopeService", return_value=MagicMock()):
+                                                with patch.object(TldwCli, "_wire_evaluation_services", lambda self: None):
+                                                    with patch.object(TldwCli, "_wire_study_services", lambda self: None):
+                                                        with patch.object(TldwCli, "_wire_character_persona_services", lambda self: None):
+                                                            with patch.object(TldwCli, "_init_notes_service", lambda self, _user: setattr(self, "notes_service", None)):
+                                                                with patch.object(TldwCli, "_init_prompts_service", lambda self: setattr(self, "prompts_service_initialized", False)):
+                                                                    with patch.object(TldwCli, "_init_providers_models", lambda self: setattr(self, "providers_models", {})):
+                                                                        with patch.object(TldwCli, "_init_media_db", lambda self: (setattr(self, "media_db", None), setattr(self, "_media_types_for_ui", ["All Media"]))):
+                                                                            return TldwCli()
 
 
 @pytest.fixture
@@ -75,6 +84,26 @@ def test_app_initializes_watchlists_and_notifications_services(app):
     assert app.watchlist_scope_service.policy_enforcer is app.service_policy_enforcer
     assert isinstance(app.client_notifications_db, ClientNotificationsDB)
     assert app.notification_dispatch_service.store is app.client_notifications_db
+
+
+def test_writing_tab_and_screen_are_registered(app):
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target(TAB_WRITING)
+
+    assert TAB_WRITING in ALL_TABS
+    assert screen_name == TAB_WRITING
+    assert current_tab == TAB_WRITING
+    assert screen_class is WritingScreen
+
+
+def test_app_initializes_writing_services(app):
+    assert isinstance(app.writing_db, WritingDatabase)
+    assert isinstance(app.local_writing_service, LocalWritingService)
+    assert isinstance(app.server_writing_service, ServerWritingService)
+    assert isinstance(app.writing_scope_service, WritingScopeService)
+    assert app.local_writing_service.db is app.writing_db
+    assert app.writing_scope_service.local_service is app.local_writing_service
+    assert app.writing_scope_service.server_service is app.server_writing_service
+    assert app.writing_scope_service.policy_enforcer is app.service_policy_enforcer
 
 
 def test_media_screen_uses_shared_runtime_state():

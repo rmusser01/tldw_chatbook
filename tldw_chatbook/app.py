@@ -68,13 +68,15 @@ from .config import (
     get_notifications_db_path,
     get_prompts_db_path,
     get_subscriptions_db_path,
+    get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.DB.Writing_DB import WritingDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
 from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
@@ -134,6 +136,11 @@ from .Study_Interop import (
     ServerStudyService,
     StudyScopeService,
 )
+from .Writing_Interop import (
+    LocalWritingService,
+    ServerWritingService,
+    WritingScopeService,
+)
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
@@ -175,6 +182,7 @@ from .UI.Screens.logs_screen import LogsScreen
 from .UI.Screens.stats_screen import StatsScreen
 from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
+from .UI.Screens.writing_screen import WritingScreen
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
 # The legacy per-view navigation (ingest-nav-*/ingest-view-*) is not used anymore.
 # Keep these as empty to avoid wiring legacy handlers.
@@ -1367,6 +1375,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
         self._wire_evaluation_services()
         self._wire_study_services()
+        self._wire_writing_services()
         self._wire_character_persona_services()
         self._notes_tab_initializer = NotesTabInitializer(self)
 
@@ -1466,6 +1475,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.study_quiz_scope_service = QuizScopeService(
             local_service=self.local_quiz_service,
             server_service=self.server_quiz_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_writing_services(self) -> None:
+        try:
+            self.writing_db = WritingDatabase(get_writing_db_path(), client_id=self.client_id)
+            self.local_writing_service = LocalWritingService(self.writing_db)
+        except Exception:
+            logger.warning("Local writing service unavailable during app wiring", exc_info=True)
+            self.writing_db = None
+            self.local_writing_service = None
+
+        try:
+            self.server_writing_service = ServerWritingService.from_config(self.app_config)
+        except ValueError:
+            self.server_writing_service = ServerWritingService(client=None)
+
+        self.writing_scope_service = WritingScopeService(
+            local_service=self.local_writing_service,
+            server_service=self.server_writing_service,
             policy_enforcer=self.service_policy_enforcer,
         )
 
@@ -1975,6 +2004,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             "stats": StatsScreen,
             "stts": STTSScreen,
             "study": StudyScreen,
+            TAB_WRITING: WritingScreen,
             "chatbooks": ChatbooksScreen,
             "subscription": SubscriptionScreen,
             "subscriptions": SubscriptionScreen,
