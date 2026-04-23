@@ -1461,8 +1461,8 @@ def save_chat_history_to_db_wrapper(
         conversation_assistant_kind: Optional[str] = None
         conversation_assistant_id: Optional[str] = None
         conversation_persona_memory_mode: Optional[str] = None
-        conversation_runtime_backend: Optional[str] = runtime_backend or "local"
-        conversation_discovery_owner: Optional[str] = discovery_owner or "general_chat"
+        conversation_runtime_backend: Optional[str] = runtime_backend
+        conversation_discovery_owner: Optional[str] = discovery_owner
         conversation_discovery_entity_id: Optional[str] = discovery_entity_id
         conversation_scope_type: Optional[str] = scope_type
         conversation_workspace_id: Optional[str] = workspace_id
@@ -1530,7 +1530,15 @@ def save_chat_history_to_db_wrapper(
                         conversation_assistant_id = str(character['id'])
                         conversation_discovery_owner = discovery_owner or "ccp_character"
                         conversation_discovery_entity_id = discovery_entity_id or str(character['id'])
-                        conversation_runtime_backend = runtime_backend or "local"
+                        conversation_runtime_backend = (
+                            runtime_backend
+                            or (existing_conv_details.get("runtime_backend") if existing_conv_details else None)
+                            or "local"
+                        )
+                        if conversation_scope_type is None and existing_conv_details:
+                            conversation_scope_type = existing_conv_details.get("scope_type")
+                        if conversation_workspace_id is None and existing_conv_details:
+                            conversation_workspace_id = existing_conv_details.get("workspace_id")
                         logging.info(
                             f"Chat will be associated with specific character '{final_character_name_for_title}' (ID: {associated_character_id})."
                         )
@@ -1551,7 +1559,24 @@ def save_chat_history_to_db_wrapper(
                 conversation_workspace_id = existing_conv_details.get("workspace_id")
                 final_character_name_for_title = str(existing_assistant_id)
             else:
-                logging.info("No specific character resolved for chat. Creating a generic local conversation.")
+                if existing_conv_details and existing_assistant_kind is None:
+                    conversation_runtime_backend = (
+                        runtime_backend
+                        or existing_conv_details.get("runtime_backend")
+                        or "local"
+                    )
+                    conversation_discovery_owner = (
+                        discovery_owner
+                        or existing_conv_details.get("discovery_owner")
+                        or "general_chat"
+                    )
+                    conversation_discovery_entity_id = (
+                        discovery_entity_id
+                        or existing_conv_details.get("discovery_entity_id")
+                    )
+                    conversation_scope_type = scope_type or existing_conv_details.get("scope_type")
+                    conversation_workspace_id = workspace_id or existing_conv_details.get("workspace_id")
+                logging.info("No specific character resolved for chat. Using generic conversation metadata.")
 
         if is_new_conversation:
             try:

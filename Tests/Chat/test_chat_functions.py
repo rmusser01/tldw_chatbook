@@ -335,7 +335,7 @@ class TestChatHistorySaving:
         assert messages["msg-assistant-1"]["is_selected_variant"] == before_messages["msg-assistant-1"]["is_selected_variant"]
         assert messages["msg-assistant-1"]["total_variants"] == before_messages["msg-assistant-1"]["total_variants"]
 
-    def test_resave_chat_history_normalizes_stale_conversation_metadata(self, db_instance: CharactersRAGDB):
+    def test_resave_chat_history_preserves_backend_while_normalizing_stale_identity_metadata(self, db_instance: CharactersRAGDB):
         char_id = db_instance.add_character_card({"name": "Resaver"})
         conversation_id = db_instance.add_conversation(
             {
@@ -367,7 +367,7 @@ class TestChatHistorySaving:
         updated_conversation = db_instance.get_conversation_by_id(conversation_id)
         assert updated_conversation["assistant_kind"] == "character"
         assert updated_conversation["assistant_id"] == str(char_id)
-        assert updated_conversation["runtime_backend"] == "local"
+        assert updated_conversation["runtime_backend"] == "server"
         assert updated_conversation["discovery_owner"] == "ccp_character"
         assert updated_conversation["discovery_entity_id"] == str(char_id)
         assert updated_conversation["title"] == "Chat with Resaver"
@@ -486,6 +486,85 @@ class TestChatHistorySaving:
         assert conversation["runtime_backend"] == "server"
         assert conversation["discovery_owner"] == "ccp_persona"
         assert conversation["discovery_entity_id"] == "persona.local.alice"
+
+    def test_resave_chat_history_preserves_existing_generic_runtime_and_scope_metadata(self, db_instance: CharactersRAGDB):
+        conversation_id = db_instance.add_conversation(
+            {
+                "assistant_kind": None,
+                "assistant_id": None,
+                "runtime_backend": "server",
+                "discovery_owner": "general_chat",
+                "discovery_entity_id": "remote.generic.1",
+                "scope_type": "workspace",
+                "workspace_id": "ws-1",
+                "title": "Remote Workspace Chat",
+                "client_id": db_instance.client_id,
+            }
+        )
+
+        resave_id, status = save_chat_history_to_db_wrapper(
+            db=db_instance,
+            chatbot_history=[
+                {"role": "user", "content": "Workspace question"},
+                {"role": "assistant", "content": "Workspace answer"},
+            ],
+            conversation_id=conversation_id,
+            media_content_for_char_assoc=None,
+            character_name_for_chat=None,
+        )
+
+        assert "success" in status.lower()
+        assert resave_id == conversation_id
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["assistant_kind"] is None
+        assert conversation["assistant_id"] is None
+        assert conversation["runtime_backend"] == "server"
+        assert conversation["discovery_owner"] == "general_chat"
+        assert conversation["discovery_entity_id"] == "remote.generic.1"
+        assert conversation["scope_type"] == "workspace"
+        assert conversation["workspace_id"] == "ws-1"
+
+    def test_resave_chat_history_preserves_existing_character_runtime_and_scope_metadata(self, db_instance: CharactersRAGDB):
+        character_id = db_instance.add_character_card({"name": "Remote Character"})
+        conversation_id = db_instance.add_conversation(
+            {
+                "character_id": character_id,
+                "assistant_kind": "character",
+                "assistant_id": str(character_id),
+                "runtime_backend": "server",
+                "discovery_owner": "ccp_character",
+                "discovery_entity_id": str(character_id),
+                "scope_type": "workspace",
+                "workspace_id": "ws-char",
+                "title": "Remote Character Workspace Chat",
+                "client_id": db_instance.client_id,
+            }
+        )
+
+        resave_id, status = save_chat_history_to_db_wrapper(
+            db=db_instance,
+            chatbot_history=[
+                {"role": "user", "content": "Character workspace question"},
+                {"role": "assistant", "content": "Character workspace answer"},
+            ],
+            conversation_id=conversation_id,
+            media_content_for_char_assoc=None,
+            character_name_for_chat="Remote Character",
+        )
+
+        assert "success" in status.lower()
+        assert resave_id == conversation_id
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["character_id"] == character_id
+        assert conversation["assistant_kind"] == "character"
+        assert conversation["assistant_id"] == str(character_id)
+        assert conversation["runtime_backend"] == "server"
+        assert conversation["discovery_owner"] == "ccp_character"
+        assert conversation["discovery_entity_id"] == str(character_id)
+        assert conversation["scope_type"] == "workspace"
+        assert conversation["workspace_id"] == "ws-char"
 
 
 @pytest.mark.integration
