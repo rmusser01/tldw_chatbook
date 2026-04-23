@@ -299,3 +299,57 @@ async def test_trash_listing_and_restore_work_for_all_entity_kinds(service):
     assert (await service.get_manuscript(manuscript.id)).deleted is False
     assert (await service.get_chapter(chapter.id)).deleted is False
     assert (await service.get_scene(scene.id)).deleted is False
+
+
+@pytest.mark.asyncio
+async def test_search_project_finds_local_scene_content(service):
+    project = await service.create_project(title="Project")
+    manuscript = await service.create_manuscript(project.id, title="Book")
+    chapter = await service.create_chapter(
+        project.id,
+        manuscript_id=manuscript.id,
+        title="Chapter",
+    )
+    scene = await service.create_scene(
+        project.id,
+        chapter_id=chapter.id,
+        title="Opening Scene",
+        body_markdown="A candle flickered in the observatory.",
+        word_count=7,
+    )
+
+    results = await service.search_project(project.id, "flickered", limit=5)
+
+    assert results == [
+        {
+            "source": "local",
+            "entity_kind": "scene",
+            "id": scene.id,
+            "title": "Opening Scene",
+            "chapter_id": chapter.id,
+            "manuscript_id": None,
+            "word_count": 7,
+            "status": "draft",
+            "snippet": "A candle flickered in the observatory.",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reorder_items_uses_local_database_with_server_shaped_items(service):
+    project = await service.create_project(title="Project")
+    first = await service.create_manuscript(project.id, title="First", sort_order=1)
+    second = await service.create_manuscript(project.id, title="Second", sort_order=2)
+
+    reordered = await service.reorder_items(
+        project.id,
+        "parts",
+        [
+            {"id": second.id, "sort_order": 10, "version": second.version},
+            {"id": first.id, "sort_order": 20, "version": first.version},
+        ],
+    )
+
+    assert [item.id for item in reordered] == [second.id, first.id]
+    assert [item.sort_order for item in reordered] == [10.0, 20.0]
+    assert [item.version for item in reordered] == [2, 2]

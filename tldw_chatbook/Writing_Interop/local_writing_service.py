@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from tldw_chatbook.DB.Writing_DB import _UNSET as _DB_UNSET, WritingDatabase
 from tldw_chatbook.Writing_Interop.writing_models import (
@@ -452,6 +452,120 @@ class LocalWritingService:
         structure = self._require_db().get_project_structure(project_id)
         return self._structure_to_outline(project_id, structure)
 
+    async def search_project(
+        self,
+        project_id: str,
+        query: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        query_text = str(query or "").strip()
+        query_folded = query_text.casefold()
+        results: list[dict[str, Any]] = []
+        rows = self._require_db().list_scenes(project_id, limit=10000)
+        for row in rows:
+            searchable = "\n".join(
+                str(value or "")
+                for value in (row.get("title"), row.get("synopsis"), row.get("body_markdown"))
+            )
+            if query_folded and query_folded not in searchable.casefold():
+                continue
+            results.append(
+                {
+                    "source": "local",
+                    "entity_kind": "scene",
+                    "id": row["id"],
+                    "title": row.get("title") or "Untitled Scene",
+                    "chapter_id": row.get("chapter_id"),
+                    "manuscript_id": row.get("manuscript_id"),
+                    "word_count": int(row.get("word_count") or 0),
+                    "status": row.get("status") or "draft",
+                    "snippet": self._search_snippet(row, query_text),
+                }
+            )
+            if len(results) >= limit:
+                break
+        return results
+
+    async def reorder_items(
+        self,
+        project_id: str,
+        entity_type: str,
+        items: Sequence[Mapping[str, Any]],
+    ) -> list[WritingManuscript] | list[WritingChapter] | list[WritingScene]:
+        entity_kind = {
+            "parts": "manuscript",
+            "chapters": "chapter",
+            "scenes": "scene",
+        }.get(entity_type)
+        if entity_kind is None:
+            raise ValueError("entity_type must be one of: parts, chapters, scenes")
+
+        db = self._require_db()
+        rows: list[dict[str, Any]] = []
+        with db.transaction():
+            for item in items:
+                item_data = dict(item)
+                item_id = str(item_data["id"])
+                sort_order = float(item_data["sort_order"])
+                expected_version = item_data.get("version")
+                self._require_project_member(db, entity_kind, item_id, project_id)
+                if entity_kind == "manuscript":
+                    rows.append(
+                        db.update_manuscript(
+                            item_id,
+                            {"sort_order": sort_order},
+                            expected_version=expected_version,
+                        )
+                    )
+                elif entity_kind == "chapter":
+                    if "new_parent_id" in item_data:
+                        rows.append(
+                            db.assign_chapter(
+                                item_id,
+                                item_data.get("new_parent_id"),
+                                expected_version=expected_version,
+                                sort_order=sort_order,
+                            )
+                        )
+                    else:
+                        rows.append(
+                            db.update_chapter(
+                                item_id,
+                                {"sort_order": sort_order},
+                                expected_version=expected_version,
+                            )
+                        )
+                else:
+                    if "new_parent_id" in item_data:
+                        if item_data.get("new_parent_id") is None:
+                            raise ValueError("scene new_parent_id must reference a chapter")
+                        rows.append(
+                            db.move_scene_local(
+                                item_id,
+                                None,
+                                item_data["new_parent_id"],
+                                expected_version=expected_version,
+                                sort_order=sort_order,
+                            )
+                        )
+                    else:
+                        rows.append(
+                            db.update_scene(
+                                item_id,
+                                {"sort_order": sort_order},
+                                expected_version=expected_version,
+                            )
+                        )
+
+        if entity_kind == "manuscript":
+            return [normalize_local_manuscript_row(row) for row in rows]
+        if entity_kind == "chapter":
+            return [normalize_local_chapter_row(row) for row in rows]
+        return [normalize_local_scene_row(row) for row in rows]
+
     def _structure_to_outline(
         self,
         project_id: str,
@@ -545,6 +659,36 @@ class LocalWritingService:
             )
             for scene in scenes
         ]
+
+    @staticmethod
+    def _search_snippet(row: Mapping[str, Any], query: str, *, radius: int = 80) -> str | None:
+        text = str(row.get("body_markdown") or row.get("synopsis") or row.get("title") or "")
+        if not text:
+            return None
+        if not query:
+            return text[: radius * 2]
+        index = text.casefold().find(query.casefold())
+        if index < 0:
+            return text[: radius * 2]
+        start = max(0, index - radius)
+        end = min(len(text), index + len(query) + radius)
+        return text[start:end]
+
+    @staticmethod
+    def _require_project_member(
+        db: WritingDatabase,
+        entity_kind: str,
+        item_id: str,
+        project_id: str,
+    ) -> None:
+        getters = {
+            "manuscript": db.get_manuscript,
+            "chapter": db.get_chapter,
+            "scene": db.get_scene,
+        }
+        row = getters[entity_kind](item_id)
+        if row is None or row.get("project_id") != project_id:
+            raise ValueError(f"{entity_kind} item is not part of the requested project")
 
     async def create_version(
         self,
