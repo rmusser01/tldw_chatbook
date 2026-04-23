@@ -4,24 +4,27 @@ Date: 2026-04-21
 
 Source spec: `Docs/superpowers/specs/2026-04-21-watchlists-notifications-vertical-design.md`
 
-Status: first-slice landed, with broader watchlists execution surfaces still deferred.
+Status: source CRUD and the first server control-plane slice are landed, with groups, richer outputs, reminders/feed, and sync still deferred.
 
 ## Landed Scope
 
 - persisted local notifications store with read and dismiss lifecycle
 - notification dispatch pipeline that records local queue entries and attempts toast or fallback delivery
 - server watchlist source schemas and API-client methods
+- server watchlist source restore API/client/service/UI routing
+- server watchlist jobs API/client/service/scope/UI routing for list, create/update, delete, restore, and trigger
+- server watchlist runs API/client/service/scope/UI routing for global/per-job list, detail, and cancel
+- server watchlist alert-rule API/client/service/scope/UI routing for list, create/update, and delete
 - local and server watchlist services plus source-aware scope routing
 - app bootstrap wiring for watchlists and client notifications services
 - backend-aware subscriptions shell behavior in `SubscriptionWindow`
-- source-aware list rendering, create/update/delete routing, and `Notifications` tab behavior in the subscriptions destination
+- source-aware list rendering, create/update/delete/restore routing, server `Jobs`, `Runs`, and `Alert Rules` tabs, and `Notifications` tab behavior in the subscriptions destination
 
 ## Explicitly Deferred
 
 - watchlist groups CRUD
-- watchlist jobs and runs
-- watchlist alert rules
-- dedicated restore UI for reversible server deletes
+- richer structured editors for jobs and alert rules beyond the current JSON payload editor
+- richer run outputs, logs, artifact/audio summaries, and historical/live monitoring UX
 - remote reminders and server notification-feed client surfaces
 - local/server sync or mirror behavior
 
@@ -44,14 +47,16 @@ python3 -m pytest \
 
 Result:
 
-- `54 passed in 5.53s`
+- initial first-slice record: `54 passed in 5.53s`
+- current control-plane focused suites: see the latest branch verification for `Tests/tldw_api/test_watchlists_client.py`, `Tests/Subscriptions/test_server_watchlists_service.py`, `Tests/Subscriptions/test_watchlist_scope_service.py`, and `Tests/UI/test_subscription_window_watchlists.py`
 
 ## Outcome
 
 Chatbook now has a credible standalone-first watchlists crosswalk:
 
 - `local` mode stays backed by local subscriptions and local notifications
-- `server` mode supports live remote watchlist source CRUD
+- `server` mode supports live remote watchlist source CRUD, source restore, jobs, runs, and alert-rule administration
 - local notification state stays Chatbook-owned even when triggered by server-mode actions
+- server-only control-plane tabs show explicit local/offline guidance rather than pretending local subscriptions are server jobs
 
-The remaining work for this domain is no longer first-slice CRUD alignment. It is the broader server watchlists execution and control-plane surface plus any future sync design.
+The remaining work for this domain is no longer source CRUD or first control-plane alignment. It is group management, richer job/run/alert-rule UX, remote reminders/feed, and any future sync design.

@@ -66,6 +66,15 @@ class WatchlistScopeService:
         return self.server_service
 
     def _parse_source_id(self, item_id: Any, *, mode: WatchlistBackend) -> int:
+        return self._parse_entity_id(item_id, mode=mode, expected_entity_kind=None)
+
+    def _parse_entity_id(
+        self,
+        item_id: Any,
+        *,
+        mode: WatchlistBackend,
+        expected_entity_kind: str | None,
+    ) -> int:
         if isinstance(item_id, int):
             return item_id
         raw = str(item_id or "").strip()
@@ -73,8 +82,10 @@ class WatchlistScopeService:
             raise ValueError("Invalid watchlist item id.")
         parts = raw.split(":")
         if len(parts) == 3:
-            backend_part, _entity_kind, source_id = parts
+            backend_part, entity_kind, source_id = parts
             if backend_part != mode.value:
+                raise ValueError("Invalid watchlist item id.")
+            if expected_entity_kind is not None and entity_kind != expected_entity_kind:
                 raise ValueError("Invalid watchlist item id.")
             try:
                 return int(source_id)
@@ -98,8 +109,31 @@ class WatchlistScopeService:
     @staticmethod
     def _clean_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         cleaned = dict(payload)
-        cleaned.pop("group_ids", None)
+        for field in ("backend", "entity_kind", "group_ids"):
+            cleaned.pop(field, None)
         return cleaned
+
+    @staticmethod
+    def _without_normalized_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
+        cleaned = dict(payload)
+        for field in (
+            "id",
+            "backend",
+            "entity_kind",
+            "title",
+            "job_ref",
+            "status_summary",
+            "last_checked_or_scraped_at",
+            "created_at",
+            "updated_at",
+        ):
+            cleaned.pop(field, None)
+        return cleaned
+
+    def _require_server_control_plane(self, mode: WatchlistBackend) -> Any:
+        if mode != WatchlistBackend.SERVER:
+            raise ValueError("Watchlist jobs, runs, and alert rules are not available for local watchlists.")
+        return self._service_for_mode(mode)
 
     @classmethod
     def _editable_write_payload(
@@ -188,6 +222,195 @@ class WatchlistScopeService:
         self._enforce_policy(self._action_id(normalized_mode, "delete"))
         source_id = self._parse_source_id(item_id, mode=normalized_mode)
         return await self._maybe_await(self._service_for_mode(normalized_mode).delete_source(source_id))
+
+    async def restore_watch_item(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        item_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        self._enforce_policy(self._action_id(normalized_mode, "restore"))
+        source_id = self._parse_source_id(item_id, mode=normalized_mode)
+        return await self._maybe_await(self._service_for_mode(normalized_mode).restore_source(source_id))
+
+    async def list_jobs(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        self._enforce_policy(self._action_id(normalized_mode, "jobs.list"))
+        service = self._require_server_control_plane(normalized_mode)
+        return await self._maybe_await(service.list_jobs(limit=limit, offset=offset))
+
+    async def get_job_detail(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        job_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        self._enforce_policy(self._action_id(normalized_mode, "jobs.detail"))
+        service = self._require_server_control_plane(normalized_mode)
+        resolved_id = self._parse_entity_id(job_id, mode=normalized_mode, expected_entity_kind="watchlist_job")
+        return await self._maybe_await(service.get_job_detail(resolved_id))
+
+    async def save_job(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        service = self._require_server_control_plane(normalized_mode)
+        cleaned = self._without_normalized_fields(payload)
+        job_id = payload.get("id", payload.get("job_id"))
+        if job_id not in (None, ""):
+            self._enforce_policy(self._action_id(normalized_mode, "jobs.update"))
+            resolved_id = self._parse_entity_id(job_id, mode=normalized_mode, expected_entity_kind="watchlist_job")
+            cleaned.pop("job_id", None)
+            return await self._maybe_await(service.update_job(resolved_id, cleaned))
+        self._enforce_policy(self._action_id(normalized_mode, "jobs.create"))
+        cleaned.pop("job_id", None)
+        return await self._maybe_await(service.create_job(cleaned))
+
+    async def delete_job(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        job_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        self._enforce_policy(self._action_id(normalized_mode, "jobs.delete"))
+        service = self._require_server_control_plane(normalized_mode)
+        resolved_id = self._parse_entity_id(job_id, mode=normalized_mode, expected_entity_kind="watchlist_job")
+        return await self._maybe_await(service.delete_job(resolved_id))
+
+    async def restore_job(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        job_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        self._enforce_policy(self._action_id(normalized_mode, "jobs.restore"))
+        service = self._require_server_control_plane(normalized_mode)
+        resolved_id = self._parse_entity_id(job_id, mode=normalized_mode, expected_entity_kind="watchlist_job")
+        return await self._maybe_await(service.restore_job(resolved_id))
+
+    async def trigger_job(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        job_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        self._enforce_policy(self._action_id(normalized_mode, "jobs.trigger"))
+        service = self._require_server_control_plane(normalized_mode)
+        resolved_id = self._parse_entity_id(job_id, mode=normalized_mode, expected_entity_kind="watchlist_job")
+        return await self._maybe_await(service.trigger_job(resolved_id))
+
+    async def list_runs(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        job_id: Any = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        self._enforce_policy(self._action_id(normalized_mode, "runs.list"))
+        service = self._require_server_control_plane(normalized_mode)
+        resolved_job_id = (
+            None
+            if job_id in (None, "")
+            else self._parse_entity_id(job_id, mode=normalized_mode, expected_entity_kind="watchlist_job")
+        )
+        return await self._maybe_await(
+            service.list_runs(job_id=resolved_job_id, status=status, limit=limit, offset=offset)
+        )
+
+    async def get_run_detail(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        run_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        self._enforce_policy(self._action_id(normalized_mode, "runs.detail"))
+        service = self._require_server_control_plane(normalized_mode)
+        resolved_id = self._parse_entity_id(run_id, mode=normalized_mode, expected_entity_kind="watchlist_run")
+        return await self._maybe_await(service.get_run_detail(resolved_id))
+
+    async def cancel_run(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        run_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        self._enforce_policy(self._action_id(normalized_mode, "runs.cancel"))
+        service = self._require_server_control_plane(normalized_mode)
+        resolved_id = self._parse_entity_id(run_id, mode=normalized_mode, expected_entity_kind="watchlist_run")
+        return await self._maybe_await(service.cancel_run(resolved_id))
+
+    async def list_alert_rules(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        job_id: Any = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        self._enforce_policy(self._action_id(normalized_mode, "alert_rules.list"))
+        service = self._require_server_control_plane(normalized_mode)
+        resolved_job_id = (
+            None
+            if job_id in (None, "")
+            else self._parse_entity_id(job_id, mode=normalized_mode, expected_entity_kind="watchlist_job")
+        )
+        return await self._maybe_await(service.list_alert_rules(job_id=resolved_job_id))
+
+    async def save_alert_rule(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        service = self._require_server_control_plane(normalized_mode)
+        cleaned = self._without_normalized_fields(payload)
+        rule_id = payload.get("id", payload.get("rule_id"))
+        job_ref = payload.get("job_ref")
+        if job_ref not in (None, "") and "job_id" not in cleaned:
+            cleaned["job_id"] = self._parse_entity_id(
+                job_ref,
+                mode=normalized_mode,
+                expected_entity_kind="watchlist_job",
+            )
+        if rule_id not in (None, ""):
+            self._enforce_policy(self._action_id(normalized_mode, "alert_rules.update"))
+            resolved_id = self._parse_entity_id(rule_id, mode=normalized_mode, expected_entity_kind="watchlist_alert_rule")
+            cleaned.pop("rule_id", None)
+            return await self._maybe_await(service.update_alert_rule(resolved_id, cleaned))
+        self._enforce_policy(self._action_id(normalized_mode, "alert_rules.create"))
+        cleaned.pop("rule_id", None)
+        return await self._maybe_await(service.create_alert_rule(cleaned))
+
+    async def delete_alert_rule(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        rule_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(runtime_backend)
+        self._enforce_policy(self._action_id(normalized_mode, "alert_rules.delete"))
+        service = self._require_server_control_plane(normalized_mode)
+        resolved_id = self._parse_entity_id(rule_id, mode=normalized_mode, expected_entity_kind="watchlist_alert_rule")
+        return await self._maybe_await(service.delete_alert_rule(resolved_id))
 
 
 __all__ = ["WatchlistBackend", "WatchlistScopeService"]

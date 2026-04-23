@@ -67,9 +67,23 @@ from .media_reading_schemas import (
     WebProcessResponse,
 )
 from .watchlists_schemas import (
+    AlertRuleCreateRequest,
+    AlertRuleListResponse,
+    AlertRuleResponse,
+    AlertRuleUpdateRequest,
+    JobCreateRequest,
+    JobDeleteResponse,
+    JobResponse,
+    JobUpdateRequest,
+    JobsListResponse,
+    RunCancelResponse,
+    RunDetailResponse,
+    RunResponse,
+    RunsListResponse,
     SourceCreateRequest,
     SourceDeleteResponse,
     SourceResponse,
+    SourceRestoreResponse,
     SourcesListResponse,
     SourceUpdateRequest,
 )
@@ -675,6 +689,118 @@ class TLDWAPIClient:
     async def delete_watchlist_source(self, source_id: int) -> SourceDeleteResponse:
         response = await self._request("DELETE", f"/api/v1/watchlists/sources/{source_id}")
         return SourceDeleteResponse.model_validate(response)
+
+    async def restore_watchlist_source(self, source_id: int) -> SourceRestoreResponse:
+        response = await self._request("POST", f"/api/v1/watchlists/sources/{source_id}/restore")
+        return SourceRestoreResponse.model_validate(response)
+
+    async def create_watchlist_job(self, request_data: JobCreateRequest) -> JobResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/jobs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return JobResponse.model_validate(response)
+
+    async def list_watchlist_jobs(self, *, limit: int = 50, offset: int = 0) -> JobsListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/jobs",
+            params={"limit": limit, "offset": offset},
+        )
+        return JobsListResponse.model_validate(response)
+
+    async def get_watchlist_job(self, job_id: int) -> JobResponse:
+        response = await self._request("GET", f"/api/v1/watchlists/jobs/{job_id}")
+        return JobResponse.model_validate(response)
+
+    async def update_watchlist_job(self, job_id: int, request_data: JobUpdateRequest) -> JobResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/watchlists/jobs/{job_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return JobResponse.model_validate(response)
+
+    async def delete_watchlist_job(self, job_id: int) -> JobDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/watchlists/jobs/{job_id}")
+        return JobDeleteResponse.model_validate(response)
+
+    async def restore_watchlist_job(self, job_id: int) -> JobResponse:
+        response = await self._request("POST", f"/api/v1/watchlists/jobs/{job_id}/restore")
+        return JobResponse.model_validate(response)
+
+    async def trigger_watchlist_job_run(self, job_id: int) -> RunResponse:
+        response = await self._request("POST", f"/api/v1/watchlists/jobs/{job_id}/run")
+        return RunResponse.model_validate(response)
+
+    async def list_watchlist_runs_for_job(
+        self,
+        job_id: int,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> RunsListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/watchlists/jobs/{job_id}/runs",
+            params={"limit": limit, "offset": offset},
+        )
+        return RunsListResponse.model_validate(response)
+
+    async def list_watchlist_runs(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> RunsListResponse:
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if status is not None:
+            params["status"] = status
+        response = await self._request("GET", "/api/v1/watchlists/runs", params=params)
+        return RunsListResponse.model_validate(response)
+
+    async def get_watchlist_run(self, run_id: int) -> RunResponse:
+        response = await self._request("GET", f"/api/v1/watchlists/runs/{run_id}")
+        return RunResponse.model_validate(response)
+
+    async def get_watchlist_run_details(self, run_id: int) -> RunDetailResponse:
+        response = await self._request("GET", f"/api/v1/watchlists/runs/{run_id}/details")
+        return RunDetailResponse.model_validate(response)
+
+    async def cancel_watchlist_run(self, run_id: int) -> RunCancelResponse:
+        response = await self._request("POST", f"/api/v1/watchlists/runs/{run_id}/cancel")
+        return RunCancelResponse.model_validate(response)
+
+    async def list_watchlist_alert_rules(self, *, job_id: int | None = None) -> AlertRuleListResponse:
+        params = {} if job_id is None else {"job_id": job_id}
+        response = await self._request("GET", "/api/v1/watchlists/alert-rules", params=params)
+        return AlertRuleListResponse.model_validate(response)
+
+    async def create_watchlist_alert_rule(self, request_data: AlertRuleCreateRequest) -> AlertRuleResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/alert-rules",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return AlertRuleResponse.model_validate(response)
+
+    async def update_watchlist_alert_rule(
+        self,
+        rule_id: int,
+        request_data: AlertRuleUpdateRequest,
+    ) -> AlertRuleResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/watchlists/alert-rules/{rule_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return AlertRuleResponse.model_validate(response)
+
+    async def delete_watchlist_alert_rule(self, rule_id: int) -> Dict[str, Any]:
+        response = await self._request("DELETE", f"/api/v1/watchlists/alert-rules/{rule_id}")
+        return dict(response)
 
     async def list_manuscript_projects(
         self,

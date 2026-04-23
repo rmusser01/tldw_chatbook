@@ -45,6 +45,7 @@ class SubscriptionBackendController:
             self.window._render_local_only_state(tab_id="review", message="Local-only in this slice.")
 
         await self._load_watch_items(runtime_backend=normalized_backend)
+        await self._refresh_control_plane(runtime_backend=normalized_backend)
         self.last_loaded_backend = normalized_backend
 
     async def stop_active_backend_workers(self) -> None:
@@ -95,6 +96,19 @@ class SubscriptionBackendController:
             )
         return dict(result)
 
+    async def restore_watch_item(self, item_id: str) -> dict[str, Any]:
+        runtime_backend = self.window._runtime_backend()
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+
+        result = await self._maybe_await(
+            self.scope_service.restore_watch_item(
+                runtime_backend=runtime_backend,
+                item_id=item_id,
+            )
+        )
+        return dict(result)
+
     async def save_watch_item(self, payload: dict[str, Any]) -> dict[str, Any]:
         runtime_backend = self.window._runtime_backend()
         if self.scope_service is None:
@@ -136,6 +150,118 @@ class SubscriptionBackendController:
         )
         items = [dict(item) for item in list(payload or [])]
         await self.window._render_watch_item_list(items)
+
+    async def _refresh_control_plane(self, *, runtime_backend: str) -> None:
+        if runtime_backend != "server":
+            message = "Server watchlist jobs, runs, and alert rules are remote-only here. Use the local subscriptions scheduler, review queue, and notifications inbox for offline watchlist operations."
+            self.window._render_local_only_state(tab_id="watchlist-jobs", message=message)
+            self.window._render_local_only_state(tab_id="watchlist-runs", message=message)
+            self.window._render_local_only_state(tab_id="watchlist-alert-rules", message=message)
+            await self.window._render_watchlist_jobs([])
+            await self.window._render_watchlist_runs([])
+            await self.window._render_watchlist_alert_rules([])
+            return
+
+        self.window._clear_local_only_state(tab_id="watchlist-jobs")
+        self.window._clear_local_only_state(tab_id="watchlist-runs")
+        self.window._clear_local_only_state(tab_id="watchlist-alert-rules")
+        await self.load_watchlist_jobs()
+        await self.load_watchlist_runs()
+        await self.load_watchlist_alert_rules()
+
+    async def load_watchlist_jobs(self) -> dict[str, Any]:
+        if self.scope_service is None:
+            return {"items": [], "total": 0}
+        payload = await self._maybe_await(
+            self.scope_service.list_jobs(runtime_backend=self.window._runtime_backend())
+        )
+        items = [dict(item) for item in list((payload or {}).get("items") or [])]
+        await self.window._render_watchlist_jobs(items)
+        return dict(payload or {"items": [], "total": 0})
+
+    async def save_watchlist_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        result = await self._maybe_await(
+            self.scope_service.save_job(runtime_backend=self.window._runtime_backend(), payload=payload)
+        )
+        return dict(result)
+
+    async def delete_watchlist_job(self, job_id: str) -> dict[str, Any]:
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        result = await self._maybe_await(
+            self.scope_service.delete_job(runtime_backend=self.window._runtime_backend(), job_id=job_id)
+        )
+        return dict(result)
+
+    async def restore_watchlist_job(self, job_id: str) -> dict[str, Any]:
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        result = await self._maybe_await(
+            self.scope_service.restore_job(runtime_backend=self.window._runtime_backend(), job_id=job_id)
+        )
+        return dict(result)
+
+    async def trigger_watchlist_job(self, job_id: str) -> dict[str, Any]:
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        result = await self._maybe_await(
+            self.scope_service.trigger_job(runtime_backend=self.window._runtime_backend(), job_id=job_id)
+        )
+        return dict(result)
+
+    async def load_watchlist_runs(self) -> dict[str, Any]:
+        if self.scope_service is None:
+            return {"items": [], "total": 0}
+        payload = await self._maybe_await(
+            self.scope_service.list_runs(runtime_backend=self.window._runtime_backend())
+        )
+        items = [dict(item) for item in list((payload or {}).get("items") or [])]
+        await self.window._render_watchlist_runs(items)
+        return dict(payload or {"items": [], "total": 0})
+
+    async def get_watchlist_run_detail(self, run_id: str) -> dict[str, Any]:
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        result = await self._maybe_await(
+            self.scope_service.get_run_detail(runtime_backend=self.window._runtime_backend(), run_id=run_id)
+        )
+        return dict(result)
+
+    async def cancel_watchlist_run(self, run_id: str) -> dict[str, Any]:
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        result = await self._maybe_await(
+            self.scope_service.cancel_run(runtime_backend=self.window._runtime_backend(), run_id=run_id)
+        )
+        return dict(result)
+
+    async def load_watchlist_alert_rules(self) -> dict[str, Any]:
+        if self.scope_service is None:
+            return {"items": [], "total": 0}
+        payload = await self._maybe_await(
+            self.scope_service.list_alert_rules(runtime_backend=self.window._runtime_backend())
+        )
+        items = [dict(item) for item in list((payload or {}).get("items") or [])]
+        await self.window._render_watchlist_alert_rules(items)
+        return dict(payload or {"items": [], "total": 0})
+
+    async def save_watchlist_alert_rule(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        result = await self._maybe_await(
+            self.scope_service.save_alert_rule(runtime_backend=self.window._runtime_backend(), payload=payload)
+        )
+        return dict(result)
+
+    async def delete_watchlist_alert_rule(self, rule_id: str) -> dict[str, Any]:
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        result = await self._maybe_await(
+            self.scope_service.delete_alert_rule(runtime_backend=self.window._runtime_backend(), rule_id=rule_id)
+        )
+        return dict(result)
 
     async def _ensure_local_scheduler(self) -> None:
         if getattr(self.window, "db", None) is None:

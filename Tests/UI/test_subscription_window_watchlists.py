@@ -108,6 +108,68 @@ def build_window(*, tmp_path: Path, runtime_backend: str, policy_allowed: bool =
             "restore_expires_at": "2026-04-21T12:00:00Z",
         }
     )
+    app.watchlist_scope_service.restore_watch_item = AsyncMock(
+        return_value=_normalized_watch_row(runtime_backend)
+    )
+    app.watchlist_scope_service.list_jobs = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "id": "server:watchlist_job:31",
+                    "job_id": 31,
+                    "title": "Daily Briefing",
+                    "active": True,
+                    "schedule_expr": "0 8 * * *",
+                }
+            ],
+            "total": 1,
+        }
+    )
+    app.watchlist_scope_service.save_job = AsyncMock(
+        return_value={"id": "server:watchlist_job:31", "job_id": 31, "title": "Daily Briefing"}
+    )
+    app.watchlist_scope_service.delete_job = AsyncMock(return_value={"deleted": True, "job_id": 31})
+    app.watchlist_scope_service.restore_job = AsyncMock(
+        return_value={"id": "server:watchlist_job:31", "job_id": 31, "title": "Daily Briefing"}
+    )
+    app.watchlist_scope_service.trigger_job = AsyncMock(
+        return_value={"id": "server:watchlist_run:91", "run_id": 91, "job_id": 31, "status": "queued"}
+    )
+    app.watchlist_scope_service.list_runs = AsyncMock(
+        return_value={
+            "items": [{"id": "server:watchlist_run:91", "run_id": 91, "job_id": 31, "status": "running"}],
+            "total": 1,
+        }
+    )
+    app.watchlist_scope_service.get_run_detail = AsyncMock(
+        return_value={
+            "id": "server:watchlist_run:91",
+            "run_id": 91,
+            "job_id": 31,
+            "status": "running",
+            "log_text": "started",
+        }
+    )
+    app.watchlist_scope_service.cancel_run = AsyncMock(return_value={"cancelled": True, "run_id": 91})
+    app.watchlist_scope_service.list_alert_rules = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "id": "server:watchlist_alert_rule:12",
+                    "rule_id": 12,
+                    "title": "No items",
+                    "enabled": True,
+                    "condition_type": "no_items",
+                    "severity": "warning",
+                }
+            ],
+            "total": 1,
+        }
+    )
+    app.watchlist_scope_service.save_alert_rule = AsyncMock(
+        return_value={"id": "server:watchlist_alert_rule:12", "rule_id": 12, "title": "No items"}
+    )
+    app.watchlist_scope_service.delete_alert_rule = AsyncMock(return_value={"deleted": True, "rule_id": 12})
 
     window = SubscriptionWindow(app)
     window.notify = Mock()
@@ -116,8 +178,17 @@ def build_window(*, tmp_path: Path, runtime_backend: str, policy_allowed: bool =
     widgets = {
         "#subscription-list": _StubListView(),
         "#notifications-list": _StubListView(),
+        "#watchlist-jobs-list": _StubListView(),
+        "#watchlist-runs-list": _StubListView(),
+        "#watchlist-alert-rules-list": _StubListView(),
         "#review-main": _StubWidget(display=True),
         "#review-local-only-state": _StubWidget(display=False),
+        "#watchlist-jobs-main": _StubWidget(display=True),
+        "#watchlist-jobs-local-state": _StubWidget(display=False),
+        "#watchlist-runs-main": _StubWidget(display=True),
+        "#watchlist-runs-local-state": _StubWidget(display=False),
+        "#watchlist-alert-rules-main": _StubWidget(display=True),
+        "#watchlist-alert-rules-local-state": _StubWidget(display=False),
         "#enable-scheduler": _StubWidget(display=True, value=False),
         "#sub-name": _StubWidget(display=True, value=""),
         "#sub-type": _StubWidget(display=True, value="rss"),
@@ -130,6 +201,9 @@ def build_window(*, tmp_path: Path, runtime_backend: str, policy_allowed: bool =
         "#sub-auto-ingest": _StubWidget(display=True, value=False),
         "#sub-auth-type": _StubWidget(display=True, value="none"),
         "#sub-headers": _StubWidget(display=True, text=""),
+        "#watchlist-job-payload": _StubWidget(display=True, text='{"name":"Daily Briefing"}'),
+        "#watchlist-run-detail": _StubWidget(display=True, text=""),
+        "#watchlist-alert-rule-payload": _StubWidget(display=True, text='{"name":"No items","condition_type":"no_items"}'),
     }
 
     def query_one(selector: str, _widget_type=None):
@@ -342,3 +416,116 @@ async def test_remote_delete_notification_preserves_restore_window_metadata(tmp_
     notification = window.notifications_store.list_notifications(limit=1)[0]
     assert notification["payload"]["restore_window_seconds"] == 10
     assert notification["payload"]["restore_expires_at"] == "2026-04-21T12:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_server_mode_refresh_loads_jobs_runs_and_alert_rules(tmp_path: Path):
+    window = build_window(tmp_path=tmp_path, runtime_backend="server")
+
+    await window.refresh_backend_view()
+
+    assert window._test_widgets["#watchlist-jobs-list"].items[0].data["id"] == "server:watchlist_job:31"
+    assert window._test_widgets["#watchlist-runs-list"].items[0].data["id"] == "server:watchlist_run:91"
+    assert window._test_widgets["#watchlist-alert-rules-list"].items[0].data["id"] == "server:watchlist_alert_rule:12"
+    assert window._test_widgets["#watchlist-jobs-local-state"].display is False
+    assert window._test_widgets["#watchlist-runs-local-state"].display is False
+    assert window._test_widgets["#watchlist-alert-rules-local-state"].display is False
+
+
+@pytest.mark.asyncio
+async def test_local_mode_shows_watchlist_control_plane_guidance(tmp_path: Path):
+    window = build_window(tmp_path=tmp_path, runtime_backend="local")
+
+    await window.refresh_backend_view()
+
+    assert window._test_widgets["#watchlist-jobs-local-state"].display is True
+    assert window._test_widgets["#watchlist-runs-local-state"].display is True
+    assert window._test_widgets["#watchlist-alert-rules-local-state"].display is True
+    assert "local subscriptions scheduler" in str(window._test_widgets["#watchlist-jobs-local-state"].updated[-1]).lower()
+    window.app_instance.watchlist_scope_service.list_jobs.assert_not_called()
+    window.app_instance.watchlist_scope_service.list_runs.assert_not_called()
+    window.app_instance.watchlist_scope_service.list_alert_rules.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_restore_deleted_source_routes_through_scope_service(tmp_path: Path):
+    window = build_window(tmp_path=tmp_path, runtime_backend="server")
+    await window.refresh_backend_view()
+    _select_list_item(window._test_widgets["#subscription-list"])
+
+    await window.handle_restore_subscription(None)
+
+    window.app_instance.watchlist_scope_service.restore_watch_item.assert_awaited_once_with(
+        runtime_backend="server",
+        item_id="server:watchlist_source:17",
+    )
+
+
+@pytest.mark.asyncio
+async def test_watchlist_job_buttons_route_through_scope_service(tmp_path: Path):
+    window = build_window(tmp_path=tmp_path, runtime_backend="server")
+    await window.refresh_backend_view()
+    _select_list_item(window._test_widgets["#watchlist-jobs-list"])
+    window.query_one("#watchlist-job-payload").text = '{"name":"Daily Briefing v2"}'
+
+    await window.handle_save_watchlist_job(None)
+    await window.handle_trigger_watchlist_job(None)
+    await window.handle_delete_watchlist_job(None)
+    await window.handle_restore_watchlist_job(None)
+
+    window.app_instance.watchlist_scope_service.save_job.assert_awaited_once_with(
+        runtime_backend="server",
+        payload={"id": "server:watchlist_job:31", "name": "Daily Briefing v2"},
+    )
+    window.app_instance.watchlist_scope_service.trigger_job.assert_awaited_once_with(
+        runtime_backend="server",
+        job_id="server:watchlist_job:31",
+    )
+    window.app_instance.watchlist_scope_service.delete_job.assert_awaited_once_with(
+        runtime_backend="server",
+        job_id="server:watchlist_job:31",
+    )
+    window.app_instance.watchlist_scope_service.restore_job.assert_awaited_once_with(
+        runtime_backend="server",
+        job_id="server:watchlist_job:31",
+    )
+
+
+@pytest.mark.asyncio
+async def test_watchlist_run_buttons_route_through_scope_service(tmp_path: Path):
+    window = build_window(tmp_path=tmp_path, runtime_backend="server")
+    await window.refresh_backend_view()
+    _select_list_item(window._test_widgets["#watchlist-runs-list"])
+
+    await window.handle_load_watchlist_run_detail(None)
+    await window.handle_cancel_watchlist_run(None)
+
+    window.app_instance.watchlist_scope_service.get_run_detail.assert_awaited_once_with(
+        runtime_backend="server",
+        run_id="server:watchlist_run:91",
+    )
+    window.app_instance.watchlist_scope_service.cancel_run.assert_awaited_once_with(
+        runtime_backend="server",
+        run_id="server:watchlist_run:91",
+    )
+    assert "started" in window.query_one("#watchlist-run-detail").text
+
+
+@pytest.mark.asyncio
+async def test_watchlist_alert_rule_buttons_route_through_scope_service(tmp_path: Path):
+    window = build_window(tmp_path=tmp_path, runtime_backend="server")
+    await window.refresh_backend_view()
+    _select_list_item(window._test_widgets["#watchlist-alert-rules-list"])
+    window.query_one("#watchlist-alert-rule-payload").text = '{"enabled":false}'
+
+    await window.handle_save_watchlist_alert_rule(None)
+    await window.handle_delete_watchlist_alert_rule(None)
+
+    window.app_instance.watchlist_scope_service.save_alert_rule.assert_awaited_once_with(
+        runtime_backend="server",
+        payload={"id": "server:watchlist_alert_rule:12", "enabled": False},
+    )
+    window.app_instance.watchlist_scope_service.delete_alert_rule.assert_awaited_once_with(
+        runtime_backend="server",
+        rule_id="server:watchlist_alert_rule:12",
+    )

@@ -40,7 +40,6 @@ class FakeLocalSubscriptions:
         self.calls.append(("delete_source", source_id))
         return {"deleted": True, "source_id": source_id}
 
-
 class FakeServerWatchlists:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
@@ -64,6 +63,66 @@ class FakeServerWatchlists:
     async def delete_source(self, source_id):
         self.calls.append(("delete_source", source_id))
         return {"deleted": True, "source_id": source_id}
+
+    async def restore_source(self, source_id):
+        self.calls.append(("restore_source", source_id))
+        return {"id": f"server:watchlist_source:{source_id}", "backend": "server"}
+
+    async def list_jobs(self, **kwargs):
+        self.calls.append(("list_jobs", kwargs))
+        return {"items": [{"id": "server:watchlist_job:31", "backend": "server"}], "total": 1}
+
+    async def get_job_detail(self, job_id):
+        self.calls.append(("get_job_detail", job_id))
+        return {"id": f"server:watchlist_job:{job_id}", "backend": "server"}
+
+    async def create_job(self, payload):
+        self.calls.append(("create_job", payload))
+        return {"id": "server:watchlist_job:31", "backend": "server", **dict(payload)}
+
+    async def update_job(self, job_id, payload):
+        self.calls.append(("update_job", job_id, payload))
+        return {"id": f"server:watchlist_job:{job_id}", "backend": "server", **dict(payload)}
+
+    async def delete_job(self, job_id):
+        self.calls.append(("delete_job", job_id))
+        return {"deleted": True, "job_id": job_id}
+
+    async def restore_job(self, job_id):
+        self.calls.append(("restore_job", job_id))
+        return {"id": f"server:watchlist_job:{job_id}", "backend": "server"}
+
+    async def trigger_job(self, job_id):
+        self.calls.append(("trigger_job", job_id))
+        return {"id": "server:watchlist_run:91", "backend": "server", "job_id": job_id}
+
+    async def list_runs(self, **kwargs):
+        self.calls.append(("list_runs", kwargs))
+        return {"items": [{"id": "server:watchlist_run:91", "backend": "server"}], "total": 1}
+
+    async def get_run_detail(self, run_id):
+        self.calls.append(("get_run_detail", run_id))
+        return {"id": f"server:watchlist_run:{run_id}", "backend": "server"}
+
+    async def cancel_run(self, run_id):
+        self.calls.append(("cancel_run", run_id))
+        return {"cancelled": True, "run_id": run_id}
+
+    async def list_alert_rules(self, **kwargs):
+        self.calls.append(("list_alert_rules", kwargs))
+        return {"items": [{"id": "server:watchlist_alert_rule:12", "backend": "server"}]}
+
+    async def create_alert_rule(self, payload):
+        self.calls.append(("create_alert_rule", payload))
+        return {"id": "server:watchlist_alert_rule:12", "backend": "server", **dict(payload)}
+
+    async def update_alert_rule(self, rule_id, payload):
+        self.calls.append(("update_alert_rule", rule_id, payload))
+        return {"id": f"server:watchlist_alert_rule:{rule_id}", "backend": "server", **dict(payload)}
+
+    async def delete_alert_rule(self, rule_id):
+        self.calls.append(("delete_alert_rule", rule_id))
+        return {"deleted": True, "rule_id": rule_id}
 
 
 class FakeSubscriptionsDB:
@@ -465,3 +524,79 @@ async def test_scope_service_round_trips_normalized_detail_payload_to_editable_f
         },
     )
     assert updated["id"] == "server:watchlist_source:7"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_watchlist_control_plane_actions_with_policy_ids():
+    policy = FakePolicy()
+    server = FakeServerWatchlists()
+    scope = WatchlistScopeService(
+        local_service=FakeLocalSubscriptions(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    await scope.restore_watch_item(runtime_backend="server", item_id="server:watchlist_source:7")
+    await scope.list_jobs(runtime_backend="server", limit=25, offset=50)
+    await scope.get_job_detail(runtime_backend="server", job_id="server:watchlist_job:31")
+    await scope.save_job(runtime_backend="server", payload={"name": "Created"})
+    await scope.save_job(runtime_backend="server", payload={"id": "server:watchlist_job:31", "name": "Renamed"})
+    await scope.delete_job(runtime_backend="server", job_id="server:watchlist_job:31")
+    await scope.restore_job(runtime_backend="server", job_id="server:watchlist_job:31")
+    await scope.trigger_job(runtime_backend="server", job_id="server:watchlist_job:31")
+    await scope.list_runs(runtime_backend="server", job_id="server:watchlist_job:31")
+    await scope.get_run_detail(runtime_backend="server", run_id="server:watchlist_run:91")
+    await scope.cancel_run(runtime_backend="server", run_id="server:watchlist_run:91")
+    await scope.list_alert_rules(runtime_backend="server", job_id="server:watchlist_job:31")
+    await scope.save_alert_rule(runtime_backend="server", payload={"name": "No items", "condition_type": "no_items"})
+    await scope.save_alert_rule(runtime_backend="server", payload={"id": "server:watchlist_alert_rule:12", "enabled": False})
+    await scope.delete_alert_rule(runtime_backend="server", rule_id="server:watchlist_alert_rule:12")
+
+    assert server.calls == [
+        ("restore_source", 7),
+        ("list_jobs", {"limit": 25, "offset": 50}),
+        ("get_job_detail", 31),
+        ("create_job", {"name": "Created"}),
+        ("update_job", 31, {"name": "Renamed"}),
+        ("delete_job", 31),
+        ("restore_job", 31),
+        ("trigger_job", 31),
+        ("list_runs", {"job_id": 31, "status": None, "limit": 50, "offset": 0}),
+        ("get_run_detail", 91),
+        ("cancel_run", 91),
+        ("list_alert_rules", {"job_id": 31}),
+        ("create_alert_rule", {"name": "No items", "condition_type": "no_items"}),
+        ("update_alert_rule", 12, {"enabled": False}),
+        ("delete_alert_rule", 12),
+    ]
+    assert [call["action_id"] for call in policy.calls] == [
+        "watchlists.restore.server",
+        "watchlists.jobs.list.server",
+        "watchlists.jobs.detail.server",
+        "watchlists.jobs.create.server",
+        "watchlists.jobs.update.server",
+        "watchlists.jobs.delete.server",
+        "watchlists.jobs.restore.server",
+        "watchlists.jobs.trigger.server",
+        "watchlists.runs.list.server",
+        "watchlists.runs.detail.server",
+        "watchlists.runs.cancel.server",
+        "watchlists.alert_rules.list.server",
+        "watchlists.alert_rules.create.server",
+        "watchlists.alert_rules.update.server",
+        "watchlists.alert_rules.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_reports_local_unavailable_for_server_only_control_plane():
+    scope = WatchlistScopeService(local_service=FakeLocalSubscriptions(), server_service=FakeServerWatchlists())
+
+    with pytest.raises(ValueError, match="not available for local watchlists"):
+        await scope.list_jobs(runtime_backend="local")
+
+    with pytest.raises(ValueError, match="not available for local watchlists"):
+        await scope.list_runs(runtime_backend="local")
+
+    with pytest.raises(ValueError, match="not available for local watchlists"):
+        await scope.list_alert_rules(runtime_backend="local")

@@ -12,7 +12,7 @@ Tranche ordering follows the capability matrix, gap ledger, and target-state des
 
 That changes the roadmap in one important way: runtime policy remains a cross-cutting extension surface, but it is no longer the next unresolved blocker. Active execution should now move into the domains that either build directly on the new authority layer or deliver the highest-value standalone-client parity you prioritized.
 
-`Watchlists` plus `Client Notifications` are also now partially landed for their first slice. See [watchlists-notifications-tranche-2.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-watchlists-notifications-vertical/Docs/Development/watchlists-notifications-tranche-2.md) for the verification record and the precise deferred scope.
+`Watchlists` plus `Client Notifications` are also now partially landed for source CRUD and the first server control-plane slice. See [watchlists-notifications-tranche-2.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-watchlists-notifications-vertical/Docs/Development/watchlists-notifications-tranche-2.md) for the verification record and the precise deferred scope.
 
 At that point, the next unresolved Tranche 2 focus moved to `Local MCP Runtime`, with `Writing Suite` and `Research Sessions / Runs` following after that.
 
@@ -35,7 +35,7 @@ At that point, the next unresolved Tranche 2 focus moved to `Local MCP Runtime`,
 5. `Prompts / Chatbooks`
    First contract seam, active-source prompt CRUD routing in CCP, live remote job browsing/actions, export download, and mounted prompt usage/version controls are landed. Continue this row when exposing prompt collections/workflows or chatbook cleanup/continuation controls.
 6. `Watchlists` plus `Client Notifications`
-   Partially landed. Chatbook now has a source-aware subscriptions shell, remote watchlist source CRUD, and a persisted local notifications inbox. Remaining work is the broader watchlists execution and control-plane surface plus any later server reminder/feed client.
+   Partially landed. Chatbook now has a source-aware subscriptions shell, remote watchlist source CRUD/restore, server jobs/runs/alert-rule administration, server-only control-plane tabs with explicit local guidance, and a persisted local notifications inbox. Remaining work is groups, richer structured control-plane UX, richer run output/log/artifact handling, and any later server reminder/feed client.
 7. `Workflows`, `Scheduler Workflows`, and `Chat Workflows`
    These remain remote-only acceptable, but once the local-first rows above are in place, Chatbook should add discover/trigger/observe support for connected-server workflow surfaces.
 8. `Server Reminders / Notification Feeds`, `Sharing`, and `Web Clipper`
@@ -93,7 +93,7 @@ Domains in this tranche:
 Execution intent for this tranche:
 
 - Crosswalk `Watchlists` onto existing local subscriptions and notification plumbing before inventing a separate remote-first model.
-- Treat the first-slice watchlists source CRUD and client-notifications inbox as landed foundations; keep watchlist groups, jobs, runs, alert rules, restore UX, and server reminder or feed surfaces as later follow-on work.
+- Treat the first-slice watchlists source CRUD, restore, jobs, runs, alert rules, and client-notifications inbox as landed foundations; keep watchlist groups, richer structured job/rule editors, richer run output/log/artifact UX, and server reminder or feed surfaces as later follow-on work.
 - Treat `Collections: Reading List / Read-it-later` as landed for the current server contract. Keep any future per-media-type server saved view follow-on explicitly blocked on a server list-contract extension, and keep any sync/mirror contract out of scope until separately approved.
 - Treat `Writing Suite` and first-slice `Research Sessions / Runs` as landed foundations; remaining work should deepen UX and execution semantics rather than re-litigating source separation.
 - Keep `Client Notifications` and `Local MCP Runtime` Chatbook-owned so offline capability remains credible even as remote interop improves.
@@ -125,7 +125,7 @@ Execution intent for this tranche:
 ## Follow-On Vertical Plans
 
 - `Collections: Reading List / Read-it-later parity`: Landed for the current server contract. Reopen this row only if the server adds per-media-type saved browsing support or a separate sync/mirror design is approved.
-- `Watchlists / subscriptions alignment`: Turn the tranche guidance into a focused plan that maps local subscriptions, alert rules, and notification delivery onto the server watchlist vocabulary without collapsing local ownership.
+- `Watchlists / subscriptions alignment`: Source CRUD, restore, server jobs/runs, alert rules, and notification delivery now map onto the server watchlist vocabulary without collapsing local ownership. Continue only for groups, richer job/run/rule UX, server reminder/feed, or sync design.
 - `Local MCP runtime parity`: Define the local-first runtime, approvals, catalog, prompts, tools, resources, and status surface before any later remote governance work.
 - `Remote MCP control plane`: The current remote Unified MCP hub-management route surface is now effectively covered inside `Tools & Settings`, with explicit local/server panes, configured server targets, remote browse sections, governance actions, governance-pack source/import/upgrade flows, expanded advanced admin browse/action coverage, assignment workspace membership control, credential-binding administration, slot-status views, and the top-level external-server secret setter. The next follow-on should focus on UI polish, richer structured presentation, and any future server-side MCP surface expansion without collapsing the source-separated local MCP runtime model.
 - `Writing suite parity`: Plan the local-first project, manuscript, chapter, and scene hierarchy together with the server contract and source-separated UI behavior.

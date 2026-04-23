@@ -9,7 +9,7 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - `Cross-cutting Runtime Policy` is no longer an unlanded blocker. The foundational runtime-policy package, capability registry, hard-stop seams, representative UI preflight, and raw-client boundary were landed and verified in [runtime-policy-tranche-0.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Docs/Development/runtime-policy-tranche-0.md).
 - The remaining runtime-policy work is breadth and adoption across more domains and screens, not absence of the authority model itself.
 - The active parity focus should therefore shift to the next user-priority standalone and remote-interop rows rather than treating runtime policy as still missing.
-- `Watchlists` plus `Client Notifications` are now partially landed in the first-slice subscriptions-shell vertical. The verification record lives in [watchlists-notifications-tranche-2.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-watchlists-notifications-vertical/Docs/Development/watchlists-notifications-tranche-2.md).
+- `Watchlists` plus `Client Notifications` are now partially landed through the subscriptions-shell and first server control-plane vertical. The verification record lives in [watchlists-notifications-tranche-2.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-watchlists-notifications-vertical/Docs/Development/watchlists-notifications-tranche-2.md).
 
 ## Critical Gaps
 
@@ -25,11 +25,11 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Watchlists: Watchlists, sources, jobs, runs, and alert rules
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
-- Current state: A source-aware subscriptions shell, local notifications inbox, and server watchlist source CRUD are now landed, with local mode still backed by subscriptions and server mode backed by live remote watchlist sources.
-- Gap: Watchlist groups, jobs, runs, alert rules, restore UX, and any sync or mirror semantics are still deferred despite the strong local user value.
+- Current state: A source-aware subscriptions shell, local notifications inbox, server watchlist source CRUD/restore, server jobs, server runs, and server alert-rule administration are now landed. Local mode remains backed by subscriptions and local notifications, while server-only control-plane tabs show explicit local/offline guidance instead of creating fake local jobs or runs.
+- Gap: Watchlist groups remain read-only/deferred. Richer structured job and alert-rule editors, richer run outputs/logs/artifact or audio summaries, remote reminders/feed integration, and any sync or mirror semantics remain future work.
 - Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/watchlists.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/watchlist_alert_rules.py`; Chatbook: `tldw_chatbook/Notifications/client_notifications_db.py`, `tldw_chatbook/Notifications/notification_dispatch_service.py`, `tldw_chatbook/Subscriptions/local_watchlists_service.py`, `tldw_chatbook/Subscriptions/server_watchlists_service.py`, `tldw_chatbook/Subscriptions/watchlist_scope_service.py`, `tldw_chatbook/UI/SubscriptionWindow.py`; Verification: `Tests/tldw_api/test_watchlists_schemas.py`, `Tests/tldw_api/test_watchlists_client.py`, `Tests/Subscriptions/test_client_notifications_db.py`, `Tests/Subscriptions/test_notification_dispatch_service.py`, `Tests/Subscriptions/test_server_watchlists_service.py`, `Tests/Subscriptions/test_watchlist_scope_service.py`, `Tests/UI/test_screen_navigation.py`, and `Tests/UI/test_subscription_window_watchlists.py`.
 - Recommended tranche: Tranche 2
-- Notes: Priority 81. This is now a partially landed vertical; the remaining work is the broader watchlists execution and control-plane surface rather than first-slice source CRUD.
+- Notes: Priority 81. Source CRUD and the first server execution/control-plane slice are now landed; the remaining work is UX depth, group management, remote feed/reminder surfaces, and sync design rather than missing basic server jobs/runs/alert-rule routing.
 
 ### Writing Suite: Writing projects and manuscript hierarchy
 - Requirement class: Local parity required + Remote parity required

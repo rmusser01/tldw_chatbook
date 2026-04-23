@@ -4,7 +4,15 @@ import pytest
 from pydantic import ValidationError
 
 from tldw_chatbook.Subscriptions.server_watchlists_service import ServerWatchlistsService
-from tldw_chatbook.tldw_api import SourceResponse
+from tldw_chatbook.tldw_api import (
+    AlertRuleResponse,
+    JobDeleteResponse,
+    JobResponse,
+    RunCancelResponse,
+    RunDetailResponse,
+    RunResponse,
+    SourceResponse,
+)
 
 
 class FakeClient:
@@ -168,6 +176,118 @@ class PagedDetailClient:
         }
 
 
+class ControlPlaneClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        self.job = JobResponse.model_validate(
+            {
+                "id": 31,
+                "name": "Daily Briefing",
+                "description": "Collect updates",
+                "scope": {"sources": [11]},
+                "schedule_expr": "0 8 * * *",
+                "timezone": "UTC",
+                "active": True,
+                "created_at": "2026-04-23T08:00:00Z",
+                "updated_at": "2026-04-23T08:00:00Z",
+            }
+        )
+        self.run = RunResponse.model_validate(
+            {
+                "id": 91,
+                "job_id": 31,
+                "status": "running",
+                "started_at": "2026-04-23T08:05:00Z",
+                "stats": {"items_found": 4},
+            }
+        )
+        self.rule = AlertRuleResponse.model_validate(
+            {
+                "id": 12,
+                "user_id": "user-1",
+                "job_id": 31,
+                "name": "No items",
+                "enabled": True,
+                "condition_type": "no_items",
+                "condition_value": "{}",
+                "severity": "warning",
+                "created_at": "2026-04-23T08:00:00Z",
+                "updated_at": "2026-04-23T08:00:00Z",
+            }
+        )
+
+    async def list_watchlist_jobs(self, **kwargs):
+        self.calls.append(("list_watchlist_jobs", kwargs))
+        return {"items": [self.job], "total": 1}
+
+    async def create_watchlist_job(self, payload):
+        self.calls.append(("create_watchlist_job", payload.model_dump(exclude_none=True, mode="json")))
+        return self.job
+
+    async def get_watchlist_job(self, job_id):
+        self.calls.append(("get_watchlist_job", job_id))
+        return self.job
+
+    async def update_watchlist_job(self, job_id, payload):
+        self.calls.append(("update_watchlist_job", job_id, payload.model_dump(exclude_none=True, mode="json")))
+        return self.job.model_copy(update={"name": payload.name or self.job.name})
+
+    async def delete_watchlist_job(self, job_id):
+        self.calls.append(("delete_watchlist_job", job_id))
+        return JobDeleteResponse(
+            job_id=job_id,
+            restore_window_seconds=3600,
+            restore_expires_at="2026-04-23T09:00:00Z",
+        )
+
+    async def restore_watchlist_job(self, job_id):
+        self.calls.append(("restore_watchlist_job", job_id))
+        return self.job
+
+    async def trigger_watchlist_job_run(self, job_id):
+        self.calls.append(("trigger_watchlist_job_run", job_id))
+        return self.run
+
+    async def list_watchlist_runs_for_job(self, job_id, **kwargs):
+        self.calls.append(("list_watchlist_runs_for_job", job_id, kwargs))
+        return {"items": [self.run], "total": 1, "has_more": False}
+
+    async def list_watchlist_runs(self, **kwargs):
+        self.calls.append(("list_watchlist_runs", kwargs))
+        return {"items": [self.run], "total": 1, "has_more": False}
+
+    async def get_watchlist_run_details(self, run_id):
+        self.calls.append(("get_watchlist_run_details", run_id))
+        return RunDetailResponse.model_validate(
+            {
+                **self.run.model_dump(mode="json"),
+                "log_text": "started",
+                "filter_tallies": {"include": 4},
+                "truncated": False,
+            }
+        )
+
+    async def cancel_watchlist_run(self, run_id):
+        self.calls.append(("cancel_watchlist_run", run_id))
+        return RunCancelResponse(run_id=run_id, status="cancelled", cancelled=True)
+
+    async def list_watchlist_alert_rules(self, **kwargs):
+        self.calls.append(("list_watchlist_alert_rules", kwargs))
+        return {"items": [self.rule]}
+
+    async def create_watchlist_alert_rule(self, payload):
+        self.calls.append(("create_watchlist_alert_rule", payload.model_dump(exclude_none=True, mode="json")))
+        return self.rule
+
+    async def update_watchlist_alert_rule(self, rule_id, payload):
+        self.calls.append(("update_watchlist_alert_rule", rule_id, payload.model_dump(exclude_none=True, mode="json")))
+        return self.rule.model_copy(update={"enabled": payload.enabled if payload.enabled is not None else self.rule.enabled})
+
+    async def delete_watchlist_alert_rule(self, rule_id):
+        self.calls.append(("delete_watchlist_alert_rule", rule_id))
+        return {"deleted": True}
+
+
 @pytest.mark.asyncio
 async def test_server_watchlists_service_omits_group_ids_and_preserves_settings_on_update():
     client = FakeClient()
@@ -273,3 +393,59 @@ async def test_server_watchlists_service_rejects_unsupported_update_source_types
         await service.update_source(17, source_type="atom")
 
     assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_watchlists_service_normalizes_job_run_and_alert_rule_controls():
+    client = ControlPlaneClient()
+    service = ServerWatchlistsService(client=client)
+
+    jobs = await service.list_jobs(limit=25, offset=50)
+    created = await service.create_job({"name": "Daily Briefing", "scope": {"sources": [11]}})
+    detail = await service.get_job_detail(31)
+    updated = await service.update_job(31, {"name": "Renamed"})
+    deleted = await service.delete_job(31)
+    restored = await service.restore_job(31)
+    triggered = await service.trigger_job(31)
+    runs = await service.list_runs(job_id=31)
+    global_runs = await service.list_runs(status="running")
+    run_detail = await service.get_run_detail(91)
+    cancelled = await service.cancel_run(91)
+    rules = await service.list_alert_rules(job_id=31)
+    created_rule = await service.create_alert_rule({"name": "No items", "condition_type": "no_items", "job_id": 31})
+    updated_rule = await service.update_alert_rule(12, {"enabled": False})
+    deleted_rule = await service.delete_alert_rule(12)
+
+    assert jobs["items"][0]["id"] == "server:watchlist_job:31"
+    assert jobs["items"][0]["title"] == "Daily Briefing"
+    assert created["job_id"] == 31
+    assert detail["backend"] == "server"
+    assert updated["title"] == "Renamed"
+    assert deleted["job_id"] == 31
+    assert restored["id"] == "server:watchlist_job:31"
+    assert triggered["id"] == "server:watchlist_run:91"
+    assert runs["items"][0]["run_id"] == 91
+    assert global_runs["total"] == 1
+    assert run_detail["log_text"] == "started"
+    assert cancelled["cancelled"] is True
+    assert rules["items"][0]["id"] == "server:watchlist_alert_rule:12"
+    assert created_rule["rule_id"] == 12
+    assert updated_rule["enabled"] is False
+    assert deleted_rule == {"deleted": True}
+    assert client.calls == [
+        ("list_watchlist_jobs", {"limit": 25, "offset": 50}),
+        ("create_watchlist_job", {"name": "Daily Briefing", "scope": {"sources": [11]}, "active": True}),
+        ("get_watchlist_job", 31),
+        ("update_watchlist_job", 31, {"name": "Renamed"}),
+        ("delete_watchlist_job", 31),
+        ("restore_watchlist_job", 31),
+        ("trigger_watchlist_job_run", 31),
+        ("list_watchlist_runs_for_job", 31, {"limit": 50, "offset": 0}),
+        ("list_watchlist_runs", {"status": "running", "limit": 50, "offset": 0}),
+        ("get_watchlist_run_details", 91),
+        ("cancel_watchlist_run", 91),
+        ("list_watchlist_alert_rules", {"job_id": 31}),
+        ("create_watchlist_alert_rule", {"name": "No items", "condition_type": "no_items", "job_id": 31, "severity": "warning"}),
+        ("update_watchlist_alert_rule", 12, {"enabled": False}),
+        ("delete_watchlist_alert_rule", 12),
+    ]

@@ -211,6 +211,9 @@ class SubscriptionWindow(Container):
         self.selected_subscription: Optional[Union[int, str]] = None
         self.selected_items: List[int] = []
         self._selected_watch_item: Optional[Dict[str, Any]] = None
+        self._selected_watchlist_job_id: Optional[str] = None
+        self._selected_watchlist_run_id: Optional[str] = None
+        self._selected_watchlist_alert_rule_id: Optional[str] = None
         self._selected_local_subscription_row: Optional[Dict[str, Any]] = None
         self.is_checking = reactive(False)
         self.check_progress = reactive(0.0)
@@ -229,6 +232,15 @@ class SubscriptionWindow(Container):
             # Notifications tab
             with TabPane("Notifications", id="notifications"):
                 yield from self._compose_notifications_tab()
+
+            with TabPane("Jobs", id="watchlist-jobs"):
+                yield from self._compose_watchlist_jobs_tab()
+
+            with TabPane("Runs", id="watchlist-runs"):
+                yield from self._compose_watchlist_runs_tab()
+
+            with TabPane("Alert Rules", id="watchlist-alert-rules"):
+                yield from self._compose_watchlist_alert_rules_tab()
             
             # Dashboard tab
             with TabPane("Dashboard", id="dashboard"):
@@ -254,6 +266,7 @@ class SubscriptionWindow(Container):
                     yield Button("Add New", id="add-subscription-btn", classes="action-button primary-button")
                     yield Button("Edit", id="edit-subscription-btn", classes="action-button")
                     yield Button("Delete", id="delete-subscription-btn", classes="action-button danger-button")
+                    yield Button("Restore", id="restore-subscription-btn", classes="action-button")
                     yield Button("Scraper Builder", id="scraper-builder-btn", classes="action-button")
             
             # Right side - subscription form
@@ -403,6 +416,52 @@ class SubscriptionWindow(Container):
             with Horizontal():
                 yield Button("Mark Read", id="notification-mark-read-btn")
                 yield Button("Dismiss", id="notification-dismiss-btn")
+
+    def _compose_watchlist_jobs_tab(self) -> ComposeResult:
+        """Compose server watchlist job controls."""
+        local_only = Static("", id="watchlist-jobs-local-state")
+        local_only.display = False
+        yield local_only
+        with Vertical(id="watchlist-jobs-main"):
+            yield Label("Watchlist Jobs")
+            yield ListView(id="watchlist-jobs-list", classes="subscription-list")
+            yield Label("Job Payload (JSON)")
+            yield TextArea('{"name":"Daily Briefing","scope":{"sources":[]}}', id="watchlist-job-payload")
+            with Horizontal(classes="list-actions"):
+                yield Button("Refresh", id="refresh-watchlist-jobs-btn")
+                yield Button("Save Job", id="save-watchlist-job-btn", classes="primary-button")
+                yield Button("Delete Job", id="delete-watchlist-job-btn", classes="danger-button")
+                yield Button("Restore Job", id="restore-watchlist-job-btn")
+                yield Button("Run Now", id="trigger-watchlist-job-btn")
+
+    def _compose_watchlist_runs_tab(self) -> ComposeResult:
+        """Compose server watchlist run controls."""
+        local_only = Static("", id="watchlist-runs-local-state")
+        local_only.display = False
+        yield local_only
+        with Vertical(id="watchlist-runs-main"):
+            yield Label("Watchlist Runs")
+            yield ListView(id="watchlist-runs-list", classes="subscription-list")
+            yield TextArea("", id="watchlist-run-detail", read_only=True)
+            with Horizontal(classes="list-actions"):
+                yield Button("Refresh", id="refresh-watchlist-runs-btn")
+                yield Button("Load Detail", id="load-watchlist-run-detail-btn")
+                yield Button("Cancel Run", id="cancel-watchlist-run-btn", classes="danger-button")
+
+    def _compose_watchlist_alert_rules_tab(self) -> ComposeResult:
+        """Compose server watchlist alert-rule controls."""
+        local_only = Static("", id="watchlist-alert-rules-local-state")
+        local_only.display = False
+        yield local_only
+        with Vertical(id="watchlist-alert-rules-main"):
+            yield Label("Watchlist Alert Rules")
+            yield ListView(id="watchlist-alert-rules-list", classes="subscription-list")
+            yield Label("Alert Rule Payload (JSON)")
+            yield TextArea('{"name":"No items","condition_type":"no_items"}', id="watchlist-alert-rule-payload")
+            with Horizontal(classes="list-actions"):
+                yield Button("Refresh", id="refresh-watchlist-alert-rules-btn")
+                yield Button("Save Rule", id="save-watchlist-alert-rule-btn", classes="primary-button")
+                yield Button("Delete Rule", id="delete-watchlist-alert-rule-btn", classes="danger-button")
     
     def _compose_dashboard_tab(self) -> ComposeResult:
         """Compose monitoring dashboard tab."""
@@ -785,6 +844,9 @@ class SubscriptionWindow(Container):
     def _local_only_selectors(self, tab_id: str) -> Tuple[str, str]:
         return {
             "review": ("#review-local-only-state", "#review-main"),
+            "watchlist-jobs": ("#watchlist-jobs-local-state", "#watchlist-jobs-main"),
+            "watchlist-runs": ("#watchlist-runs-local-state", "#watchlist-runs-main"),
+            "watchlist-alert-rules": ("#watchlist-alert-rules-local-state", "#watchlist-alert-rules-main"),
         }.get(tab_id, ("", ""))
 
     def _render_local_only_state(self, *, tab_id: str, message: str) -> None:
@@ -827,6 +889,71 @@ class SubscriptionWindow(Container):
             list_item = ListItem(Static(label, classes="subscription-item"))
             list_item.data = item
             await list_view.append(list_item)
+
+    async def _render_watchlist_record_list(
+        self,
+        selector: str,
+        items: List[Dict[str, Any]],
+        *,
+        label_builder,
+        fallback_key: str,
+        entity_kind: str,
+    ) -> None:
+        try:
+            list_view = self.query_one(selector, ListView)
+        except (AssertionError, QueryError):
+            return
+        selected_id = self._remembered_control_plane_id(selector)
+        restored_selection = False
+        await list_view.clear()
+        for index, item in enumerate(items):
+            list_item = ListItem(Static(label_builder(item), classes="subscription-item"))
+            list_item.data = item
+            await list_view.append(list_item)
+            item_id = self._normalized_control_plane_id(item, fallback_key, entity_kind)
+            if item_id is not None and item_id == selected_id:
+                list_view.highlighted_child = list_item
+                list_view.index = index
+                restored_selection = True
+        if selected_id is not None and not restored_selection:
+            self._remember_control_plane_id(selector, None)
+
+    async def _render_watchlist_jobs(self, items: List[Dict[str, Any]]) -> None:
+        await self._render_watchlist_record_list(
+            "#watchlist-jobs-list",
+            items,
+            label_builder=lambda item: (
+                f"{item.get('title') or item.get('name') or 'Untitled Job'} "
+                f"[{'active' if item.get('active', True) else 'inactive'}] "
+                f"{item.get('schedule_expr') or 'manual'}"
+            ),
+            fallback_key="job_id",
+            entity_kind="watchlist_job",
+        )
+
+    async def _render_watchlist_runs(self, items: List[Dict[str, Any]]) -> None:
+        await self._render_watchlist_record_list(
+            "#watchlist-runs-list",
+            items,
+            label_builder=lambda item: (
+                f"Run {item.get('run_id', item.get('id', '?'))} "
+                f"for job {item.get('job_id', '-')} [{item.get('status', 'unknown')}]"
+            ),
+            fallback_key="run_id",
+            entity_kind="watchlist_run",
+        )
+
+    async def _render_watchlist_alert_rules(self, items: List[Dict[str, Any]]) -> None:
+        await self._render_watchlist_record_list(
+            "#watchlist-alert-rules-list",
+            items,
+            label_builder=lambda item: (
+                f"{item.get('title') or item.get('name') or 'Alert Rule'} "
+                f"[{item.get('condition_type', 'condition')}] {item.get('severity', 'warning')}"
+            ),
+            fallback_key="rule_id",
+            entity_kind="watchlist_alert_rule",
+        )
 
     async def refresh_notifications_inbox(self) -> None:
         """Reload the notifications list from the local client store."""
@@ -886,6 +1013,57 @@ class SubscriptionWindow(Container):
         entity_kind = str(selected.get("entity_kind") or ("subscription" if self._runtime_backend() == "local" else "watchlist_source"))
         return f"{self._runtime_backend()}:{entity_kind}:{source_id}"
 
+    def _control_plane_selection_attr(self, selector: str) -> Optional[str]:
+        mapping = {
+            "#watchlist-jobs-list": "_selected_watchlist_job_id",
+            "#watchlist-runs-list": "_selected_watchlist_run_id",
+            "#watchlist-alert-rules-list": "_selected_watchlist_alert_rule_id",
+        }
+        return mapping.get(selector)
+
+    def _remembered_control_plane_id(self, selector: str) -> Optional[str]:
+        attr_name = self._control_plane_selection_attr(selector)
+        if attr_name is None:
+            return None
+        selected_id = getattr(self, attr_name, None)
+        return str(selected_id) if selected_id not in (None, "") else None
+
+    def _remember_control_plane_id(self, selector: str, item_id: Optional[str]) -> None:
+        attr_name = self._control_plane_selection_attr(selector)
+        if attr_name is not None:
+            setattr(self, attr_name, str(item_id) if item_id not in (None, "") else None)
+
+    def _normalized_control_plane_id(
+        self,
+        selected: Dict[str, Any],
+        fallback_key: str,
+        entity_kind: str,
+    ) -> Optional[str]:
+        item_id = selected.get("id")
+        if item_id not in (None, ""):
+            return str(item_id)
+        raw_id = selected.get(fallback_key)
+        if raw_id in (None, ""):
+            return None
+        return f"{self._runtime_backend()}:{entity_kind}:{raw_id}"
+
+    def _active_normalized_id(self, selector: str, fallback_key: str, entity_kind: str) -> Optional[str]:
+        selected = self._selected_list_item_data(selector)
+        if not selected:
+            return self._remembered_control_plane_id(selector)
+        item_id = self._normalized_control_plane_id(selected, fallback_key, entity_kind)
+        self._remember_control_plane_id(selector, item_id)
+        return item_id
+
+    def _active_watchlist_job_id(self) -> Optional[str]:
+        return self._active_normalized_id("#watchlist-jobs-list", "job_id", "watchlist_job")
+
+    def _active_watchlist_run_id(self) -> Optional[str]:
+        return self._active_normalized_id("#watchlist-runs-list", "run_id", "watchlist_run")
+
+    def _active_watchlist_alert_rule_id(self) -> Optional[str]:
+        return self._active_normalized_id("#watchlist-alert-rules-list", "rule_id", "watchlist_alert_rule")
+
     def _parse_tags_field(self) -> List[str]:
         return [tag.strip() for tag in self.query_one("#sub-tags", Input).value.split(',') if tag.strip()]
 
@@ -944,6 +1122,23 @@ class SubscriptionWindow(Container):
                 return decoded
         return {}
 
+    def _json_payload_from_text_area(self, selector: str) -> Dict[str, Any]:
+        widget = self.query_one(selector, TextArea)
+        raw_text = getattr(widget, "text", "") or ""
+        if not raw_text.strip():
+            return {}
+        decoded = json.loads(raw_text)
+        if not isinstance(decoded, dict):
+            raise ValueError("Payload must be a JSON object.")
+        return decoded
+
+    def _load_text_area(self, selector: str, text: str) -> None:
+        widget = self.query_one(selector, TextArea)
+        if hasattr(widget, "load_text"):
+            widget.load_text(text)
+        else:
+            widget.text = text
+
     def _clear_subscription_list_selection(self) -> None:
         try:
             list_view = self.query_one("#subscription-list", ListView)
@@ -980,6 +1175,13 @@ class SubscriptionWindow(Container):
         if item_id is None:
             return None
         return await self.backend_controller.delete_watch_item(item_id)
+
+    async def restore_selected_watch_item(self) -> Dict[str, Any] | None:
+        """Restore the current watch item through the backend controller."""
+        item_id = self._active_watch_item_id()
+        if item_id is None:
+            return None
+        return await self.backend_controller.restore_watch_item(item_id)
 
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
         """Refresh window state after a runtime backend switch."""
@@ -1144,6 +1346,113 @@ class SubscriptionWindow(Container):
         if deleted:
             await self.handle_add_subscription(None)
             await self.refresh_backend_view()
+
+    @on(Button.Pressed, "#restore-subscription-btn")
+    async def handle_restore_subscription(self, event: Button.Pressed) -> None:
+        """Restore the selected server watchlist source when it is still inside the restore window."""
+        del event
+        restored = await self.restore_selected_watch_item()
+        if restored:
+            self._selected_watch_item = dict(restored)
+            self.selected_subscription = restored.get("id")
+            await self.refresh_backend_view()
+
+    @on(Button.Pressed, "#refresh-watchlist-jobs-btn")
+    async def handle_refresh_watchlist_jobs(self, event: Button.Pressed) -> None:
+        del event
+        await self.backend_controller.load_watchlist_jobs()
+
+    @on(Button.Pressed, "#save-watchlist-job-btn")
+    async def handle_save_watchlist_job(self, event: Button.Pressed) -> None:
+        del event
+        try:
+            payload = self._json_payload_from_text_area("#watchlist-job-payload")
+        except (json.JSONDecodeError, ValueError) as exc:
+            self.notify(f"Invalid job JSON: {exc}", severity="error")
+            return
+        job_id = self._active_watchlist_job_id()
+        if job_id is not None and "id" not in payload and "job_id" not in payload:
+            payload["id"] = job_id
+        await self.backend_controller.save_watchlist_job(payload)
+        await self.backend_controller.load_watchlist_jobs()
+
+    @on(Button.Pressed, "#delete-watchlist-job-btn")
+    async def handle_delete_watchlist_job(self, event: Button.Pressed) -> None:
+        del event
+        job_id = self._active_watchlist_job_id()
+        if job_id is None:
+            return
+        await self.backend_controller.delete_watchlist_job(job_id)
+        await self.backend_controller.load_watchlist_jobs()
+
+    @on(Button.Pressed, "#restore-watchlist-job-btn")
+    async def handle_restore_watchlist_job(self, event: Button.Pressed) -> None:
+        del event
+        job_id = self._active_watchlist_job_id()
+        if job_id is None:
+            return
+        await self.backend_controller.restore_watchlist_job(job_id)
+        await self.backend_controller.load_watchlist_jobs()
+
+    @on(Button.Pressed, "#trigger-watchlist-job-btn")
+    async def handle_trigger_watchlist_job(self, event: Button.Pressed) -> None:
+        del event
+        job_id = self._active_watchlist_job_id()
+        if job_id is None:
+            return
+        await self.backend_controller.trigger_watchlist_job(job_id)
+        await self.backend_controller.load_watchlist_runs()
+
+    @on(Button.Pressed, "#refresh-watchlist-runs-btn")
+    async def handle_refresh_watchlist_runs(self, event: Button.Pressed) -> None:
+        del event
+        await self.backend_controller.load_watchlist_runs()
+
+    @on(Button.Pressed, "#load-watchlist-run-detail-btn")
+    async def handle_load_watchlist_run_detail(self, event: Button.Pressed) -> None:
+        del event
+        run_id = self._active_watchlist_run_id()
+        if run_id is None:
+            return
+        detail = await self.backend_controller.get_watchlist_run_detail(run_id)
+        self._load_text_area("#watchlist-run-detail", json.dumps(detail, indent=2, sort_keys=True, default=str))
+
+    @on(Button.Pressed, "#cancel-watchlist-run-btn")
+    async def handle_cancel_watchlist_run(self, event: Button.Pressed) -> None:
+        del event
+        run_id = self._active_watchlist_run_id()
+        if run_id is None:
+            return
+        await self.backend_controller.cancel_watchlist_run(run_id)
+        await self.backend_controller.load_watchlist_runs()
+
+    @on(Button.Pressed, "#refresh-watchlist-alert-rules-btn")
+    async def handle_refresh_watchlist_alert_rules(self, event: Button.Pressed) -> None:
+        del event
+        await self.backend_controller.load_watchlist_alert_rules()
+
+    @on(Button.Pressed, "#save-watchlist-alert-rule-btn")
+    async def handle_save_watchlist_alert_rule(self, event: Button.Pressed) -> None:
+        del event
+        try:
+            payload = self._json_payload_from_text_area("#watchlist-alert-rule-payload")
+        except (json.JSONDecodeError, ValueError) as exc:
+            self.notify(f"Invalid alert rule JSON: {exc}", severity="error")
+            return
+        rule_id = self._active_watchlist_alert_rule_id()
+        if rule_id is not None and "id" not in payload and "rule_id" not in payload:
+            payload["id"] = rule_id
+        await self.backend_controller.save_watchlist_alert_rule(payload)
+        await self.backend_controller.load_watchlist_alert_rules()
+
+    @on(Button.Pressed, "#delete-watchlist-alert-rule-btn")
+    async def handle_delete_watchlist_alert_rule(self, event: Button.Pressed) -> None:
+        del event
+        rule_id = self._active_watchlist_alert_rule_id()
+        if rule_id is None:
+            return
+        await self.backend_controller.delete_watchlist_alert_rule(rule_id)
+        await self.backend_controller.load_watchlist_alert_rules()
     
     @on(Button.Pressed, "#check-all-btn")
     async def handle_check_all(self, event: Button.Pressed) -> None:
