@@ -832,6 +832,8 @@ class WritingDatabase(BaseDB):
         if snapshot is not None:
             snapshot_data = dict(snapshot)
             version_body = body_markdown if entity_kind == "scene" else None
+            if entity_kind != "scene":
+                snapshot_data.pop("body_markdown", None)
         else:
             snapshot_data, version_body = self._build_version_snapshot(
                 entity_kind,
