@@ -191,9 +191,13 @@ from .rag_admin_schemas import (
     ChunkingTemplateApplyResponse,
     ChunkingTemplateCreateRequest,
     ChunkingTemplateDiagnosticsResponse,
+    ChunkingTemplateLearnRequest,
+    ChunkingTemplateLearnResponse,
     ChunkingTemplateListResponse,
+    ChunkingTemplateMatchResponse,
     ChunkingTemplateResponse,
     ChunkingTemplateUpdateRequest,
+    ChunkingTemplateValidationResponse,
     EmbeddingCollectionListResponse,
     EmbeddingCollectionResponse,
     EmbeddingCollectionStatsResponse,
@@ -2155,6 +2159,53 @@ class TLDWAPIClient:
     async def get_chunking_template_diagnostics(self) -> ChunkingTemplateDiagnosticsResponse:
         response = await self._request("GET", "/api/v1/chunking/templates/diagnostics")
         return ChunkingTemplateDiagnosticsResponse.model_validate(response)
+
+    async def validate_chunking_template(
+        self,
+        template_config: dict[str, Any],
+    ) -> ChunkingTemplateValidationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/chunking/templates/validate",
+            json_data=dict(template_config),
+        )
+        return ChunkingTemplateValidationResponse.model_validate(response)
+
+    async def match_chunking_templates(
+        self,
+        *,
+        media_type: Optional[str] = None,
+        title: Optional[str] = None,
+        url: Optional[str] = None,
+        filename: Optional[str] = None,
+    ) -> ChunkingTemplateMatchResponse:
+        params = {
+            key: value
+            for key, value in {
+                "media_type": media_type,
+                "title": title,
+                "url": url,
+                "filename": filename,
+            }.items()
+            if value is not None
+        }
+        response = await self._request(
+            "POST",
+            "/api/v1/chunking/templates/match",
+            params=params,
+        )
+        return ChunkingTemplateMatchResponse.model_validate(response)
+
+    async def learn_chunking_template(
+        self,
+        request_data: ChunkingTemplateLearnRequest,
+    ) -> ChunkingTemplateLearnResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/chunking/templates/learn",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ChunkingTemplateLearnResponse.model_validate(response)
 
     async def list_embedding_collections(self) -> EmbeddingCollectionListResponse:
         response = await self._request("GET", "/api/v1/embeddings/collections")

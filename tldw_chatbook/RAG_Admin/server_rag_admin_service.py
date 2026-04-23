@@ -10,6 +10,7 @@ from ..tldw_api import (
     BatchMediaEmbeddingsRequest,
     ChunkingTemplateApplyRequest,
     ChunkingTemplateCreateRequest,
+    ChunkingTemplateLearnRequest,
     ChunkingTemplateUpdateRequest,
     GenerateMediaEmbeddingsRequest,
     MediaEmbeddingsSearchRequest,
@@ -119,6 +120,46 @@ class ServerRAGAdminService:
 
     async def get_template_diagnostics(self) -> dict[str, Any]:
         return self._dump_model(await self._require_client().get_chunking_template_diagnostics())
+
+    async def validate_template_config(self, template_config: Mapping[str, Any]) -> dict[str, Any]:
+        return self._dump_model(
+            await self._require_client().validate_chunking_template(dict(template_config))
+        )
+
+    async def match_templates(
+        self,
+        *,
+        media_type: Optional[str] = None,
+        title: Optional[str] = None,
+        url: Optional[str] = None,
+        filename: Optional[str] = None,
+    ) -> dict[str, Any]:
+        return self._dump_model(
+            await self._require_client().match_chunking_templates(
+                media_type=media_type,
+                title=title,
+                url=url,
+                filename=filename,
+            )
+        )
+
+    async def learn_template(
+        self,
+        *,
+        name: str,
+        example_text: Optional[str] = None,
+        description: Optional[str] = None,
+        save: bool = False,
+        classifier: Optional[Mapping[str, Any]] = None,
+    ) -> dict[str, Any]:
+        request = ChunkingTemplateLearnRequest(
+            name=name,
+            example_text=example_text,
+            description=description,
+            save=save,
+            classifier=dict(classifier) if classifier is not None else None,
+        )
+        return self._dump_model(await self._require_client().learn_chunking_template(request))
 
     async def list_collections(self) -> list[dict[str, Any]]:
         return self._dump_model(await self._require_client().list_embedding_collections())

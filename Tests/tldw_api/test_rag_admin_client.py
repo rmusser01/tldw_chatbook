@@ -9,9 +9,13 @@ from tldw_chatbook.tldw_api import (
     ChunkingTemplateApplyResponse,
     ChunkingTemplateCreateRequest,
     ChunkingTemplateDiagnosticsResponse,
+    ChunkingTemplateLearnRequest,
+    ChunkingTemplateLearnResponse,
     ChunkingTemplateListResponse,
+    ChunkingTemplateMatchResponse,
     ChunkingTemplateResponse,
     ChunkingTemplateUpdateRequest,
+    ChunkingTemplateValidationResponse,
     EmbeddingCollectionResponse,
     EmbeddingCollectionStatsResponse,
     GenerateMediaEmbeddingsRequest,
@@ -182,6 +186,68 @@ async def test_chunking_template_crud_apply_and_diagnostics_routes_wire(monkeypa
     assert isinstance(diagnostics, ChunkingTemplateDiagnosticsResponse)
     assert applied.metadata["chunk_count"] == 1
     assert diagnostics.capability == "native"
+
+
+@pytest.mark.asyncio
+async def test_chunking_template_validate_match_and_learn_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {"valid": True, "errors": None, "warnings": None},
+            {"matches": [{"name": "article-template", "score": 0.85, "priority": 3}]},
+            {
+                "template": {
+                    "name": "learned",
+                    "description": "Learned template",
+                    "chunking": {"method": "sentences", "config": {"hierarchical": True}},
+                },
+                "saved": True,
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    template_config = {"chunking": {"method": "sentences", "config": {"max_size": 8}}}
+    validation = await client.validate_chunking_template(template_config)
+    matches = await client.match_chunking_templates(
+        media_type="article",
+        title="Example Article",
+        url="https://example.test/article",
+        filename="article.md",
+    )
+    learned = await client.learn_chunking_template(
+        ChunkingTemplateLearnRequest(
+            name="learned",
+            example_text="# Heading\nBody",
+            description="Learned template",
+            save=True,
+            classifier={"media_type": "article"},
+        )
+    )
+
+    assert isinstance(validation, ChunkingTemplateValidationResponse)
+    assert isinstance(matches, ChunkingTemplateMatchResponse)
+    assert isinstance(learned, ChunkingTemplateLearnResponse)
+    assert validation.valid is True
+    assert matches.matches[0]["name"] == "article-template"
+    assert learned.saved is True
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/chunking/templates/validate")
+    assert mocked.await_args_list[0].kwargs["json_data"] == template_config
+    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/chunking/templates/match")
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "media_type": "article",
+        "title": "Example Article",
+        "url": "https://example.test/article",
+        "filename": "article.md",
+    }
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/chunking/templates/learn")
+    assert mocked.await_args_list[2].kwargs["json_data"] == {
+        "name": "learned",
+        "example_text": "# Heading\nBody",
+        "description": "Learned template",
+        "save": True,
+        "classifier": {"media_type": "article"},
+    }
 
 
 @pytest.mark.asyncio

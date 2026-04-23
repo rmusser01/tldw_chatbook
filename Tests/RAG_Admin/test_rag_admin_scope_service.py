@@ -40,6 +40,18 @@ class FakeServerService:
         self.calls.append(("list_media_embedding_jobs", kwargs))
         return {"data": [{"uuid": "job-1", "status": "completed"}], "pagination": {"count": 1}}
 
+    async def validate_template_config(self, template_config):
+        self.calls.append(("validate_template_config", template_config))
+        return {"valid": True}
+
+    async def match_templates(self, **kwargs):
+        self.calls.append(("match_templates", kwargs))
+        return {"matches": [{"name": "article-template", "score": 0.85}]}
+
+    async def learn_template(self, **kwargs):
+        self.calls.append(("learn_template", kwargs))
+        return {"template": {"name": kwargs["name"]}, "saved": kwargs.get("save", False)}
+
 
 @pytest.mark.asyncio
 async def test_scope_service_routes_template_list_by_backend():
@@ -129,3 +141,38 @@ async def test_scope_service_routes_media_embedding_operations_to_server_only():
 
     with pytest.raises(ValueError, match="Server retrieval-admin backend is required"):
         await scope.generate_media_embeddings(mode="local", media_id=42)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_template_helpers_to_server_only():
+    server = FakeServerService()
+    scope = RAGAdminScopeService(local_service=FakeLocalService(), server_service=server)
+    template_config = {"chunking": {"method": "sentences"}}
+
+    validation = await scope.validate_template_config(mode="server", template_config=template_config)
+    matches = await scope.match_templates(mode="server", media_type="article", title="Example Article")
+    learned = await scope.learn_template(
+        mode="server",
+        name="learned",
+        example_text="# Heading\nBody",
+        save=True,
+    )
+
+    assert validation["valid"] is True
+    assert matches["matches"][0]["name"] == "article-template"
+    assert learned == {"template": {"name": "learned"}, "saved": True}
+    assert server.calls == [
+        ("validate_template_config", template_config),
+        ("match_templates", {"media_type": "article", "title": "Example Article"}),
+        (
+            "learn_template",
+            {
+                "name": "learned",
+                "example_text": "# Heading\nBody",
+                "save": True,
+            },
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="Server retrieval-admin backend is required"):
+        await scope.validate_template_config(mode="local", template_config=template_config)

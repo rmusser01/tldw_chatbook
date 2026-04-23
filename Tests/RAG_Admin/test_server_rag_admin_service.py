@@ -6,9 +6,13 @@ from tldw_chatbook.tldw_api import (
     BatchMediaEmbeddingsResponse,
     ChunkingTemplateCreateRequest,
     ChunkingTemplateDiagnosticsResponse,
+    ChunkingTemplateLearnRequest,
+    ChunkingTemplateLearnResponse,
     ChunkingTemplateListResponse,
+    ChunkingTemplateMatchResponse,
     ChunkingTemplateResponse,
     ChunkingTemplateUpdateRequest,
+    ChunkingTemplateValidationResponse,
     EmbeddingCollectionResponse,
     EmbeddingCollectionStatsResponse,
     GenerateMediaEmbeddingsRequest,
@@ -91,6 +95,23 @@ class FakeClient:
             capability="native",
             fallback_enabled=True,
             hint="hint",
+        )
+
+    async def validate_chunking_template(self, template_config):
+        self.calls.append(("validate_chunking_template", template_config))
+        return ChunkingTemplateValidationResponse(valid=True)
+
+    async def match_chunking_templates(self, **kwargs):
+        self.calls.append(("match_chunking_templates", kwargs))
+        return ChunkingTemplateMatchResponse(
+            matches=[{"name": "article-template", "score": 0.85, "priority": 3}]
+        )
+
+    async def learn_chunking_template(self, request_data):
+        self.calls.append(("learn_chunking_template", request_data))
+        return ChunkingTemplateLearnResponse(
+            template={"name": "learned", "chunking": {"method": "sentences"}},
+            saved=True,
         )
 
     async def list_embedding_collections(self):
@@ -196,6 +217,44 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     assert diagnostics["capability"] == "native"
     assert collections[0]["name"] == "demo_collection"
     assert stats["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_server_rag_admin_service_exposes_template_helper_operations():
+    client = FakeClient()
+    service = ServerRAGAdminService(client=client)
+    template_config = {"chunking": {"method": "sentences", "config": {"max_size": 8}}}
+
+    validation = await service.validate_template_config(template_config)
+    matches = await service.match_templates(
+        media_type="article",
+        title="Example Article",
+        url="https://example.test/article",
+        filename="article.md",
+    )
+    learned = await service.learn_template(
+        name="learned",
+        example_text="# Heading\nBody",
+        description="Learned template",
+        save=True,
+        classifier={"media_type": "article"},
+    )
+
+    assert client.calls[0] == ("validate_chunking_template", template_config)
+    assert client.calls[1] == (
+        "match_chunking_templates",
+        {
+            "media_type": "article",
+            "title": "Example Article",
+            "url": "https://example.test/article",
+            "filename": "article.md",
+        },
+    )
+    assert client.calls[2][0] == "learn_chunking_template"
+    assert isinstance(client.calls[2][1], ChunkingTemplateLearnRequest)
+    assert validation["valid"] is True
+    assert matches["matches"][0]["name"] == "article-template"
+    assert learned["saved"] is True
 
 
 @pytest.mark.asyncio

@@ -43,7 +43,7 @@ class RAGAdminScopeService:
     def _server_service_for_mode(self, mode: RAGAdminBackend | str | None) -> Any:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode != RAGAdminBackend.SERVER:
-            raise ValueError("Server retrieval-admin backend is required for media embedding operations.")
+            raise ValueError("Server retrieval-admin backend is required for this RAG admin operation.")
         return self._service_for_mode(normalized_mode)
 
     async def _maybe_await(self, value: Any) -> Any:
@@ -174,6 +174,58 @@ class RAGAdminScopeService:
                 include_metadata=include_metadata,
             )
         )
+
+    async def validate_template_config(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        template_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        service = self._server_service_for_mode(mode)
+        return await self._maybe_await(service.validate_template_config(template_config))
+
+    async def match_templates(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        media_type: str | None = None,
+        title: str | None = None,
+        url: str | None = None,
+        filename: str | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_service_for_mode(mode)
+        kwargs: dict[str, Any] = {}
+        if media_type is not None:
+            kwargs["media_type"] = media_type
+        if title is not None:
+            kwargs["title"] = title
+        if url is not None:
+            kwargs["url"] = url
+        if filename is not None:
+            kwargs["filename"] = filename
+        return await self._maybe_await(service.match_templates(**kwargs))
+
+    async def learn_template(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        name: str,
+        example_text: str | None = None,
+        description: str | None = None,
+        save: bool = False,
+        classifier: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_service_for_mode(mode)
+        kwargs: dict[str, Any] = {"name": name}
+        if example_text is not None:
+            kwargs["example_text"] = example_text
+        if description is not None:
+            kwargs["description"] = description
+        if save:
+            kwargs["save"] = save
+        if classifier is not None:
+            kwargs["classifier"] = classifier
+        return await self._maybe_await(service.learn_template(**kwargs))
 
     async def list_collections(
         self,
