@@ -22,7 +22,7 @@ from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistScopeSe
 from tldw_chatbook.Constants import ALL_TABS, TAB_WRITING
 from tldw_chatbook.DB.Writing_DB import WritingDatabase
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
-from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
 from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 from tldw_chatbook.UI.Screens.writing_screen import WritingScreen
@@ -93,6 +93,12 @@ def test_writing_tab_and_screen_are_registered(app):
     assert screen_name == TAB_WRITING
     assert current_tab == TAB_WRITING
     assert screen_class is WritingScreen
+
+
+def test_main_navigation_bar_includes_writing_item():
+    navigation = MainNavigationBar(active=TAB_WRITING)
+
+    assert (TAB_WRITING, "Writing") in navigation.nav_items
 
 
 def test_app_initializes_writing_services(app):
