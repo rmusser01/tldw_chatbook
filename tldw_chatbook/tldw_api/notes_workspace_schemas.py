@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field, field_validator
 
 
 WorkspaceStudyMaterialsPolicy = Literal["general", "workspace"]
+NoteGraphEdgeType = Literal["manual", "wikilink", "backlink", "tag_membership", "source_membership"]
+NoteGraphFormat = Literal["default", "cytoscape"]
 
 
 def _split_keywords(value: Any) -> list[str] | None:
@@ -131,6 +133,87 @@ class NoteListResponse(BaseModel):
     limit: int = 0
     offset: int = 0
     total: Optional[int] = None
+
+
+class NoteGraphRequest(BaseModel):
+    """Query parameters for the server notes graph endpoints."""
+
+    center_note_id: Optional[str] = None
+    radius: int = Field(1, ge=1, le=2)
+    edge_types: list[NoteGraphEdgeType] | None = None
+    tag: Optional[str] = None
+    source: Optional[str] = None
+    time_range_field: Literal["created_at", "updated_at"] = "updated_at"
+    max_nodes: Optional[int] = Field(None, ge=1)
+    max_edges: Optional[int] = Field(None, ge=0)
+    max_degree: Optional[int] = Field(None, ge=1)
+    format: NoteGraphFormat = "default"
+    cursor: Optional[str] = None
+    allow_heavy: bool = False
+
+    @field_validator("edge_types", mode="before")
+    @classmethod
+    def validate_edge_types(cls, value: Any):
+        if value is None:
+            return value
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return value
+
+
+class NoteGraphNode(BaseModel):
+    """Server notes graph node payload."""
+
+    id: str
+    type: Literal["note", "tag", "source"]
+    label: str
+    created_at: Optional[str] = None
+    deleted: Optional[bool] = None
+    degree: Optional[int] = None
+    tag_count: Optional[int] = None
+    primary_source_id: Optional[str] = None
+
+
+class NoteGraphEdge(BaseModel):
+    """Server notes graph edge payload."""
+
+    id: str
+    source: str
+    target: str
+    type: NoteGraphEdgeType
+    directed: bool
+    weight: Optional[float] = 1.0
+    label: Optional[str] = None
+
+
+class NoteGraphLimits(BaseModel):
+    """Server-applied graph bounds."""
+
+    max_nodes: int = Field(..., ge=1)
+    max_edges: int = Field(..., ge=0)
+    max_degree: int = Field(..., ge=1)
+
+
+class NoteGraphResponse(BaseModel):
+    """Default server notes graph response."""
+
+    nodes: list[NoteGraphNode] = Field(default_factory=list)
+    edges: list[NoteGraphEdge] = Field(default_factory=list)
+    truncated: bool = False
+    truncated_by: list[str] = Field(default_factory=list)
+    has_more: bool = False
+    cursor: Optional[str] = None
+    limits: NoteGraphLimits
+    radius_cap_applied: bool = False
+
+
+class NoteLinkCreateRequest(BaseModel):
+    """Request body for creating a manual server notes graph link."""
+
+    to_note_id: str = Field(..., min_length=1)
+    directed: bool = False
+    weight: Optional[float] = Field(1.0, ge=0.0)
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class WorkspaceCreateRequest(BaseModel):

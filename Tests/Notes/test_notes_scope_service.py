@@ -106,6 +106,8 @@ class FakeServerNotes:
         self.server_queries = []
         self.workspace_queries = []
         self.loaded_workspaces = []
+        self.graph_calls = []
+        self.link_calls = []
 
     async def save_server_note(self, **kwargs):
         self.saved_ids.append(kwargs["note_id"])
@@ -134,6 +136,37 @@ class FakeServerNotes:
     async def load_workspace_context(self, workspace_id):
         self.loaded_workspaces.append(workspace_id)
         return {"workspace": {"id": workspace_id}}
+
+    async def get_notes_graph(self, **kwargs):
+        self.graph_calls.append(("graph", kwargs))
+        return {"nodes": [], "edges": []}
+
+    async def get_note_neighbors(self, note_id, **kwargs):
+        self.graph_calls.append(("neighbors", note_id, kwargs))
+        return {"nodes": [{"id": note_id}], "edges": []}
+
+    async def create_note_link(self, note_id, **kwargs):
+        self.link_calls.append(("create", note_id, kwargs))
+        return {"status": "created"}
+
+    async def delete_note_link(self, edge_id):
+        self.link_calls.append(("delete", edge_id))
+        return {"deleted": True}
+
+
+class FakePolicyEnforcer:
+    def __init__(self, denied_reason=None):
+        self.calls = []
+        self.denied_reason = denied_reason
+
+    @classmethod
+    def deny(cls, reason="blocked"):
+        return cls(denied_reason=reason)
+
+    def require_allowed(self, *, action_id):
+        self.calls.append(action_id)
+        if self.denied_reason:
+            raise PermissionError(self.denied_reason)
 
 
 @pytest.mark.asyncio
@@ -296,3 +329,65 @@ async def test_scope_service_loads_workspace_context_from_server_service():
 
     assert server.loaded_workspaces == ["ws-7"]
     assert result == {"workspace": {"id": "ws-7"}}
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_note_graph_actions_with_policy():
+    server = FakeServerNotes()
+    policy = FakePolicyEnforcer()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    await scope_service.get_notes_graph(
+        scope=ScopeType.SERVER_NOTE,
+        center_note_id="note:1",
+        edge_types=["manual"],
+    )
+    await scope_service.get_note_neighbors(
+        scope=ScopeType.SERVER_NOTE,
+        note_id="note:1",
+        edge_types=["backlink"],
+    )
+    await scope_service.create_note_link(
+        scope=ScopeType.SERVER_NOTE,
+        note_id="note:1",
+        to_note_id="note:2",
+        directed=True,
+    )
+    await scope_service.delete_note_link(
+        scope=ScopeType.SERVER_NOTE,
+        edge_id="e:1",
+    )
+
+    assert server.graph_calls == [
+        ("graph", {"center_note_id": "note:1", "edge_types": ["manual"]}),
+        ("neighbors", "note:1", {"edge_types": ["backlink"]}),
+    ]
+    assert server.link_calls == [
+        ("create", "note:1", {"to_note_id": "note:2", "directed": True}),
+        ("delete", "e:1"),
+    ]
+    assert policy.calls == [
+        "notes.graph.list.server",
+        "notes.graph.detail.server",
+        "notes.graph.create.server",
+        "notes.graph.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_local_note_graph_before_policy_denial():
+    policy = FakePolicyEnforcer.deny()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="requires server note scope"):
+        await scope_service.get_notes_graph(scope=ScopeType.LOCAL_NOTE)
+
+    assert policy.calls == []

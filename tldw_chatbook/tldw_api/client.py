@@ -24,6 +24,8 @@ from .notes_workspace_schemas import (
     MediaListResponse,
     MediaSearchRequest,
     NoteCreateRequest,
+    NoteGraphRequest,
+    NoteLinkCreateRequest,
     NoteListResponse,
     NoteResponse,
     NoteUpdateRequest,
@@ -631,6 +633,42 @@ class TLDWAPIClient:
             f"/api/v1/notes/{note_id}",
             headers={"expected-version": str(expected_version)},
         )
+
+    @staticmethod
+    def _build_note_graph_params(request_data: NoteGraphRequest) -> Dict[str, Any]:
+        params = request_data.model_dump(exclude_none=True, exclude_defaults=True, mode="json")
+        edge_types = params.get("edge_types")
+        if isinstance(edge_types, list):
+            params["edge_types"] = ",".join(str(edge_type) for edge_type in edge_types)
+        if "allow_heavy" in params:
+            params["allow_heavy"] = str(bool(params["allow_heavy"])).lower()
+        return params
+
+    async def get_notes_graph(self, request_data: Optional[NoteGraphRequest] = None) -> Dict[str, Any]:
+        request_data = request_data or NoteGraphRequest()
+        return await self._request(
+            "GET",
+            "/api/v1/notes/graph",
+            params=self._build_note_graph_params(request_data),
+        )
+
+    async def get_note_neighbors(self, note_id: str, request_data: Optional[NoteGraphRequest] = None) -> Dict[str, Any]:
+        request_data = request_data or NoteGraphRequest()
+        return await self._request(
+            "GET",
+            f"/api/v1/notes/{note_id}/neighbors",
+            params=self._build_note_graph_params(request_data),
+        )
+
+    async def create_note_link(self, note_id: str, request_data: NoteLinkCreateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/notes/{note_id}/links",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def delete_note_link(self, edge_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/notes/links/{edge_id}")
 
     async def list_workspaces(self) -> Dict[str, Any]:
         return await self._request("GET", "/api/v1/workspaces/")

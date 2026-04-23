@@ -10,6 +10,8 @@ from typing import Any, Mapping, Optional, Sequence
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
 from ..tldw_api import (
     NoteCreateRequest,
+    NoteGraphRequest,
+    NoteLinkCreateRequest,
     NoteUpdateRequest,
     TLDWAPIClient,
     WorkspaceArtifactCreateRequest,
@@ -28,12 +30,13 @@ _UNSET = object()
 class ServerNotesWorkspaceService:
     """Thin service around server-backed notes and workspace resources."""
 
-    def __init__(self, client: Optional[TLDWAPIClient]):
+    def __init__(self, client: Optional[TLDWAPIClient], policy_enforcer: Any = None):
         self.client = client
+        self.policy_enforcer = policy_enforcer
 
     @classmethod
-    def from_config(cls, app_config: Mapping[str, Any]) -> "ServerNotesWorkspaceService":
-        return cls(client=build_tldw_api_client_from_config(app_config))
+    def from_config(cls, app_config: Mapping[str, Any], policy_enforcer: Any = None) -> "ServerNotesWorkspaceService":
+        return cls(client=build_tldw_api_client_from_config(app_config), policy_enforcer=policy_enforcer)
 
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:
@@ -418,6 +421,86 @@ class ServerNotesWorkspaceService:
     async def delete_server_note(self, note_id: str, version: int) -> dict[str, Any]:
         client = self._require_client()
         return await client.delete_server_note(note_id, expected_version=version)
+
+    def build_note_graph_request(
+        self,
+        *,
+        center_note_id: Optional[str] = None,
+        radius: int = 1,
+        edge_types: Optional[Sequence[str]] = None,
+        tag: Optional[str] = None,
+        source: Optional[str] = None,
+        max_nodes: Optional[int] = None,
+        max_edges: Optional[int] = None,
+        max_degree: Optional[int] = None,
+        format: str = "default",
+        cursor: Optional[str] = None,
+        allow_heavy: bool = False,
+    ) -> NoteGraphRequest:
+        return NoteGraphRequest(
+            center_note_id=center_note_id,
+            radius=radius,
+            edge_types=list(edge_types) if edge_types is not None else None,
+            tag=tag,
+            source=source,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+            max_degree=max_degree,
+            format=format,
+            cursor=cursor,
+            allow_heavy=allow_heavy,
+        )
+
+    def build_note_link_create_payload(
+        self,
+        *,
+        to_note_id: str,
+        directed: bool = False,
+        weight: Optional[float] = 1.0,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> NoteLinkCreateRequest:
+        return NoteLinkCreateRequest(
+            to_note_id=to_note_id,
+            directed=directed,
+            weight=weight,
+            metadata=dict(metadata) if metadata is not None else None,
+        )
+
+    async def get_notes_graph(self, **kwargs: Any) -> dict[str, Any]:
+        client = self._require_client()
+        request = self.build_note_graph_request(**kwargs)
+        response = await client.get_notes_graph(request)
+        return dict(response) if isinstance(response, Mapping) else response
+
+    async def get_note_neighbors(self, note_id: str, **kwargs: Any) -> dict[str, Any]:
+        client = self._require_client()
+        request = self.build_note_graph_request(**kwargs)
+        response = await client.get_note_neighbors(note_id, request)
+        return dict(response) if isinstance(response, Mapping) else response
+
+    async def create_note_link(
+        self,
+        note_id: str,
+        *,
+        to_note_id: str,
+        directed: bool = False,
+        weight: Optional[float] = 1.0,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> dict[str, Any]:
+        client = self._require_client()
+        request = self.build_note_link_create_payload(
+            to_note_id=to_note_id,
+            directed=directed,
+            weight=weight,
+            metadata=metadata,
+        )
+        response = await client.create_note_link(note_id, request)
+        return dict(response) if isinstance(response, Mapping) else response
+
+    async def delete_note_link(self, edge_id: str) -> dict[str, Any]:
+        client = self._require_client()
+        response = await client.delete_note_link(edge_id)
+        return dict(response) if isinstance(response, Mapping) else response
 
     async def list_workspaces(self) -> list[dict[str, Any]]:
         client = self._require_client()

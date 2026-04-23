@@ -101,9 +101,9 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Notes / Workspaces: Notes CRUD, workspace CRUD, and notes graph
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
-- Current state: Dual-backend notes and workspace seams already exist, including scope services and server-aware notes surfaces.
-- Gap: Graph parity and full remote normalization still need completion.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/notes.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/notes_graph.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/workspaces.py`; Chatbook: `tldw_chatbook/Notes/Notes_Library.py`, `tldw_chatbook/Notes/notes_scope_service.py`, `tldw_chatbook/Notes/server_notes_workspace_service.py`; Verification: notes, graph, and workspace endpoint families are separate and explicit.
+- Current state: Dual-backend notes and workspace seams already exist, including scope services, server-aware notes surfaces, workspace resource CRUD seams, local keyword persistence, and typed server notes-graph support for graph fetch, note-neighbor fetch, manual link create, and manual link delete. Notes-graph operations are exposed through the server notes/workspace service and scope service with central runtime-policy action IDs.
+- Gap: The prior absence of server notes-graph client/service/scope coverage is closed. Remaining work is local graph parity, richer graph/workspace normalization, mounted graph UX, and any future sync or cross-scope graph-link policy.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/notes.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/notes_graph.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/workspaces.py`; Chatbook: `tldw_chatbook/tldw_api/notes_workspace_schemas.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/Notes/Notes_Library.py`, `tldw_chatbook/Notes/notes_scope_service.py`, `tldw_chatbook/Notes/server_notes_workspace_service.py`, `tldw_chatbook/runtime_policy/registry.py`; Verification: `Tests/tldw_api/test_notes_workspace_client.py`, `Tests/Notes/test_server_notes_workspace_service.py`, `Tests/Notes/test_notes_scope_service.py`, `Tests/RuntimePolicy/test_runtime_policy_core.py`, and `Tests/UI/test_screen_navigation.py`.
 - Recommended tranche: Tranche 1
 - Notes: Priority 73. This is daily-use parity work with strong existing scaffolding.
 

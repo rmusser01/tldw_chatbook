@@ -17,9 +17,10 @@ class ScopeType(str, Enum):
 class NotesScopeService:
     """Route screen-facing note actions to the correct backing service."""
 
-    def __init__(self, local_notes_service: Any, server_service: Any):
+    def __init__(self, local_notes_service: Any, server_service: Any, policy_enforcer: Any = None):
         self.local_notes_service = local_notes_service
         self.server_service = server_service
+        self.policy_enforcer = policy_enforcer
 
     def _normalize_scope(self, scope: ScopeType | str) -> ScopeType:
         if isinstance(scope, ScopeType):
@@ -35,6 +36,15 @@ class NotesScopeService:
         if not workspace_id:
             raise ValueError("workspace_id is required for workspace note operations.")
         return workspace_id
+
+    def _require_server_note_scope(self, scope: ScopeType | str) -> None:
+        if self._normalize_scope(scope) != ScopeType.SERVER_NOTE:
+            raise ValueError("Notes graph requires server note scope.")
+
+    def _enforce_policy(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=action_id)
 
     @staticmethod
     def _normalize_keywords(keywords: Optional[Sequence[str]]) -> list[str]:
@@ -238,3 +248,56 @@ class NotesScopeService:
         return await self.server_service.load_workspace_context(
             self._require_workspace_id(workspace_id)
         )
+
+    async def get_notes_graph(
+        self,
+        *,
+        scope: ScopeType | str,
+        **kwargs: Any,
+    ) -> Any:
+        self._require_server_note_scope(scope)
+        self._enforce_policy("notes.graph.list.server")
+        return await self.server_service.get_notes_graph(**kwargs)
+
+    async def get_note_neighbors(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: str,
+        **kwargs: Any,
+    ) -> Any:
+        self._require_server_note_scope(scope)
+        self._enforce_policy("notes.graph.detail.server")
+        return await self.server_service.get_note_neighbors(note_id, **kwargs)
+
+    async def create_note_link(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: str,
+        to_note_id: str,
+        directed: bool = False,
+        weight: Optional[float] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> Any:
+        self._require_server_note_scope(scope)
+        self._enforce_policy("notes.graph.create.server")
+        payload: dict[str, Any] = {
+            "to_note_id": to_note_id,
+            "directed": directed,
+        }
+        if weight is not None:
+            payload["weight"] = weight
+        if metadata is not None:
+            payload["metadata"] = metadata
+        return await self.server_service.create_note_link(note_id, **payload)
+
+    async def delete_note_link(
+        self,
+        *,
+        scope: ScopeType | str,
+        edge_id: str,
+    ) -> Any:
+        self._require_server_note_scope(scope)
+        self._enforce_policy("notes.graph.delete.server")
+        return await self.server_service.delete_note_link(edge_id)

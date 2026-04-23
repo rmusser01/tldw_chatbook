@@ -473,6 +473,10 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         notes.detail.local
         notes.detail.server
         notes.detail.workspace
+        notes.graph.create.server
+        notes.graph.delete.server
+        notes.graph.detail.server
+        notes.graph.list.server
         notes.list.local
         notes.list.server
         notes.list.workspace
