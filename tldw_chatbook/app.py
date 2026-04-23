@@ -77,7 +77,9 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_N
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_loop_scope_service import ServerChatLoopScopeService
 from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
+from tldw_chatbook.Chat.server_chat_loop_service import ServerChatLoopService
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Research_DB import ResearchDatabase
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -1506,6 +1508,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.chat_conversation_scope_service = ChatConversationScopeService(
             local_service=self.local_chat_conversation_service,
             server_service=self.server_chat_conversation_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_chat_loop_service = ServerChatLoopService.from_config(self.app_config)
+        except ValueError:
+            self.server_chat_loop_service = ServerChatLoopService(client=None)
+        self.server_chat_loop_scope_service = ServerChatLoopScopeService(
+            server_service=self.server_chat_loop_service,
             policy_enforcer=self.service_policy_enforcer,
         )
 

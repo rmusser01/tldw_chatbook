@@ -268,6 +268,13 @@ from .chat_conversation_schemas import (
     ConversationUpdateRequest,
     normalize_conversation_state,
 )
+from .chat_loop_schemas import (
+    ChatLoopActionResponse,
+    ChatLoopApprovalDecisionRequest,
+    ChatLoopEventsResponse,
+    ChatLoopStartRequest,
+    ChatLoopStartResponse,
+)
 from .character_persona_schemas import (
     CharacterCreateRequest,
     CharacterExemplarCreate,
@@ -3171,6 +3178,44 @@ class TLDWAPIClient:
         if scope_params is not None:
             params.update(scope_params.model_dump(exclude_none=True, mode="json"))
         return await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/tree", params=params)
+
+    async def start_chat_loop_run(self, request_data: ChatLoopStartRequest) -> ChatLoopStartResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/chat/loop/start",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ChatLoopStartResponse.model_validate(response)
+
+    async def list_chat_loop_events(self, run_id: str, after_seq: int = 0) -> ChatLoopEventsResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/chat/loop/{run_id}/events",
+            params={"after_seq": after_seq},
+        )
+        return ChatLoopEventsResponse.model_validate(response)
+
+    async def approve_chat_loop_call(self, run_id: str, approval_id: str) -> ChatLoopActionResponse:
+        request_data = ChatLoopApprovalDecisionRequest(approval_id=approval_id, decision="approve")
+        response = await self._request(
+            "POST",
+            f"/api/v1/chat/loop/{run_id}/approve",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return ChatLoopActionResponse.model_validate(response)
+
+    async def reject_chat_loop_call(self, run_id: str, approval_id: str) -> ChatLoopActionResponse:
+        request_data = ChatLoopApprovalDecisionRequest(approval_id=approval_id, decision="reject")
+        response = await self._request(
+            "POST",
+            f"/api/v1/chat/loop/{run_id}/reject",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return ChatLoopActionResponse.model_validate(response)
+
+    async def cancel_chat_loop_run(self, run_id: str) -> ChatLoopActionResponse:
+        response = await self._request("POST", f"/api/v1/chat/loop/{run_id}/cancel")
+        return ChatLoopActionResponse.model_validate(response)
 
     async def list_prompt_versions(self, prompt_identifier: Union[str, int]) -> List[PromptVersionResponse]:
         response = await self._request(

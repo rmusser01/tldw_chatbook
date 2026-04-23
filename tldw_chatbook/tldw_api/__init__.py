@@ -427,6 +427,19 @@ _EXPORT_GROUPS = (
         ),
     ),
     (
+        ".chat_loop_schemas",
+        (
+            "ChatLoopActionResponse",
+            "ChatLoopApprovalDecision",
+            "ChatLoopApprovalDecisionRequest",
+            "ChatLoopEvent",
+            "ChatLoopEventsResponse",
+            "ChatLoopEventType",
+            "ChatLoopStartRequest",
+            "ChatLoopStartResponse",
+        ),
+    ),
+    (
         ".character_persona_schemas",
         (
             "CharacterBase",

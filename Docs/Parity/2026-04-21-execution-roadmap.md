@@ -30,7 +30,7 @@ At that point, the next unresolved Tranche 2 focus moved to `Local MCP Runtime`,
 
 `Collections: Outputs / Templates / Artifacts` now has a first dedicated server slice. Chatbook includes typed output-template and output-artifact client methods, a remote-only server outputs service, a policy-aware scope seam, app bootstrap wiring, and a lightweight `Outputs` panel in `Tools & Settings` for template CRUD/preview plus artifact browse/get/create/update/delete in explicit server mode. Remaining work is richer download/export ergonomics, deeper render-job observation/history, and any later optional local parity or sync design.
 
-`Chat` now has a backend-only source-aware conversation scope seam. Chatbook wires local conversation metadata/history/delete and server conversation list/detail/update/tree operations behind source-scoped policy actions, preserving local workspace scope filtering and avoiding any chat UI rewrite. Remaining Chat work is remote launch/message execution, remote delete pending a server conversation-delete contract, attachment/export identity, and mounted UX for explicit local/server conversation browsing.
+`Chat` now has backend-only source-aware conversation and chat-loop seams. Chatbook wires local conversation metadata/history/delete, server conversation list/detail/update/tree operations, and server chat-loop start/event/approve/reject/cancel operations behind source-scoped policy actions, preserving local workspace scope filtering and avoiding any chat UI rewrite. Remaining Chat work is mounted remote launch/message handoff, remote delete pending a server conversation-delete contract, attachment/export identity, and mounted UX for explicit local/server conversation browsing.
 
 ## Immediate Post-Tranche-0 Order
 
