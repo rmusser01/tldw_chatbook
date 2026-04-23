@@ -75,6 +75,9 @@ from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
+from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Research_DB import ResearchDatabase
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -1406,6 +1409,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 logging.error("ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.")
                 self.chachanotes_db = None # Explicitly set to None
 
+        self._wire_chat_conversation_services()
+
         try:
             self.server_notes_workspace_service = ServerNotesWorkspaceService.from_config(
                 self.app_config,
@@ -1489,6 +1494,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.chachanotes_db,
             server_service=self.server_character_persona_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_chat_conversation_services(self) -> None:
+        self.local_chat_conversation_service = ChatConversationService(self.chachanotes_db)
+        try:
+            self.server_chat_conversation_service = ServerChatConversationService.from_config(self.app_config)
+        except ValueError:
+            self.server_chat_conversation_service = ServerChatConversationService(client=None)
+        self.chat_conversation_scope_service = ChatConversationScopeService(
+            local_service=self.local_chat_conversation_service,
+            server_service=self.server_chat_conversation_service,
             policy_enforcer=self.service_policy_enforcer,
         )
 

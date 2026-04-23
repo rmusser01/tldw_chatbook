@@ -83,11 +83,11 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Chat: Chat conversation sessions, history, and message flow
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
-- Current state: Local chat is already strong and mode-aware, while remote conversation interoperability remains thinner.
-- Gap: Remote conversation contract alignment and explicit source separation still need finishing work.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/chat.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/chat_loop.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/UI/Chat_Window_Enhanced_Refactored.py`, `tldw_chatbook/UI/Screens/chat_screen_state.py`; Verification: dedicated chat routes exist and `chat_workflows.py` is intentionally scored separately.
+- Current state: Local chat is already strong and mode-aware, and Chatbook now has a source-aware chat conversation scope seam over local metadata/history plus the existing server conversation list/detail/update/tree client contract. The app wires local and server conversation services behind runtime-policy action IDs without changing the mounted chat UI.
+- Gap: Remote launch/message execution, delete parity, attachments/export identity, and richer mounted source selection remain follow-on work. The current backend seam closes the prior absence of central source-separated conversation metadata routing, but the chat UI still needs a later UX pass for explicit local/server conversation browsing.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/chat.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/chat_loop.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/Chat/chat_conversation_service.py`, `tldw_chatbook/Chat/server_chat_conversation_service.py`, `tldw_chatbook/Chat/chat_conversation_scope_service.py`, `tldw_chatbook/UI/Chat_Window_Enhanced_Refactored.py`, `tldw_chatbook/UI/Screens/chat_screen_state.py`; Verification: `Tests/tldw_api/test_chat_conversation_client.py`, `Tests/Chat/test_chat_conversation_service.py`, `Tests/Chat/test_chat_conversation_scope_service.py`, and `Tests/UI/test_screen_navigation.py`.
 - Recommended tranche: Tranche 1
-- Notes: Priority 78. Chat remains a core credibility surface for Chatbook as a serious standalone client.
+- Notes: Priority 78. Chat remains a core credibility surface for Chatbook as a serious standalone client; this slice deliberately keeps UI changes deferred to the parallel UX work.
 
 ### Characters / Personas / CCP: Character catalog, persona profiles, chat sessions, and character messages
 - Requirement class: Local parity required + Remote parity required

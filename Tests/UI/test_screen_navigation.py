@@ -10,6 +10,9 @@ from textual.app import App
 from unittest.mock import MagicMock, patch
 
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
 from tldw_chatbook.Media import (
     LocalMediaReadingService,
     MediaReadingScopeService,
@@ -110,6 +113,16 @@ def test_app_initializes_server_outputs_services(app):
     assert isinstance(app.server_outputs_scope_service, ServerOutputsScopeService)
     assert app.server_outputs_scope_service.server_service is app.server_outputs_service
     assert app.server_outputs_scope_service.policy_enforcer is app.service_policy_enforcer
+
+
+def test_app_initializes_chat_conversation_scope_services(app):
+    assert isinstance(app.local_chat_conversation_service, ChatConversationService)
+    assert isinstance(app.server_chat_conversation_service, ServerChatConversationService)
+    assert isinstance(app.chat_conversation_scope_service, ChatConversationScopeService)
+    assert app.local_chat_conversation_service.db is app.chachanotes_db
+    assert app.chat_conversation_scope_service.local_service is app.local_chat_conversation_service
+    assert app.chat_conversation_scope_service.server_service is app.server_chat_conversation_service
+    assert app.chat_conversation_scope_service.policy_enforcer is app.service_policy_enforcer
 
 
 def test_writing_tab_and_screen_are_registered(app):
