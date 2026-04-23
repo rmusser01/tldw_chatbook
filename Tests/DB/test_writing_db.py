@@ -242,6 +242,38 @@ def test_scene_parent_invariants_require_single_same_project_parent(db):
         )
 
 
+def test_chapter_assignment_requires_same_project_manuscript(db):
+    project = db.create_project(title="Project")
+    other_project = db.create_project(title="Other")
+    manuscript = db.create_manuscript(project["id"], title="Book")
+    other_manuscript = db.create_manuscript(other_project["id"], title="Other Book")
+    chapter = db.create_chapter(project["id"], manuscript_id=None, title="Loose")
+
+    with pytest.raises(WritingDBConflictError, match="does not belong to project"):
+        db.create_chapter(project["id"], manuscript_id=other_manuscript["id"], title="Cross")
+
+    with pytest.raises(WritingDBConflictError, match="does not belong to project"):
+        db.assign_chapter(
+            chapter["id"],
+            manuscript_id=other_manuscript["id"],
+            expected_version=1,
+        )
+
+    with pytest.raises(WritingDBConflictError, match="does not belong to project"):
+        db.update_chapter(
+            chapter["id"],
+            {"manuscript_id": other_manuscript["id"]},
+            expected_version=1,
+        )
+
+    assigned = db.assign_chapter(
+        chapter["id"],
+        manuscript_id=manuscript["id"],
+        expected_version=1,
+    )
+    assert assigned["manuscript_id"] == manuscript["id"]
+
+
 def test_restore_version_preserves_structural_identity(db):
     project = db.create_project(title="Project")
     other_project = db.create_project(title="Other")

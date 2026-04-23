@@ -490,6 +490,7 @@ class WritingDatabase(BaseDB):
         status: str = "draft",
         word_count: int = 0,
     ) -> Dict[str, Any]:
+        self._validate_chapter_manuscript_parent(project_id, manuscript_id)
         data = {
             "id": id or self._new_id(),
             "project_id": project_id,
@@ -541,10 +542,17 @@ class WritingDatabase(BaseDB):
         expected_version: Optional[int] = None,
         **kwargs,
     ) -> Dict[str, Any]:
+        data = self._merge_update_data(update_data, kwargs)
+        if "manuscript_id" in data:
+            current = self._require_current("chapter", chapter_id, include_deleted=False)
+            self._validate_chapter_manuscript_parent(
+                current["project_id"],
+                data["manuscript_id"],
+            )
         return self._update(
             "chapter",
             chapter_id,
-            self._merge_update_data(update_data, kwargs),
+            data,
             expected_version,
         )
 
@@ -555,6 +563,8 @@ class WritingDatabase(BaseDB):
         expected_version: Optional[int] = None,
         sort_order: Optional[float] = None,
     ) -> Dict[str, Any]:
+        current = self._require_current("chapter", chapter_id, include_deleted=False)
+        self._validate_chapter_manuscript_parent(current["project_id"], manuscript_id)
         data = {"manuscript_id": manuscript_id}
         if sort_order is not None:
             data["sort_order"] = sort_order
@@ -1080,6 +1090,28 @@ class WritingDatabase(BaseDB):
                     entity_kind="chapter",
                     entity_id=chapter_id,
                 )
+
+    def _validate_chapter_manuscript_parent(
+        self,
+        project_id: str,
+        manuscript_id: Optional[str],
+    ) -> None:
+        if manuscript_id is None:
+            return
+        manuscript = self._require_current(
+            "manuscript",
+            manuscript_id,
+            include_deleted=False,
+        )
+        if manuscript["project_id"] != project_id:
+            raise WritingDBConflictError(
+                "Manuscript {id} does not belong to project {project_id}.".format(
+                    id=manuscript_id,
+                    project_id=project_id,
+                ),
+                entity_kind="manuscript",
+                entity_id=manuscript_id,
+            )
 
     def _require_current(
         self,
