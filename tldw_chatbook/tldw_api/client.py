@@ -87,6 +87,24 @@ from .watchlists_schemas import (
     SourcesListResponse,
     SourceUpdateRequest,
 )
+from .server_notifications_schemas import (
+    NotificationCancelSnoozeResponse,
+    NotificationDismissResponse,
+    NotificationPreferencesResponse,
+    NotificationPreferencesUpdateRequest,
+    NotificationSnoozeRequest,
+    NotificationSnoozeResponse,
+    NotificationsListResponse,
+    NotificationsMarkReadRequest,
+    NotificationsMarkReadResponse,
+    NotificationsUnreadCountResponse,
+    ReminderTaskCreateRequest,
+    ReminderTaskDeleteResponse,
+    ReminderTaskListResponse,
+    ReminderTaskResponse,
+    ReminderTaskUpdateRequest,
+    ServerNotificationStreamEvent,
+)
 from .prompt_chatbook_schemas import (
     ChatbookExportJobListResponse,
     ChatbookExportJobResponse,
@@ -805,6 +823,118 @@ class TLDWAPIClient:
     async def delete_watchlist_alert_rule(self, rule_id: int) -> Dict[str, Any]:
         response = await self._request("DELETE", f"/api/v1/watchlists/alert-rules/{rule_id}")
         return dict(response)
+
+    async def create_reminder_task(self, request_data: ReminderTaskCreateRequest) -> ReminderTaskResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/tasks",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReminderTaskResponse.model_validate(response)
+
+    async def list_reminder_tasks(self) -> ReminderTaskListResponse:
+        response = await self._request("GET", "/api/v1/tasks")
+        return ReminderTaskListResponse.model_validate(response)
+
+    async def get_reminder_task(self, task_id: str) -> ReminderTaskResponse:
+        response = await self._request("GET", f"/api/v1/tasks/{task_id}")
+        return ReminderTaskResponse.model_validate(response)
+
+    async def update_reminder_task(
+        self,
+        task_id: str,
+        request_data: ReminderTaskUpdateRequest,
+    ) -> ReminderTaskResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/tasks/{task_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReminderTaskResponse.model_validate(response)
+
+    async def delete_reminder_task(self, task_id: str) -> ReminderTaskDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/tasks/{task_id}")
+        return ReminderTaskDeleteResponse.model_validate(response)
+
+    async def list_server_notifications(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        include_archived: bool = False,
+        only_snoozed: bool = False,
+    ) -> NotificationsListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/notifications",
+            params={
+                "limit": limit,
+                "offset": offset,
+                "include_archived": include_archived,
+                "only_snoozed": only_snoozed,
+            },
+        )
+        return NotificationsListResponse.model_validate(response)
+
+    async def get_server_notifications_unread_count(self) -> NotificationsUnreadCountResponse:
+        response = await self._request("GET", "/api/v1/notifications/unread-count")
+        return NotificationsUnreadCountResponse.model_validate(response)
+
+    async def mark_server_notifications_read(self, notification_ids: list[int]) -> NotificationsMarkReadResponse:
+        request_data = NotificationsMarkReadRequest(ids=notification_ids)
+        response = await self._request(
+            "POST",
+            "/api/v1/notifications/mark-read",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return NotificationsMarkReadResponse.model_validate(response)
+
+    async def dismiss_server_notification(self, notification_id: int) -> NotificationDismissResponse:
+        response = await self._request("POST", f"/api/v1/notifications/{notification_id}/dismiss")
+        return NotificationDismissResponse.model_validate(response)
+
+    async def snooze_server_notification(
+        self,
+        notification_id: int,
+        request_data: NotificationSnoozeRequest | None = None,
+    ) -> NotificationSnoozeResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/notifications/{notification_id}/snooze",
+            json_data=(request_data or NotificationSnoozeRequest()).model_dump(mode="json"),
+        )
+        return NotificationSnoozeResponse.model_validate(response)
+
+    async def cancel_server_notification_snooze(self, notification_id: int) -> NotificationCancelSnoozeResponse:
+        response = await self._request("DELETE", f"/api/v1/notifications/{notification_id}/snooze")
+        return NotificationCancelSnoozeResponse.model_validate(response)
+
+    async def get_server_notification_preferences(self) -> NotificationPreferencesResponse:
+        response = await self._request("GET", "/api/v1/notifications/preferences")
+        return NotificationPreferencesResponse.model_validate(response)
+
+    async def update_server_notification_preferences(
+        self,
+        request_data: NotificationPreferencesUpdateRequest,
+    ) -> NotificationPreferencesResponse:
+        response = await self._request(
+            "PATCH",
+            "/api/v1/notifications/preferences",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return NotificationPreferencesResponse.model_validate(response)
+
+    async def stream_server_notifications(
+        self,
+        *,
+        after: int = 0,
+    ) -> AsyncGenerator[ServerNotificationStreamEvent, None]:
+        async for event in self._stream_sse_request(
+            "/api/v1/notifications/stream",
+            params={"after": after},
+            event_model=ServerNotificationStreamEvent,
+        ):
+            yield event
 
     async def list_manuscript_projects(
         self,

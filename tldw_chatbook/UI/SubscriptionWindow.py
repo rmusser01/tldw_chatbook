@@ -195,11 +195,13 @@ class SubscriptionWindow(Container):
         self.template_manager: Optional[BriefingTemplateManager] = None
         self.notifications_store = getattr(app_instance, "client_notifications_db", None)
         self.watchlist_scope_service = getattr(app_instance, "watchlist_scope_service", None)
+        self.server_notifications_scope_service = getattr(app_instance, "server_notifications_scope_service", None)
         self.notification_dispatch_service = getattr(app_instance, "notification_dispatch_service", None)
         self.backend_controller = SubscriptionBackendController(
             window=self,
             app_instance=app_instance,
             scope_service=self.watchlist_scope_service,
+            server_notifications_scope_service=self.server_notifications_scope_service,
             notification_dispatch_service=self.notification_dispatch_service,
         )
         self.notifications_controller = NotificationsInboxController(
@@ -214,6 +216,8 @@ class SubscriptionWindow(Container):
         self._selected_watchlist_job_id: Optional[str] = None
         self._selected_watchlist_run_id: Optional[str] = None
         self._selected_watchlist_alert_rule_id: Optional[str] = None
+        self._selected_server_reminder_id: Optional[str] = None
+        self._selected_server_notification_id: Optional[str] = None
         self._selected_local_subscription_row: Optional[Dict[str, Any]] = None
         self.is_checking = reactive(False)
         self.check_progress = reactive(0.0)
@@ -232,6 +236,12 @@ class SubscriptionWindow(Container):
             # Notifications tab
             with TabPane("Notifications", id="notifications"):
                 yield from self._compose_notifications_tab()
+
+            with TabPane("Server Reminders", id="server-reminders"):
+                yield from self._compose_server_reminders_tab()
+
+            with TabPane("Server Feed", id="server-feed"):
+                yield from self._compose_server_feed_tab()
 
             with TabPane("Jobs", id="watchlist-jobs"):
                 yield from self._compose_watchlist_jobs_tab()
@@ -411,11 +421,46 @@ class SubscriptionWindow(Container):
     def _compose_notifications_tab(self) -> ComposeResult:
         """Compose the client notifications inbox tab."""
         with Vertical():
-            yield Label("Notifications Inbox")
+            yield Label("Local Notifications Inbox")
             yield ListView(id="notifications-list")
             with Horizontal():
                 yield Button("Mark Read", id="notification-mark-read-btn")
                 yield Button("Dismiss", id="notification-dismiss-btn")
+
+    def _compose_server_reminders_tab(self) -> ComposeResult:
+        """Compose server reminder task controls."""
+        local_only = Static("", id="server-reminders-local-state")
+        local_only.display = False
+        yield local_only
+        with Vertical(id="server-reminders-main"):
+            yield Label("Server Reminder Tasks")
+            yield ListView(id="server-reminders-list", classes="subscription-list")
+            yield Label("Reminder Payload (JSON)")
+            yield TextArea(
+                '{"title":"Review claims","schedule_kind":"one_time","run_at":"2026-04-23T20:00:00Z"}',
+                id="server-reminder-payload",
+            )
+            with Horizontal(classes="list-actions"):
+                yield Button("Refresh", id="refresh-server-reminders-btn")
+                yield Button("Save Reminder", id="save-server-reminder-btn", classes="primary-button")
+                yield Button("Delete Reminder", id="delete-server-reminder-btn", classes="danger-button")
+
+    def _compose_server_feed_tab(self) -> ComposeResult:
+        """Compose server notification feed controls."""
+        local_only = Static("", id="server-feed-local-state")
+        local_only.display = False
+        yield local_only
+        with Vertical(id="server-feed-main"):
+            yield Label("Server Notification Feed")
+            yield ListView(id="server-feed-list", classes="subscription-list")
+            yield TextArea("", id="server-feed-detail", read_only=True)
+            with Horizontal(classes="list-actions"):
+                yield Button("Refresh", id="refresh-server-feed-btn")
+                yield Button("Mark Read", id="mark-server-notification-read-btn")
+                yield Button("Dismiss", id="dismiss-server-notification-btn")
+                yield Button("Snooze 30m", id="snooze-server-notification-btn")
+                yield Button("Cancel Snooze", id="cancel-server-notification-snooze-btn")
+                yield Button("Watch Feed", id="watch-server-feed-btn")
 
     def _compose_watchlist_jobs_tab(self) -> ComposeResult:
         """Compose server watchlist job controls."""
@@ -847,6 +892,8 @@ class SubscriptionWindow(Container):
             "watchlist-jobs": ("#watchlist-jobs-local-state", "#watchlist-jobs-main"),
             "watchlist-runs": ("#watchlist-runs-local-state", "#watchlist-runs-main"),
             "watchlist-alert-rules": ("#watchlist-alert-rules-local-state", "#watchlist-alert-rules-main"),
+            "server-reminders": ("#server-reminders-local-state", "#server-reminders-main"),
+            "server-feed": ("#server-feed-local-state", "#server-feed-main"),
         }.get(tab_id, ("", ""))
 
     def _render_local_only_state(self, *, tab_id: str, message: str) -> None:
@@ -955,6 +1002,32 @@ class SubscriptionWindow(Container):
             entity_kind="watchlist_alert_rule",
         )
 
+    async def _render_server_reminders(self, items: List[Dict[str, Any]]) -> None:
+        await self._render_watchlist_record_list(
+            "#server-reminders-list",
+            items,
+            label_builder=lambda item: (
+                f"{item.get('title') or 'Reminder'} "
+                f"[{item.get('schedule_kind', 'schedule')}] "
+                f"{'enabled' if item.get('enabled', True) else 'disabled'}"
+            ),
+            fallback_key="task_id",
+            entity_kind="reminder_task",
+        )
+
+    async def _render_server_feed(self, items: List[Dict[str, Any]]) -> None:
+        await self._render_watchlist_record_list(
+            "#server-feed-list",
+            items,
+            label_builder=lambda item: (
+                f"{'Read' if item.get('read_at') or item.get('is_read') else 'Unread'}: "
+                f"{item.get('title') or 'Notification'} "
+                f"[{item.get('kind', item.get('event', 'notification'))}]"
+            ),
+            fallback_key="notification_id",
+            entity_kind="notification",
+        )
+
     async def refresh_notifications_inbox(self) -> None:
         """Reload the notifications list from the local client store."""
         rows = await self.notifications_controller.load_rows()
@@ -1018,6 +1091,8 @@ class SubscriptionWindow(Container):
             "#watchlist-jobs-list": "_selected_watchlist_job_id",
             "#watchlist-runs-list": "_selected_watchlist_run_id",
             "#watchlist-alert-rules-list": "_selected_watchlist_alert_rule_id",
+            "#server-reminders-list": "_selected_server_reminder_id",
+            "#server-feed-list": "_selected_server_notification_id",
         }
         return mapping.get(selector)
 
@@ -1063,6 +1138,12 @@ class SubscriptionWindow(Container):
 
     def _active_watchlist_alert_rule_id(self) -> Optional[str]:
         return self._active_normalized_id("#watchlist-alert-rules-list", "rule_id", "watchlist_alert_rule")
+
+    def _active_server_reminder_id(self) -> Optional[str]:
+        return self._active_normalized_id("#server-reminders-list", "task_id", "reminder_task")
+
+    def _active_server_notification_id(self) -> Optional[str]:
+        return self._active_normalized_id("#server-feed-list", "notification_id", "notification")
 
     def _parse_tags_field(self) -> List[str]:
         return [tag.strip() for tag in self.query_one("#sub-tags", Input).value.split(',') if tag.strip()]
@@ -1453,6 +1534,119 @@ class SubscriptionWindow(Container):
             return
         await self.backend_controller.delete_watchlist_alert_rule(rule_id)
         await self.backend_controller.load_watchlist_alert_rules()
+
+    @on(Button.Pressed, "#refresh-server-reminders-btn")
+    async def handle_refresh_server_reminders(self, event: Button.Pressed) -> None:
+        del event
+        await self.backend_controller.load_server_reminders()
+
+    @on(Button.Pressed, "#save-server-reminder-btn")
+    async def handle_save_server_reminder(self, event: Button.Pressed) -> None:
+        del event
+        try:
+            payload = self._json_payload_from_text_area("#server-reminder-payload")
+        except (json.JSONDecodeError, ValueError) as exc:
+            self.notify(f"Invalid reminder JSON: {exc}", severity="error")
+            return
+        task_id = self._active_server_reminder_id()
+        if task_id is not None and "id" not in payload and "task_id" not in payload:
+            payload["id"] = task_id
+        await self.backend_controller.save_server_reminder(payload)
+        await self.backend_controller.load_server_reminders()
+
+    @on(Button.Pressed, "#delete-server-reminder-btn")
+    async def handle_delete_server_reminder(self, event: Button.Pressed) -> None:
+        del event
+        task_id = self._active_server_reminder_id()
+        if task_id is None:
+            return
+        await self.backend_controller.delete_server_reminder(task_id)
+        await self.backend_controller.load_server_reminders()
+
+    @on(Button.Pressed, "#refresh-server-feed-btn")
+    async def handle_refresh_server_feed(self, event: Button.Pressed) -> None:
+        del event
+        await self.backend_controller.load_server_feed()
+
+    @on(Button.Pressed, "#mark-server-notification-read-btn")
+    async def handle_mark_server_notification_read(self, event: Button.Pressed) -> None:
+        del event
+        notification_id = self._active_server_notification_id()
+        if notification_id is None:
+            return
+        await self.backend_controller.mark_server_notification_read(notification_id)
+        await self.backend_controller.load_server_feed()
+
+    @on(Button.Pressed, "#dismiss-server-notification-btn")
+    async def handle_dismiss_server_notification(self, event: Button.Pressed) -> None:
+        del event
+        notification_id = self._active_server_notification_id()
+        if notification_id is None:
+            return
+        await self.backend_controller.dismiss_server_notification(notification_id)
+        await self.backend_controller.load_server_feed()
+
+    @on(Button.Pressed, "#snooze-server-notification-btn")
+    async def handle_snooze_server_notification(self, event: Button.Pressed) -> None:
+        del event
+        notification_id = self._active_server_notification_id()
+        if notification_id is None:
+            return
+        await self.backend_controller.snooze_server_notification(notification_id, minutes=30)
+        await self.backend_controller.load_server_feed()
+
+    @on(Button.Pressed, "#cancel-server-notification-snooze-btn")
+    async def handle_cancel_server_notification_snooze(self, event: Button.Pressed) -> None:
+        del event
+        notification_id = self._active_server_notification_id()
+        if notification_id is None:
+            return
+        await self.backend_controller.cancel_server_notification_snooze(notification_id)
+        await self.backend_controller.load_server_feed()
+
+    def _server_feed_item_from_event(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        data = event.get("data") if isinstance(event, dict) else None
+        if not isinstance(data, dict):
+            return None
+        notification_id = data.get("notification_id", data.get("id", event.get("id")))
+        if notification_id in (None, ""):
+            return None
+        try:
+            normalized_id = int(notification_id)
+        except (TypeError, ValueError):
+            return None
+        return {
+            "id": f"server:notification:{normalized_id}",
+            "backend": "server",
+            "entity_kind": "server_notification",
+            "notification_id": normalized_id,
+            "event": event.get("event"),
+            "title": data.get("title") or f"Notification {normalized_id}",
+            "message": data.get("message", ""),
+            "severity": data.get("severity", "info"),
+            "kind": data.get("kind", event.get("event", "notification")),
+            "created_at": data.get("created_at"),
+        }
+
+    async def watch_server_feed_events(self, *, after: int = 0) -> List[Dict[str, Any]]:
+        """Collect server notification stream events and render notification payloads."""
+        events: List[Dict[str, Any]] = []
+        rendered: List[Dict[str, Any]] = []
+        async for event in self.backend_controller.stream_server_feed_events(after=after):
+            event_data = dict(event) if isinstance(event, dict) else {"event": str(event)}
+            events.append(event_data)
+            rendered_item = self._server_feed_item_from_event(event_data)
+            if rendered_item is not None:
+                rendered.append(rendered_item)
+                self._load_text_area("#server-feed-detail", json.dumps(rendered_item, indent=2, sort_keys=True, default=str))
+        if rendered:
+            await self._render_server_feed(rendered)
+        return events
+
+    @on(Button.Pressed, "#watch-server-feed-btn")
+    async def handle_watch_server_feed(self, event: Button.Pressed) -> None:
+        del event
+        await self.watch_server_feed_events(after=0)
     
     @on(Button.Pressed, "#check-all-btn")
     async def handle_check_all(self, event: Button.Pressed) -> None:

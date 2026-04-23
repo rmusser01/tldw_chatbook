@@ -89,6 +89,7 @@ def build_window(*, tmp_path: Path, runtime_backend: str, policy_allowed: bool =
         runtime_backend=runtime_backend,
         current_runtime_backend=runtime_backend,
         watchlist_scope_service=Mock(),
+        server_notifications_scope_service=Mock(),
         client_notifications_db=notifications_store,
         notification_dispatch_service=NotificationDispatchService(store=notifications_store),
         require_ui_action_allowed=require_ui_action_allowed,
@@ -170,6 +171,61 @@ def build_window(*, tmp_path: Path, runtime_backend: str, policy_allowed: bool =
         return_value={"id": "server:watchlist_alert_rule:12", "rule_id": 12, "title": "No items"}
     )
     app.watchlist_scope_service.delete_alert_rule = AsyncMock(return_value={"deleted": True, "rule_id": 12})
+    app.server_notifications_scope_service.list_reminders = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "id": "server:reminder_task:task-1",
+                    "task_id": "task-1",
+                    "title": "Review claims",
+                    "enabled": True,
+                    "schedule_kind": "one_time",
+                    "next_run_at": "2026-04-23T20:00:00Z",
+                }
+            ],
+            "total": 1,
+        }
+    )
+    app.server_notifications_scope_service.save_reminder = AsyncMock(
+        return_value={"id": "server:reminder_task:task-1", "task_id": "task-1", "title": "Review claims"}
+    )
+    app.server_notifications_scope_service.delete_reminder = AsyncMock(return_value={"deleted": True})
+    app.server_notifications_scope_service.list_feed = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "id": "server:notification:11",
+                    "notification_id": 11,
+                    "title": "Reminder due",
+                    "message": "Review claims",
+                    "kind": "reminder_due",
+                    "severity": "info",
+                    "created_at": "2026-04-23T20:00:00Z",
+                    "read_at": None,
+                    "dismissed_at": None,
+                }
+            ],
+            "total": 1,
+        }
+    )
+    app.server_notifications_scope_service.mark_notification_read = AsyncMock(return_value={"updated": 1})
+    app.server_notifications_scope_service.dismiss_notification = AsyncMock(return_value={"dismissed": True})
+    app.server_notifications_scope_service.snooze_notification = AsyncMock(return_value={"task_id": "snooze-1"})
+    app.server_notifications_scope_service.cancel_notification_snooze = AsyncMock(return_value={"cancelled": True})
+
+    async def fake_feed_stream(*, runtime_backend: str, after: int = 0):
+        yield {
+            "event": "notification",
+            "id": "12",
+            "data": {
+                "notification_id": 12,
+                "title": "Job complete",
+                "message": "Watchlist run completed",
+                "severity": "info",
+            },
+        }
+
+    app.server_notifications_scope_service.stream_feed_events = Mock(side_effect=fake_feed_stream)
 
     window = SubscriptionWindow(app)
     window.notify = Mock()
@@ -181,6 +237,8 @@ def build_window(*, tmp_path: Path, runtime_backend: str, policy_allowed: bool =
         "#watchlist-jobs-list": _StubListView(),
         "#watchlist-runs-list": _StubListView(),
         "#watchlist-alert-rules-list": _StubListView(),
+        "#server-reminders-list": _StubListView(),
+        "#server-feed-list": _StubListView(),
         "#review-main": _StubWidget(display=True),
         "#review-local-only-state": _StubWidget(display=False),
         "#watchlist-jobs-main": _StubWidget(display=True),
@@ -189,6 +247,10 @@ def build_window(*, tmp_path: Path, runtime_backend: str, policy_allowed: bool =
         "#watchlist-runs-local-state": _StubWidget(display=False),
         "#watchlist-alert-rules-main": _StubWidget(display=True),
         "#watchlist-alert-rules-local-state": _StubWidget(display=False),
+        "#server-reminders-main": _StubWidget(display=True),
+        "#server-reminders-local-state": _StubWidget(display=False),
+        "#server-feed-main": _StubWidget(display=True),
+        "#server-feed-local-state": _StubWidget(display=False),
         "#enable-scheduler": _StubWidget(display=True, value=False),
         "#sub-name": _StubWidget(display=True, value=""),
         "#sub-type": _StubWidget(display=True, value="rss"),
@@ -204,6 +266,11 @@ def build_window(*, tmp_path: Path, runtime_backend: str, policy_allowed: bool =
         "#watchlist-job-payload": _StubWidget(display=True, text='{"name":"Daily Briefing"}'),
         "#watchlist-run-detail": _StubWidget(display=True, text=""),
         "#watchlist-alert-rule-payload": _StubWidget(display=True, text='{"name":"No items","condition_type":"no_items"}'),
+        "#server-reminder-payload": _StubWidget(
+            display=True,
+            text='{"title":"Review claims","schedule_kind":"one_time","run_at":"2026-04-23T20:00:00Z"}',
+        ),
+        "#server-feed-detail": _StubWidget(display=True, text=""),
     }
 
     def query_one(selector: str, _widget_type=None):
@@ -528,4 +595,94 @@ async def test_watchlist_alert_rule_buttons_route_through_scope_service(tmp_path
     window.app_instance.watchlist_scope_service.delete_alert_rule.assert_awaited_once_with(
         runtime_backend="server",
         rule_id="server:watchlist_alert_rule:12",
+    )
+
+
+@pytest.mark.asyncio
+async def test_server_mode_refresh_loads_remote_reminders_and_feed(tmp_path: Path):
+    window = build_window(tmp_path=tmp_path, runtime_backend="server")
+
+    await window.refresh_backend_view()
+
+    assert window._test_widgets["#server-reminders-list"].items[0].data["id"] == "server:reminder_task:task-1"
+    assert window._test_widgets["#server-feed-list"].items[0].data["id"] == "server:notification:11"
+    assert window._test_widgets["#server-reminders-local-state"].display is False
+    assert window._test_widgets["#server-feed-local-state"].display is False
+
+
+@pytest.mark.asyncio
+async def test_local_mode_shows_remote_reminder_feed_guidance(tmp_path: Path):
+    window = build_window(tmp_path=tmp_path, runtime_backend="local")
+
+    await window.refresh_backend_view()
+
+    assert window._test_widgets["#server-reminders-local-state"].display is True
+    assert window._test_widgets["#server-feed-local-state"].display is True
+    assert "server reminders" in str(window._test_widgets["#server-reminders-local-state"].updated[-1]).lower()
+    window.app_instance.server_notifications_scope_service.list_reminders.assert_not_called()
+    window.app_instance.server_notifications_scope_service.list_feed.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_server_reminder_buttons_route_through_scope_service(tmp_path: Path):
+    window = build_window(tmp_path=tmp_path, runtime_backend="server")
+    await window.refresh_backend_view()
+    _select_list_item(window._test_widgets["#server-reminders-list"])
+    window.query_one("#server-reminder-payload").text = '{"enabled":false}'
+
+    await window.handle_save_server_reminder(None)
+    await window.handle_delete_server_reminder(None)
+
+    window.app_instance.server_notifications_scope_service.save_reminder.assert_awaited_once_with(
+        runtime_backend="server",
+        payload={"id": "server:reminder_task:task-1", "enabled": False},
+    )
+    window.app_instance.server_notifications_scope_service.delete_reminder.assert_awaited_once_with(
+        runtime_backend="server",
+        task_id="server:reminder_task:task-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_server_feed_buttons_route_through_scope_service(tmp_path: Path):
+    window = build_window(tmp_path=tmp_path, runtime_backend="server")
+    await window.refresh_backend_view()
+    _select_list_item(window._test_widgets["#server-feed-list"])
+
+    await window.handle_mark_server_notification_read(None)
+    await window.handle_dismiss_server_notification(None)
+    await window.handle_snooze_server_notification(None)
+    await window.handle_cancel_server_notification_snooze(None)
+
+    window.app_instance.server_notifications_scope_service.mark_notification_read.assert_awaited_once_with(
+        runtime_backend="server",
+        notification_id="server:notification:11",
+    )
+    window.app_instance.server_notifications_scope_service.dismiss_notification.assert_awaited_once_with(
+        runtime_backend="server",
+        notification_id="server:notification:11",
+    )
+    window.app_instance.server_notifications_scope_service.snooze_notification.assert_awaited_once_with(
+        runtime_backend="server",
+        notification_id="server:notification:11",
+        minutes=30,
+    )
+    window.app_instance.server_notifications_scope_service.cancel_notification_snooze.assert_awaited_once_with(
+        runtime_backend="server",
+        notification_id="server:notification:11",
+    )
+
+
+@pytest.mark.asyncio
+async def test_server_feed_watch_event_renders_stream_payload(tmp_path: Path):
+    window = build_window(tmp_path=tmp_path, runtime_backend="server")
+
+    events = await window.watch_server_feed_events(after=11)
+
+    assert events[0]["event"] == "notification"
+    assert window._test_widgets["#server-feed-list"].items[0].data["notification_id"] == 12
+    assert "job complete" in window.query_one("#server-feed-detail").text.lower()
+    window.app_instance.server_notifications_scope_service.stream_feed_events.assert_called_once_with(
+        runtime_backend="server",
+        after=11,
     )

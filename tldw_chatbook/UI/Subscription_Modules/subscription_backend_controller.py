@@ -19,11 +19,13 @@ class SubscriptionBackendController:
         window: Any,
         app_instance: Any,
         scope_service: Any = None,
+        server_notifications_scope_service: Any = None,
         notification_dispatch_service: Any = None,
     ) -> None:
         self.window = window
         self.app_instance = app_instance
         self.scope_service = scope_service
+        self.server_notifications_scope_service = server_notifications_scope_service
         self.notification_dispatch_service = notification_dispatch_service
         self.last_loaded_backend: str | None = None
 
@@ -157,17 +159,26 @@ class SubscriptionBackendController:
             self.window._render_local_only_state(tab_id="watchlist-jobs", message=message)
             self.window._render_local_only_state(tab_id="watchlist-runs", message=message)
             self.window._render_local_only_state(tab_id="watchlist-alert-rules", message=message)
+            reminder_message = "Server reminders and notification feed are remote-only. Use the local Notifications inbox for offline client-owned notifications."
+            self.window._render_local_only_state(tab_id="server-reminders", message=reminder_message)
+            self.window._render_local_only_state(tab_id="server-feed", message=reminder_message)
             await self.window._render_watchlist_jobs([])
             await self.window._render_watchlist_runs([])
             await self.window._render_watchlist_alert_rules([])
+            await self.window._render_server_reminders([])
+            await self.window._render_server_feed([])
             return
 
         self.window._clear_local_only_state(tab_id="watchlist-jobs")
         self.window._clear_local_only_state(tab_id="watchlist-runs")
         self.window._clear_local_only_state(tab_id="watchlist-alert-rules")
+        self.window._clear_local_only_state(tab_id="server-reminders")
+        self.window._clear_local_only_state(tab_id="server-feed")
         await self.load_watchlist_jobs()
         await self.load_watchlist_runs()
         await self.load_watchlist_alert_rules()
+        await self.load_server_reminders()
+        await self.load_server_feed()
 
     async def load_watchlist_jobs(self) -> dict[str, Any]:
         if self.scope_service is None:
@@ -262,6 +273,102 @@ class SubscriptionBackendController:
             self.scope_service.delete_alert_rule(runtime_backend=self.window._runtime_backend(), rule_id=rule_id)
         )
         return dict(result)
+
+    async def load_server_reminders(self) -> dict[str, Any]:
+        if self.server_notifications_scope_service is None:
+            return {"items": [], "total": 0}
+        payload = await self._maybe_await(
+            self.server_notifications_scope_service.list_reminders(runtime_backend=self.window._runtime_backend())
+        )
+        items = [dict(item) for item in list((payload or {}).get("items") or [])]
+        await self.window._render_server_reminders(items)
+        return dict(payload or {"items": [], "total": 0})
+
+    async def save_server_reminder(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.server_notifications_scope_service is None:
+            raise ValueError("Server notification scope service is unavailable.")
+        result = await self._maybe_await(
+            self.server_notifications_scope_service.save_reminder(
+                runtime_backend=self.window._runtime_backend(),
+                payload=payload,
+            )
+        )
+        return dict(result)
+
+    async def delete_server_reminder(self, task_id: str) -> dict[str, Any]:
+        if self.server_notifications_scope_service is None:
+            raise ValueError("Server notification scope service is unavailable.")
+        result = await self._maybe_await(
+            self.server_notifications_scope_service.delete_reminder(
+                runtime_backend=self.window._runtime_backend(),
+                task_id=task_id,
+            )
+        )
+        return dict(result)
+
+    async def load_server_feed(self) -> dict[str, Any]:
+        if self.server_notifications_scope_service is None:
+            return {"items": [], "total": 0}
+        payload = await self._maybe_await(
+            self.server_notifications_scope_service.list_feed(runtime_backend=self.window._runtime_backend())
+        )
+        items = [dict(item) for item in list((payload or {}).get("items") or [])]
+        await self.window._render_server_feed(items)
+        return dict(payload or {"items": [], "total": 0})
+
+    async def mark_server_notification_read(self, notification_id: str) -> dict[str, Any]:
+        if self.server_notifications_scope_service is None:
+            raise ValueError("Server notification scope service is unavailable.")
+        result = await self._maybe_await(
+            self.server_notifications_scope_service.mark_notification_read(
+                runtime_backend=self.window._runtime_backend(),
+                notification_id=notification_id,
+            )
+        )
+        return dict(result)
+
+    async def dismiss_server_notification(self, notification_id: str) -> dict[str, Any]:
+        if self.server_notifications_scope_service is None:
+            raise ValueError("Server notification scope service is unavailable.")
+        result = await self._maybe_await(
+            self.server_notifications_scope_service.dismiss_notification(
+                runtime_backend=self.window._runtime_backend(),
+                notification_id=notification_id,
+            )
+        )
+        return dict(result)
+
+    async def snooze_server_notification(self, notification_id: str, *, minutes: int = 30) -> dict[str, Any]:
+        if self.server_notifications_scope_service is None:
+            raise ValueError("Server notification scope service is unavailable.")
+        result = await self._maybe_await(
+            self.server_notifications_scope_service.snooze_notification(
+                runtime_backend=self.window._runtime_backend(),
+                notification_id=notification_id,
+                minutes=minutes,
+            )
+        )
+        return dict(result)
+
+    async def cancel_server_notification_snooze(self, notification_id: str) -> dict[str, Any]:
+        if self.server_notifications_scope_service is None:
+            raise ValueError("Server notification scope service is unavailable.")
+        result = await self._maybe_await(
+            self.server_notifications_scope_service.cancel_notification_snooze(
+                runtime_backend=self.window._runtime_backend(),
+                notification_id=notification_id,
+            )
+        )
+        return dict(result)
+
+    async def stream_server_feed_events(self, *, after: int = 0):
+        if self.server_notifications_scope_service is None:
+            raise ValueError("Server notification scope service is unavailable.")
+        async for event in self.server_notifications_scope_service.stream_feed_events(
+            runtime_backend=self.window._runtime_backend(),
+            after=after,
+        ):
+            yield event
 
     async def _ensure_local_scheduler(self) -> None:
         if getattr(self.window, "db", None) is None:

@@ -107,8 +107,8 @@ def _load_backend_exception_classes(*, module_importer=importlib.import_module) 
 def _is_backend_exception(error: Exception, class_name: str) -> bool:
     backend_classes = _load_backend_exception_classes()
     backend_class = backend_classes.get(class_name)
-    if backend_class is not None:
-        return isinstance(error, backend_class)
+    if backend_class is not None and isinstance(error, backend_class):
+        return True
 
     error_type = type(error)
     return (

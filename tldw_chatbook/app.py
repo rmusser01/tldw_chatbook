@@ -83,6 +83,8 @@ from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
 from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
 from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
+from tldw_chatbook.Notifications.server_notifications_scope_service import ServerNotificationsScopeService
+from tldw_chatbook.Notifications.server_notifications_service import ServerNotificationsService
 from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
 from tldw_chatbook.Prompt_Management.prompt_scope_service import build_prompt_scope_service
 from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
@@ -1323,6 +1325,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
         self.notification_dispatch_service = NotificationDispatchService(
             store=self.client_notifications_db
+        )
+        try:
+            self.server_notifications_service = ServerNotificationsService.from_config(self.app_config)
+        except ValueError:
+            self.server_notifications_service = ServerNotificationsService(client=None)
+        self.server_notifications_scope_service = ServerNotificationsScopeService(
+            server_service=self.server_notifications_service,
+            policy_enforcer=self.service_policy_enforcer,
         )
 
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
