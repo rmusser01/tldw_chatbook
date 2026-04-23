@@ -27,6 +27,7 @@ class WritingDetailPanel(Vertical):
         self.version_preview_text = ""
         self.trash_entries: list[Any] = []
         self.trash_labels: list[str] = []
+        self.unsupported_reasons: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         yield Label("Writing Detail")
@@ -38,6 +39,7 @@ class WritingDetailPanel(Vertical):
         )
         with Horizontal(classes="writing-detail-actions"):
             yield Button("Save", id="writing-save-current", disabled=True)
+            yield Button("Delete", id="writing-delete-current", disabled=True)
             yield Button("Create New Version", id="writing-create-version", disabled=True)
             yield Button("Restore To Working Draft", id="writing-restore-version", disabled=True)
         yield Static("", id="writing-version-list")
@@ -65,6 +67,7 @@ class WritingDetailPanel(Vertical):
     def load_entity(self, node_data: Mapping[str, Any], entity: Any) -> None:
         self.selected_node = dict(node_data)
         self.entity = entity
+        self.unsupported_reasons = {}
         kind = str(node_data.get("kind") or "")
         source = str(node_data.get("source") or "local")
         self.title = self._record_title(entity, fallback=str(node_data.get("title") or "Untitled"))
@@ -105,6 +108,13 @@ class WritingDetailPanel(Vertical):
         ]
         self._refresh_mounted()
 
+    def set_unsupported_reason(self, action: str, reason: str | None) -> None:
+        if reason:
+            self.unsupported_reasons[action] = reason
+        else:
+            self.unsupported_reasons.pop(action, None)
+        self._refresh_mounted()
+
     def _refresh_mounted(self) -> None:
         if not self.is_mounted:
             return
@@ -120,6 +130,7 @@ class WritingDetailPanel(Vertical):
             pass
         try:
             self.query_one("#writing-save-current", Button).disabled = self.entity is None
+            self.query_one("#writing-delete-current", Button).disabled = self.entity is None
             self.query_one("#writing-create-version", Button).disabled = not self.create_version_enabled
             self.query_one("#writing-restore-version", Button).disabled = not bool(self.selected_version_id)
         except Exception:
@@ -141,6 +152,7 @@ class WritingDetailPanel(Vertical):
         self.version_preview_text = ""
         self.trash_entries = []
         self.trash_labels = []
+        self.unsupported_reasons = {}
 
     def current_payload(self) -> dict[str, Any]:
         if self.selected_node is None:

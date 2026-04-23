@@ -176,6 +176,26 @@ class WritingController:
             method(entity_id, expected_version=expected_version, mode=source)
         )
 
+    async def assign_chapter(
+        self,
+        source: str,
+        chapter_id: str,
+        *,
+        manuscript_id: str | None,
+        expected_version: int | None,
+        sort_order: float | None = None,
+    ) -> Any:
+        service = self._require_scope_service()
+        return await self._maybe_await(
+            service.assign_chapter(
+                chapter_id,
+                manuscript_id,
+                mode=source,
+                expected_version=expected_version,
+                sort_order=sort_order,
+            )
+        )
+
     def get_capability(self, source: str, **kwargs: Any) -> Any:
         service = self._require_scope_service()
         return service.get_capability(mode=source, **kwargs)

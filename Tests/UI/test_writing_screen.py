@@ -4,6 +4,12 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import ListView, Static, TextArea, Tree
 
+from tldw_chatbook.Writing_Interop.server_writing_service import (
+    REASON_DIRECT_MANUSCRIPT_SCENE,
+    REASON_SCENE_REPARENT,
+    REASON_TRASH_RESTORE,
+    REASON_VERSION_HISTORY,
+)
 from tldw_chatbook.UI.Writing_Modules.writing_controller import WritingController
 from tldw_chatbook.UI.Screens.writing_screen import WritingScreen
 from tldw_chatbook.UI.Writing_Window import WritingWindow
@@ -159,6 +165,36 @@ class FakeWritingScopeService:
             raise ValueError("Server writing backend is unavailable")
         return self.structure
 
+    async def create_project(self, *, mode, **payload):
+        self.calls.append(("create_project", mode, dict(payload)))
+        return SimpleNamespace(id="server-project-new", title=payload["title"], version=1)
+
+    async def create_manuscript(self, project_id, *, mode, **payload):
+        self.calls.append(("create_manuscript", mode, project_id, dict(payload)))
+        return SimpleNamespace(id="part-new", project_id=project_id, title=payload["title"], version=1)
+
+    async def create_chapter(self, project_id, *, mode, manuscript_id=None, **payload):
+        self.calls.append(("create_chapter", mode, project_id, manuscript_id, dict(payload)))
+        return SimpleNamespace(
+            id="chapter-new",
+            project_id=project_id,
+            manuscript_id=manuscript_id,
+            title=payload["title"],
+            version=1,
+        )
+
+    async def create_scene(self, project_id, *, mode, chapter_id=None, manuscript_id=None, **payload):
+        self.calls.append(("create_scene", mode, project_id, chapter_id, manuscript_id, dict(payload)))
+        return SimpleNamespace(
+            id="scene-new",
+            project_id=project_id,
+            chapter_id=chapter_id,
+            manuscript_id=manuscript_id,
+            title=payload["title"],
+            body_markdown=payload.get("body_markdown", ""),
+            version=1,
+        )
+
     async def get_project(self, entity_id, *, mode, include_deleted=False):
         self.calls.append(("get_project", mode, entity_id, include_deleted))
         return self.entities["project"]
@@ -190,6 +226,26 @@ class FakeWritingScopeService:
     async def update_scene(self, entity_id, payload, expected_version, *, mode):
         self.calls.append(("update_scene", mode, entity_id, dict(payload), expected_version))
         return self.entities["scene"]
+
+    async def delete_project(self, entity_id, *, mode, expected_version=None):
+        self.calls.append(("delete_project", mode, entity_id, expected_version))
+        return SimpleNamespace(id=entity_id, deleted=True)
+
+    async def delete_manuscript(self, entity_id, *, mode, expected_version=None):
+        self.calls.append(("delete_manuscript", mode, entity_id, expected_version))
+        return SimpleNamespace(id=entity_id, deleted=True)
+
+    async def delete_chapter(self, entity_id, *, mode, expected_version=None):
+        self.calls.append(("delete_chapter", mode, entity_id, expected_version))
+        return SimpleNamespace(id=entity_id, deleted=True)
+
+    async def delete_scene(self, entity_id, *, mode, expected_version=None):
+        self.calls.append(("delete_scene", mode, entity_id, expected_version))
+        return SimpleNamespace(id=entity_id, deleted=True)
+
+    async def assign_chapter(self, entity_id, manuscript_id, *, mode, expected_version=None, sort_order=None):
+        self.calls.append(("assign_chapter", mode, entity_id, manuscript_id, expected_version, sort_order))
+        return self.entities["chapter"]
 
     async def autosave_scene(self, entity_id, *, mode, body_markdown, expected_version=None):
         self.calls.append(("autosave_scene", mode, entity_id, body_markdown, expected_version))
@@ -234,6 +290,18 @@ class FakeWritingScopeService:
         return self.entities["scene"]
 
     def get_capability(self, **kwargs):
+        mode = kwargs.get("mode")
+        action = kwargs.get("action")
+        entity_kind = kwargs.get("entity_kind")
+        parent_kind = kwargs.get("parent_kind")
+        if mode == "server" and action == "create_version":
+            return SimpleNamespace(supported=False, reason=REASON_VERSION_HISTORY, metadata=kwargs)
+        if mode == "server" and action == "restore_deleted":
+            return SimpleNamespace(supported=False, reason=REASON_TRASH_RESTORE, metadata=kwargs)
+        if mode == "server" and action == "reparent" and entity_kind == "scene":
+            return SimpleNamespace(supported=False, reason=REASON_SCENE_REPARENT, metadata=kwargs)
+        if mode == "server" and action in {"create", "move"} and entity_kind == "scene" and parent_kind == "manuscript":
+            return SimpleNamespace(supported=False, reason=REASON_DIRECT_MANUSCRIPT_SCENE, metadata=kwargs)
         return SimpleNamespace(supported=True, reason=None, metadata=kwargs)
 
 
@@ -496,6 +564,130 @@ async def test_window_local_trash_can_restore_deleted_entities():
     assert ("restore_chapter", "local", "chapter-1", None) in scope.calls
     assert ("restore_scene", "local", "scene-1", None) in scope.calls
     assert window.detail_panel.trash_entries == []
+
+
+@pytest.mark.asyncio
+async def test_server_project_create_update_delete_routes_scope_methods():
+    scope = FakeWritingScopeService()
+    window = _writing_window(scope)
+    window.current_source = "server"
+
+    await window.create_project({"title": "Server Project"})
+    await window.load_entity_detail(
+        {"source": "server", "kind": "project", "id": "local-project", "project_id": "local-project"}
+    )
+    update_payload = window.detail_panel.current_payload()
+    await window.autosave_selected_entity()
+    await window.delete_selected_entity()
+
+    assert ("create_project", "server", {"title": "Server Project"}) in scope.calls
+    assert ("update_project", "server", "local-project", update_payload, 1) in scope.calls
+    assert ("delete_project", "server", "local-project", 1) in scope.calls
+
+
+@pytest.mark.asyncio
+async def test_server_child_create_and_chapter_assignment_route_through_scope_methods():
+    scope = FakeWritingScopeService()
+    controller = WritingController(scope)
+
+    await controller.create_child(
+        "server",
+        {"kind": "project", "id": "local-project"},
+        {"title": "Part Two"},
+    )
+    await controller.create_child(
+        "server",
+        {"kind": "manuscript", "id": "part-1", "project_id": "local-project"},
+        {"title": "Server Chapter"},
+    )
+    await controller.create_child(
+        "server",
+        {"kind": "unassigned_chapters", "project_id": "local-project"},
+        {"title": "Loose Server Chapter"},
+    )
+    await controller.assign_chapter(
+        "server",
+        "chapter-1",
+        manuscript_id=None,
+        expected_version=5,
+        sort_order=10,
+    )
+
+    assert ("create_manuscript", "server", "local-project", {"title": "Part Two"}) in scope.calls
+    assert (
+        "create_chapter",
+        "server",
+        "local-project",
+        "part-1",
+        {"title": "Server Chapter"},
+    ) in scope.calls
+    assert (
+        "create_chapter",
+        "server",
+        "local-project",
+        None,
+        {"title": "Loose Server Chapter"},
+    ) in scope.calls
+    assert ("assign_chapter", "server", "chapter-1", None, 5, 10) in scope.calls
+
+
+def test_server_action_states_expose_unsupported_reason_codes():
+    scope = FakeWritingScopeService()
+    window = _writing_window(scope)
+    window.current_source = "server"
+
+    direct_scene = window.get_action_state("create", "scene", parent_kind="manuscript")
+    version = window.get_action_state("create_version", "scene")
+    trash = window.get_action_state("restore_deleted", "scene")
+    reparent = window.get_action_state("reparent", "scene")
+
+    assert direct_scene.supported is False
+    assert direct_scene.reason == REASON_DIRECT_MANUSCRIPT_SCENE
+    assert version.supported is False
+    assert version.reason == REASON_VERSION_HISTORY
+    assert trash.supported is False
+    assert trash.reason == REASON_TRASH_RESTORE
+    assert reparent.supported is False
+    assert reparent.reason == REASON_SCENE_REPARENT
+
+
+@pytest.mark.asyncio
+async def test_server_scene_create_is_enabled_only_under_chapter():
+    scope = FakeWritingScopeService()
+    controller = WritingController(scope)
+
+    await controller.create_child(
+        "server",
+        {"kind": "chapter", "id": "chapter-1", "project_id": "local-project"},
+        {"title": "Server Scene", "body_markdown": "Draft"},
+    )
+
+    assert (
+        "create_scene",
+        "server",
+        "local-project",
+        "chapter-1",
+        None,
+        {"title": "Server Scene", "body_markdown": "Draft"},
+    ) in scope.calls
+
+
+@pytest.mark.asyncio
+async def test_server_versions_and_trash_are_disabled_with_visible_reasons():
+    scope = FakeWritingScopeService()
+    window = _writing_window(scope)
+    window.current_source = "server"
+
+    await window.load_entity_detail(
+        {"source": "server", "kind": "scene", "id": "scene-1", "project_id": "local-project"}
+    )
+    trash_entries = await window.load_trash("local-project")
+
+    assert window.detail_panel.create_version_enabled is False
+    assert window.detail_panel.unsupported_reasons["create_version"] == REASON_VERSION_HISTORY
+    assert trash_entries == []
+    assert window.detail_panel.unsupported_reasons["restore_deleted"] == REASON_TRASH_RESTORE
+    assert REASON_TRASH_RESTORE in window.status_message
 
 
 class WritingWindowHarness(App):

@@ -90,6 +90,11 @@ class WritingWindow(Container):
         self._set_status(f"Loaded outline for project {project_id}.")
         return dict(structure)
 
+    async def create_project(self, payload: dict[str, Any]) -> Any:
+        created = await self.controller.create_project(self.current_source, payload)
+        await self.load_projects(self.current_source)
+        return created
+
     def select_outline_node(self, node_data: dict[str, Any]) -> None:
         self.selected_node = dict(node_data)
         self.detail_panel.load_node(node_data)
@@ -109,7 +114,13 @@ class WritingWindow(Container):
             str(entity_id),
         )
         self.detail_panel.load_entity(selected, entity)
-        if selected.get("source") == "local" and kind in {"manuscript", "chapter", "scene"}:
+        source = str(selected.get("source") or self.current_source)
+        version_capability = self.get_action_state("create_version", kind, source=source)
+        self.detail_panel.set_unsupported_reason(
+            "create_version",
+            version_capability.reason if not version_capability.supported else None,
+        )
+        if source == "local" and kind in {"manuscript", "chapter", "scene"}:
             self.detail_panel.set_versions(
                 await self.controller.list_versions("local", kind, str(entity_id))
             )
@@ -140,6 +151,21 @@ class WritingWindow(Container):
         )
         self.detail_panel.load_entity(self.selected_node, saved)
         return saved
+
+    async def delete_selected_entity(self) -> Any:
+        if not self.selected_node or self.detail_panel.entity is None:
+            raise ValueError("No writing entity is selected.")
+        kind = str(self.selected_node.get("kind") or "")
+        entity_id = str(self.selected_node.get("id") or "")
+        source = str(self.selected_node.get("source") or self.current_source)
+        deleted = await self.controller.delete_current(
+            source,
+            kind,
+            entity_id,
+            self._entity_version(self.detail_panel.entity),
+        )
+        self.detail_panel.clear()
+        return deleted
 
     async def create_new_version(self) -> Any:
         if not self.selected_node:
@@ -178,6 +204,15 @@ class WritingWindow(Container):
 
     async def load_trash(self, project_id: str | None = None) -> list[Any]:
         resolved_project_id = project_id or self.current_project_id
+        capability = self.get_action_state("restore_deleted", "scene")
+        self.detail_panel.set_unsupported_reason(
+            "restore_deleted",
+            capability.reason if not capability.supported else None,
+        )
+        if not capability.supported:
+            self.detail_panel.set_trash([])
+            self._set_status(capability.reason or "Writing trash restore is unavailable.")
+            return []
         entries = await self.controller.list_trash(self.current_source, resolved_project_id)
         self.detail_panel.set_trash(entries)
         return entries
@@ -193,6 +228,21 @@ class WritingWindow(Container):
         )
         await self.load_trash(str(project_id) if project_id else None)
         return restored
+
+    def get_action_state(
+        self,
+        action: str,
+        entity_kind: str,
+        *,
+        source: str | None = None,
+        parent_kind: str | None = None,
+    ) -> Any:
+        return self.controller.get_capability(
+            source or self.current_source,
+            action=action,
+            entity_kind=entity_kind,
+            parent_kind=parent_kind,
+        )
 
     def _set_status(self, message: str) -> None:
         self.status_message = message
@@ -250,6 +300,10 @@ class WritingWindow(Container):
     async def _handle_save_current(self, _event: Button.Pressed) -> None:
         await self.autosave_selected_entity()
 
+    @on(Button.Pressed, "#writing-delete-current")
+    async def _handle_delete_current(self, _event: Button.Pressed) -> None:
+        await self.delete_selected_entity()
+
     @on(Button.Pressed, "#writing-create-version")
     async def _handle_create_version(self, _event: Button.Pressed) -> None:
         await self.create_new_version()
@@ -257,3 +311,7 @@ class WritingWindow(Container):
     @on(Button.Pressed, "#writing-restore-version")
     async def _handle_restore_version(self, _event: Button.Pressed) -> None:
         await self.restore_selected_version()
+
+    @on(Button.Pressed, "#writing-create-project")
+    async def _handle_create_project(self, _event: Button.Pressed) -> None:
+        await self.create_project({"title": "Untitled Project"})
