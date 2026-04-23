@@ -501,6 +501,25 @@ class FakeServerMediaService:
             "download_url": "/api/v1/outputs/77/download",
         }
 
+    async def export_reading_items(self, **kwargs):
+        self.calls.append(("export_reading_items", kwargs))
+        return b'{"id":31}\n'
+
+    async def summarize_reading_item(self, item_id, **kwargs):
+        self.calls.append(("summarize_reading_item", item_id, kwargs))
+        return {
+            "item_id": item_id,
+            "summary": "Short summary",
+            "provider": kwargs.get("provider", "openai"),
+            "model": kwargs.get("model"),
+            "citations": [{"item_id": item_id, "title": "Example", "source": "reading"}],
+            "generated_at": "2026-04-23T12:00:00Z",
+        }
+
+    async def tts_reading_item(self, item_id, **kwargs):
+        self.calls.append(("tts_reading_item", item_id, kwargs))
+        return b"audio-bytes"
+
     async def submit_media_ingest_jobs(self, **kwargs):
         self.calls.append(("submit_media_ingest_jobs", kwargs))
         return {
@@ -1314,6 +1333,67 @@ async def test_scope_service_routes_server_reading_import_jobs_and_archive_creat
         "media.reading_import.detail.server",
         "media.reading_archives.create.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_reading_export_summary_and_tts_with_policy():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(local_service=None, server_service=server, policy_enforcer=policy)
+
+    exported = await scope.export_reading_items(mode="server", status=["saved"], include_text=True, format="jsonl")
+    summary = await scope.summarize_reading_item(
+        mode="server",
+        item_id=31,
+        provider="openai",
+        model="gpt-4o-mini",
+        prompt="Summarize",
+    )
+    audio = await scope.tts_reading_item(
+        mode="server",
+        item_id=31,
+        model="kokoro",
+        stream=False,
+        text_source="text",
+    )
+
+    assert exported == b'{"id":31}\n'
+    assert summary["id"] == "server:reading_summary:31"
+    assert summary["citations"][0]["source"] == "reading"
+    assert audio == b"audio-bytes"
+    assert policy.calls == [
+        "media.reading_export.export.server",
+        "media.reading_summaries.create.server",
+        "media.reading_tts.launch.server",
+    ]
+    assert server.calls[-3:] == [
+        ("export_reading_items", {"status": ["saved"], "include_text": True, "format": "jsonl"}),
+        (
+            "summarize_reading_item",
+            31,
+            {"provider": "openai", "model": "gpt-4o-mini", "prompt": "Summarize"},
+        ),
+        ("tts_reading_item", 31, {"model": "kokoro", "stream": False, "text_source": "text"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_fails_explicitly_for_local_reading_export_summary_and_tts_before_policy():
+    policy = FakePolicyEnforcer.deny("blocked")
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Local reading export is not available yet."):
+        await scope.export_reading_items(mode="local")
+    with pytest.raises(ValueError, match="Local reading summaries are not available yet."):
+        await scope.summarize_reading_item(mode="local", item_id=31)
+    with pytest.raises(ValueError, match="Local reading TTS is not available yet."):
+        await scope.tts_reading_item(mode="local", item_id=31, model="kokoro")
+
+    assert policy.calls == []
 
 
 @pytest.mark.asyncio

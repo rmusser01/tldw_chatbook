@@ -11,12 +11,15 @@ from ..tldw_api import (
     MediaSearchRequest,
     MediaIngestJobSubmitRequest,
     ReadingArchiveCreateRequest,
+    ReadingExportRequest,
     ReadingHighlightCreateRequest,
     ReadingHighlightUpdateRequest,
     ReadingNoteLinkCreateRequest,
     ReadingProgressUpdate,
     ReadingSavedSearchCreateRequest,
     ReadingSavedSearchUpdateRequest,
+    ReadingSummarizeRequest,
+    ReadingTTSRequest,
     ReadingUpdateRequest,
     TLDWAPIClient,
 )
@@ -249,6 +252,24 @@ class ServerMediaReadingService:
             retention_until=retention_until,
         )
         return await self._require_client().create_reading_archive(int(item_id), request_data)
+
+    async def export_reading_items(self, **filters: Any) -> bytes:
+        request_data = ReadingExportRequest(
+            **{key: value for key, value in filters.items() if value is not None}
+        )
+        return await self._require_client().export_reading_items(request_data)
+
+    async def summarize_reading_item(self, item_id: Any, **options: Any) -> Any:
+        request_data = ReadingSummarizeRequest(
+            **{key: value for key, value in options.items() if value is not None}
+        )
+        return await self._require_client().summarize_reading_item(int(item_id), request_data)
+
+    async def tts_reading_item(self, item_id: Any, **options: Any) -> bytes:
+        request_data = ReadingTTSRequest(
+            **{key: value for key, value in options.items() if value is not None}
+        )
+        return await self._require_client().tts_reading_item(int(item_id), request_data)
 
     async def submit_media_ingest_jobs(
         self,

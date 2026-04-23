@@ -205,6 +205,33 @@ class FakeClient:
             "download_url": "/api/v1/outputs/77/download",
         }
 
+    async def export_reading_items(self, request_data):
+        self.calls.append(("export_reading_items", request_data.model_dump(exclude_none=True, mode="json")))
+        return b'{"id":31}\n'
+
+    async def summarize_reading_item(self, item_id, request_data):
+        self.calls.append(("summarize_reading_item", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "item_id": item_id,
+            "summary": "Short summary",
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "citations": [
+                {
+                    "item_id": item_id,
+                    "url": "https://example.com",
+                    "canonical_url": "https://example.com",
+                    "title": "Example",
+                    "source": "reading",
+                }
+            ],
+            "generated_at": "2026-04-23T12:00:00Z",
+        }
+
+    async def tts_reading_item(self, item_id, request_data):
+        self.calls.append(("tts_reading_item", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return b"audio-bytes"
+
     async def submit_media_ingest_jobs(self, request_data, file_paths=None):
         self.calls.append(
             (
@@ -563,6 +590,63 @@ async def test_server_service_routes_reading_import_jobs_and_archive_creation():
             "create_reading_archive",
             31,
             {"format": "md", "source": "text", "title": "Example Archive"},
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_reading_export_summary_and_tts_payloads():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    exported = await service.export_reading_items(status=["saved"], include_text=True, format="jsonl")
+    summary = await service.summarize_reading_item(
+        31,
+        provider="openai",
+        model="gpt-4o-mini",
+        prompt="Summarize",
+    )
+    audio = await service.tts_reading_item(31, model="kokoro", stream=False, text_source="text")
+
+    assert exported == b'{"id":31}\n'
+    assert summary["summary"] == "Short summary"
+    assert audio == b"audio-bytes"
+    assert client.calls[-3:] == [
+        (
+            "export_reading_items",
+            {
+                "status": ["saved"],
+                "page": 1,
+                "size": 1000,
+                "include_metadata": True,
+                "include_clean_html": False,
+                "include_text": True,
+                "include_highlights": False,
+                "include_notes": True,
+                "format": "jsonl",
+            },
+        ),
+        (
+            "summarize_reading_item",
+            31,
+            {
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "prompt": "Summarize",
+                "recursive": False,
+                "chunked": False,
+            },
+        ),
+        (
+            "tts_reading_item",
+            31,
+            {
+                "model": "kokoro",
+                "voice": "af_heart",
+                "response_format": "mp3",
+                "stream": False,
+                "text_source": "text",
+            },
         ),
     ]
 

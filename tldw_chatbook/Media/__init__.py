@@ -13,6 +13,7 @@ from .media_reading_normalizers import (
     normalize_reading_note_link,
     normalize_reading_progress,
     normalize_reading_saved_search,
+    normalize_reading_summary,
     normalize_server_reading_item,
 )
 from .media_reading_scope_service import MediaReadingBackend, MediaReadingScopeService
@@ -34,5 +35,6 @@ __all__ = [
     "normalize_reading_note_link",
     "normalize_reading_progress",
     "normalize_reading_saved_search",
+    "normalize_reading_summary",
     "normalize_server_reading_item",
 ]

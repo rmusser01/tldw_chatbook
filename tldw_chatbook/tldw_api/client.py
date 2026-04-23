@@ -59,6 +59,7 @@ from .media_reading_schemas import (
     MediaIngestJobSubmitRequest,
     ReadingArchiveCreateRequest,
     ReadingArchiveResponse,
+    ReadingExportRequest,
     ReadingHighlight,
     ReadingHighlightCreateRequest,
     ReadingHighlightDeleteResponse,
@@ -74,6 +75,9 @@ from .media_reading_schemas import (
     ReadingSavedSearchListResponse,
     ReadingSavedSearchResponse,
     ReadingSavedSearchUpdateRequest,
+    ReadingSummarizeRequest,
+    ReadingSummaryResponse,
+    ReadingTTSRequest,
     ReadingUpdateRequest,
     SubmitMediaIngestJobsResponse,
     WebProcessResponse,
@@ -392,6 +396,9 @@ class TLDWAPIClient:
         self,
         method: str,
         endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        files: Optional[List[tuple]] = None,
+        json_data: Optional[Union[Dict[str, Any], List[Any]]] = None,
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> bytes:
@@ -402,6 +409,9 @@ class TLDWAPIClient:
             response = await client.request(
                 method,
                 endpoint,
+                data=data,
+                files=files,
+                json=json_data,
                 params=params,
                 headers=headers,
             )
@@ -1915,6 +1925,37 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return ReadingArchiveResponse.model_validate(response)
+
+    async def export_reading_items(self, request_data: ReadingExportRequest | None = None) -> bytes:
+        payload = request_data or ReadingExportRequest()
+        return await self._request_bytes(
+            "GET",
+            "/api/v1/reading/export",
+            params=payload.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def summarize_reading_item(
+        self,
+        item_id: int,
+        request_data: ReadingSummarizeRequest,
+    ) -> ReadingSummaryResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/reading/items/{item_id}/summarize",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReadingSummaryResponse.model_validate(response)
+
+    async def tts_reading_item(
+        self,
+        item_id: int,
+        request_data: ReadingTTSRequest,
+    ) -> bytes:
+        return await self._request_bytes(
+            "POST",
+            f"/api/v1/reading/items/{item_id}/tts",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
 
     async def get_reading_progress(self, media_id: int) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/media/{media_id}/progress")

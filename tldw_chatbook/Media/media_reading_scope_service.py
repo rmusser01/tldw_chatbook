@@ -23,6 +23,7 @@ from .media_reading_normalizers import (
     normalize_reading_note_link,
     normalize_reading_progress,
     normalize_reading_saved_search,
+    normalize_reading_summary,
     normalize_server_reading_item,
 )
 
@@ -132,6 +133,18 @@ class MediaReadingScopeService:
         return f"media.reading_archives.{action}.{mode.value}"
 
     @staticmethod
+    def _reading_export_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading_export.{action}.{mode.value}"
+
+    @staticmethod
+    def _reading_summary_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading_summaries.{action}.{mode.value}"
+
+    @staticmethod
+    def _reading_tts_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading_tts.{action}.{mode.value}"
+
+    @staticmethod
     def _ingestion_source_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.ingestion_sources.{action}.{mode.value}"
 
@@ -175,6 +188,18 @@ class MediaReadingScopeService:
     @staticmethod
     def _raise_local_reading_archives_unavailable() -> None:
         raise ValueError("Local reading archives are not available yet.")
+
+    @staticmethod
+    def _raise_local_reading_export_unavailable() -> None:
+        raise ValueError("Local reading export is not available yet.")
+
+    @staticmethod
+    def _raise_local_reading_summaries_unavailable() -> None:
+        raise ValueError("Local reading summaries are not available yet.")
+
+    @staticmethod
+    def _raise_local_reading_tts_unavailable() -> None:
+        raise ValueError("Local reading TTS is not available yet.")
 
     @staticmethod
     def _validate_server_create_source_type(source_type: str) -> str:
@@ -705,6 +730,51 @@ class MediaReadingScopeService:
             )
         )
         return normalize_reading_archive(archive, backend=normalized_mode.value)
+
+    async def export_reading_items(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        **filters: Any,
+    ) -> bytes:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_export_unavailable()
+        self._enforce_policy(self._reading_export_action_id(normalized_mode, "export"))
+        service = self._service_for_mode(normalized_mode)
+        payload = {key: value for key, value in filters.items() if value is not None}
+        return await self._maybe_await(service.export_reading_items(**payload))
+
+    async def summarize_reading_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_id: Any,
+        **options: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_summaries_unavailable()
+        self._enforce_policy(self._reading_summary_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        payload = {key: value for key, value in options.items() if value is not None}
+        summary = await self._maybe_await(service.summarize_reading_item(item_id, **payload))
+        return normalize_reading_summary(summary, backend=normalized_mode.value)
+
+    async def tts_reading_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_id: Any,
+        **options: Any,
+    ) -> bytes:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_tts_unavailable()
+        self._enforce_policy(self._reading_tts_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        payload = {key: value for key, value in options.items() if value is not None}
+        return await self._maybe_await(service.tts_reading_item(item_id, **payload))
 
     async def list_ingestion_sources(self, *, mode: MediaReadingBackend | str | None = None) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)

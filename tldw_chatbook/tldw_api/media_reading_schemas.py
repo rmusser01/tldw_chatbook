@@ -32,6 +32,9 @@ ReadingSavedSearchSort = Literal[
     "title_desc",
     "relevance",
 ]
+ReadingExportFormat = Literal["jsonl", "zip"]
+ReadingTTSResponseFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
+ReadingTTSTextSource = Literal["text", "summary", "notes"]
 
 _READING_SAVED_SEARCH_ALLOWED_QUERY_KEYS = {
     "q",
@@ -701,6 +704,61 @@ class ReadingArchiveResponse(BaseModel):
     download_url: str
 
 
+class ReadingExportRequest(BaseModel):
+    status: list[str] | None = None
+    tags: list[str] | None = None
+    favorite: bool | None = None
+    q: str | None = None
+    domain: str | None = None
+    page: int = Field(default=1, ge=1)
+    size: int = Field(default=1000, ge=1, le=10000)
+    include_metadata: bool = True
+    include_clean_html: bool = False
+    include_text: bool = False
+    include_highlights: bool = False
+    include_notes: bool = True
+    format: ReadingExportFormat = "jsonl"
+
+
+class ReadingSummarizeRequest(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    prompt: str | None = None
+    system_prompt: str | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    recursive: bool = False
+    chunked: bool = False
+
+
+class ReadingCitation(BaseModel):
+    item_id: int
+    url: str | None = None
+    canonical_url: str | None = None
+    title: str | None = None
+    source: str = "reading"
+
+
+class ReadingSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    item_id: int
+    summary: str
+    provider: str
+    model: str | None = None
+    citations: list[ReadingCitation] = Field(default_factory=list)
+    generated_at: str | None = None
+
+
+class ReadingTTSRequest(BaseModel):
+    model: str = Field(..., min_length=1)
+    voice: str = "af_heart"
+    response_format: ReadingTTSResponseFormat = "mp3"
+    stream: bool = True
+    speed: float | None = Field(default=None, ge=0.25, le=4.0)
+    max_chars: int | None = Field(default=None, ge=1, le=200000)
+    text_source: ReadingTTSTextSource | None = None
+
+
 class ReadingDeleteResponse(BaseModel):
     status: str
     item_id: int
@@ -764,6 +822,9 @@ __all__ = [
     "MediaIngestJobStreamEvent",
     "MediaIngestJobSubmitRequest",
     "ReadingDeleteResponse",
+    "ReadingCitation",
+    "ReadingExportFormat",
+    "ReadingExportRequest",
     "ReadingHighlight",
     "ReadingHighlightCreateRequest",
     "ReadingHighlightDeleteResponse",
@@ -789,6 +850,11 @@ __all__ = [
     "ReadingSavedSearchResponse",
     "ReadingSavedSearchSort",
     "ReadingSavedSearchUpdateRequest",
+    "ReadingSummarizeRequest",
+    "ReadingSummaryResponse",
+    "ReadingTTSRequest",
+    "ReadingTTSResponseFormat",
+    "ReadingTTSTextSource",
     "ReadingUpdateRequest",
     "ReferenceImageListItem",
     "ReferenceImageListResponse",

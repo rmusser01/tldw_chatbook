@@ -397,14 +397,39 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.reading.delete.server
         media.reading.detail.local
         media.reading.detail.server
+        media.reading_highlights.create.local
+        media.reading_highlights.create.server
+        media.reading_highlights.delete.local
+        media.reading_highlights.delete.server
+        media.reading_highlights.detail.local
+        media.reading_highlights.detail.server
+        media.reading_highlights.list.local
+        media.reading_highlights.list.server
+        media.reading_highlights.update.local
+        media.reading_highlights.update.server
         media.reading.list.local
         media.reading.list.server
         media.reading.update.local
         media.reading.update.server
+        media.reading_archives.create.server
+        media.reading_export.export.server
+        media.reading_import.detail.server
+        media.reading_import.launch.server
+        media.reading_import.list.server
+        media.reading_note_links.create.server
+        media.reading_note_links.delete.server
+        media.reading_note_links.list.server
         media.reading_progress.detail.local
         media.reading_progress.detail.server
         media.reading_progress.update.local
         media.reading_progress.update.server
+        media.reading_saved_searches.create.server
+        media.reading_saved_searches.delete.server
+        media.reading_saved_searches.list.server
+        media.reading_saved_searches.update.server
+        media.reading_summaries.create.server
+        media.reading_tts.launch.server
+        media.web_content_ingest.launch.server
     """),
     "notes_workspaces": _action_ids("""
         notes.create.local

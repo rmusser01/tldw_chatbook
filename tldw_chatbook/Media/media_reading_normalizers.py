@@ -365,6 +365,27 @@ def normalize_reading_archive(
     }
 
 
+def normalize_reading_summary(
+    summary: Mapping[str, Any] | Any,
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    summary_data = _as_mapping(summary)
+    source_id = str(summary_data.get("item_id"))
+    return {
+        "id": build_canonical_media_id(backend, "reading_summary", source_id),
+        "backend": backend,
+        "entity_kind": "reading_summary",
+        "source_id": source_id,
+        "item_id": summary_data.get("item_id"),
+        "summary": summary_data.get("summary"),
+        "provider": summary_data.get("provider"),
+        "model": summary_data.get("model"),
+        "citations": list(summary_data.get("citations") or []),
+        "generated_at": _clean_timestamp(summary_data.get("generated_at")),
+    }
+
+
 def normalize_media_ingest_job(
     job: Mapping[str, Any],
     *,

@@ -13,12 +13,16 @@ from tldw_chatbook.tldw_api import (
     IngestionSourceItemResponse,
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
-    ReadingProgressUpdate,
-    ReadingUpdateRequest,
     MediaIngestJobListResponse,
     MediaIngestJobStatus,
     MediaIngestJobStreamEvent,
     MediaIngestJobSubmitRequest,
+    ReadingExportRequest,
+    ReadingProgressUpdate,
+    ReadingSummarizeRequest,
+    ReadingSummaryResponse,
+    ReadingTTSRequest,
+    ReadingUpdateRequest,
     SubmitMediaIngestJobsResponse,
     TLDWAPIClient,
 )
@@ -669,6 +673,81 @@ async def test_reading_import_job_and_archive_routes_wire_payloads(monkeypatch, 
     assert isinstance(job, api.ReadingImportJobStatus)
     assert isinstance(archive, api.ReadingArchiveResponse)
     assert archive.download_url == "/api/v1/outputs/77/download"
+
+
+@pytest.mark.asyncio
+async def test_reading_export_summarize_and_tts_routes_wire_payloads(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    request_mock = AsyncMock(
+        return_value={
+            "item_id": 31,
+            "summary": "Short summary",
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "citations": [
+                {
+                    "item_id": 31,
+                    "url": "https://example.com",
+                    "canonical_url": "https://example.com",
+                    "title": "Example",
+                    "source": "reading",
+                }
+            ],
+            "generated_at": "2026-04-23T12:00:00Z",
+        }
+    )
+    bytes_mock = AsyncMock(side_effect=[b'{"id":31}\n', b"audio-bytes"])
+    monkeypatch.setattr(client, "_request", request_mock)
+    monkeypatch.setattr(client, "_request_bytes", bytes_mock)
+
+    exported = await client.export_reading_items(
+        ReadingExportRequest(status=["saved"], include_text=True, format="jsonl")
+    )
+    summary = await client.summarize_reading_item(
+        31,
+        ReadingSummarizeRequest(
+            provider="openai",
+            model="gpt-4o-mini",
+            prompt="Summarize",
+        ),
+    )
+    audio = await client.tts_reading_item(
+        31,
+        ReadingTTSRequest(model="kokoro", stream=False, text_source="text"),
+    )
+
+    assert bytes_mock.await_args_list[0].args[:2] == ("GET", "/api/v1/reading/export")
+    assert bytes_mock.await_args_list[0].kwargs["params"] == {
+        "status": ["saved"],
+        "page": 1,
+        "size": 1000,
+        "include_metadata": True,
+        "include_clean_html": False,
+        "include_text": True,
+        "include_highlights": False,
+        "include_notes": True,
+        "format": "jsonl",
+    }
+    assert request_mock.await_args.args[:2] == ("POST", "/api/v1/reading/items/31/summarize")
+    assert request_mock.await_args.kwargs["json_data"] == {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "prompt": "Summarize",
+        "recursive": False,
+        "chunked": False,
+    }
+    assert bytes_mock.await_args_list[1].args[:2] == ("POST", "/api/v1/reading/items/31/tts")
+    assert bytes_mock.await_args_list[1].kwargs["json_data"] == {
+        "model": "kokoro",
+        "voice": "af_heart",
+        "response_format": "mp3",
+        "stream": False,
+        "text_source": "text",
+    }
+    assert exported == b'{"id":31}\n'
+    assert isinstance(summary, ReadingSummaryResponse)
+    assert summary.citations[0].source == "reading"
+    assert audio == b"audio-bytes"
 
 
 @pytest.mark.asyncio

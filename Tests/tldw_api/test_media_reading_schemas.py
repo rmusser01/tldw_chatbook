@@ -7,9 +7,13 @@ from tldw_chatbook.tldw_api import (
     IngestionSourcePatchRequest,
     ReadingProgressUpdate,
     ReadingArchiveCreateRequest,
+    ReadingExportRequest,
     ReadingImportJobStatus,
     ReadingSavedSearchCreateRequest,
     ReadingSavedSearchUpdateRequest,
+    ReadingSummarizeRequest,
+    ReadingSummaryResponse,
+    ReadingTTSRequest,
     ReadingUpdateRequest,
 )
 
@@ -94,3 +98,87 @@ def test_reading_import_job_status_accepts_server_payload():
 
     assert status.job_id == 42
     assert status.result["imported"] == 3
+
+
+def test_reading_export_request_matches_server_filters_and_defaults():
+    request = ReadingExportRequest(
+        status=["saved"],
+        tags=["ai"],
+        favorite=True,
+        q="rag",
+        include_text=True,
+        format="zip",
+    )
+
+    assert request.model_dump(exclude_none=True, mode="json") == {
+        "status": ["saved"],
+        "tags": ["ai"],
+        "favorite": True,
+        "q": "rag",
+        "page": 1,
+        "size": 1000,
+        "include_metadata": True,
+        "include_clean_html": False,
+        "include_text": True,
+        "include_highlights": False,
+        "include_notes": True,
+        "format": "zip",
+    }
+
+
+def test_reading_summarize_request_and_response_match_server_contract():
+    request = ReadingSummarizeRequest(
+        provider="openai",
+        model="gpt-4o-mini",
+        prompt="Summarize for a product brief.",
+        temperature=0.4,
+        recursive=True,
+    )
+    response = ReadingSummaryResponse(
+        item_id=31,
+        summary="Short summary",
+        provider="openai",
+        model="gpt-4o-mini",
+        citations=[
+            {
+                "item_id": 31,
+                "url": "https://example.com",
+                "canonical_url": "https://example.com",
+                "title": "Example",
+                "source": "reading",
+            }
+        ],
+        generated_at="2026-04-23T12:00:00Z",
+    )
+
+    assert request.model_dump(exclude_none=True, mode="json") == {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "prompt": "Summarize for a product brief.",
+        "temperature": 0.4,
+        "recursive": True,
+        "chunked": False,
+    }
+    assert response.citations[0].source == "reading"
+
+
+def test_reading_tts_request_matches_server_contract():
+    request = ReadingTTSRequest(
+        model="kokoro",
+        voice="af_heart",
+        response_format="mp3",
+        stream=False,
+        speed=1.1,
+        max_chars=12000,
+        text_source="text",
+    )
+
+    assert request.model_dump(exclude_none=True, mode="json") == {
+        "model": "kokoro",
+        "voice": "af_heart",
+        "response_format": "mp3",
+        "stream": False,
+        "speed": 1.1,
+        "max_chars": 12000,
+        "text_source": "text",
+    }
