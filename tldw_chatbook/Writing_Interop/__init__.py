@@ -1,5 +1,6 @@
 """Writing interop normalized models and adapter helpers."""
 
+from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
 from tldw_chatbook.Writing_Interop.writing_markdown_adapter import (
     markdown_to_plain_text,
     markdown_to_server_content,
@@ -42,6 +43,7 @@ from tldw_chatbook.Writing_Interop.writing_normalizers import (
 )
 
 __all__ = [
+    "LocalWritingService",
     "WritingCapability",
     "WritingChapter",
     "WritingDraft",
