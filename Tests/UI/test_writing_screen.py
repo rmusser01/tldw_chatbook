@@ -690,6 +690,20 @@ async def test_server_versions_and_trash_are_disabled_with_visible_reasons():
     assert REASON_TRASH_RESTORE in window.status_message
 
 
+@pytest.mark.asyncio
+async def test_server_version_reason_survives_autosave_refresh():
+    scope = FakeWritingScopeService()
+    window = _writing_window(scope)
+    window.current_source = "server"
+
+    await window.load_entity_detail(
+        {"source": "server", "kind": "scene", "id": "scene-1", "project_id": "local-project"}
+    )
+    await window.autosave_selected_entity()
+
+    assert window.detail_panel.unsupported_reasons["create_version"] == REASON_VERSION_HISTORY
+
+
 class WritingWindowHarness(App):
     def __init__(self, window):
         super().__init__()

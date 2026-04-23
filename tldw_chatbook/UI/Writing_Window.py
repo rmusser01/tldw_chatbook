@@ -115,11 +115,7 @@ class WritingWindow(Container):
         )
         self.detail_panel.load_entity(selected, entity)
         source = str(selected.get("source") or self.current_source)
-        version_capability = self.get_action_state("create_version", kind, source=source)
-        self.detail_panel.set_unsupported_reason(
-            "create_version",
-            version_capability.reason if not version_capability.supported else None,
-        )
+        self._apply_version_action_state(kind, source)
         if source == "local" and kind in {"manuscript", "chapter", "scene"}:
             self.detail_panel.set_versions(
                 await self.controller.list_versions("local", kind, str(entity_id))
@@ -150,6 +146,7 @@ class WritingWindow(Container):
             self._entity_version(self.detail_panel.entity),
         )
         self.detail_panel.load_entity(self.selected_node, saved)
+        self._apply_version_action_state(kind, source)
         return saved
 
     async def delete_selected_entity(self) -> Any:
@@ -242,6 +239,13 @@ class WritingWindow(Container):
             action=action,
             entity_kind=entity_kind,
             parent_kind=parent_kind,
+        )
+
+    def _apply_version_action_state(self, entity_kind: str, source: str) -> None:
+        capability = self.get_action_state("create_version", entity_kind, source=source)
+        self.detail_panel.set_unsupported_reason(
+            "create_version",
+            capability.reason if not capability.supported else None,
         )
 
     def _set_status(self, message: str) -> None:
