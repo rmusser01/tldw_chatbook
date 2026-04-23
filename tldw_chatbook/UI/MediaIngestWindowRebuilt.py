@@ -483,6 +483,11 @@ class RemoteIngestionPanel(ScrollableContainer):
                     disabled=True,
                 )
                 yield Button(
+                    "Watch Recent Server Jobs",
+                    id="watch-recent-jobs-btn",
+                    disabled=True,
+                )
+                yield Button(
                     "Cancel Batch",
                     id="cancel-batch-btn",
                     disabled=True,
@@ -562,6 +567,12 @@ class RemoteIngestionPanel(ScrollableContainer):
         self.query_one("#watch-batch-btn", Button).disabled = disabled
         self.query_one("#cancel-batch-btn", Button).disabled = disabled
 
+    def _set_recent_watch_controls_disabled(self, disabled: bool) -> None:
+        try:
+            self.query_one("#watch-recent-jobs-btn", Button).disabled = disabled
+        except Exception:
+            pass
+
     def _set_job_controls_disabled(self, disabled: bool) -> None:
         try:
             self.query_one("#server-ingest-job-select", Select).disabled = disabled
@@ -584,6 +595,7 @@ class RemoteIngestionPanel(ScrollableContainer):
         self._set_process_controls_disabled(not enabled)
         self._set_batch_lookup_controls_disabled(not enabled)
         self._set_batch_controls_disabled(not enabled or not self.last_batch_id)
+        self._set_recent_watch_controls_disabled(not enabled)
         self._set_job_controls_disabled(not enabled or not self.current_jobs)
         if self.runtime_backend != "server":
             self.query_one("#remote-job-status", Static).update("Server ingest jobs require server mode.")
@@ -719,6 +731,13 @@ class RemoteIngestionPanel(ScrollableContainer):
             return
         self.run_worker(self.watch_last_batch_events(), exclusive=True)
 
+    @on(Button.Pressed, "#watch-recent-jobs-btn")
+    def handle_watch_recent_jobs(self) -> None:
+        """Watch recent visible server ingest job events across batches."""
+        if self.processing:
+            return
+        self.run_worker(self.watch_recent_job_events(), exclusive=True)
+
     @on(Button.Pressed, "#cancel-batch-btn")
     def handle_cancel_batch(self) -> None:
         """Cancel the last submitted server ingest batch."""
@@ -792,6 +811,7 @@ class RemoteIngestionPanel(ScrollableContainer):
         finally:
             self.processing = False
             self._set_process_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
+            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
             self._set_batch_controls_disabled(
                 self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
             )
@@ -846,6 +866,41 @@ class RemoteIngestionPanel(ScrollableContainer):
         finally:
             self.processing = False
             self._set_process_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
+            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
+            self._set_batch_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
+            )
+            self._set_batch_lookup_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
+            self._set_job_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None or not self.current_jobs
+            )
+
+    async def watch_recent_job_events(self, *, after_id: int = 0) -> None:
+        """Consume live server ingest events for recent visible jobs across batches."""
+        self.runtime_backend = self._current_runtime_backend()
+        if self.runtime_backend != "server" or self.scope_service is None:
+            self.notify("Server ingest jobs require server mode.", severity="warning")
+            return
+
+        stream_events = getattr(self.scope_service, "stream_media_ingest_job_events", None)
+        if stream_events is None:
+            self.notify("Server ingest job event stream is unavailable.", severity="error")
+            return
+
+        self.processing = True
+        self._set_recent_watch_controls_disabled(True)
+        self._set_batch_controls_disabled(True)
+        try:
+            async for event in stream_events(mode="server", batch_id=None, after_id=after_id):
+                self._apply_job_stream_event(dict(event or {}), recent=True)
+            self.notify("Recent server ingest job event stream ended", severity="information")
+        except Exception as exc:
+            logger.error(f"Error watching recent server ingest jobs: {exc}", exc_info=True)
+            self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
+            self.notify(f"Recent server ingest job watch failed: {exc}", severity="error")
+        finally:
+            self.processing = False
+            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
             self._set_batch_controls_disabled(
                 self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
             )
@@ -895,6 +950,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self.notify(f"Server ingest batch watch failed: {exc}", severity="error")
         finally:
             self.processing = False
+            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
             self._set_batch_controls_disabled(
                 self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
             )
@@ -931,6 +987,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self.notify(f"Server ingest batch refresh failed: {exc}", severity="error")
         finally:
             self.processing = False
+            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
             self._set_batch_controls_disabled(
                 self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
             )
@@ -967,6 +1024,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self.notify(f"Server ingest batch cancellation failed: {exc}", severity="error")
         finally:
             self.processing = False
+            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
             self._set_batch_controls_disabled(
                 self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
             )
@@ -1014,6 +1072,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self.notify(f"Server ingest job cancellation failed: {exc}", severity="error")
         finally:
             self.processing = False
+            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
             self._set_batch_controls_disabled(
                 self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
             )
@@ -1065,14 +1124,15 @@ class RemoteIngestionPanel(ScrollableContainer):
         job_select.disabled = False
         cancel_button.disabled = False
 
-    def _apply_job_stream_event(self, event: Dict[str, Any]) -> None:
+    def _apply_job_stream_event(self, event: Dict[str, Any], *, recent: bool = False) -> None:
         event_name = str(event.get("event") or "")
         if event_name == "snapshot":
             self._render_job_list_response(
                 {
                     "batch_id": event.get("batch_id") or self.last_batch_id,
                     "jobs": list(event.get("jobs") or []),
-                }
+                },
+                recent=recent,
             )
             return
 
@@ -1123,7 +1183,8 @@ class RemoteIngestionPanel(ScrollableContainer):
             {
                 "batch_id": self.last_batch_id,
                 "jobs": updated_jobs,
-            }
+            },
+            recent=recent,
         )
 
     @staticmethod
@@ -1170,11 +1231,11 @@ class RemoteIngestionPanel(ScrollableContainer):
             lines.extend(f"- {error}" for error in errors)
         self.query_one("#remote-job-status", Static).update("\n".join(lines))
 
-    def _render_job_list_response(self, response: Dict[str, Any]) -> None:
+    def _render_job_list_response(self, response: Dict[str, Any], *, recent: bool = False) -> None:
         batch_id = response.get("batch_id") or self.last_batch_id
         if batch_id:
             self.last_batch_id = str(batch_id)
-        lines = [f"Batch: {batch_id or 'unknown'}"]
+        lines = ["Recent visible server ingest jobs"] if recent and not batch_id else [f"Batch: {batch_id or 'unknown'}"]
         jobs = [dict(job) for job in list(response.get("jobs") or []) if isinstance(job, dict)]
         self._update_job_selection(jobs)
         for job in jobs:

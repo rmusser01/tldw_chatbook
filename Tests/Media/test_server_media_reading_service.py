@@ -471,6 +471,28 @@ async def test_server_service_streams_media_ingest_job_events():
 
 
 @pytest.mark.asyncio
+async def test_server_service_streams_recent_media_ingest_job_events_without_batch():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    events = [
+        event
+        async for event in service.stream_media_ingest_job_events(
+            batch_id=None,
+            after_id=0,
+        )
+    ]
+
+    assert events[0]["event"] == "snapshot"
+    assert events[0]["data"]["batch_id"] is None
+    assert events[0]["data"]["jobs"][0]["id"] == 7
+    assert client.calls[:2] == [
+        ("stream_media_ingest_job_events", None, 0),
+        ("get_media_ingest_job", 7),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_server_service_routes_web_content_ingest_with_schema_object():
     client = FakeClient()
     service = ServerMediaReadingService(client=client)

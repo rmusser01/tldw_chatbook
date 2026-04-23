@@ -919,6 +919,34 @@ async def test_scope_service_streams_media_ingest_events_and_normalizes_payloads
 
 
 @pytest.mark.asyncio
+async def test_scope_service_streams_recent_media_ingest_events_without_batch():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    events = [
+        event
+        async for event in scope.stream_media_ingest_job_events(
+            mode="server",
+            batch_id=None,
+            after_id=0,
+        )
+    ]
+
+    assert policy.calls == ["media.ingestion_jobs.list.server"]
+    assert events[0]["event"] == "snapshot"
+    assert events[0]["batch_id"] is None
+    assert events[0]["jobs"][0]["id"] == "server:ingestion_job:7"
+    assert events[1]["event"] == "job"
+    assert events[1]["id"] == "server:ingestion_job:7"
+    assert ("stream_media_ingest_job_events", None, 0) in server.calls
+
+
+@pytest.mark.asyncio
 async def test_scope_service_fails_explicitly_for_local_media_ingest_jobs_before_policy_denial():
     policy = FakePolicyEnforcer.deny("blocked")
     scope = MediaReadingScopeService(

@@ -319,6 +319,49 @@ async def test_remote_ingestion_panel_watches_server_job_events():
 
 
 @pytest.mark.asyncio
+async def test_remote_ingestion_panel_watches_recent_server_job_events_without_batch():
+    async def fake_event_stream():
+        yield {
+            "event": "snapshot",
+            "batch_id": None,
+            "jobs": [
+                {
+                    "id": "server:ingestion_job:42",
+                    "source_id": "42",
+                    "status": "running",
+                    "progress_percent": 25,
+                    "progress_message": "Recent visible job",
+                    "source": "https://example.com/recent",
+                    "source_kind": "url",
+                }
+            ],
+        }
+
+    scope_service = Mock()
+    scope_service.stream_media_ingest_job_events = Mock(return_value=fake_event_stream())
+    app = RemoteIngestionPanelTestApp(runtime_backend="server", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(RemoteIngestionPanel)
+        panel.runtime_backend = "server"
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        await panel.watch_recent_job_events()
+
+        scope_service.stream_media_ingest_job_events.assert_called_once_with(
+            mode="server",
+            batch_id=None,
+            after_id=0,
+        )
+        rendered_status = str(panel.query_one("#remote-job-status", Static).render())
+        assert "Recent visible server ingest jobs" in rendered_status
+        assert "running" in rendered_status
+        assert "Recent visible job" in rendered_status
+        assert panel.last_batch_id is None
+
+
+@pytest.mark.asyncio
 async def test_remote_ingestion_panel_loads_known_server_batch_by_id():
     scope_service = Mock()
     scope_service.list_media_ingest_jobs = AsyncMock(
