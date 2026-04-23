@@ -172,6 +172,11 @@ from .prompt_chatbook_schemas import (
     ChatbookImportJobResponse,
     ChatbookJobMutationResponse,
     PaginatedPromptsResponse,
+    PromptCollectionCreateRequest,
+    PromptCollectionCreateResponse,
+    PromptCollectionListResponse,
+    PromptCollectionResponse,
+    PromptCollectionUpdateRequest,
     PromptCreateRequest,
     PromptPreviewRequest,
     PromptResponse,
@@ -3745,6 +3750,44 @@ class TLDWAPIClient:
             f"/api/v1/prompts/{prompt_identifier}/versions/{version}/restore",
         )
         return PromptResponse.model_validate(response)
+
+    async def create_prompt_collection(
+        self,
+        request_data: PromptCollectionCreateRequest,
+    ) -> PromptCollectionCreateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompts/collections/create",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return PromptCollectionCreateResponse.model_validate(response)
+
+    async def list_prompt_collections(self, limit: int = 200, offset: int = 0) -> PromptCollectionListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/prompts/collections",
+            params={"limit": limit, "offset": offset},
+        )
+        return PromptCollectionListResponse.model_validate(response)
+
+    async def get_prompt_collection(self, collection_id: int) -> PromptCollectionResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/prompts/collections/{collection_id}",
+        )
+        return PromptCollectionResponse.model_validate(response)
+
+    async def update_prompt_collection(
+        self,
+        collection_id: int,
+        request_data: PromptCollectionUpdateRequest,
+    ) -> PromptCollectionResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/prompts/collections/{collection_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptCollectionResponse.model_validate(response)
 
     async def export_chatbook(self, request_data: ChatbookExportRequest) -> Dict[str, Any]:
         return await self._request(

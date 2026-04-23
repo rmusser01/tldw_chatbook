@@ -13,6 +13,11 @@ from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
     ChatbookImportRequest,
     ChatbookImportJobListResponse,
     PaginatedPromptsResponse,
+    PromptCollectionCreateRequest,
+    PromptCollectionCreateResponse,
+    PromptCollectionListResponse,
+    PromptCollectionResponse,
+    PromptCollectionUpdateRequest,
     PromptCreateRequest,
     PromptResponse,
     PromptVersionResponse,
@@ -144,6 +149,48 @@ class TestPromptChatbookClient:
         assert isinstance(restored, PromptResponse)
         assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/prompts/abc/versions")
         assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/prompts/abc/versions/1/restore")
+
+    async def test_prompt_collection_methods_match_server_routes(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(
+            side_effect=[
+                {"collection_id": 7},
+                {"collections": [{"collection_id": 7, "name": "Drafting", "prompt_ids": [1, 2]}]},
+                {"collection_id": 7, "name": "Drafting", "prompt_ids": [1, 2]},
+                {"collection_id": 7, "name": "Renamed", "description": "Updated", "prompt_ids": [2]},
+            ]
+        )
+        monkeypatch.setattr(client, "_request", mocked)
+
+        created = await client.create_prompt_collection(
+            PromptCollectionCreateRequest(name="Drafting", description="Prompts", prompt_ids=[1, 2])
+        )
+        listed = await client.list_prompt_collections(limit=50, offset=5)
+        fetched = await client.get_prompt_collection(7)
+        updated = await client.update_prompt_collection(
+            7,
+            PromptCollectionUpdateRequest(name="Renamed", description="Updated", prompt_ids=[2]),
+        )
+
+        assert isinstance(created, PromptCollectionCreateResponse)
+        assert isinstance(listed, PromptCollectionListResponse)
+        assert isinstance(fetched, PromptCollectionResponse)
+        assert isinstance(updated, PromptCollectionResponse)
+        assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/prompts/collections/create")
+        assert mocked.await_args_list[0].kwargs["json_data"] == {
+            "name": "Drafting",
+            "description": "Prompts",
+            "prompt_ids": [1, 2],
+        }
+        assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/prompts/collections")
+        assert mocked.await_args_list[1].kwargs["params"] == {"limit": 50, "offset": 5}
+        assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/prompts/collections/7")
+        assert mocked.await_args_list[3].args[:2] == ("PUT", "/api/v1/prompts/collections/7")
+        assert mocked.await_args_list[3].kwargs["json_data"] == {
+            "name": "Renamed",
+            "description": "Updated",
+            "prompt_ids": [2],
+        }
 
     async def test_export_chatbook_posts_to_export_endpoint(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")

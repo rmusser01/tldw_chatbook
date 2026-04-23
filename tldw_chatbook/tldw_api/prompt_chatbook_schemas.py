@@ -97,6 +97,43 @@ class PromptVersionResponse(BaseModel):
     prompt_definition: Optional[Dict[str, Any]] = None
 
 
+class PromptCollectionCreateRequest(BaseModel):
+    """Request for creating a server prompt collection."""
+
+    name: str
+    description: Optional[str] = None
+    prompt_ids: List[int] = Field(default_factory=list)
+
+
+class PromptCollectionCreateResponse(BaseModel):
+    """Server response for prompt collection creation."""
+
+    collection_id: int
+
+
+class PromptCollectionUpdateRequest(BaseModel):
+    """Request for updating a server prompt collection."""
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    prompt_ids: Optional[List[int]] = None
+
+
+class PromptCollectionResponse(BaseModel):
+    """Server prompt collection payload."""
+
+    collection_id: int
+    name: str
+    description: Optional[str] = None
+    prompt_ids: List[int] = Field(default_factory=list)
+
+
+class PromptCollectionListResponse(BaseModel):
+    """Server prompt collection list response."""
+
+    collections: List[PromptCollectionResponse] = Field(default_factory=list)
+
+
 class ChatbookExportRequest(BaseModel):
     """Request for creating a portable chatbook export."""
 

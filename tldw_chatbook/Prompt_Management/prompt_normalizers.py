@@ -115,3 +115,30 @@ def normalize_prompt_version_record(record: Any, *, backend: str) -> dict[str, A
 
 def normalize_prompt_version_list(payload: Any, *, backend: str) -> list[dict[str, Any]]:
     return [normalize_prompt_version_record(item, backend=backend) for item in list(payload or [])]
+
+
+def normalize_prompt_collection_record(record: Any, *, backend: str) -> dict[str, Any]:
+    data = _to_plain_dict(record)
+    collection_id = data.get("collection_id")
+    if collection_id in (None, ""):
+        raise ValueError("Prompt collection record must include collection_id.")
+    backend_value = str(backend)
+    return {
+        "id": f"{backend_value}:prompt_collection:{collection_id}",
+        "backend": backend_value,
+        "collection_id": int(collection_id),
+        "name": data.get("name"),
+        "description": data.get("description"),
+        "prompt_ids": list(data.get("prompt_ids") or []),
+    }
+
+
+def normalize_prompt_collection_list(payload: Any, *, backend: str, limit: int = 200, offset: int = 0) -> dict[str, Any]:
+    data = _to_plain_dict(payload)
+    raw_items = data.get("collections", [])
+    return {
+        "collections": [normalize_prompt_collection_record(item, backend=backend) for item in raw_items],
+        "limit": int(data.get("limit", limit) or limit),
+        "offset": int(data.get("offset", offset) or offset),
+        "total": int(data.get("total", len(raw_items)) or 0),
+    }

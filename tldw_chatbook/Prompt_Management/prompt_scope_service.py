@@ -7,8 +7,15 @@ from enum import Enum
 from typing import Any, Optional
 
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
-from ..tldw_api import PromptCreateRequest, TLDWAPIClient
+from ..tldw_api import (
+    PromptCollectionCreateRequest,
+    PromptCollectionUpdateRequest,
+    PromptCreateRequest,
+    TLDWAPIClient,
+)
 from .prompt_normalizers import (
+    normalize_prompt_collection_list,
+    normalize_prompt_collection_record,
     normalize_prompt_list,
     normalize_prompt_record,
     normalize_prompt_version_list,
@@ -107,6 +114,21 @@ class ServerPromptService:
 
     async def restore_prompt_version(self, prompt_identifier: str | int, version: int) -> Any:
         return await self._require_client().restore_prompt_version(prompt_identifier, version)
+
+    async def create_prompt_collection(self, payload: dict[str, Any]) -> Any:
+        return await self._require_client().create_prompt_collection(PromptCollectionCreateRequest(**payload))
+
+    async def list_prompt_collections(self, *, limit: int = 200, offset: int = 0) -> Any:
+        return await self._require_client().list_prompt_collections(limit=limit, offset=offset)
+
+    async def get_prompt_collection(self, collection_id: int) -> Any:
+        return await self._require_client().get_prompt_collection(collection_id)
+
+    async def update_prompt_collection(self, collection_id: int, payload: dict[str, Any]) -> Any:
+        return await self._require_client().update_prompt_collection(
+            collection_id,
+            PromptCollectionUpdateRequest(**payload),
+        )
 
 
 class LocalPromptService:
@@ -222,6 +244,16 @@ class PromptScopeService:
     @staticmethod
     def _action_id(mode: PromptBackend, action: str) -> str:
         return f"prompts.{action}.{mode.value}"
+
+    @staticmethod
+    def _collection_action_id(action: str) -> str:
+        return f"prompts.collections.{action}.server"
+
+    def _require_server_mode_for_collections(self, mode: PromptBackend | str | None) -> PromptBackend:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != PromptBackend.SERVER:
+            raise ValueError("Prompt collections require server mode.")
+        return normalized_mode
 
     async def list_prompts(
         self,
@@ -352,6 +384,85 @@ class PromptScopeService:
         service = self._service_for_mode(normalized_mode)
         response = await self._maybe_await(service.restore_prompt_version(prompt_identifier, version))
         return normalize_prompt_record(response, backend=normalized_mode.value)
+
+    async def create_prompt_collection(
+        self,
+        *,
+        mode: PromptBackend | str | None = None,
+        name: str,
+        description: Optional[str] = None,
+        prompt_ids: Optional[list[int]] = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode_for_collections(mode)
+        self._enforce_policy(self._collection_action_id("create"))
+        service = self._service_for_mode(normalized_mode)
+        payload = {
+            "name": name,
+            "description": description,
+            "prompt_ids": list(prompt_ids or []),
+        }
+        response = await self._maybe_await(service.create_prompt_collection(payload))
+        data = response.model_dump(mode="json") if hasattr(response, "model_dump") else dict(response)
+        collection_id = int(data["collection_id"])
+        return {
+            "id": f"{normalized_mode.value}:prompt_collection:{collection_id}",
+            "backend": normalized_mode.value,
+            "collection_id": collection_id,
+        }
+
+    async def list_prompt_collections(
+        self,
+        *,
+        mode: PromptBackend | str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode_for_collections(mode)
+        self._enforce_policy(self._collection_action_id("list"))
+        service = self._service_for_mode(normalized_mode)
+        response = await self._maybe_await(service.list_prompt_collections(limit=limit, offset=offset))
+        return normalize_prompt_collection_list(
+            response,
+            backend=normalized_mode.value,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def get_prompt_collection(
+        self,
+        *,
+        mode: PromptBackend | str | None = None,
+        collection_id: int,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode_for_collections(mode)
+        self._enforce_policy(self._collection_action_id("detail"))
+        service = self._service_for_mode(normalized_mode)
+        response = await self._maybe_await(service.get_prompt_collection(collection_id))
+        return normalize_prompt_collection_record(response, backend=normalized_mode.value)
+
+    async def update_prompt_collection(
+        self,
+        *,
+        mode: PromptBackend | str | None = None,
+        collection_id: int,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        prompt_ids: Optional[list[int]] = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode_for_collections(mode)
+        self._enforce_policy(self._collection_action_id("update"))
+        service = self._service_for_mode(normalized_mode)
+        payload = {
+            key: value
+            for key, value in {
+                "name": name,
+                "description": description,
+                "prompt_ids": prompt_ids,
+            }.items()
+            if value is not None
+        }
+        response = await self._maybe_await(service.update_prompt_collection(collection_id, payload))
+        return normalize_prompt_collection_record(response, backend=normalized_mode.value)
 
 
 def build_prompt_scope_service(

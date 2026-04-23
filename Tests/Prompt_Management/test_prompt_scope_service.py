@@ -10,17 +10,27 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
 from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
     PaginatedPromptsResponse,
     PromptBriefResponse,
+    PromptCollectionCreateResponse,
+    PromptCollectionListResponse,
+    PromptCollectionResponse,
     PromptResponse,
     PromptVersionResponse,
 )
 
 
 class FakePolicyEnforcer:
-    def __init__(self):
+    def __init__(self, denied_reason=None):
         self.actions = []
+        self.denied_reason = denied_reason
+
+    @classmethod
+    def deny(cls, reason="blocked"):
+        return cls(denied_reason=reason)
 
     def require_allowed(self, *, action_id):
         self.actions.append(action_id)
+        if self.denied_reason:
+            raise PermissionError(self.denied_reason)
 
 
 class FakeLocalPromptService:
@@ -137,6 +147,41 @@ class FakeServerPromptService:
     async def restore_prompt_version(self, prompt_identifier, version):
         self.calls.append(("restore_prompt_version", prompt_identifier, version))
         return self.prompt.model_copy(update={"version": version})
+
+    async def create_prompt_collection(self, payload):
+        self.calls.append(("create_prompt_collection", payload))
+        return PromptCollectionCreateResponse(collection_id=7)
+
+    async def list_prompt_collections(self, *, limit=200, offset=0):
+        self.calls.append(("list_prompt_collections", limit, offset))
+        return PromptCollectionListResponse(
+            collections=[
+                PromptCollectionResponse(
+                    collection_id=7,
+                    name="Server Collection",
+                    description="Remote prompts",
+                    prompt_ids=[9],
+                )
+            ]
+        )
+
+    async def get_prompt_collection(self, collection_id):
+        self.calls.append(("get_prompt_collection", collection_id))
+        return PromptCollectionResponse(
+            collection_id=collection_id,
+            name="Server Collection",
+            description="Remote prompts",
+            prompt_ids=[9],
+        )
+
+    async def update_prompt_collection(self, collection_id, payload):
+        self.calls.append(("update_prompt_collection", collection_id, payload))
+        return PromptCollectionResponse(
+            collection_id=collection_id,
+            name=payload.get("name") or "Server Collection",
+            description=payload.get("description"),
+            prompt_ids=payload.get("prompt_ids") or [],
+        )
 
 
 @pytest.mark.asyncio
@@ -306,3 +351,62 @@ async def test_prompt_scope_rejects_local_version_history_until_supported():
             prompt_identifier="local-uuid-7",
             version=1,
         )
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_routes_server_prompt_collections_with_policy():
+    policy = FakePolicyEnforcer()
+    server = FakeServerPromptService()
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    created = await service.create_prompt_collection(
+        mode="server",
+        name="Server Collection",
+        description="Remote prompts",
+        prompt_ids=[9],
+    )
+    listed = await service.list_prompt_collections(mode="server", limit=50, offset=5)
+    fetched = await service.get_prompt_collection(mode="server", collection_id=7)
+    updated = await service.update_prompt_collection(
+        mode="server",
+        collection_id=7,
+        name="Renamed",
+        description="Updated",
+        prompt_ids=[9, 10],
+    )
+
+    assert created == {"id": "server:prompt_collection:7", "backend": "server", "collection_id": 7}
+    assert listed["collections"][0]["id"] == "server:prompt_collection:7"
+    assert fetched["name"] == "Server Collection"
+    assert updated["name"] == "Renamed"
+    assert server.calls[-4:] == [
+        ("create_prompt_collection", {"name": "Server Collection", "description": "Remote prompts", "prompt_ids": [9]}),
+        ("list_prompt_collections", 50, 5),
+        ("get_prompt_collection", 7),
+        ("update_prompt_collection", 7, {"name": "Renamed", "description": "Updated", "prompt_ids": [9, 10]}),
+    ]
+    assert policy.actions[-4:] == [
+        "prompts.collections.create.server",
+        "prompts.collections.list.server",
+        "prompts.collections.detail.server",
+        "prompts.collections.update.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_rejects_local_prompt_collections_before_policy_denial():
+    policy = FakePolicyEnforcer.deny()
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(),
+        server_service=FakeServerPromptService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Prompt collections require server mode"):
+        await service.list_prompt_collections(mode="local")
+
+    assert policy.actions == []
