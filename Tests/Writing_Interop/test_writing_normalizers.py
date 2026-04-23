@@ -2,14 +2,21 @@ from datetime import datetime, timezone
 
 from tldw_chatbook.Writing_Interop.writing_models import WritingOutlineNode
 from tldw_chatbook.Writing_Interop.writing_normalizers import (
+    normalize_local_draft_row,
     normalize_local_chapter_row,
+    normalize_local_capability_row,
     normalize_local_manuscript_row,
     normalize_local_project_row,
     normalize_local_scene_row,
+    normalize_local_trash_row,
+    normalize_local_version_row,
+    normalize_server_capability,
     normalize_server_part,
     normalize_server_project,
     normalize_server_scene,
     normalize_server_structure_outline,
+    normalize_server_trash,
+    normalize_server_version,
 )
 from tldw_chatbook.tldw_api.writing_manuscript_schemas import (
     ChapterSummary,
@@ -42,6 +49,111 @@ def test_normalize_local_rows_to_models():
     assert scene.chapter_id == "c1"
     assert scene.manuscript_id is None
     assert scene.body_markdown == "Hello"
+
+
+def test_required_ids_do_not_normalize_to_literal_none():
+    for normalizer, row in [
+        (normalize_local_project_row, {"title": "Missing id"}),
+        (normalize_local_manuscript_row, {"id": "m1", "title": "Missing project"}),
+        (normalize_local_chapter_row, {"id": "c1", "title": "Missing project"}),
+        (normalize_local_scene_row, {"id": "s1", "title": "Missing project", "chapter_id": "c1"}),
+    ]:
+        try:
+            normalizer(row)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{normalizer.__name__} accepted missing required IDs")
+
+
+def test_normalize_draft_version_trash_and_capability_shapes():
+    draft = normalize_local_draft_row(
+        {
+            "entity_kind": "scene",
+            "entity_id": "scene-1",
+            "project_id": "project-1",
+            "body_markdown": "# Draft",
+            "updated_at": "2026-04-22T12:00:00+00:00",
+        }
+    )
+    version = normalize_local_version_row(
+        {
+            "id": "version-1",
+            "entity_kind": "scene",
+            "entity_id": "scene-1",
+            "project_id": "project-1",
+            "version_number": 2,
+            "body_markdown": "# Snapshot",
+            "snapshot_json": {"title": "Scene 1"},
+            "created_at": "2026-04-22T12:05:00+00:00",
+        }
+    )
+    trash = normalize_local_trash_row(
+        {
+            "id": "trash-scene-1",
+            "entity_kind": "scene",
+            "entity_id": "scene-1",
+            "project_id": "project-1",
+            "title": "Scene 1",
+            "deleted_at": "2026-04-22T12:10:00+00:00",
+        }
+    )
+    capability = normalize_local_capability_row(
+        {
+            "name": "create_version",
+            "supported": True,
+            "metadata": {"reason_source": "local"},
+        }
+    )
+
+    assert draft.body_markdown == "# Draft"
+    assert draft.updated_at is not None
+    assert version.version_number == 2
+    assert version.metadata == {"title": "Scene 1"}
+    assert trash.title == "Scene 1"
+    assert trash.deleted_at is not None
+    assert capability.source == "local"
+    assert capability.name == "create_version"
+    assert capability.supported is True
+
+
+def test_normalize_server_version_trash_and_capability_shapes():
+    version = normalize_server_version(
+        {
+            "id": "server-version-1",
+            "entity_kind": "scene",
+            "entity_id": "scene-1",
+            "project_id": "project-1",
+            "version_number": 1,
+            "content_json": '{"type":"doc","content":[{"type":"paragraph","attrs":{"tldw_chatbook_markdown":true,"format":"markdown","version":1},"content":[{"type":"text","text":"# Server Snapshot"}]}]}',
+            "snapshot": {"title": "Scene 1"},
+        }
+    )
+    trash = normalize_server_trash(
+        {
+            "id": "server-trash-1",
+            "kind": "chapter",
+            "entity_id": "chapter-1",
+            "project_id": "project-1",
+            "title": "Chapter 1",
+        }
+    )
+    capability = normalize_server_capability(
+        {
+            "name": "create_version",
+            "supported": False,
+            "reason": "server_version_history_unavailable",
+        }
+    )
+
+    assert version.source == "server"
+    assert version.body_markdown == "# Server Snapshot"
+    assert version.metadata == {"title": "Scene 1"}
+    assert trash.source == "server"
+    assert trash.entity_kind == "chapter"
+    assert capability.source == "server"
+    assert capability.supported is False
+    assert capability.reason == "server_version_history_unavailable"
 
 
 def test_normalize_server_scene_prefers_markdown_wrapper_and_falls_back_to_plain():
