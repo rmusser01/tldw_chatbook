@@ -5,8 +5,9 @@ This module provides a clean, modern interface for ingesting media content
 from local files and from server-backed ingestion sources.
 """
 
+import json
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Dict, Any, Union
+from typing import TYPE_CHECKING, List, Optional, Dict, Any, Union, Mapping
 from datetime import datetime
 
 from loguru import logger
@@ -1290,6 +1291,327 @@ class RemoteIngestionPanel(ScrollableContainer):
         self.query_one("#remote-job-status", Static).update("\n".join(lines))
 
 
+class WebClipperPanel(ScrollableContainer):
+    """Panel for server-backed Web Clipper save/status/enrichment operations."""
+
+    DEFAULT_CSS = """
+    WebClipperPanel {
+        layout: vertical;
+        padding: 1;
+        height: 100%;
+        background: $panel;
+    }
+
+    WebClipperPanel #web-clipper-disabled {
+        padding: 2;
+        color: $text-muted;
+        text-style: italic;
+    }
+
+    WebClipperPanel .web-clipper-section {
+        height: auto;
+        margin-bottom: 1;
+        padding: 1;
+        border: solid $secondary;
+        background: $boost;
+    }
+
+    WebClipperPanel .web-clipper-actions {
+        layout: horizontal;
+        height: auto;
+        margin-top: 1;
+    }
+
+    WebClipperPanel .web-clipper-actions Button {
+        margin-right: 1;
+    }
+
+    WebClipperPanel TextArea {
+        height: 6;
+        margin-bottom: 1;
+        background: $surface;
+    }
+
+    WebClipperPanel #web-clipper-status {
+        min-height: 8;
+        padding: 1;
+        border: solid $secondary;
+        background: $surface;
+    }
+    """
+
+    runtime_backend: reactive[str] = reactive("local")
+
+    def __init__(self, app_instance: "TldwCli", **kwargs: Any):
+        super().__init__(**kwargs)
+        self.app_instance = app_instance
+        self.scope_service = getattr(app_instance, "server_web_clipper_scope_service", None)
+        self.runtime_state = getattr(app_instance, "media_runtime_state", None)
+
+    def compose(self) -> ComposeResult:
+        yield Static("Server Web Clipper requires server mode.", id="web-clipper-disabled")
+        with Container(id="web-clipper-main"):
+            with Container(classes="web-clipper-section"):
+                yield Label("Clip")
+                yield Input(placeholder="Clip ID / idempotency key", id="web-clipper-clip-id")
+                yield Input(placeholder="Source URL", id="web-clipper-url", validators=[URL()])
+                yield Input(placeholder="Source title", id="web-clipper-title")
+                yield Input("article", placeholder="Clip type", id="web-clipper-type")
+                destination = Select(
+                    [("Note", "note"), ("Workspace", "workspace"), ("Both", "both")],
+                    id="web-clipper-destination-mode",
+                )
+                destination.value = "note"
+                yield destination
+                yield Input(placeholder="Workspace ID (required for workspace/both)", id="web-clipper-workspace-id")
+                yield Input(placeholder="Note title", id="web-clipper-note-title")
+                yield Input(placeholder="Keywords (comma-separated)", id="web-clipper-keywords")
+                yield TextArea("", id="web-clipper-visible-body")
+                yield TextArea("", id="web-clipper-selected-text")
+                yield Label("Capture metadata JSON:")
+                yield TextArea("{}", id="web-clipper-capture-metadata-json")
+                yield Label("Attachments JSON array:")
+                yield TextArea("[]", id="web-clipper-attachments-json")
+                yield Checkbox("Request OCR", id="web-clipper-run-ocr")
+                yield Checkbox("Request VLM", id="web-clipper-run-vlm")
+                with Horizontal(classes="web-clipper-actions"):
+                    yield Button("Save Clip", variant="primary", id="web-clipper-save-btn")
+                    yield Button("Load Status", id="web-clipper-status-btn")
+
+            with Container(classes="web-clipper-section"):
+                yield Label("Enrichment")
+                enrichment_type = Select(
+                    [("OCR", "ocr"), ("VLM", "vlm")],
+                    id="web-clipper-enrichment-type",
+                )
+                enrichment_type.value = "ocr"
+                yield enrichment_type
+                enrichment_status = Select(
+                    [("Pending", "pending"), ("Running", "running"), ("Complete", "complete"), ("Failed", "failed")],
+                    id="web-clipper-enrichment-status",
+                )
+                enrichment_status.value = "complete"
+                yield enrichment_status
+                yield Input("1", placeholder="Source note version", id="web-clipper-enrichment-version", validators=[Number()])
+                yield Input(placeholder="Inline summary", id="web-clipper-enrichment-summary")
+                yield Input(placeholder="Error (optional)", id="web-clipper-enrichment-error")
+                yield Label("Structured enrichment JSON:")
+                yield TextArea("{}", id="web-clipper-enrichment-json")
+                with Horizontal(classes="web-clipper-actions"):
+                    yield Button("Persist Enrichment", id="web-clipper-enrichment-btn")
+
+            yield Static("No Web Clipper operation run yet.", id="web-clipper-status")
+
+    async def _maybe_await(self, value: Any) -> Any:
+        import inspect
+
+        if inspect.isawaitable(value):
+            return await value
+        return value
+
+    def _current_runtime_backend(self) -> str:
+        runtime_backend = self.runtime_backend
+        if self.runtime_state is not None:
+            runtime_backend = str(getattr(self.runtime_state, "runtime_backend", runtime_backend) or "local")
+        normalized_backend = str(runtime_backend or "local").strip().lower()
+        if normalized_backend not in {"local", "server"}:
+            return "local"
+        return normalized_backend
+
+    def _show_server_ui(self, enabled: bool) -> None:
+        self.query_one("#web-clipper-disabled", Static).display = not enabled
+        self.query_one("#web-clipper-main", Container).display = enabled
+
+    def _set_controls_disabled(self, disabled: bool) -> None:
+        for selector, widget_type in (
+            ("#web-clipper-clip-id", Input),
+            ("#web-clipper-url", Input),
+            ("#web-clipper-title", Input),
+            ("#web-clipper-type", Input),
+            ("#web-clipper-destination-mode", Select),
+            ("#web-clipper-workspace-id", Input),
+            ("#web-clipper-note-title", Input),
+            ("#web-clipper-keywords", Input),
+            ("#web-clipper-visible-body", TextArea),
+            ("#web-clipper-selected-text", TextArea),
+            ("#web-clipper-capture-metadata-json", TextArea),
+            ("#web-clipper-attachments-json", TextArea),
+            ("#web-clipper-run-ocr", Checkbox),
+            ("#web-clipper-run-vlm", Checkbox),
+            ("#web-clipper-save-btn", Button),
+            ("#web-clipper-status-btn", Button),
+            ("#web-clipper-enrichment-type", Select),
+            ("#web-clipper-enrichment-status", Select),
+            ("#web-clipper-enrichment-version", Input),
+            ("#web-clipper-enrichment-summary", Input),
+            ("#web-clipper-enrichment-error", Input),
+            ("#web-clipper-enrichment-json", TextArea),
+            ("#web-clipper-enrichment-btn", Button),
+        ):
+            self.query_one(selector, widget_type).disabled = disabled
+
+    async def refresh_for_mode(self) -> None:
+        self.runtime_backend = self._current_runtime_backend()
+        enabled = self.runtime_backend == "server" and self.scope_service is not None
+        self._show_server_ui(enabled)
+        self._set_controls_disabled(not enabled)
+        if self.runtime_backend != "server":
+            self.query_one("#web-clipper-status", Static).update("Server Web Clipper requires server mode.")
+        elif self.scope_service is None:
+            self.query_one("#web-clipper-status", Static).update("Server Web Clipper service is unavailable.")
+
+    def on_mount(self) -> None:
+        self.run_worker(self.refresh_for_mode(), exclusive=True)
+
+    @staticmethod
+    def _clean_string(value: Any) -> str:
+        return str(value or "").strip()
+
+    def _text_area_text(self, selector: str) -> str:
+        return self.query_one(selector, TextArea).text.strip()
+
+    def _parse_json_text(self, selector: str, *, default: Any) -> Any:
+        raw_text = self._text_area_text(selector)
+        if not raw_text:
+            return default
+        return json.loads(raw_text)
+
+    def _clip_id(self) -> str:
+        return self._clean_string(self.query_one("#web-clipper-clip-id", Input).value)
+
+    def _render_payload(self, title: str, payload: Mapping[str, Any]) -> None:
+        formatted_payload = json.dumps(dict(payload), indent=2, sort_keys=True, default=str)
+        self.query_one("#web-clipper-status", Static).update(f"{title}\n{formatted_payload}")
+
+    def _build_save_payload(self) -> dict[str, Any]:
+        clip_id = self._clip_id()
+        source_url = self._clean_string(self.query_one("#web-clipper-url", Input).value)
+        source_title = self._clean_string(self.query_one("#web-clipper-title", Input).value)
+        clip_type = self._clean_string(self.query_one("#web-clipper-type", Input).value) or "article"
+        if not clip_id or not source_url or not source_title:
+            raise ValueError("Clip ID, source URL, and source title are required.")
+
+        destination_mode = str(self.query_one("#web-clipper-destination-mode", Select).value or "note")
+        workspace_id = self._clean_string(self.query_one("#web-clipper-workspace-id", Input).value)
+        workspace = {"workspace_id": workspace_id} if workspace_id else None
+        if destination_mode in {"workspace", "both"} and workspace is None:
+            raise ValueError("Workspace ID is required when destination targets a workspace.")
+
+        note_title = self._clean_string(self.query_one("#web-clipper-note-title", Input).value)
+        keywords = [
+            keyword.strip()
+            for keyword in self._clean_string(self.query_one("#web-clipper-keywords", Input).value).split(",")
+            if keyword.strip()
+        ]
+        note: dict[str, Any] = {}
+        if note_title:
+            note["title"] = note_title
+        if keywords:
+            note["keywords"] = keywords
+
+        content = {
+            key: value
+            for key, value in {
+                "visible_body": self._text_area_text("#web-clipper-visible-body"),
+                "selected_text": self._text_area_text("#web-clipper-selected-text"),
+            }.items()
+            if value
+        }
+
+        return {
+            "clip_id": clip_id,
+            "clip_type": clip_type,
+            "source_url": source_url,
+            "source_title": source_title,
+            "destination_mode": destination_mode,
+            "note": note,
+            "workspace": workspace,
+            "content": content,
+            "attachments": list(self._parse_json_text("#web-clipper-attachments-json", default=[])),
+            "enhancements": {
+                "run_ocr": bool(self.query_one("#web-clipper-run-ocr", Checkbox).value),
+                "run_vlm": bool(self.query_one("#web-clipper-run-vlm", Checkbox).value),
+            },
+            "capture_metadata": dict(self._parse_json_text("#web-clipper-capture-metadata-json", default={})),
+        }
+
+    @on(Button.Pressed, "#web-clipper-save-btn")
+    def handle_save_clip(self) -> None:
+        self.run_worker(self.save_clip_from_form(), exclusive=True)
+
+    @on(Button.Pressed, "#web-clipper-status-btn")
+    def handle_load_clip_status(self) -> None:
+        self.run_worker(self.load_clip_status(), exclusive=True)
+
+    @on(Button.Pressed, "#web-clipper-enrichment-btn")
+    def handle_persist_enrichment(self) -> None:
+        self.run_worker(self.persist_enrichment_from_form(), exclusive=True)
+
+    async def save_clip_from_form(self) -> None:
+        self.runtime_backend = self._current_runtime_backend()
+        if self.runtime_backend != "server" or self.scope_service is None:
+            self.notify("Server Web Clipper requires server mode.", severity="warning")
+            return
+        try:
+            payload = self._build_save_payload()
+            result = await self._maybe_await(self.scope_service.save_clip(mode="server", **payload))
+            self._render_payload("Web Clipper save result", dict(result or {}))
+            self.notify("Server Web Clipper save completed", severity="information")
+        except Exception as exc:
+            logger.error(f"Server Web Clipper save failed: {exc}", exc_info=True)
+            self.query_one("#web-clipper-status", Static).update(f"Error: {exc}")
+            self.notify(f"Server Web Clipper save failed: {exc}", severity="error")
+
+    async def load_clip_status(self) -> None:
+        self.runtime_backend = self._current_runtime_backend()
+        if self.runtime_backend != "server" or self.scope_service is None:
+            self.notify("Server Web Clipper requires server mode.", severity="warning")
+            return
+        clip_id = self._clip_id()
+        if not clip_id:
+            self.notify("Enter a clip ID to load.", severity="warning")
+            return
+        try:
+            result = await self._maybe_await(self.scope_service.get_clip_status(mode="server", clip_id=clip_id))
+            self._render_payload("Web Clipper status", dict(result or {}))
+        except Exception as exc:
+            logger.error(f"Server Web Clipper status failed: {exc}", exc_info=True)
+            self.query_one("#web-clipper-status", Static).update(f"Error: {exc}")
+            self.notify(f"Server Web Clipper status failed: {exc}", severity="error")
+
+    async def persist_enrichment_from_form(self) -> None:
+        self.runtime_backend = self._current_runtime_backend()
+        if self.runtime_backend != "server" or self.scope_service is None:
+            self.notify("Server Web Clipper requires server mode.", severity="warning")
+            return
+        clip_id = self._clip_id()
+        if not clip_id:
+            self.notify("Enter a clip ID before persisting enrichment.", severity="warning")
+            return
+        try:
+            source_note_version = int(self.query_one("#web-clipper-enrichment-version", Input).value or "1")
+            error_text = self._clean_string(self.query_one("#web-clipper-enrichment-error", Input).value) or None
+            payload = {
+                "enrichment_type": str(self.query_one("#web-clipper-enrichment-type", Select).value or "ocr"),
+                "status": str(self.query_one("#web-clipper-enrichment-status", Select).value or "pending"),
+                "source_note_version": source_note_version,
+                "inline_summary": self._clean_string(
+                    self.query_one("#web-clipper-enrichment-summary", Input).value
+                ) or None,
+                "structured_payload": dict(self._parse_json_text("#web-clipper-enrichment-json", default={})),
+                "error": error_text,
+            }
+            result = await self._maybe_await(
+                self.scope_service.persist_enrichment(mode="server", clip_id=clip_id, **payload)
+            )
+            self._render_payload("Web Clipper enrichment result", dict(result or {}))
+            self.notify("Server Web Clipper enrichment persisted", severity="information")
+        except Exception as exc:
+            logger.error(f"Server Web Clipper enrichment failed: {exc}", exc_info=True)
+            self.query_one("#web-clipper-status", Static).update(f"Error: {exc}")
+            self.notify(f"Server Web Clipper enrichment failed: {exc}", severity="error")
+
+
 class IngestionResultsPanel(Container):
     """Panel for displaying ingestion results."""
     
@@ -1421,6 +1743,10 @@ class MediaIngestWindowRebuilt(Widget):
             with TabPane("Server Jobs", id="remote-tab"):
                 self.remote_panel = RemoteIngestionPanel(self.app_instance, id="remote-panel")
                 yield self.remote_panel
+
+            with TabPane("Web Clipper", id="web-clipper-tab"):
+                self.web_clipper_panel = WebClipperPanel(self.app_instance, id="web-clipper-panel")
+                yield self.web_clipper_panel
         
         yield IngestionResultsPanel(id="results-panel")
     
@@ -1431,6 +1757,8 @@ class MediaIngestWindowRebuilt(Widget):
             self.current_tab = "local"
         elif event.tab.id == "remote-tab":
             self.current_tab = "remote"
+        elif event.tab.id == "web-clipper-tab":
+            self.current_tab = "web_clipper"
         else:
             self.current_tab = "sources"
         logger.debug(f"Switched to {self.current_tab} tab")
@@ -1479,7 +1807,7 @@ class MediaIngestWindowRebuilt(Widget):
         if self.runtime_state is not None:
             runtime_backend = str(getattr(self.runtime_state, "runtime_backend", "local") or "local")
 
-        for panel_name in ("source_panel", "remote_panel"):
+        for panel_name in ("source_panel", "remote_panel", "web_clipper_panel"):
             panel = getattr(self, panel_name, None)
             if panel is None:
                 continue

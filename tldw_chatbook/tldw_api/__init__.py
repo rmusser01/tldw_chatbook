@@ -166,6 +166,24 @@ _EXPORT_GROUPS = (
         ),
     ),
     (
+        ".web_clipper_schemas",
+        (
+            "WebClipperAttachmentRecord",
+            "WebClipperDestination",
+            "WebClipperEnrichmentPayload",
+            "WebClipperEnrichmentResponse",
+            "WebClipperEnrichmentStatus",
+            "WebClipperEnrichmentType",
+            "WebClipperOutcomeState",
+            "WebClipperSavedNote",
+            "WebClipperSaveRequest",
+            "WebClipperSaveResponse",
+            "WebClipperSaveResult",
+            "WebClipperStatusResponse",
+            "WebClipperWorkspacePlacement",
+        ),
+    ),
+    (
         ".prompt_chatbook_schemas",
         (
             "PromptCreateRequest",

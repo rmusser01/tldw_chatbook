@@ -105,6 +105,13 @@ from .server_notifications_schemas import (
     ReminderTaskUpdateRequest,
     ServerNotificationStreamEvent,
 )
+from .web_clipper_schemas import (
+    WebClipperEnrichmentPayload,
+    WebClipperEnrichmentResponse,
+    WebClipperSaveRequest,
+    WebClipperSaveResponse,
+    WebClipperStatusResponse,
+)
 from .prompt_chatbook_schemas import (
     ChatbookExportJobListResponse,
     ChatbookExportJobResponse,
@@ -935,6 +942,30 @@ class TLDWAPIClient:
             event_model=ServerNotificationStreamEvent,
         ):
             yield event
+
+    async def save_web_clip(self, request_data: WebClipperSaveRequest) -> WebClipperSaveResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/web-clipper/save",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WebClipperSaveResponse.model_validate(response)
+
+    async def get_web_clip_status(self, clip_id: str) -> WebClipperStatusResponse:
+        response = await self._request("GET", f"/api/v1/web-clipper/{clip_id}")
+        return WebClipperStatusResponse.model_validate(response)
+
+    async def persist_web_clip_enrichment(
+        self,
+        clip_id: str,
+        request_data: WebClipperEnrichmentPayload,
+    ) -> WebClipperEnrichmentResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/web-clipper/{clip_id}/enrichments",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WebClipperEnrichmentResponse.model_validate(response)
 
     async def list_manuscript_projects(
         self,

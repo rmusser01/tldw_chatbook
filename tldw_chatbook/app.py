@@ -90,6 +90,8 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import build_prompt_sc
 from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.server_watchlists_service import ServerWatchlistsService
 from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistScopeService
+from tldw_chatbook.WebClipper.server_web_clipper_scope_service import ServerWebClipperScopeService
+from tldw_chatbook.WebClipper.server_web_clipper_service import ServerWebClipperService
 from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, supports_emoji
 from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 from tldw_chatbook.Utils.ui_helpers import UIHelpers
@@ -1332,6 +1334,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.server_notifications_service = ServerNotificationsService(client=None)
         self.server_notifications_scope_service = ServerNotificationsScopeService(
             server_service=self.server_notifications_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_web_clipper_service = ServerWebClipperService.from_config(self.app_config)
+        except ValueError:
+            self.server_web_clipper_service = ServerWebClipperService(client=None)
+        self.server_web_clipper_scope_service = ServerWebClipperScopeService(
+            server_service=self.server_web_clipper_service,
             policy_enforcer=self.service_policy_enforcer,
         )
 

@@ -6,7 +6,11 @@ from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from tldw_chatbook.app import TldwCli
-from tldw_chatbook.UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt, RemoteIngestionPanel
+from tldw_chatbook.UI.MediaIngestWindowRebuilt import (
+    MediaIngestWindowRebuilt,
+    RemoteIngestionPanel,
+    WebClipperPanel,
+)
 from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 
@@ -19,6 +23,16 @@ class RemoteIngestionPanelTestApp(App):
 
     def compose(self):
         yield RemoteIngestionPanel(self, id="remote-panel")
+
+
+class WebClipperPanelTestApp(App):
+    def __init__(self, *, runtime_backend: str, scope_service: Mock):
+        super().__init__()
+        self.media_runtime_state = MediaRuntimeState(runtime_backend=runtime_backend)
+        self.server_web_clipper_scope_service = scope_service
+
+    def compose(self):
+        yield WebClipperPanel(self, id="web-clipper-panel")
 
 
 @pytest.mark.asyncio
@@ -34,6 +48,10 @@ async def test_ingest_window_refreshes_server_mode_panels_without_constructing_a
         runtime_backend="local",
         refresh_for_mode=AsyncMock(),
     )
+    ingest_window.web_clipper_panel = SimpleNamespace(
+        runtime_backend="local",
+        refresh_for_mode=AsyncMock(),
+    )
 
     await ingest_window.refresh_backend_view()
 
@@ -41,6 +59,8 @@ async def test_ingest_window_refreshes_server_mode_panels_without_constructing_a
     ingest_window.source_panel.refresh_for_mode.assert_awaited_once()
     assert ingest_window.remote_panel.runtime_backend == "server"
     ingest_window.remote_panel.refresh_for_mode.assert_awaited_once()
+    assert ingest_window.web_clipper_panel.runtime_backend == "server"
+    ingest_window.web_clipper_panel.refresh_for_mode.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -56,6 +76,10 @@ async def test_ingest_window_refresh_backend_view_preserves_local_refresh_behavi
         runtime_backend="server",
         refresh_for_mode=AsyncMock(),
     )
+    ingest_window.web_clipper_panel = SimpleNamespace(
+        runtime_backend="server",
+        refresh_for_mode=AsyncMock(),
+    )
 
     await ingest_window.refresh_backend_view()
 
@@ -63,6 +87,8 @@ async def test_ingest_window_refresh_backend_view_preserves_local_refresh_behavi
     ingest_window.source_panel.refresh_for_mode.assert_awaited_once()
     assert ingest_window.remote_panel.runtime_backend == "local"
     ingest_window.remote_panel.refresh_for_mode.assert_awaited_once()
+    assert ingest_window.web_clipper_panel.runtime_backend == "local"
+    ingest_window.web_clipper_panel.refresh_for_mode.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -454,6 +480,133 @@ async def test_remote_ingestion_panel_runs_web_content_ingest_through_scope_serv
         rendered_status = panel.query_one("#remote-job-status").render()
         assert "Web content processed" in str(rendered_status)
         assert "Article" in str(rendered_status)
+
+
+@pytest.mark.asyncio
+async def test_web_clipper_panel_rejects_local_mode_with_explicit_guidance():
+    scope_service = Mock()
+    scope_service.save_clip = AsyncMock()
+    app = WebClipperPanelTestApp(runtime_backend="local", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(WebClipperPanel)
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        assert panel.query_one("#web-clipper-disabled", Static).display is True
+        assert panel.query_one("#web-clipper-main").display is False
+        assert panel.query_one("#web-clipper-save-btn", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_web_clipper_panel_saves_server_clip_from_form():
+    scope_service = Mock()
+    scope_service.save_clip = AsyncMock(
+        return_value={
+            "id": "server:web_clip:clip-1",
+            "clip_id": "clip-1",
+            "status": "saved",
+            "note": {"id": "server:note:note-1", "title": "Saved Article", "version": 1},
+            "warnings": [],
+        }
+    )
+    app = WebClipperPanelTestApp(runtime_backend="server", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(WebClipperPanel)
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        panel.query_one("#web-clipper-clip-id", Input).value = "clip-1"
+        panel.query_one("#web-clipper-url", Input).value = "https://example.com/article"
+        panel.query_one("#web-clipper-title", Input).value = "Saved Article"
+        panel.query_one("#web-clipper-type", Input).value = "article"
+        panel.query_one("#web-clipper-note-title", Input).value = "Saved Article"
+        panel.query_one("#web-clipper-keywords", Input).value = "clipper, article"
+        panel.query_one("#web-clipper-visible-body", TextArea).text = "Visible body"
+        panel.query_one("#web-clipper-selected-text", TextArea).text = "Selected quote"
+        panel.query_one("#web-clipper-capture-metadata-json", TextArea).text = '{"browser":"firefox"}'
+
+        await panel.save_clip_from_form()
+
+        scope_service.save_clip.assert_awaited_once_with(
+            mode="server",
+            clip_id="clip-1",
+            clip_type="article",
+            source_url="https://example.com/article",
+            source_title="Saved Article",
+            destination_mode="note",
+            note={"title": "Saved Article", "keywords": ["clipper", "article"]},
+            workspace=None,
+            content={
+                "visible_body": "Visible body",
+                "selected_text": "Selected quote",
+            },
+            attachments=[],
+            enhancements={"run_ocr": False, "run_vlm": False},
+            capture_metadata={"browser": "firefox"},
+        )
+        rendered_status = str(panel.query_one("#web-clipper-status", Static).render())
+        assert "server:web_clip:clip-1" in rendered_status
+        assert "Saved Article" in rendered_status
+
+
+@pytest.mark.asyncio
+async def test_web_clipper_panel_loads_status_and_persists_enrichment():
+    scope_service = Mock()
+    scope_service.get_clip_status = AsyncMock(
+        return_value={
+            "id": "server:web_clip:clip-1",
+            "clip_id": "clip-1",
+            "status": "saved",
+            "note": {"id": "server:note:note-1", "title": "Saved Article", "version": 1},
+            "analysis": {"ocr": {"status": "complete"}},
+            "attachments": [],
+        }
+    )
+    scope_service.persist_enrichment = AsyncMock(
+        return_value={
+            "id": "server:web_clip:clip-1:enrichment:ocr",
+            "clip_id": "clip-1",
+            "enrichment_type": "ocr",
+            "status": "complete",
+            "inline_applied": True,
+        }
+    )
+    app = WebClipperPanelTestApp(runtime_backend="server", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(WebClipperPanel)
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        panel.query_one("#web-clipper-clip-id", Input).value = "clip-1"
+        await panel.load_clip_status()
+        scope_service.get_clip_status.assert_awaited_once_with(mode="server", clip_id="clip-1")
+        rendered_status = str(panel.query_one("#web-clipper-status", Static).render())
+        assert "server:web_clip:clip-1" in rendered_status
+        assert "ocr" in rendered_status
+
+        panel.query_one("#web-clipper-enrichment-type", Select).value = "ocr"
+        panel.query_one("#web-clipper-enrichment-status", Select).value = "complete"
+        panel.query_one("#web-clipper-enrichment-version", Input).value = "1"
+        panel.query_one("#web-clipper-enrichment-summary", Input).value = "OCR summary"
+        panel.query_one("#web-clipper-enrichment-json", TextArea).text = '{"text":"OCR summary"}'
+        await panel.persist_enrichment_from_form()
+
+        scope_service.persist_enrichment.assert_awaited_once_with(
+            mode="server",
+            clip_id="clip-1",
+            enrichment_type="ocr",
+            status="complete",
+            source_note_version=1,
+            inline_summary="OCR summary",
+            structured_payload={"text": "OCR summary"},
+            error=None,
+        )
+        rendered_status = str(panel.query_one("#web-clipper-status", Static).render())
+        assert "server:web_clip:clip-1:enrichment:ocr" in rendered_status
+        assert "inline_applied" in rendered_status
 
 
 @pytest.mark.asyncio
