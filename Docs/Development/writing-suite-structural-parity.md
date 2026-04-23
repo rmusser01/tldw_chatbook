@@ -20,6 +20,11 @@ Implemented scope:
 - Server search and reorder through the current server manuscript routes.
 - Source-specific Local/Server mode selection with no mixed view and no local fallback for server actions.
 
+Mounted UI status:
+
+- The Writing destination exposes source selection, project listing, outline/detail selection, project create, selected-entity save/delete, local version create/restore, and unsupported server reason state.
+- Child create, search, reorder/move, and trash load/restore are landed as service/controller seams and covered by automated tests, but full mounted affordances for those actions remain pending UX completion.
+
 Out of scope for this tranche:
 
 - LLM writing generation, outline generation, revision helpers, export, publishing, collaboration, sync/mirroring, and prose-IDE features.
@@ -113,11 +118,12 @@ Result: clean.
 
 1. Start Chatbook.
 2. Open `Writing`.
-3. In `Local` mode, create project -> manuscript -> chapter -> scene.
-4. Save Markdown in the scene and create a manual version.
-5. Delete the scene and restore it from local trash.
-6. Switch to `Server` mode with a configured server.
-7. Create project -> manuscript(part) -> chapter -> scene under chapter.
-8. Confirm an unassigned server chapter appears in `Unassigned Chapters`.
-9. Confirm direct manuscript-level scene and server version actions are disabled with reason codes.
-10. Switch back to `Local` mode and confirm local records are unchanged.
+3. In `Local` mode, create a project and confirm the project list refreshes.
+4. Select an existing local outline entity and confirm detail state updates without mixing server records.
+5. For an existing local scene, save Markdown body text and create or restore a manual version.
+6. Delete a selected local entity and confirm it is routed through the local backend.
+7. Switch to `Server` mode with a configured server and confirm local records are not shown as server records.
+8. Browse a server project structure and confirm server `parts` appear as manuscripts.
+9. Confirm an unassigned server chapter appears in `Unassigned Chapters` when returned by the server structure.
+10. Confirm direct manuscript-level scene, server version, server trash restore, and server scene reparent actions expose disabled reason codes where the current mounted UI shows those actions.
+11. Treat local/server child creation, search, reorder/move, and trash restore as automated service/controller verification until the follow-on UX pass adds full mounted controls.
