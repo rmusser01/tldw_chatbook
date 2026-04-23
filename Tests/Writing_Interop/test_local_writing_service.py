@@ -261,6 +261,34 @@ async def test_autosave_manual_versions_and_restore_version_semantics(service):
 
 
 @pytest.mark.asyncio
+async def test_container_versions_snapshot_child_membership_without_body_content(service):
+    project = await service.create_project(title="Project")
+    manuscript = await service.create_manuscript(project.id, title="Book")
+    chapter = await service.create_chapter(
+        project.id,
+        manuscript_id=manuscript.id,
+        title="Chapter",
+    )
+    scene = await service.create_scene(
+        project.id,
+        chapter_id=chapter.id,
+        title="Scene",
+        body_markdown="Scene body",
+    )
+
+    manuscript_version = await service.create_version("manuscript", manuscript.id)
+    chapter_version = await service.create_version("chapter", chapter.id)
+
+    assert manuscript_version.body_markdown is None
+    assert chapter_version.body_markdown is None
+    assert manuscript_version.metadata["child_chapter_ids"] == [chapter.id]
+    assert manuscript_version.metadata["direct_scene_ids"] == []
+    assert chapter_version.metadata["child_scene_ids"] == [scene.id]
+    assert chapter_version.metadata["assembled_markdown"] == "Scene body"
+    assert "Scene body" in manuscript_version.metadata["assembled_markdown"]
+
+
+@pytest.mark.asyncio
 async def test_trash_listing_and_restore_work_for_all_entity_kinds(service):
     project = await service.create_project(title="Trash Project")
     manuscript = await service.create_manuscript(project.id, title="Trash Book")

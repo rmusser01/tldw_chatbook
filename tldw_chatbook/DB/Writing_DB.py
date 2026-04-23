@@ -829,14 +829,15 @@ class WritingDatabase(BaseDB):
             raise ValueError("Only scene versions may include body_markdown.")
 
         current = self._require_current(entity_kind, entity_id, include_deleted=False)
-        snapshot_data = dict(snapshot) if snapshot is not None else dict(current)
-        if entity_kind == "scene":
-            version_body = body_markdown
-            if version_body is None:
-                version_body = current.get("body_markdown")
+        if snapshot is not None:
+            snapshot_data = dict(snapshot)
+            version_body = body_markdown if entity_kind == "scene" else None
         else:
-            snapshot_data.pop("body_markdown", None)
-            version_body = None
+            snapshot_data, version_body = self._build_version_snapshot(
+                entity_kind,
+                current,
+                body_markdown=body_markdown,
+            )
 
         with self.transaction() as conn:
             cursor = conn.execute(
@@ -868,6 +869,63 @@ class WritingDatabase(BaseDB):
                 ),
             )
         return self.get_version(version_id)
+
+    def _build_version_snapshot(
+        self,
+        entity_kind: str,
+        current: Dict[str, Any],
+        *,
+        body_markdown: Optional[str] = None,
+    ) -> tuple[Dict[str, Any], Optional[str]]:
+        snapshot_data = dict(current)
+        if entity_kind == "scene":
+            return snapshot_data, body_markdown if body_markdown is not None else current.get("body_markdown")
+
+        snapshot_data.pop("body_markdown", None)
+        if entity_kind == "chapter":
+            scenes = self.list_scenes(
+                current["project_id"],
+                chapter_id=current["id"],
+                limit=10000,
+            )
+            snapshot_data["child_scene_ids"] = [scene["id"] for scene in scenes]
+            snapshot_data["assembled_markdown"] = self._assembled_scene_markdown(scenes)
+            return snapshot_data, None
+
+        chapters = self.list_chapters(
+            current["project_id"],
+            manuscript_id=current["id"],
+            limit=10000,
+        )
+        direct_scenes = self.list_scenes(
+            current["project_id"],
+            manuscript_id=current["id"],
+            chapter_id=None,
+            limit=10000,
+        )
+        chapter_scene_groups = [
+            self.list_scenes(current["project_id"], chapter_id=chapter["id"], limit=10000)
+            for chapter in chapters
+        ]
+        snapshot_data["child_chapter_ids"] = [chapter["id"] for chapter in chapters]
+        snapshot_data["direct_scene_ids"] = [scene["id"] for scene in direct_scenes]
+        snapshot_data["assembled_markdown"] = self._assembled_scene_markdown(
+            [
+                scene
+                for scenes in chapter_scene_groups
+                for scene in scenes
+            ]
+            + direct_scenes
+        )
+        return snapshot_data, None
+
+    @staticmethod
+    def _assembled_scene_markdown(scenes: Iterable[Dict[str, Any]]) -> str:
+        return "\n\n".join(
+            str(scene.get("body_markdown") or "").strip()
+            for scene in scenes
+            if str(scene.get("body_markdown") or "").strip()
+        )
 
     def list_versions(
         self,

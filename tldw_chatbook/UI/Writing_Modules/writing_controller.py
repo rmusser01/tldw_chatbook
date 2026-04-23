@@ -43,6 +43,56 @@ class WritingController:
         self.selected_node = dict(node_data)
         return self.selected_node
 
+    async def load_entity_detail(
+        self,
+        source: str,
+        entity_kind: str,
+        entity_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> Any:
+        service = self._require_scope_service()
+        method_name = {
+            "project": "get_project",
+            "manuscript": "get_manuscript",
+            "chapter": "get_chapter",
+            "scene": "get_scene",
+        }.get(entity_kind)
+        if method_name is None:
+            raise ValueError(f"Unsupported writing entity kind: {entity_kind}")
+        method = getattr(service, method_name)
+        return await self._maybe_await(
+            method(entity_id, mode=source, include_deleted=include_deleted)
+        )
+
+    async def autosave_current(
+        self,
+        source: str,
+        entity_kind: str,
+        entity_id: str,
+        payload: Mapping[str, Any],
+        expected_version: int | None,
+    ) -> Any:
+        service = self._require_scope_service()
+        data = dict(payload)
+        if entity_kind == "scene" and "body_markdown" in data:
+            return await self._maybe_await(
+                service.autosave_scene(
+                    entity_id,
+                    mode=source,
+                    body_markdown=str(data.get("body_markdown") or ""),
+                    expected_version=expected_version,
+                )
+            )
+        data.pop("body_markdown", None)
+        return await self.save_current(
+            source,
+            entity_kind,
+            entity_id,
+            data,
+            expected_version,
+        )
+
     async def create_project(self, source: str, payload: Mapping[str, Any]) -> Any:
         service = self._require_scope_service()
         return await self._maybe_await(service.create_project(mode=source, **dict(payload)))
@@ -129,3 +179,84 @@ class WritingController:
     def get_capability(self, source: str, **kwargs: Any) -> Any:
         service = self._require_scope_service()
         return service.get_capability(mode=source, **kwargs)
+
+    async def create_version(
+        self,
+        source: str,
+        entity_kind: str,
+        entity_id: str,
+        *,
+        label: str | None = None,
+    ) -> Any:
+        service = self._require_scope_service()
+        return await self._maybe_await(
+            service.create_version(
+                entity_kind,
+                entity_id,
+                mode=source,
+                label=label,
+            )
+        )
+
+    async def list_versions(
+        self,
+        source: str,
+        entity_kind: str,
+        entity_id: str,
+    ) -> list[Any]:
+        service = self._require_scope_service()
+        versions = await self._maybe_await(
+            service.list_versions(entity_kind, entity_id, mode=source)
+        )
+        return list(versions or [])
+
+    async def restore_version(
+        self,
+        source: str,
+        entity_kind: str,
+        version_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> Any:
+        service = self._require_scope_service()
+        return await self._maybe_await(
+            service.restore_version_to_working_state(
+                version_id,
+                mode=source,
+                entity_kind=entity_kind,
+                expected_version=expected_version,
+            )
+        )
+
+    async def list_trash(
+        self,
+        source: str,
+        project_id: str | None,
+    ) -> list[Any]:
+        service = self._require_scope_service()
+        entries = await self._maybe_await(
+            service.list_trash(project_id, mode=source)
+        )
+        return list(entries or [])
+
+    async def restore_deleted(
+        self,
+        source: str,
+        entity_kind: str,
+        entity_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> Any:
+        service = self._require_scope_service()
+        method_name = {
+            "project": "restore_project",
+            "manuscript": "restore_manuscript",
+            "chapter": "restore_chapter",
+            "scene": "restore_scene",
+        }.get(entity_kind)
+        if method_name is None:
+            raise ValueError(f"Unsupported writing entity kind: {entity_kind}")
+        method = getattr(service, method_name)
+        return await self._maybe_await(
+            method(entity_id, mode=source, expected_version=expected_version)
+        )
