@@ -116,6 +116,24 @@ from .quizzes_schemas import (
     QuizResponse,
     QuizUpdateRequest,
 )
+from .writing_manuscript_schemas import (
+    ManuscriptChapterCreateRequest,
+    ManuscriptChapterResponse,
+    ManuscriptChapterUpdateRequest,
+    ManuscriptPartCreateRequest,
+    ManuscriptPartResponse,
+    ManuscriptPartUpdateRequest,
+    ManuscriptProjectCreateRequest,
+    ManuscriptProjectListResponse,
+    ManuscriptProjectResponse,
+    ManuscriptProjectUpdateRequest,
+    ManuscriptSceneCreateRequest,
+    ManuscriptSceneResponse,
+    ManuscriptSceneUpdateRequest,
+    ManuscriptSearchResponse,
+    ManuscriptStructureResponse,
+    ReorderRequest,
+)
 from .chat_conversation_schemas import (
     ConversationScopeParams,
     ConversationUpdateRequest,
@@ -516,6 +534,242 @@ class TLDWAPIClient:
     async def delete_watchlist_source(self, source_id: int) -> SourceDeleteResponse:
         response = await self._request("DELETE", f"/api/v1/watchlists/sources/{source_id}")
         return SourceDeleteResponse.model_validate(response)
+
+    async def list_manuscript_projects(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> ManuscriptProjectListResponse:
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if status is not None:
+            params["status"] = status
+        response = await self._request(
+            "GET",
+            "/api/v1/writing/manuscripts/projects",
+            params=params,
+        )
+        return ManuscriptProjectListResponse.model_validate(response)
+
+    async def create_manuscript_project(
+        self,
+        request_data: ManuscriptProjectCreateRequest,
+    ) -> ManuscriptProjectResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/writing/manuscripts/projects",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ManuscriptProjectResponse.model_validate(response)
+
+    async def get_manuscript_project(self, project_id: str) -> ManuscriptProjectResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/projects/{project_id}",
+        )
+        return ManuscriptProjectResponse.model_validate(response)
+
+    async def update_manuscript_project(
+        self,
+        project_id: str,
+        request_data: ManuscriptProjectUpdateRequest,
+        expected_version: int,
+    ) -> ManuscriptProjectResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/writing/manuscripts/projects/{project_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"expected-version": str(expected_version)},
+        )
+        return ManuscriptProjectResponse.model_validate(response)
+
+    async def delete_manuscript_project(self, project_id: str, expected_version: int) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/writing/manuscripts/projects/{project_id}",
+            headers={"expected-version": str(expected_version)},
+        )
+
+    async def get_manuscript_project_structure(self, project_id: str) -> ManuscriptStructureResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/projects/{project_id}/structure",
+        )
+        return ManuscriptStructureResponse.model_validate(response)
+
+    async def reorder_manuscript_entities(
+        self,
+        project_id: str,
+        request_data: ReorderRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/writing/manuscripts/projects/{project_id}/reorder",
+            json_data=request_data.model_dump(mode="json"),
+        )
+
+    async def search_manuscript_project(
+        self,
+        project_id: str,
+        query: str,
+        limit: int = 20,
+    ) -> ManuscriptSearchResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/projects/{project_id}/search",
+            params={"q": query, "limit": limit},
+        )
+        return ManuscriptSearchResponse.model_validate(response)
+
+    async def create_manuscript_part(
+        self,
+        project_id: str,
+        request_data: ManuscriptPartCreateRequest,
+    ) -> ManuscriptPartResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/writing/manuscripts/projects/{project_id}/parts",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ManuscriptPartResponse.model_validate(response)
+
+    async def list_manuscript_parts(self, project_id: str) -> list[ManuscriptPartResponse]:
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/projects/{project_id}/parts",
+        )
+        return [ManuscriptPartResponse.model_validate(item) for item in response]
+
+    async def get_manuscript_part(self, part_id: str) -> ManuscriptPartResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/parts/{part_id}",
+        )
+        return ManuscriptPartResponse.model_validate(response)
+
+    async def update_manuscript_part(
+        self,
+        part_id: str,
+        request_data: ManuscriptPartUpdateRequest,
+        expected_version: int,
+    ) -> ManuscriptPartResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/writing/manuscripts/parts/{part_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"expected-version": str(expected_version)},
+        )
+        return ManuscriptPartResponse.model_validate(response)
+
+    async def delete_manuscript_part(self, part_id: str, expected_version: int) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/writing/manuscripts/parts/{part_id}",
+            headers={"expected-version": str(expected_version)},
+        )
+
+    async def create_manuscript_chapter(
+        self,
+        project_id: str,
+        request_data: ManuscriptChapterCreateRequest,
+    ) -> ManuscriptChapterResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/writing/manuscripts/projects/{project_id}/chapters",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ManuscriptChapterResponse.model_validate(response)
+
+    async def list_manuscript_chapters(
+        self,
+        project_id: str,
+        part_id: str | None = None,
+    ) -> list[ManuscriptChapterResponse]:
+        params: Dict[str, Any] = {}
+        if part_id is not None:
+            params["part_id"] = part_id
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/projects/{project_id}/chapters",
+            params=params or None,
+        )
+        return [ManuscriptChapterResponse.model_validate(item) for item in response]
+
+    async def get_manuscript_chapter(self, chapter_id: str) -> ManuscriptChapterResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/chapters/{chapter_id}",
+        )
+        return ManuscriptChapterResponse.model_validate(response)
+
+    async def update_manuscript_chapter(
+        self,
+        chapter_id: str,
+        request_data: ManuscriptChapterUpdateRequest,
+        expected_version: int,
+    ) -> ManuscriptChapterResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/writing/manuscripts/chapters/{chapter_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"expected-version": str(expected_version)},
+        )
+        return ManuscriptChapterResponse.model_validate(response)
+
+    async def delete_manuscript_chapter(self, chapter_id: str, expected_version: int) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/writing/manuscripts/chapters/{chapter_id}",
+            headers={"expected-version": str(expected_version)},
+        )
+
+    async def create_manuscript_scene(
+        self,
+        chapter_id: str,
+        request_data: ManuscriptSceneCreateRequest,
+    ) -> ManuscriptSceneResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/writing/manuscripts/chapters/{chapter_id}/scenes",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ManuscriptSceneResponse.model_validate(response)
+
+    async def list_manuscript_scenes(self, chapter_id: str) -> list[ManuscriptSceneResponse]:
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/chapters/{chapter_id}/scenes",
+        )
+        return [ManuscriptSceneResponse.model_validate(item) for item in response]
+
+    async def get_manuscript_scene(self, scene_id: str) -> ManuscriptSceneResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/scenes/{scene_id}",
+        )
+        return ManuscriptSceneResponse.model_validate(response)
+
+    async def update_manuscript_scene(
+        self,
+        scene_id: str,
+        request_data: ManuscriptSceneUpdateRequest,
+        expected_version: int,
+    ) -> ManuscriptSceneResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/writing/manuscripts/scenes/{scene_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"expected-version": str(expected_version)},
+        )
+        return ManuscriptSceneResponse.model_validate(response)
+
+    async def delete_manuscript_scene(self, scene_id: str, expected_version: int) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/writing/manuscripts/scenes/{scene_id}",
+            headers={"expected-version": str(expected_version)},
+        )
 
     async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
         response = await self._request(
