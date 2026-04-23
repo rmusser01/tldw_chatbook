@@ -43,6 +43,17 @@ if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import TLDWAPIClient
 
 
+CAPABILITY_DIRECT_MANUSCRIPT_SCENE = "server_direct_manuscript_scene"
+CAPABILITY_SCENE_REPARENT = "server_scene_reparent"
+CAPABILITY_TRASH_RESTORE = "server_trash_restore"
+CAPABILITY_VERSION_HISTORY = "server_version_history"
+
+REASON_DIRECT_MANUSCRIPT_SCENE = "server_direct_manuscript_scene_unavailable"
+REASON_SCENE_REPARENT = "server_scene_reparent_unavailable"
+REASON_TRASH_RESTORE = "server_trash_restore_unavailable"
+REASON_VERSION_HISTORY = "server_version_history_unavailable"
+
+
 class WritingCapabilityError(RuntimeError):
     """Raised when a writing operation is unsupported by the active source."""
 
@@ -82,7 +93,7 @@ class ServerWritingService:
     @staticmethod
     def _merge_updates(update_data: Mapping[str, Any] | None, kwargs: Mapping[str, Any]) -> dict[str, Any]:
         merged = dict(update_data or {})
-        merged.update({key: value for key, value in kwargs.items() if value is not None})
+        merged.update(kwargs)
         return merged
 
     @staticmethod
@@ -112,7 +123,7 @@ class ServerWritingService:
         offset: int = 0,
     ) -> list[WritingProject]:
         if include_deleted:
-            raise self._unsupported("trash_list", "server_trash_list_unsupported")
+            raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
         response = await self._require_client().list_manuscript_projects(
             status=status,
             limit=limit,
@@ -159,7 +170,7 @@ class ServerWritingService:
         include_deleted: bool = False,
     ) -> WritingProject:
         if include_deleted:
-            raise self._unsupported("trash_list", "server_trash_list_unsupported")
+            raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
         return normalize_server_project(
             await self._require_client().get_manuscript_project(project_id)
         )
@@ -199,7 +210,7 @@ class ServerWritingService:
     ) -> list[WritingManuscript]:
         del limit, offset
         if include_deleted:
-            raise self._unsupported("trash_list", "server_trash_list_unsupported")
+            raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
         response = await self._require_client().list_manuscript_parts(project_id)
         return [normalize_server_part(part) for part in response or []]
 
@@ -231,7 +242,7 @@ class ServerWritingService:
         include_deleted: bool = False,
     ) -> WritingManuscript:
         if include_deleted:
-            raise self._unsupported("trash_list", "server_trash_list_unsupported")
+            raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
         return normalize_server_part(await self._require_client().get_manuscript_part(manuscript_id))
 
     async def update_manuscript(
@@ -270,7 +281,7 @@ class ServerWritingService:
     ) -> list[WritingChapter]:
         del limit, offset
         if include_deleted:
-            raise self._unsupported("trash_list", "server_trash_list_unsupported")
+            raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
         if manuscript_id is None:
             structure = await self.get_project_structure(project_id)
             return [item["chapter"] for item in structure["unassigned_chapters"]]
@@ -311,7 +322,7 @@ class ServerWritingService:
         include_deleted: bool = False,
     ) -> WritingChapter:
         if include_deleted:
-            raise self._unsupported("trash_list", "server_trash_list_unsupported")
+            raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
         return normalize_server_chapter(await self._require_client().get_manuscript_chapter(chapter_id))
 
     async def update_chapter(
@@ -370,13 +381,13 @@ class ServerWritingService:
     ) -> list[WritingScene]:
         del project_id, manuscript_id, limit, offset
         if include_deleted:
-            raise self._unsupported("trash_list", "server_trash_list_unsupported")
+            raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
         if chapter_id is WRITING_FILTER_UNSET:
             raise ValueError("chapter_id is required for server scene listing.")
         if chapter_id is None:
             raise self._unsupported(
-                "direct_manuscript_scenes",
-                "server_direct_manuscript_scenes_unsupported",
+                CAPABILITY_DIRECT_MANUSCRIPT_SCENE,
+                REASON_DIRECT_MANUSCRIPT_SCENE,
             )
         response = await self._require_client().list_manuscript_scenes(chapter_id)
         return [normalize_server_scene(scene) for scene in response or []]
@@ -398,8 +409,8 @@ class ServerWritingService:
         del project_id
         if chapter_id is None and manuscript_id is not None:
             raise self._unsupported(
-                "direct_manuscript_scenes",
-                "server_direct_manuscript_scenes_unsupported",
+                CAPABILITY_DIRECT_MANUSCRIPT_SCENE,
+                REASON_DIRECT_MANUSCRIPT_SCENE,
             )
         if chapter_id is None:
             raise ValueError("chapter_id is required for server scene creation.")
@@ -424,7 +435,7 @@ class ServerWritingService:
         include_deleted: bool = False,
     ) -> WritingScene:
         if include_deleted:
-            raise self._unsupported("trash_list", "server_trash_list_unsupported")
+            raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
         return normalize_server_scene(await self._require_client().get_manuscript_scene(scene_id))
 
     async def update_scene(
@@ -437,7 +448,7 @@ class ServerWritingService:
         version = self._require_expected_version(expected_version, operation="scene update")
         data = self._merge_updates(update_data, kwargs)
         if "chapter_id" in data or "manuscript_id" in data or "part_id" in data:
-            raise self._unsupported("scene_reparent", "server_scene_reparent_unsupported")
+            raise self._unsupported(CAPABILITY_SCENE_REPARENT, REASON_SCENE_REPARENT)
         body_markdown = data.pop("body_markdown", None)
         if body_markdown is not None:
             data["content"] = markdown_to_server_content(str(body_markdown))
@@ -543,7 +554,7 @@ class ServerWritingService:
         sort_order: float | None = None,
     ) -> WritingScene:
         del scene_id, manuscript_id, chapter_id, expected_version, sort_order
-        raise self._unsupported("scene_reparent", "server_scene_reparent_unsupported")
+        raise self._unsupported(CAPABILITY_SCENE_REPARENT, REASON_SCENE_REPARENT)
 
     async def create_version(
         self,
@@ -555,7 +566,7 @@ class ServerWritingService:
         label: str | None = None,
     ) -> WritingVersion:
         del entity_kind, entity_id, snapshot, body_markdown, label
-        raise self._unsupported("manual_versions", "server_manual_versions_unsupported")
+        raise self._unsupported(CAPABILITY_VERSION_HISTORY, REASON_VERSION_HISTORY)
 
     async def list_versions(
         self,
@@ -567,7 +578,7 @@ class ServerWritingService:
         offset: int = 0,
     ) -> list[WritingVersion]:
         del entity_kind, entity_id, include_deleted, limit, offset
-        raise self._unsupported("manual_versions", "server_manual_versions_unsupported")
+        raise self._unsupported(CAPABILITY_VERSION_HISTORY, REASON_VERSION_HISTORY)
 
     async def get_version(
         self,
@@ -576,7 +587,7 @@ class ServerWritingService:
         include_deleted: bool = False,
     ) -> WritingVersion | None:
         del version_id, include_deleted
-        raise self._unsupported("manual_versions", "server_manual_versions_unsupported")
+        raise self._unsupported(CAPABILITY_VERSION_HISTORY, REASON_VERSION_HISTORY)
 
     async def restore_version_to_working_state(
         self,
@@ -585,7 +596,7 @@ class ServerWritingService:
         expected_version: int | None = None,
     ) -> WritingManuscript | WritingChapter | WritingScene:
         del version_id, expected_version
-        raise self._unsupported("version_restore", "server_version_restore_unsupported")
+        raise self._unsupported(CAPABILITY_VERSION_HISTORY, REASON_VERSION_HISTORY)
 
     async def list_trash(
         self,
@@ -595,7 +606,7 @@ class ServerWritingService:
         offset: int = 0,
     ) -> list[WritingTrashEntry]:
         del project_id, limit, offset
-        raise self._unsupported("trash_list", "server_trash_list_unsupported")
+        raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
 
     async def restore_project(
         self,
@@ -604,7 +615,7 @@ class ServerWritingService:
         expected_version: int | None = None,
     ) -> WritingProject:
         del project_id, expected_version
-        raise self._unsupported("restore", "server_restore_unsupported")
+        raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
 
     async def restore_manuscript(
         self,
@@ -613,7 +624,7 @@ class ServerWritingService:
         expected_version: int | None = None,
     ) -> WritingManuscript:
         del manuscript_id, expected_version
-        raise self._unsupported("restore", "server_restore_unsupported")
+        raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
 
     async def restore_chapter(
         self,
@@ -622,7 +633,7 @@ class ServerWritingService:
         expected_version: int | None = None,
     ) -> WritingChapter:
         del chapter_id, expected_version
-        raise self._unsupported("restore", "server_restore_unsupported")
+        raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
 
     async def restore_scene(
         self,
@@ -631,7 +642,7 @@ class ServerWritingService:
         expected_version: int | None = None,
     ) -> WritingScene:
         del scene_id, expected_version
-        raise self._unsupported("restore", "server_restore_unsupported")
+        raise self._unsupported(CAPABILITY_TRASH_RESTORE, REASON_TRASH_RESTORE)
 
     def _normalize_part_structure(
         self,

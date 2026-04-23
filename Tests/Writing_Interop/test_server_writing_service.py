@@ -140,10 +140,25 @@ class FakeClient:
             "version": expected_version + 1,
         }
 
+    async def update_manuscript_project(self, project_id, request_data, expected_version):
+        self.calls.append(("update_manuscript_project", project_id, request_data, expected_version))
+        data = request_data.model_dump(exclude_unset=True, mode="json")
+        return {**self.project, "id": project_id, **data, "version": expected_version + 1}
+
     async def update_manuscript_part(self, part_id, request_data, expected_version):
         self.calls.append(("update_manuscript_part", part_id, request_data, expected_version))
         data = request_data.model_dump(exclude_unset=True, mode="json")
         return {**self.part, "id": part_id, "title": data["title"], "version": expected_version + 1}
+
+    async def update_manuscript_chapter(self, chapter_id, request_data, expected_version):
+        self.calls.append(("update_manuscript_chapter", chapter_id, request_data, expected_version))
+        data = request_data.model_dump(exclude_unset=True, mode="json")
+        return {
+            **self.chapter,
+            "id": chapter_id,
+            "part_id": data.get("part_id", self.chapter["part_id"]),
+            "version": expected_version + 1,
+        }
 
     async def delete_manuscript_part(self, part_id, expected_version):
         self.calls.append(("delete_manuscript_part", part_id, expected_version))
@@ -251,9 +266,9 @@ async def test_direct_manuscript_level_server_scene_creation_raises_capability_e
             body_markdown="Body",
         )
 
-    assert exc_info.value.capability == "direct_manuscript_scenes"
+    assert exc_info.value.capability == "server_direct_manuscript_scene"
     assert exc_info.value.source == "server"
-    assert exc_info.value.reason == "server_direct_manuscript_scenes_unsupported"
+    assert exc_info.value.reason == "server_direct_manuscript_scene_unavailable"
 
 
 @pytest.mark.asyncio
@@ -292,3 +307,49 @@ async def test_server_update_and_delete_pass_expected_version_to_client_methods(
         4,
     )
     assert service.client.calls[-1] == ("delete_manuscript_part", "part-1", 5)
+
+
+@pytest.mark.asyncio
+async def test_server_keyword_updates_preserve_explicit_none_clears(service):
+    project = await service.update_project(
+        "project-1",
+        expected_version=3,
+        subtitle=None,
+    )
+    chapter = await service.update_chapter(
+        "chapter-1",
+        expected_version=5,
+        manuscript_id=None,
+    )
+
+    project_payload = service.client.calls[-2][2].model_dump(exclude_unset=True, mode="json")
+    chapter_payload = service.client.calls[-1][2].model_dump(exclude_unset=True, mode="json")
+
+    assert project.subtitle is None
+    assert chapter.manuscript_id is None
+    assert project_payload == {"subtitle": None}
+    assert chapter_payload == {"part_id": None}
+    assert service.client.calls[-2][3] == 3
+    assert service.client.calls[-1][3] == 5
+
+
+@pytest.mark.asyncio
+async def test_unsupported_server_capabilities_use_scope_gate_reason_codes(service):
+    with pytest.raises(WritingCapabilityError) as direct_scene:
+        await service.create_scene(
+            "project-1",
+            title="Direct Scene",
+            manuscript_id="part-1",
+            body_markdown="Body",
+        )
+    with pytest.raises(WritingCapabilityError) as reparent:
+        await service.update_scene("scene-1", {"chapter_id": "chapter-2"}, expected_version=6)
+    with pytest.raises(WritingCapabilityError) as version:
+        await service.create_version("scene", "scene-1")
+    with pytest.raises(WritingCapabilityError) as trash:
+        await service.list_trash("project-1")
+
+    assert direct_scene.value.reason == "server_direct_manuscript_scene_unavailable"
+    assert reparent.value.reason == "server_scene_reparent_unavailable"
+    assert version.value.reason == "server_version_history_unavailable"
+    assert trash.value.reason == "server_trash_restore_unavailable"
