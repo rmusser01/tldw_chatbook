@@ -127,7 +127,6 @@ class WritingDatabase(BaseDB):
             "word_count",
         },
         "manuscript": {
-            "project_id",
             "title",
             "sort_order",
             "synopsis",
@@ -135,7 +134,6 @@ class WritingDatabase(BaseDB):
             "word_count",
         },
         "chapter": {
-            "project_id",
             "manuscript_id",
             "title",
             "sort_order",
@@ -144,9 +142,33 @@ class WritingDatabase(BaseDB):
             "word_count",
         },
         "scene": {
-            "project_id",
             "manuscript_id",
             "chapter_id",
+            "title",
+            "body_markdown",
+            "sort_order",
+            "synopsis",
+            "status",
+            "word_count",
+        },
+    }
+
+    _RESTORE_FIELDS = {
+        "manuscript": {
+            "title",
+            "sort_order",
+            "synopsis",
+            "status",
+            "word_count",
+        },
+        "chapter": {
+            "title",
+            "sort_order",
+            "synopsis",
+            "status",
+            "word_count",
+        },
+        "scene": {
             "title",
             "body_markdown",
             "sort_order",
@@ -561,8 +583,7 @@ class WritingDatabase(BaseDB):
         status: str = "draft",
         word_count: int = 0,
     ) -> Dict[str, Any]:
-        if chapter_id is None and manuscript_id is None:
-            raise ValueError("A scene must have either chapter_id or manuscript_id.")
+        self._validate_scene_parent(project_id, manuscript_id, chapter_id)
         data = {
             "id": id or self._new_id(),
             "project_id": project_id,
@@ -631,12 +652,10 @@ class WritingDatabase(BaseDB):
         **kwargs,
     ) -> Dict[str, Any]:
         data = self._merge_update_data(update_data, kwargs)
-        if data.get("chapter_id") is None and "chapter_id" in data:
-            manuscript_id = data.get("manuscript_id")
-            if manuscript_id is None:
-                current = self._require_current("scene", scene_id, include_deleted=False)
-                if current["manuscript_id"] is None:
-                    raise ValueError("A scene must have either chapter_id or manuscript_id.")
+        current = self._require_current("scene", scene_id, include_deleted=False)
+        next_chapter_id = data.get("chapter_id", current["chapter_id"])
+        next_manuscript_id = data.get("manuscript_id", current["manuscript_id"])
+        self._validate_scene_parent(current["project_id"], next_manuscript_id, next_chapter_id)
         return self._update("scene", scene_id, data, expected_version)
 
     def move_scene_local(
@@ -647,8 +666,8 @@ class WritingDatabase(BaseDB):
         expected_version: Optional[int] = None,
         sort_order: Optional[float] = None,
     ) -> Dict[str, Any]:
-        if chapter_id is None and manuscript_id is None:
-            raise ValueError("A scene must have either chapter_id or manuscript_id.")
+        current = self._require_current("scene", scene_id, include_deleted=False)
+        self._validate_scene_parent(current["project_id"], manuscript_id, chapter_id)
         data = {"manuscript_id": manuscript_id, "chapter_id": chapter_id}
         if sort_order is not None:
             data["sort_order"] = sort_order
@@ -715,21 +734,45 @@ class WritingDatabase(BaseDB):
     ) -> List[Dict[str, Any]]:
         if entity_kind not in {"manuscript", "chapter", "scene"}:
             raise ValueError("Can only reorder manuscript, chapter, or scene items.")
-        updated = []
+        table = self._TABLES[entity_kind]
+        now = self._now()
         with self.transaction():
-            for index, item_id in enumerate(ordered_ids):
+            current_rows = []
+            for item_id in ordered_ids:
                 expected_version = None
                 if expected_versions is not None:
                     expected_version = expected_versions.get(item_id)
-                updated.append(
-                    self._update(
+                current_rows.append(
+                    self._require_expected_version(
                         entity_kind,
                         item_id,
-                        {"sort_order": start + (index * step)},
                         expected_version,
+                        include_deleted=False,
                     )
                 )
-        return updated
+            for index, current in enumerate(current_rows):
+                new_version = current["version"] + 1
+                cursor = self.conn.execute(
+                    """
+                    UPDATE {table}
+                    SET sort_order = ?, version = ?, client_id = ?, updated_at = ?
+                    WHERE id = ? AND version = ? AND deleted = 0
+                    """.format(table=table),
+                    (
+                        start + (index * step),
+                        new_version,
+                        self.client_id,
+                        now,
+                        current["id"],
+                        current["version"],
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise self._version_conflict(entity_kind, current["id"], current["version"])
+        return [
+            self._require_current(entity_kind, item_id, include_deleted=False)
+            for item_id in ordered_ids
+        ]
 
     def list_trash(
         self, project_id: Optional[str] = None, limit: int = 100, offset: int = 0
@@ -767,6 +810,8 @@ class WritingDatabase(BaseDB):
             logger.debug("Ignoring local writing version label; schema stores snapshots only.")
         if entity_kind not in {"manuscript", "chapter", "scene"}:
             raise ValueError("Versions are supported for manuscript, chapter, and scene.")
+        if entity_kind != "scene" and body_markdown is not None:
+            raise ValueError("Only scene versions may include body_markdown.")
 
         current = self._require_current(entity_kind, entity_id, include_deleted=False)
         snapshot_data = dict(snapshot) if snapshot is not None else dict(current)
@@ -775,7 +820,8 @@ class WritingDatabase(BaseDB):
             if version_body is None:
                 version_body = current.get("body_markdown")
         else:
-            version_body = body_markdown
+            snapshot_data.pop("body_markdown", None)
+            version_body = None
 
         with self.transaction() as conn:
             cursor = conn.execute(
@@ -850,7 +896,7 @@ class WritingDatabase(BaseDB):
             )
         snapshot = json.loads(version["snapshot_json"])
         entity_kind = version["entity_kind"]
-        allowed = self._UPDATE_FIELDS[entity_kind]
+        allowed = self._RESTORE_FIELDS[entity_kind]
         update_data = {
             key: value
             for key, value in snapshot.items()
@@ -904,8 +950,7 @@ class WritingDatabase(BaseDB):
             current = self._require_current(entity_kind, entity_id, include_deleted=False)
             next_chapter_id = updates.get("chapter_id", current["chapter_id"])
             next_manuscript_id = updates.get("manuscript_id", current["manuscript_id"])
-            if next_chapter_id is None and next_manuscript_id is None:
-                raise ValueError("A scene must have either chapter_id or manuscript_id.")
+            self._validate_scene_parent(current["project_id"], next_manuscript_id, next_chapter_id)
         current = self._require_expected_version(
             entity_kind,
             entity_id,
@@ -994,6 +1039,47 @@ class WritingDatabase(BaseDB):
         if expected_version is not None and row["version"] != expected_version:
             raise self._version_conflict(entity_kind, entity_id, expected_version, row)
         return row
+
+    def _validate_scene_parent(
+        self,
+        project_id: str,
+        manuscript_id: Optional[str],
+        chapter_id: Optional[str],
+    ) -> None:
+        has_manuscript = manuscript_id is not None
+        has_chapter = chapter_id is not None
+        if has_manuscript == has_chapter:
+            raise ValueError("A scene must have exactly one parent: chapter_id or manuscript_id.")
+        if manuscript_id is not None:
+            manuscript = self._require_current(
+                "manuscript",
+                manuscript_id,
+                include_deleted=False,
+            )
+            if manuscript["project_id"] != project_id:
+                raise WritingDBConflictError(
+                    "Manuscript {id} does not belong to project {project_id}.".format(
+                        id=manuscript_id,
+                        project_id=project_id,
+                    ),
+                    entity_kind="manuscript",
+                    entity_id=manuscript_id,
+                )
+        if chapter_id is not None:
+            chapter = self._require_current(
+                "chapter",
+                chapter_id,
+                include_deleted=False,
+            )
+            if chapter["project_id"] != project_id:
+                raise WritingDBConflictError(
+                    "Chapter {id} does not belong to project {project_id}.".format(
+                        id=chapter_id,
+                        project_id=project_id,
+                    ),
+                    entity_kind="chapter",
+                    entity_id=chapter_id,
+                )
 
     def _require_current(
         self,

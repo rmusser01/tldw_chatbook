@@ -195,3 +195,106 @@ def test_manual_version_snapshot_increments_without_changing_working_version(db)
         1,
         2,
     ]
+
+
+def test_scene_parent_invariants_require_single_same_project_parent(db):
+    project = db.create_project(title="Project")
+    other_project = db.create_project(title="Other")
+    manuscript = db.create_manuscript(project["id"], title="Book")
+    chapter = db.create_chapter(project["id"], manuscript_id=manuscript["id"], title="Chapter")
+    other_manuscript = db.create_manuscript(other_project["id"], title="Other Book")
+    other_chapter = db.create_chapter(
+        other_project["id"],
+        manuscript_id=other_manuscript["id"],
+        title="Other Chapter",
+    )
+
+    with pytest.raises(ValueError, match="exactly one"):
+        db.create_scene(
+            project["id"],
+            title="Ambiguous",
+            manuscript_id=manuscript["id"],
+            chapter_id=chapter["id"],
+        )
+
+    with pytest.raises(WritingDBConflictError, match="does not belong to project"):
+        db.create_scene(project["id"], title="Cross Manuscript", manuscript_id=other_manuscript["id"])
+
+    with pytest.raises(WritingDBConflictError, match="does not belong to project"):
+        db.create_scene(project["id"], title="Cross Chapter", chapter_id=other_chapter["id"])
+
+    scene = db.create_scene(project["id"], title="Valid", chapter_id=chapter["id"])
+
+    with pytest.raises(ValueError, match="exactly one"):
+        db.move_scene_local(
+            scene["id"],
+            manuscript_id=manuscript["id"],
+            chapter_id=chapter["id"],
+            expected_version=1,
+        )
+
+    with pytest.raises(WritingDBConflictError, match="does not belong to project"):
+        db.move_scene_local(
+            scene["id"],
+            manuscript_id=other_manuscript["id"],
+            chapter_id=None,
+            expected_version=1,
+        )
+
+
+def test_restore_version_preserves_structural_identity(db):
+    project = db.create_project(title="Project")
+    other_project = db.create_project(title="Other")
+    manuscript = db.create_manuscript(project["id"], title="Book")
+    version = db.create_version(
+        "manuscript",
+        manuscript["id"],
+        snapshot={
+            "project_id": other_project["id"],
+            "title": "Restored Title",
+            "synopsis": "Restored Synopsis",
+        },
+    )
+
+    restored = db.restore_version_to_working_state(version["id"], expected_version=1)
+
+    assert restored["project_id"] == project["id"]
+    assert restored["title"] == "Restored Title"
+    assert restored["synopsis"] == "Restored Synopsis"
+
+
+def test_non_scene_versions_reject_markdown_body(db):
+    project = db.create_project(title="Project")
+    manuscript = db.create_manuscript(project["id"], title="Book")
+    chapter = db.create_chapter(project["id"], manuscript_id=manuscript["id"], title="Chapter")
+
+    with pytest.raises(ValueError, match="Only scene versions"):
+        db.create_version("chapter", chapter["id"], body_markdown="illegal")
+
+    version = db.create_version(
+        "chapter",
+        chapter["id"],
+        snapshot={"title": "Chapter", "body_markdown": "illegal"},
+    )
+
+    assert version["body_markdown"] is None
+    assert "body_markdown" not in json.loads(version["snapshot_json"])
+
+
+def test_reorder_items_rolls_back_as_one_batch_on_version_conflict(db):
+    project = db.create_project(title="Project")
+    first = db.create_manuscript(project["id"], title="First", sort_order=1)
+    second = db.create_manuscript(project["id"], title="Second", sort_order=2)
+
+    with pytest.raises(WritingDBConflictError, match="version mismatch"):
+        db.reorder_items(
+            "manuscript",
+            [first["id"], second["id"]],
+            start=10,
+            expected_versions={first["id"]: 1, second["id"]: 999},
+        )
+
+    assert db.get_manuscript(first["id"])["sort_order"] == 1
+    assert db.get_manuscript(first["id"])["version"] == 1
+    assert db.get_manuscript(second["id"])["sort_order"] == 2
+    assert db.get_manuscript(second["id"])["version"] == 1
