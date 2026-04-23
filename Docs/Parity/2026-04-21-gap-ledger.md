@@ -220,11 +220,11 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Sharing: Share links, permissions, revocation, and share discovery
 - Requirement class: Remote-only acceptable
 - Client obligation: Discover / Configure / Trigger / Observe
-- Current state: Chatbook has no dedicated sharing client today.
-- Gap: Remote share discovery, permissions, and revocation are absent.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/sharing.py`; Chatbook: no dedicated sharing surface in `tldw_chatbook/tldw_api/client.py` or the local UI; Verification: share lifecycle routes are explicit.
+- Current state: Chatbook now has typed non-admin Sharing client methods, a remote-only service, a policy-aware scope seam, app bootstrap wiring, and a lightweight `Sharing` panel in `Tools & Settings` for workspace share create/list/update/revoke, shared-with-me discovery, shared workspace clone/chat proxy operations, and share-token create/list/revoke plus public preview/verify/import. Local mode shows explicit unavailable guidance and keeps sharing server-owned.
+- Gap: Richer shared-resource presentation, explicit shared workspace browsing beyond JSON status output, deeper share-link/public-access UX, and any future local import or sync semantics remain future work. Admin sharing config and audit stay intentionally excluded by the audit boundary.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/sharing.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/sharing_schemas.py`; Chatbook: `tldw_chatbook/tldw_api/sharing_schemas.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/Sharing/server_sharing_service.py`, `tldw_chatbook/Sharing/server_sharing_scope_service.py`, `tldw_chatbook/UI/Sharing_Panel.py`, `tldw_chatbook/UI/Tools_Settings_Window.py`; Verification: `Tests/tldw_api/test_sharing_client.py`, `Tests/Sharing/test_server_sharing_service.py`, `Tests/UI/test_tools_settings_window.py`, and `Tests/UI/test_screen_navigation.py`.
 - Recommended tranche: Tranche 3
-- Notes: Priority 29. This remains a server-owned convenience surface rather than a local-parity target.
+- Notes: Priority 29. First remote-only support is landed; keep it server-owned and source-explicit unless a later local import/sync design is separately approved.
 
 ### Web Clipper: Browser clip save, status, and enrichment capture
 - Requirement class: Remote-only acceptable

@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 from datetime import datetime
 
-from textual.widgets import Button, TextArea, Label, Static
+from textual.widgets import Button, Checkbox, Input, Select, TextArea, Label, Static
 from textual.app import App
 try:
     from textual.app import AppTest
@@ -17,6 +17,7 @@ except ImportError:
     AppTest = None
 
 from tldw_chatbook.UI.Tools_Settings_Window import ToolsSettingsWindow
+from tldw_chatbook.UI.Sharing_Panel import SharingPanel
 # Import DEFAULT_CONFIG_PATH to be monkeypatched, and the function that uses it
 import tldw_chatbook.config
 
@@ -505,3 +506,123 @@ async def test_tools_settings_window_exposes_unified_mcp_view():
 
         content_switcher = window.query_one("#tools-settings-content-pane")
         assert content_switcher.current == "ts-view-unified-mcp"
+
+
+@pytest.mark.asyncio
+async def test_tools_settings_window_exposes_sharing_view():
+    class ToolsSettingsHostApp(App):
+        def __init__(self):
+            super().__init__()
+            self.notify = MagicMock()
+            self.unified_mcp_service = None
+            self.current_runtime_backend = "server"
+            self.server_sharing_scope_service = MagicMock()
+
+        def get_authoritative_runtime_source(self):
+            return self.current_runtime_backend
+
+        def compose(self):
+            yield ToolsSettingsWindow(app_instance=self)
+
+    app = ToolsSettingsHostApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(ToolsSettingsWindow)
+        nav_button = window.query_one("#ts-nav-sharing", Button)
+
+        assert nav_button.label.plain == "Sharing"
+
+        await window.on_button_pressed(Button.Pressed(nav_button))
+
+        content_switcher = window.query_one("#tools-settings-content-pane")
+        assert content_switcher.current == "ts-view-sharing"
+        assert window.query_one("#sharing-panel", SharingPanel) is not None
+
+
+class SharingPanelHostApp(App):
+    def __init__(self, *, runtime_backend: str, scope_service: MagicMock):
+        super().__init__()
+        self.notify = MagicMock()
+        self.current_runtime_backend = runtime_backend
+        self.server_sharing_scope_service = scope_service
+
+    def get_authoritative_runtime_source(self):
+        return self.current_runtime_backend
+
+    def compose(self):
+        yield SharingPanel(self, id="sharing-panel")
+
+
+@pytest.mark.asyncio
+async def test_sharing_panel_rejects_local_mode_with_explicit_guidance():
+    scope_service = MagicMock()
+    app = SharingPanelHostApp(runtime_backend="local", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(SharingPanel)
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        assert panel.query_one("#sharing-disabled", Static).display is True
+        assert panel.query_one("#sharing-main").display is False
+        assert panel.query_one("#sharing-create-workspace-share-btn", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_sharing_panel_routes_server_workspace_share_and_token_operations():
+    scope_service = MagicMock()
+    scope_service.share_workspace = AsyncMock(return_value={"id": "server:share:7", "access_level": "view_chat"})
+    scope_service.list_workspace_shares = AsyncMock(return_value={"shares": [{"id": "server:share:7"}], "total": 1})
+    scope_service.create_share_token = AsyncMock(return_value={"id": "server:share_token:5", "raw_token": "raw-token"})
+    scope_service.list_share_tokens = AsyncMock(return_value={"tokens": [{"id": "server:share_token:5"}], "total": 1})
+    scope_service.list_shared_with_me = AsyncMock(return_value={"items": [{"id": "server:share:9"}], "total": 1})
+    app = SharingPanelHostApp(runtime_backend="server", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(SharingPanel)
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        panel.query_one("#sharing-workspace-id", Input).value = "ws-1"
+        panel.query_one("#sharing-scope-type", Select).value = "team"
+        panel.query_one("#sharing-scope-id", Input).value = "11"
+        panel.query_one("#sharing-access-level", Select).value = "view_chat"
+        panel.query_one("#sharing-allow-clone", Checkbox).value = True
+        await panel.create_workspace_share()
+        await panel.list_workspace_shares()
+
+        panel.query_one("#sharing-resource-type", Select).value = "workspace"
+        panel.query_one("#sharing-resource-id", Input).value = "ws-1"
+        panel.query_one("#sharing-token-password", Input).value = "passphrase"
+        panel.query_one("#sharing-token-max-uses", Input).value = "10"
+        await panel.create_share_token()
+        await panel.list_share_tokens()
+        await panel.list_shared_with_me()
+
+        scope_service.share_workspace.assert_awaited_once_with(
+            mode="server",
+            workspace_id="ws-1",
+            share_scope_type="team",
+            share_scope_id=11,
+            access_level="view_chat",
+            allow_clone=True,
+        )
+        scope_service.list_workspace_shares.assert_awaited_once_with(
+            mode="server",
+            workspace_id="ws-1",
+            include_revoked=False,
+        )
+        scope_service.create_share_token.assert_awaited_once_with(
+            mode="server",
+            resource_type="workspace",
+            resource_id="ws-1",
+            access_level="view_chat",
+            allow_clone=True,
+            password="passphrase",
+            max_uses=10,
+            expires_at=None,
+        )
+        scope_service.list_share_tokens.assert_awaited_once_with(mode="server")
+        scope_service.list_shared_with_me.assert_awaited_once_with(mode="server")
+        rendered_status = str(panel.query_one("#sharing-status", Static).render())
+        assert "server:share:9" in rendered_status

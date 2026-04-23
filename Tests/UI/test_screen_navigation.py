@@ -16,6 +16,7 @@ from tldw_chatbook.Media import (
     ServerMediaReadingService,
 )
 from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Sharing import ServerSharingScopeService, ServerSharingService
 from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.server_watchlists_service import ServerWatchlistsService
 from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistScopeService
@@ -94,6 +95,13 @@ def test_app_initializes_watchlists_and_notifications_services(app):
     assert app.watchlist_scope_service.policy_enforcer is app.service_policy_enforcer
     assert isinstance(app.client_notifications_db, ClientNotificationsDB)
     assert app.notification_dispatch_service.store is app.client_notifications_db
+
+
+def test_app_initializes_server_sharing_services(app):
+    assert isinstance(app.server_sharing_service, ServerSharingService)
+    assert isinstance(app.server_sharing_scope_service, ServerSharingScopeService)
+    assert app.server_sharing_scope_service.server_service is app.server_sharing_service
+    assert app.server_sharing_scope_service.policy_enforcer is app.service_policy_enforcer
 
 
 def test_writing_tab_and_screen_are_registered(app):

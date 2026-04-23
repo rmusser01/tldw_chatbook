@@ -24,6 +24,8 @@ At that point, the next unresolved Tranche 2 focus moved to `Local MCP Runtime`,
 
 `Web Clipper` now has a first remote-only server slice. Chatbook includes typed save/status/enrichment client methods, a remote-only service, policy-aware scope routing, app bootstrap wiring, and a lightweight media-ingest tab for clip save, known-clip status lookup, and enrichment persistence. Remaining work is browser-extension handoff UX, server clip browse/history if the server exposes it, richer capture helpers, and any future local mirror/import design.
 
+`Sharing` now has a first remote-only server slice. Chatbook includes typed non-admin sharing client methods, a remote-only service, policy-aware scope routing, app bootstrap wiring, and a lightweight `Sharing` panel in `Tools & Settings` for workspace share permissions, shared-with-me discovery, clone/chat proxy actions, and share-token operations. Remaining work is richer shared-resource rendering, deeper public-share UX, and any future local import/sync design.
+
 ## Immediate Post-Tranche-0 Order
 
 1. `Local MCP Runtime`
@@ -41,7 +43,7 @@ At that point, the next unresolved Tranche 2 focus moved to `Local MCP Runtime`,
 7. `Workflows`, `Scheduler Workflows`, and `Chat Workflows`
    These remain remote-only acceptable, but once the local-first rows above are in place, Chatbook should add discover/trigger/observe support for connected-server workflow surfaces.
 8. `Server Reminders / Notification Feeds`, `Sharing`, and `Web Clipper`
-   Server reminders/feed and Web Clipper now have first remote-only slices. Sharing remains the next untouched remote-only convenience surface, while richer reminders/feed and web-clipper UX should follow higher-value standalone rows and any needed server contract extensions.
+   Server reminders/feed, Sharing, and Web Clipper now have first remote-only slices. Continue them only for richer UX, deeper shared-resource rendering, browser handoff, stream ergonomics, or any server contract extensions they depend on.
 
 ## Tranche 0: Runtime Policy And Capability Map
 
@@ -121,7 +123,7 @@ Domains in this tranche:
 Execution intent for this tranche:
 
 - Keep remote-only workflows, sharing, web clipper, and remote MCP governance behind the core standalone-first roadmap rather than letting them pull priority forward.
-- Treat first-slice server reminders/feed and Web Clipper as landed remote-only foundations; continue them only for richer UX, stream ergonomics, clip browsing/history, browser handoff, or explicitly approved local ingestion/sync semantics.
+- Treat first-slice server reminders/feed, Sharing, and Web Clipper as landed remote-only foundations; continue them only for richer UX, stream ergonomics, deeper shared-resource rendering, clip browsing/history, browser handoff, or explicitly approved local ingestion/sync semantics.
 - Treat `Study Packs`, `Study Suggestions`, and `Research Search / Provider Surfaces` as contract-maturity-sensitive rows whose client investment should follow clearer evidence.
 - Reuse the source-labeling, offline fallback, and discover/trigger/observe patterns proven in earlier tranches instead of creating special-case remote UI rules.
 
@@ -130,6 +132,7 @@ Execution intent for this tranche:
 - `Collections: Reading List / Read-it-later parity`: Landed for the current server contract. Reopen this row only if the server adds per-media-type saved browsing support or a separate sync/mirror design is approved.
 - `Watchlists / subscriptions alignment`: Source CRUD, restore, server jobs/runs, alert rules, and notification delivery now map onto the server watchlist vocabulary without collapsing local ownership. Continue only for groups, richer job/run/rule UX, server reminder/feed, or sync design.
 - `Server reminders / notification feeds`: First-slice typed client/service/scope support and lightweight subscriptions-window tabs are landed. Continue only for richer feed/reminder UX, preferences editing, stream worker ergonomics, or later explicit local-notification ingestion.
+- `Sharing`: First-slice typed client/service/scope support and a lightweight Tools & Settings panel are landed for workspace share permissions, shared-with-me discovery, clone/chat proxy actions, and share-token operations. Continue only for richer shared-resource browsing, deeper public-share UX, or later explicit local import/sync design.
 - `Web Clipper`: First-slice typed client/service/scope support and a lightweight media-ingest tab are landed for server save, known-ID status lookup, and enrichment persistence. Continue only for browser-extension handoff UX, server clip browse/history, richer capture helpers, or later explicit local import/sync design.
 - `Local MCP runtime parity`: Define the local-first runtime, approvals, catalog, prompts, tools, resources, and status surface before any later remote governance work.
 - `Remote MCP control plane`: The current remote Unified MCP hub-management route surface is now effectively covered inside `Tools & Settings`, with explicit local/server panes, configured server targets, remote browse sections, governance actions, governance-pack source/import/upgrade flows, expanded advanced admin browse/action coverage, assignment workspace membership control, credential-binding administration, slot-status views, and the top-level external-server secret setter. The next follow-on should focus on UI polish, richer structured presentation, and any future server-side MCP surface expansion without collapsing the source-separated local MCP runtime model.

@@ -112,6 +112,27 @@ from .web_clipper_schemas import (
     WebClipperSaveResponse,
     WebClipperStatusResponse,
 )
+from .sharing_schemas import (
+    CloneWorkspaceRequest,
+    CloneWorkspaceResponse,
+    CreateTokenRequest,
+    PublicShareImportResponse,
+    PublicSharePreview,
+    RevokeResponse,
+    ShareListResponse,
+    ShareResponse,
+    ShareWorkspaceRequest,
+    SharedChatRequest,
+    SharedMediaResponse,
+    SharedWithMeResponse,
+    SharedWorkspaceResponse,
+    SharedWorkspaceSourceResponse,
+    TokenListResponse,
+    TokenResponse,
+    UpdateShareRequest,
+    VerifyPasswordRequest,
+    VerifyPasswordResponse,
+)
 from .prompt_chatbook_schemas import (
     ChatbookExportJobListResponse,
     ChatbookExportJobResponse,
@@ -966,6 +987,115 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return WebClipperEnrichmentResponse.model_validate(response)
+
+    async def share_workspace(self, workspace_id: str, request_data: ShareWorkspaceRequest) -> ShareResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/sharing/workspaces/{workspace_id}/share",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return ShareResponse.model_validate(response)
+
+    async def list_workspace_shares(
+        self,
+        workspace_id: str,
+        *,
+        include_revoked: bool = False,
+    ) -> ShareListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/sharing/workspaces/{workspace_id}/shares",
+            params={"include_revoked": str(include_revoked).lower()},
+        )
+        return ShareListResponse.model_validate(response)
+
+    async def update_share(self, share_id: int, request_data: UpdateShareRequest) -> ShareResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/sharing/shares/{share_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ShareResponse.model_validate(response)
+
+    async def revoke_share(self, share_id: int) -> dict[str, Any]:
+        response = await self._request("DELETE", f"/api/v1/sharing/shares/{share_id}")
+        return RevokeResponse.model_validate(response).model_dump(mode="json")
+
+    async def list_shared_with_me(self) -> SharedWithMeResponse:
+        response = await self._request("GET", "/api/v1/sharing/shared-with-me")
+        return SharedWithMeResponse.model_validate(response)
+
+    async def get_shared_workspace(self, share_id: int) -> SharedWorkspaceResponse:
+        response = await self._request("GET", f"/api/v1/sharing/shared-with-me/{share_id}/workspace")
+        return SharedWorkspaceResponse.model_validate(response)
+
+    async def clone_shared_workspace(
+        self,
+        share_id: int,
+        request_data: CloneWorkspaceRequest,
+    ) -> CloneWorkspaceResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/sharing/shared-with-me/{share_id}/clone",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return CloneWorkspaceResponse.model_validate(response)
+
+    async def list_shared_workspace_sources(self, share_id: int) -> list[SharedWorkspaceSourceResponse]:
+        response = await self._request("GET", f"/api/v1/sharing/shared-with-me/{share_id}/sources")
+        return [SharedWorkspaceSourceResponse.model_validate(item) for item in response]
+
+    async def get_shared_workspace_media(self, share_id: int, media_id: int) -> SharedMediaResponse:
+        response = await self._request("GET", f"/api/v1/sharing/shared-with-me/{share_id}/media/{media_id}")
+        return SharedMediaResponse.model_validate(response)
+
+    async def chat_with_shared_workspace(
+        self,
+        share_id: int,
+        request_data: SharedChatRequest,
+    ) -> dict[str, Any]:
+        response = await self._request(
+            "POST",
+            f"/api/v1/sharing/shared-with-me/{share_id}/chat",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return dict(response)
+
+    async def create_share_token(self, request_data: CreateTokenRequest) -> TokenResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/sharing/tokens",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return TokenResponse.model_validate(response)
+
+    async def list_share_tokens(self) -> TokenListResponse:
+        response = await self._request("GET", "/api/v1/sharing/tokens")
+        return TokenListResponse.model_validate(response)
+
+    async def revoke_share_token(self, token_id: int) -> dict[str, Any]:
+        response = await self._request("DELETE", f"/api/v1/sharing/tokens/{token_id}")
+        return RevokeResponse.model_validate(response).model_dump(mode="json")
+
+    async def preview_public_share(self, token: str) -> PublicSharePreview:
+        response = await self._request("GET", f"/api/v1/sharing/public/{token}")
+        return PublicSharePreview.model_validate(response)
+
+    async def verify_public_share_password(
+        self,
+        token: str,
+        request_data: VerifyPasswordRequest,
+    ) -> VerifyPasswordResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/sharing/public/{token}/verify",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return VerifyPasswordResponse.model_validate(response)
+
+    async def import_public_share(self, token: str) -> PublicShareImportResponse:
+        response = await self._request("POST", f"/api/v1/sharing/public/{token}/import")
+        return PublicShareImportResponse.model_validate(response)
 
     async def list_manuscript_projects(
         self,
