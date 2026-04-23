@@ -201,11 +201,16 @@ class WritingDatabase(BaseDB):
     @contextmanager
     def transaction(self):
         conn = self.conn
+        nested = conn.in_transaction
+        if not nested:
+            conn.execute("BEGIN")
         try:
             yield conn
-            conn.commit()
+            if not nested:
+                conn.commit()
         except Exception:
-            conn.rollback()
+            if not nested:
+                conn.rollback()
             raise
 
     def _initialize_schema(self):

@@ -330,3 +330,16 @@ def test_reorder_items_rolls_back_as_one_batch_on_version_conflict(db):
     assert db.get_manuscript(first["id"])["version"] == 1
     assert db.get_manuscript(second["id"])["sort_order"] == 2
     assert db.get_manuscript(second["id"])["version"] == 1
+
+
+def test_outer_transaction_rolls_back_nested_public_methods(db):
+    project = db.create_project(title="Original")
+
+    with pytest.raises(RuntimeError, match="abort"):
+        with db.transaction():
+            db.update_project(project["id"], {"title": "Committed Too Early"}, expected_version=1)
+            raise RuntimeError("abort")
+
+    current = db.get_project(project["id"])
+    assert current["title"] == "Original"
+    assert current["version"] == 1
