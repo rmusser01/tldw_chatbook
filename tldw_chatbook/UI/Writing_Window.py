@@ -7,7 +7,7 @@ from typing import Any
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Label, Select, Static
+from textual.widgets import Label, ListView, Select, Static, Tree
 
 from tldw_chatbook.UI.Writing_Modules import WritingController
 from tldw_chatbook.Widgets.Writing import (
@@ -59,9 +59,11 @@ class WritingWindow(Container):
             projects = await self.controller.load_projects(selected_source)
         except Exception as exc:
             self.source_panel.clear_projects()
+            await self.source_panel.refresh_project_list()
             self._set_status(str(exc))
             return []
         self.source_panel.set_projects(projects)
+        await self.source_panel.refresh_project_list()
         self._set_status(f"Loaded {len(projects)} {selected_source} writing project(s).")
         return projects
 
@@ -70,6 +72,7 @@ class WritingWindow(Container):
         self.current_source = selected_source
         self.source_panel.set_source(selected_source)
         self.source_panel.clear_projects()
+        await self.source_panel.refresh_project_list()
         self.outline_tree.clear()
         self.detail_panel.clear()
         self._set_status("")
@@ -100,3 +103,15 @@ class WritingWindow(Container):
     async def _handle_source_changed(self, event: Select.Changed) -> None:
         if event.value in {"local", "server"}:
             await self.switch_source(str(event.value))
+
+    @on(ListView.Selected, "#writing-project-list")
+    async def _handle_project_selected(self, event: ListView.Selected) -> None:
+        project_id = getattr(event.item, "project_id", None)
+        if project_id:
+            await self.load_project_structure(str(project_id))
+
+    @on(Tree.NodeSelected, "#writing-outline-tree")
+    def _handle_outline_node_selected(self, event: Tree.NodeSelected) -> None:
+        node_data = getattr(event.node, "data", None)
+        if isinstance(node_data, dict):
+            self.select_outline_node(node_data)

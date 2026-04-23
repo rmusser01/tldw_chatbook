@@ -6,7 +6,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Label, ListView, Select, Static
+from textual.widgets import Button, Label, ListItem, ListView, Select, Static
 
 
 class WritingSourcePanel(Vertical):
@@ -48,6 +48,20 @@ class WritingSourcePanel(Vertical):
 
     def set_notice(self, message: str) -> None:
         self.notice = message
+
+    async def refresh_project_list(self) -> None:
+        if not self.is_mounted:
+            return
+        list_view = self.query_one("#writing-project-list", ListView)
+        await list_view.clear()
+        for project_id, title in zip(self.project_ids, self.project_titles):
+            item = ListItem(Static(title), id=f"writing-project-{project_id}")
+            item.project_id = project_id
+            await list_view.append(item)
+        try:
+            self.query_one("#writing-source-status", Static).update(self.notice)
+        except Exception:
+            pass
 
     @staticmethod
     def _record_title(record: Any) -> str:

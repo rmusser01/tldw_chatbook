@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 
 import pytest
+from textual.app import App, ComposeResult
+from textual.widgets import ListView, Tree
 
 from tldw_chatbook.UI.Screens.writing_screen import WritingScreen
 from tldw_chatbook.UI.Writing_Window import WritingWindow
@@ -163,3 +165,49 @@ def test_selecting_outline_node_loads_detail_panel():
     assert window.detail_panel.selected_node == node_data
     assert window.detail_panel.title == "Opening Scene"
     assert "scene" in window.detail_panel.detail_text
+
+
+class WritingWindowHarness(App):
+    def __init__(self, window):
+        super().__init__()
+        self.window = window
+
+    def compose(self) -> ComposeResult:
+        yield self.window
+
+
+@pytest.mark.asyncio
+async def test_mounted_project_list_renders_and_selects_project():
+    scope = FakeWritingScopeService()
+    window = _writing_window(scope)
+    app = WritingWindowHarness(window)
+
+    async with app.run_test():
+        await window.load_projects("local")
+        project_list = app.query_one("#writing-project-list", ListView)
+
+        assert len(project_list.children) == 1
+        assert getattr(project_list.children[0], "project_id") == "local-project"
+
+        await window._handle_project_selected(SimpleNamespace(item=project_list.children[0]))
+
+    assert ("get_project_structure", "local", "local-project") in scope.calls
+    assert window.outline_tree.labels[0] == "Local Draft"
+
+
+@pytest.mark.asyncio
+async def test_mounted_outline_tree_renders_and_selects_nodes():
+    window = _writing_window()
+    app = WritingWindowHarness(window)
+
+    async with app.run_test():
+        await window.load_project_structure("local-project")
+        tree = app.query_one("#writing-outline-tree", Tree)
+
+        assert len(tree.root.children) == 2
+        scene_node = tree.root.children[0].children[0].children[0]
+        assert scene_node.data["kind"] == "scene"
+
+        window._handle_outline_node_selected(SimpleNamespace(node=scene_node))
+
+    assert window.detail_panel.title == "Opening Scene"
