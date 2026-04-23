@@ -994,6 +994,16 @@ class WritingScopeService:
         mode: WritingBackend | str | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        if (
+            normalized_mode == WritingBackend.SERVER
+            and entity_type == "scenes"
+            and any("new_parent_id" in item for item in items)
+        ):
+            self._require_capability(
+                normalized_mode,
+                action="reparent",
+                entity_kind="scene",
+            )
         resource = {
             "parts": "manuscripts",
             "chapters": "chapters",

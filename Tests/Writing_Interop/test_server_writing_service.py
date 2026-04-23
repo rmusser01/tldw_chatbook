@@ -164,6 +164,10 @@ class FakeClient:
         self.calls.append(("delete_manuscript_part", part_id, expected_version))
         return {"id": part_id, "deleted": True}
 
+    async def reorder_manuscript_entities(self, project_id, request_data):
+        self.calls.append(("reorder_manuscript_entities", project_id, request_data))
+        return {"project_id": project_id, "ok": True}
+
 
 @pytest.fixture()
 def service():
@@ -353,3 +357,35 @@ async def test_unsupported_server_capabilities_use_scope_gate_reason_codes(servi
     assert reparent.value.reason == "server_scene_reparent_unavailable"
     assert version.value.reason == "server_version_history_unavailable"
     assert trash.value.reason == "server_trash_restore_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_server_reorder_allows_chapter_parent_updates_and_scene_order_only(service):
+    chapter_result = await service.reorder_items(
+        "project-1",
+        "chapters",
+        [{"id": "chapter-1", "sort_order": 1, "version": 5, "new_parent_id": "part-2"}],
+    )
+    scene_result = await service.reorder_items(
+        "project-1",
+        "scenes",
+        [{"id": "scene-1", "sort_order": 1, "version": 6}],
+    )
+
+    assert chapter_result == {"project_id": "project-1", "ok": True}
+    assert scene_result == {"project_id": "project-1", "ok": True}
+    assert service.client.calls[-2][0] == "reorder_manuscript_entities"
+    assert service.client.calls[-1][0] == "reorder_manuscript_entities"
+
+
+@pytest.mark.asyncio
+async def test_server_reorder_blocks_scene_reparent_before_client_call(service):
+    with pytest.raises(WritingCapabilityError) as exc_info:
+        await service.reorder_items(
+            "project-1",
+            "scenes",
+            [{"id": "scene-1", "sort_order": 1, "version": 6, "new_parent_id": "chapter-2"}],
+        )
+
+    assert exc_info.value.reason == "server_scene_reparent_unavailable"
+    assert not any(call[0] == "reorder_manuscript_entities" for call in service.client.calls)

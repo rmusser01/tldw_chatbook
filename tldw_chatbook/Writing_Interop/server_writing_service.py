@@ -536,6 +536,8 @@ class ServerWritingService:
     ) -> Any:
         if entity_type not in {"parts", "chapters", "scenes"}:
             raise ValueError("entity_type must be one of: parts, chapters, scenes")
+        if entity_type == "scenes" and any("new_parent_id" in item for item in items):
+            raise self._unsupported(CAPABILITY_SCENE_REPARENT, REASON_SCENE_REPARENT)
         return await self._require_client().reorder_manuscript_entities(
             project_id,
             ReorderRequest(

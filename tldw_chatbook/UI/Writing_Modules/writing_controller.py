@@ -196,6 +196,54 @@ class WritingController:
             )
         )
 
+    async def reorder_items(
+        self,
+        source: str,
+        project_id: str,
+        entity_type: str,
+        items: list[Mapping[str, Any]],
+    ) -> Any:
+        service = self._require_scope_service()
+        return await self._maybe_await(
+            service.reorder_items(project_id, entity_type, items, mode=source)
+        )
+
+    async def move_scene(
+        self,
+        source: str,
+        scene_id: str,
+        *,
+        manuscript_id: str | None,
+        chapter_id: str | None,
+        expected_version: int | None,
+        sort_order: float | None = None,
+    ) -> Any:
+        service = self._require_scope_service()
+        return await self._maybe_await(
+            service.move_scene(
+                scene_id,
+                manuscript_id,
+                chapter_id,
+                mode=source,
+                expected_version=expected_version,
+                sort_order=sort_order,
+            )
+        )
+
+    async def search_project(
+        self,
+        source: str,
+        project_id: str,
+        query: str,
+        *,
+        limit: int = 20,
+    ) -> list[Any]:
+        service = self._require_scope_service()
+        results = await self._maybe_await(
+            service.search_project(project_id, query, mode=source, limit=limit)
+        )
+        return list(results or [])
+
     def get_capability(self, source: str, **kwargs: Any) -> Any:
         service = self._require_scope_service()
         return service.get_capability(mode=source, **kwargs)

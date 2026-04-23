@@ -76,6 +76,14 @@ class FakeBackend:
         self.calls.append(("list_trash", project_id, kwargs))
         return [{"project_id": project_id, "source": self.label}]
 
+    async def reorder_items(self, project_id, entity_type, items):
+        self.calls.append(("reorder_items", project_id, entity_type, list(items)))
+        return [{"project_id": project_id, "entity_type": entity_type, "source": self.label}]
+
+    async def search_project(self, project_id, query, **kwargs):
+        self.calls.append(("search_project", project_id, query, kwargs))
+        return [{"project_id": project_id, "query": query, "source": self.label}]
+
 
 class FakePolicy:
     def __init__(self):
@@ -407,3 +415,58 @@ async def test_policy_action_ids_cover_restore_version_and_trash_actions():
         "writing.scenes.update.local",
         "writing.projects.list.local",
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_scene_reorder_with_new_parent_is_blocked_before_backend_call():
+    server = FakeBackend("server")
+    service = WritingScopeService(local_service=FakeBackend("local"), server_service=server)
+
+    with pytest.raises(WritingCapabilityError) as exc_info:
+        await service.reorder_items(
+            "project-1",
+            "scenes",
+            [{"id": "scene-1", "sort_order": 1, "version": 2, "new_parent_id": "chapter-2"}],
+            mode="server",
+        )
+
+    assert exc_info.value.reason == REASON_SCENE_REPARENT
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_chapter_reorder_with_new_parent_uses_server_backend():
+    server = FakeBackend("server")
+    service = WritingScopeService(local_service=FakeBackend("local"), server_service=server)
+
+    result = await service.reorder_items(
+        "project-1",
+        "chapters",
+        [{"id": "chapter-1", "sort_order": 1, "version": 2, "new_parent_id": "part-2"}],
+        mode="server",
+    )
+
+    assert result == [{"project_id": "project-1", "entity_type": "chapters", "source": "server"}]
+    assert server.calls == [
+        (
+            "reorder_items",
+            "project-1",
+            "chapters",
+            [{"id": "chapter-1", "sort_order": 1, "version": 2, "new_parent_id": "part-2"}],
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_project_routes_only_to_selected_source():
+    local = FakeBackend("local")
+    server = FakeBackend("server")
+    service = WritingScopeService(local_service=local, server_service=server)
+
+    local_results = await service.search_project("project-1", "torch", mode="local", limit=3)
+    server_results = await service.search_project("project-1", "torch", mode="server", limit=3)
+
+    assert local_results == [{"project_id": "project-1", "query": "torch", "source": "local"}]
+    assert server_results == [{"project_id": "project-1", "query": "torch", "source": "server"}]
+    assert local.calls == [("search_project", "project-1", "torch", {"limit": 3})]
+    assert server.calls == [("search_project", "project-1", "torch", {"limit": 3})]

@@ -381,3 +381,76 @@ async def test_reorder_items_uses_local_database_with_server_shaped_items(servic
     assert [item.id for item in reordered] == [second.id, first.id]
     assert [item.sort_order for item in reordered] == [10.0, 20.0]
     assert [item.version for item in reordered] == [2, 2]
+
+
+@pytest.mark.asyncio
+async def test_local_chapter_scene_reorder_and_scene_moves(service):
+    project = await service.create_project(title="Project")
+    manuscript = await service.create_manuscript(project.id, title="Book")
+    first_chapter = await service.create_chapter(
+        project.id,
+        manuscript_id=manuscript.id,
+        title="First",
+        sort_order=1,
+    )
+    second_chapter = await service.create_chapter(
+        project.id,
+        manuscript_id=manuscript.id,
+        title="Second",
+        sort_order=2,
+    )
+    first_scene = await service.create_scene(
+        project.id,
+        chapter_id=first_chapter.id,
+        title="First Scene",
+        sort_order=1,
+    )
+    second_scene = await service.create_scene(
+        project.id,
+        chapter_id=first_chapter.id,
+        title="Second Scene",
+        sort_order=2,
+    )
+
+    reordered_chapters = await service.reorder_items(
+        project.id,
+        "chapters",
+        [
+            {"id": second_chapter.id, "sort_order": 10, "version": second_chapter.version},
+            {"id": first_chapter.id, "sort_order": 20, "version": first_chapter.version},
+        ],
+    )
+    reordered_scenes = await service.reorder_items(
+        project.id,
+        "scenes",
+        [
+            {"id": second_scene.id, "sort_order": 10, "version": second_scene.version},
+            {"id": first_scene.id, "sort_order": 20, "version": first_scene.version},
+        ],
+    )
+    moved_to_manuscript = await service.move_scene(
+        first_scene.id,
+        manuscript.id,
+        None,
+        expected_version=reordered_scenes[1].version,
+    )
+    moved_to_chapter = await service.move_scene(
+        first_scene.id,
+        None,
+        second_chapter.id,
+        expected_version=moved_to_manuscript.version,
+    )
+    moved_between_chapters = await service.move_scene(
+        first_scene.id,
+        None,
+        first_chapter.id,
+        expected_version=moved_to_chapter.version,
+    )
+
+    assert [chapter.id for chapter in reordered_chapters] == [second_chapter.id, first_chapter.id]
+    assert [scene.id for scene in reordered_scenes] == [second_scene.id, first_scene.id]
+    assert moved_to_manuscript.manuscript_id == manuscript.id
+    assert moved_to_manuscript.chapter_id is None
+    assert moved_to_chapter.chapter_id == second_chapter.id
+    assert moved_to_chapter.manuscript_id is None
+    assert moved_between_chapters.chapter_id == first_chapter.id

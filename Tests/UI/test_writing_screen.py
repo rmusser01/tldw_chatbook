@@ -247,6 +247,18 @@ class FakeWritingScopeService:
         self.calls.append(("assign_chapter", mode, entity_id, manuscript_id, expected_version, sort_order))
         return self.entities["chapter"]
 
+    async def reorder_items(self, project_id, entity_type, items, *, mode):
+        self.calls.append(("reorder_items", mode, project_id, entity_type, list(items)))
+        return list(items)
+
+    async def move_scene(self, scene_id, manuscript_id, chapter_id, *, mode, expected_version=None, sort_order=None):
+        self.calls.append(("move_scene", mode, scene_id, manuscript_id, chapter_id, expected_version, sort_order))
+        return self.entities["scene"]
+
+    async def search_project(self, project_id, query, *, mode, limit=20):
+        self.calls.append(("search_project", mode, project_id, query, limit))
+        return [{"source": mode, "id": "scene-1", "title": "Opening Scene"}]
+
     async def autosave_scene(self, entity_id, *, mode, body_markdown, expected_version=None):
         self.calls.append(("autosave_scene", mode, entity_id, body_markdown, expected_version))
         self.entities["scene"].body_markdown = body_markdown
@@ -702,6 +714,42 @@ async def test_server_version_reason_survives_autosave_refresh():
     await window.autosave_selected_entity()
 
     assert window.detail_panel.unsupported_reasons["create_version"] == REASON_VERSION_HISTORY
+
+
+@pytest.mark.asyncio
+async def test_controller_reorder_move_and_search_are_source_specific():
+    scope = FakeWritingScopeService()
+    controller = WritingController(scope)
+
+    await controller.reorder_items(
+        "local",
+        "local-project",
+        "scenes",
+        [{"id": "scene-1", "sort_order": 2, "version": 1}],
+    )
+    await controller.move_scene(
+        "local",
+        "scene-1",
+        manuscript_id="manuscript-1",
+        chapter_id=None,
+        expected_version=1,
+        sort_order=3,
+    )
+    local_results = await controller.search_project("local", "local-project", "Opening", limit=5)
+    server_results = await controller.search_project("server", "local-project", "Opening", limit=5)
+
+    assert (
+        "reorder_items",
+        "local",
+        "local-project",
+        "scenes",
+        [{"id": "scene-1", "sort_order": 2, "version": 1}],
+    ) in scope.calls
+    assert ("move_scene", "local", "scene-1", "manuscript-1", None, 1, 3) in scope.calls
+    assert local_results == [{"source": "local", "id": "scene-1", "title": "Opening Scene"}]
+    assert server_results == [{"source": "server", "id": "scene-1", "title": "Opening Scene"}]
+    assert ("search_project", "local", "local-project", "Opening", 5) in scope.calls
+    assert ("search_project", "server", "local-project", "Opening", 5) in scope.calls
 
 
 class WritingWindowHarness(App):
