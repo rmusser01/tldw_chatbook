@@ -40,7 +40,7 @@ class ManuscriptProjectResponse(BaseModel):
     subtitle: str | None = None
     author: str | None = None
     genre: str | None = None
-    status: ProjectStatus
+    status: str
     synopsis: str | None = None
     target_word_count: int | None = None
     settings: dict[str, Any] = Field(default_factory=dict)
@@ -116,7 +116,7 @@ class ManuscriptChapterResponse(BaseModel):
     synopsis: str | None = None
     pov_character_id: str | None = None
     word_count: int = 0
-    status: NodeStatus = "draft"
+    status: str = "draft"
     created_at: datetime
     last_modified: datetime
     deleted: bool = False
@@ -156,7 +156,7 @@ class ManuscriptSceneResponse(BaseModel):
     synopsis: str | None = None
     word_count: int = 0
     pov_character_id: str | None = None
-    status: NodeStatus = "draft"
+    status: str = "draft"
     created_at: datetime
     last_modified: datetime
     deleted: bool = False
@@ -195,7 +195,7 @@ class SceneSummary(BaseModel):
     title: str
     sort_order: float
     word_count: int = 0
-    status: NodeStatus = "draft"
+    status: str = "draft"
     version: int = 1
 
     model_config = ConfigDict(from_attributes=True)
@@ -207,7 +207,7 @@ class ChapterSummary(BaseModel):
     sort_order: float
     part_id: str | None = None
     word_count: int = 0
-    status: NodeStatus = "draft"
+    status: str = "draft"
     version: int = 1
     scenes: list[SceneSummary] = Field(default_factory=list)
 
@@ -250,7 +250,7 @@ class ManuscriptSearchResult(BaseModel):
     title: str
     chapter_id: str
     word_count: int = 0
-    status: NodeStatus = "draft"
+    status: str = "draft"
     snippet: str | None = None
 
     model_config = ConfigDict(from_attributes=True)

@@ -579,7 +579,7 @@ class TLDWAPIClient:
         response = await self._request(
             "PATCH",
             f"/api/v1/writing/manuscripts/projects/{project_id}",
-            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
             headers={"expected-version": str(expected_version)},
         )
         return ManuscriptProjectResponse.model_validate(response)
@@ -606,7 +606,7 @@ class TLDWAPIClient:
         return await self._request(
             "POST",
             f"/api/v1/writing/manuscripts/projects/{project_id}/reorder",
-            json_data=request_data.model_dump(mode="json"),
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
 
     async def search_manuscript_project(
@@ -657,7 +657,7 @@ class TLDWAPIClient:
         response = await self._request(
             "PATCH",
             f"/api/v1/writing/manuscripts/parts/{part_id}",
-            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
             headers={"expected-version": str(expected_version)},
         )
         return ManuscriptPartResponse.model_validate(response)
@@ -712,7 +712,7 @@ class TLDWAPIClient:
         response = await self._request(
             "PATCH",
             f"/api/v1/writing/manuscripts/chapters/{chapter_id}",
-            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
             headers={"expected-version": str(expected_version)},
         )
         return ManuscriptChapterResponse.model_validate(response)
@@ -759,7 +759,7 @@ class TLDWAPIClient:
         response = await self._request(
             "PATCH",
             f"/api/v1/writing/manuscripts/scenes/{scene_id}",
-            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
             headers={"expected-version": str(expected_version)},
         )
         return ManuscriptSceneResponse.model_validate(response)
