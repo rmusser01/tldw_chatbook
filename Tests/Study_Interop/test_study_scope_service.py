@@ -165,6 +165,38 @@ class FakeServerStudyService:
         self.calls.append(("end_review_session", review_session_id))
         return {"id": review_session_id, "status": "completed"}
 
+    async def create_study_pack_job(self, *, title, source_items, workspace_id=None, deck_mode="new"):
+        self.calls.append(("create_study_pack_job", title, source_items, workspace_id, deck_mode))
+        return {"job": {"id": 41, "status": "queued"}}
+
+    async def get_study_pack_job_status(self, job_id):
+        self.calls.append(("get_study_pack_job_status", job_id))
+        return {"job": {"id": int(job_id), "status": "completed"}, "study_pack": {"id": 9, "title": "Pack"}}
+
+    async def get_study_pack(self, pack_id):
+        self.calls.append(("get_study_pack", pack_id))
+        return {"record_id": f"server:study-pack:{pack_id}", "id": int(pack_id), "title": "Pack"}
+
+    async def regenerate_study_pack(self, pack_id):
+        self.calls.append(("regenerate_study_pack", pack_id))
+        return {"job": {"id": 42, "status": "queued"}}
+
+    async def get_study_suggestion_status(self, *, anchor_type, anchor_id):
+        self.calls.append(("get_study_suggestion_status", anchor_type, anchor_id))
+        return {"anchor_type": anchor_type, "anchor_id": int(anchor_id), "status": "ready", "snapshot_id": 23}
+
+    async def get_study_suggestion_snapshot(self, snapshot_id):
+        self.calls.append(("get_study_suggestion_snapshot", snapshot_id))
+        return {"snapshot": {"id": int(snapshot_id), "payload": {}}, "live_evidence": {}}
+
+    async def refresh_study_suggestion_snapshot(self, snapshot_id, *, reason=None):
+        self.calls.append(("refresh_study_suggestion_snapshot", snapshot_id, reason))
+        return {"job": {"id": 45, "status": "queued"}}
+
+    async def trigger_study_suggestion_action(self, snapshot_id, **payload):
+        self.calls.append(("trigger_study_suggestion_action", snapshot_id, payload))
+        return {"snapshot_id": int(snapshot_id), "target_service": payload["target_service"], "target_type": payload["target_type"], "target_id": "7"}
+
 
 class PagedFakeServerStudyService:
     def __init__(self, pages, *, fail_on_offset=None):
@@ -196,6 +228,91 @@ async def test_scope_service_routes_deck_list_by_backend():
     assert local_decks[0]["record_id"] == "local:study_deck:deck-local-1"
     assert server_decks[0]["record_id"] == "server:study_deck:7"
     assert server_decks[0]["scheduler_type"] == "fsrs"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_study_pack_server_only_actions():
+    local = FakeLocalStudyService()
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=local, server_service=server)
+
+    created = await scope.create_study_pack_job(
+        mode="server",
+        title="Cell Biology Pack",
+        workspace_id="ws-1",
+        source_items=[{"source_type": "note", "source_id": "note-1"}],
+    )
+    status = await scope.get_study_pack_job_status(mode="server", job_id=41)
+    pack = await scope.get_study_pack(mode="server", pack_id=9)
+    regenerated = await scope.regenerate_study_pack(mode="server", pack_id=9)
+
+    assert created["source"] == "server"
+    assert created["job"]["id"] == 41
+    assert status["study_pack"]["title"] == "Pack"
+    assert pack["record_id"] == "server:study-pack:9"
+    assert regenerated["job"]["id"] == 42
+    assert server.calls[-4:] == [
+        ("create_study_pack_job", "Cell Biology Pack", [{"source_type": "note", "source_id": "note-1"}], "ws-1", "new"),
+        ("get_study_pack_job_status", 41),
+        ("get_study_pack", 9),
+        ("regenerate_study_pack", 9),
+    ]
+
+    with pytest.raises(ValueError, match="Study packs are server-only"):
+        await scope.create_study_pack_job(
+            mode="local",
+            title="Offline Pack",
+            source_items=[{"source_type": "note", "source_id": "note-1"}],
+        )
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_study_suggestion_server_only_actions():
+    local = FakeLocalStudyService()
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=local, server_service=server)
+
+    status = await scope.get_study_suggestion_status(mode="server", anchor_type="quiz_attempt", anchor_id=17)
+    snapshot = await scope.get_study_suggestion_snapshot(mode="server", snapshot_id=23)
+    refresh = await scope.refresh_study_suggestion_snapshot(mode="server", snapshot_id=23, reason="user-request")
+    action = await scope.trigger_study_suggestion_action(
+        mode="server",
+        snapshot_id=23,
+        target_service="flashcards",
+        target_type="deck",
+        action_kind="generate",
+        selected_topic_ids=["topic-1"],
+        has_explicit_selection=True,
+    )
+
+    assert status["source"] == "server"
+    assert status["status"] == "ready"
+    assert snapshot["snapshot"]["id"] == 23
+    assert refresh["job"]["id"] == 45
+    assert action["target_id"] == "7"
+    assert server.calls[-4:] == [
+        ("get_study_suggestion_status", "quiz_attempt", 17),
+        ("get_study_suggestion_snapshot", 23),
+        ("refresh_study_suggestion_snapshot", 23, "user-request"),
+        (
+            "trigger_study_suggestion_action",
+            23,
+            {
+                "target_service": "flashcards",
+                "target_type": "deck",
+                "action_kind": "generate",
+                "selected_topic_ids": ["topic-1"],
+                "selected_topic_edits": None,
+                "manual_topic_labels": None,
+                "has_explicit_selection": True,
+                "generator_version": "v1",
+                "force_regenerate": False,
+            },
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="Study suggestions are server-only"):
+        await scope.get_study_suggestion_status(mode="local", anchor_type="quiz_attempt", anchor_id=17)
 
 
 @pytest.mark.asyncio

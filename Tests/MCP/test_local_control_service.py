@@ -12,6 +12,7 @@ import pytest
 
 import tldw_chatbook.MCP.client as mcp_client_module
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+from tldw_chatbook.MCP.local_runtime_delegate import LocalMCPRuntimeDelegate
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
 from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
 
@@ -29,6 +30,8 @@ class FakeLocalStore:
         }
         self.discovery_snapshots = {}
         self.governance_rules = []
+        self.approval_requests = []
+        self.runtime_activity = []
 
     def list_profiles(self):
         return list(self.profiles.values())
@@ -64,6 +67,173 @@ class FakeLocalStore:
                 return rule
         self.governance_rules.append(rule)
         return rule
+
+    def list_approval_requests(self):
+        return list(self.approval_requests)
+
+    def save_approval_request(self, request):
+        for index, existing in enumerate(self.approval_requests):
+            if existing.request_id == request.request_id:
+                self.approval_requests[index] = request
+                return request
+        self.approval_requests.append(request)
+        return request
+
+    def resolve_approval_request(self, request_id: str, status: str):
+        for index, existing in enumerate(self.approval_requests):
+            if existing.request_id != request_id:
+                continue
+            updated = type(existing)(
+                request_id=existing.request_id,
+                action_name=existing.action_name,
+                resolved_action_id=existing.resolved_action_id,
+                registry_capability_id=existing.registry_capability_id,
+                payload=existing.payload,
+                payload_fingerprint=existing.payload_fingerprint,
+                status=status,
+                matched_rule_id=existing.matched_rule_id,
+                notes=existing.notes,
+                created_at=existing.created_at,
+                updated_at=existing.updated_at,
+                resolved_at=existing.resolved_at,
+            )
+            self.approval_requests[index] = updated
+            return updated
+        return None
+
+    def delete_approval_request(self, request_id: str):
+        original_count = len(self.approval_requests)
+        self.approval_requests = [
+            request for request in self.approval_requests if request.request_id != request_id
+        ]
+        return len(self.approval_requests) != original_count
+
+    def list_runtime_activity(self, limit: int = 20):
+        normalized_limit = max(1, int(limit or 20))
+        return list(reversed(self.runtime_activity[-normalized_limit:]))
+
+    def record_runtime_activity(self, entry, limit: int = 50):
+        saved_entry = dict(entry)
+        saved_entry.setdefault("activity_id", f"activity-{len(self.runtime_activity) + 1}")
+        self.runtime_activity.append(saved_entry)
+        if len(self.runtime_activity) > limit:
+            self.runtime_activity = self.runtime_activity[-limit:]
+        return self.runtime_activity[-1]
+
+
+class FakeLocalRuntimeDelegate:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def get_status(self):
+        payload = {
+            "server_id": "local:tldw_chatbook",
+            "server_label": "tldw_chatbook local MCP",
+            "mcp_sdk_available": False,
+            "tool_count": 2,
+            "resource_count": 1,
+            "prompt_count": 1,
+        }
+        self.calls.append(("status.get", payload))
+        return payload
+
+    def get_protocol_capabilities(self):
+        return {
+            "adapter": "direct_in_process",
+            "supports_batch": True,
+            "request_methods": [
+                "initialize",
+                "status/get",
+                "tools/list",
+                "resources/list",
+                "prompts/list",
+                "tools/call",
+                "resources/read",
+                "prompts/get",
+            ],
+        }
+
+    def get_protocol_diagnostics(self):
+        return {
+            "adapter": "direct_in_process",
+            "protocol_version": "2025-03-26",
+            "transport": "in_process",
+            "mcp_sdk_available": False,
+            "supports_batch": True,
+            "methods": [
+                {"name": "tools/list", "supported": True},
+                {"name": "tools/call", "supported": True},
+            ],
+            "manifest": {"tools": 2, "resources": 1, "prompts": 1},
+            "implementation": {
+                "tools": {
+                    "implemented": ["search_notes"],
+                    "unavailable": ["chat_with_llm"],
+                    "missing": [],
+                },
+                "resources": {
+                    "supported_uri_prefixes": ["note://"],
+                },
+                "prompts": {
+                    "implemented": ["summarize_conversation"],
+                    "missing": [],
+                },
+            },
+        }
+
+    def get_runtime_health(self):
+        return {
+            "state": "ready",
+            "adapter": "direct_in_process",
+            "transport": "in_process",
+            "mcp_sdk_available": False,
+            "initialized_at": "2026-04-23T00:00:00+00:00",
+            "uptime_seconds": 12.5,
+            "manifest": {
+                "loaded": True,
+                "tools": 2,
+                "resources": 1,
+                "prompts": 1,
+            },
+            "component_cache": {
+                "tools_loaded": False,
+                "resources_loaded": False,
+                "prompts_loaded": False,
+            },
+            "issues": [],
+        }
+
+    async def execute_tool(self, tool_name: str, arguments: dict[str, object] | None = None):
+        payload = {"tool_name": tool_name, "arguments": dict(arguments or {})}
+        self.calls.append(("tool.execute", payload))
+        return {"ok": True, **payload}
+
+    async def read_resource(self, resource_uri: str):
+        payload = {"resource_uri": resource_uri}
+        self.calls.append(("resource.read", payload))
+        return {"uri": resource_uri, "mimeType": "text/plain", "content": "resource-body"}
+
+    async def get_prompt(self, prompt_name: str, arguments: dict[str, object] | None = None):
+        payload = {"prompt_name": prompt_name, "arguments": dict(arguments or {})}
+        self.calls.append(("prompt.get", payload))
+        return [{"role": "assistant", "content": f"prompt:{prompt_name}"}]
+
+    async def request(self, method: str, params: dict[str, object] | None = None):
+        payload = {"method": method, "params": dict(params or {})}
+        self.calls.append(("runtime.request", payload))
+        return {"method": method, "echo": dict(params or {})}
+
+    async def batch(self, requests: list[dict[str, object]]):
+        payload = {"requests": [dict(item) for item in requests]}
+        self.calls.append(("runtime.batch", payload))
+        return [
+            {
+                "index": index,
+                "method": request.get("method"),
+                "ok": True,
+            }
+            for index, request in enumerate(requests)
+        ]
 
 
 class FakeMCPClient:
@@ -556,6 +726,652 @@ def test_local_control_service_rejects_invalid_governance_rule_writes(tmp_path):
         )
 
     assert store.list_governance_rules() == []
+
+
+def test_local_control_service_deletes_governance_rules(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+    service.save_governance_rule(
+        {
+            "rule_id": "rule-a",
+            "capability_id": "mcp.governance.list.local",
+            "decision": "allow",
+        }
+    )
+
+    deleted = service.delete_governance_rule("rule-a")
+
+    assert deleted is True
+    assert store.list_governance_rules() == []
+
+
+def test_local_control_service_previews_governance_decisions(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+    service.save_governance_rule(
+        {
+            "rule_id": "rule-a",
+            "capability_id": "mcp.inventory.list.local",
+            "decision": "allow",
+            "notes": "Inventory is allowed locally.",
+        }
+    )
+
+    matched = service.preview_governance_decision("mcp.inventory.list.local")
+    unmatched = service.preview_governance_decision("mcp.advanced.observe.local")
+
+    assert matched == {
+        "source": "local",
+        "capability_id": "mcp.inventory.list.local",
+        "decision": "allow",
+        "matched_rule_id": "rule-a",
+        "notes": "Inventory is allowed locally.",
+    }
+    assert unmatched == {
+        "source": "local",
+        "capability_id": "mcp.advanced.observe.local",
+        "decision": "inherit",
+        "matched_rule_id": None,
+        "notes": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_local_control_service_executes_local_inventory_runtime_actions():
+    runtime_delegate = FakeLocalRuntimeDelegate()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=runtime_delegate,
+    )
+
+    tool_result = await service.execute_tool("search_notes", {"query": "roadmap"})
+    resource_result = await service.read_resource("note://123")
+    prompt_result = await service.get_prompt("summarize_conversation", {"conversation_id": 4})
+
+    assert tool_result == {
+        "source": "local",
+        "tool_name": "search_notes",
+        "result": {
+            "ok": True,
+            "tool_name": "search_notes",
+            "arguments": {"query": "roadmap"},
+        },
+        "governance": {
+            "resolved_action_id": "notes.list.local",
+            "registry_capability_id": "notes_workspaces",
+            "decision": "inherit",
+            "matched_rule_id": None,
+            "notes": None,
+        },
+    }
+    assert resource_result == {
+        "source": "local",
+        "resource_uri": "note://123",
+        "result": {
+            "uri": "note://123",
+            "mimeType": "text/plain",
+            "content": "resource-body",
+        },
+        "governance": {
+            "resolved_action_id": "notes.detail.local",
+            "registry_capability_id": "notes_workspaces",
+            "decision": "inherit",
+            "matched_rule_id": None,
+            "notes": None,
+        },
+    }
+    assert prompt_result == {
+        "source": "local",
+        "prompt_name": "summarize_conversation",
+        "arguments": {"conversation_id": 4},
+        "messages": [{"role": "assistant", "content": "prompt:summarize_conversation"}],
+        "governance": {
+            "resolved_action_id": "prompts.preview.local",
+            "registry_capability_id": "prompts_chatbooks",
+            "decision": "inherit",
+            "matched_rule_id": None,
+            "notes": None,
+        },
+    }
+    assert runtime_delegate.calls == [
+        ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "roadmap"}}),
+        ("resource.read", {"resource_uri": "note://123"}),
+        (
+            "prompt.get",
+            {
+                "prompt_name": "summarize_conversation",
+                "arguments": {"conversation_id": 4},
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_control_service_exposes_runtime_status_and_protocol_helpers():
+    runtime_delegate = FakeLocalRuntimeDelegate()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=runtime_delegate,
+    )
+
+    advanced = service.get_advanced()
+    status = service.get_runtime_status()
+    health = service.get_runtime_health()
+    diagnostics = service.get_runtime_protocol_diagnostics()
+    request_result = await service.run_runtime_request("tools/list", {"scope": "local"})
+    batch_result = await service.run_runtime_batch(
+        [
+            {"method": "tools/list", "params": {}},
+            {"method": "prompts/list", "params": {}},
+        ]
+    )
+
+    assert advanced == {
+        "source": "local",
+        "section": "advanced",
+        "runtime_status": {
+            "server_id": "local:tldw_chatbook",
+            "server_label": "tldw_chatbook local MCP",
+            "mcp_sdk_available": False,
+            "tool_count": 2,
+            "resource_count": 1,
+            "prompt_count": 1,
+        },
+        "runtime_health": {
+            "state": "ready",
+            "adapter": "direct_in_process",
+            "transport": "in_process",
+            "mcp_sdk_available": False,
+            "initialized_at": "2026-04-23T00:00:00+00:00",
+            "uptime_seconds": 12.5,
+            "manifest": {
+                "loaded": True,
+                "tools": 2,
+                "resources": 1,
+                "prompts": 1,
+            },
+            "component_cache": {
+                "tools_loaded": False,
+                "resources_loaded": False,
+                "prompts_loaded": False,
+            },
+            "issues": [],
+        },
+        "protocol": {
+            "adapter": "direct_in_process",
+            "supports_batch": True,
+            "request_methods": [
+                "initialize",
+                "status/get",
+                "tools/list",
+                "resources/list",
+                "prompts/list",
+                "tools/call",
+                "resources/read",
+                "prompts/get",
+            ],
+        },
+        "protocol_diagnostics": {
+            "adapter": "direct_in_process",
+            "protocol_version": "2025-03-26",
+            "transport": "in_process",
+            "mcp_sdk_available": False,
+            "supports_batch": True,
+            "methods": [
+                {"name": "tools/list", "supported": True},
+                {"name": "tools/call", "supported": True},
+            ],
+            "manifest": {"tools": 2, "resources": 1, "prompts": 1},
+            "implementation": {
+                "tools": {
+                    "implemented": ["search_notes"],
+                    "unavailable": ["chat_with_llm"],
+                    "missing": [],
+                },
+                "resources": {
+                    "supported_uri_prefixes": ["note://"],
+                },
+                "prompts": {
+                    "implemented": ["summarize_conversation"],
+                    "missing": [],
+                },
+            },
+        },
+        "governance": {
+            "rules": 0,
+            "deny_rules": 0,
+            "allow_rules": 0,
+        },
+    }
+    assert status == {
+        "source": "local",
+        "status": {
+            "server_id": "local:tldw_chatbook",
+            "server_label": "tldw_chatbook local MCP",
+            "mcp_sdk_available": False,
+            "tool_count": 2,
+            "resource_count": 1,
+            "prompt_count": 1,
+        },
+    }
+    assert health == {
+        "source": "local",
+        "health": advanced["runtime_health"],
+    }
+    assert diagnostics == {
+        "source": "local",
+        "diagnostics": advanced["protocol_diagnostics"],
+    }
+    assert request_result == {
+        "source": "local",
+        "method": "tools/list",
+        "params": {"scope": "local"},
+        "result": {"method": "tools/list", "echo": {"scope": "local"}},
+        "governance": {
+            "resolved_action_id": "mcp.inventory.list.local",
+            "registry_capability_id": "local_mcp_runtime",
+            "decision": "inherit",
+            "matched_rule_id": None,
+            "notes": None,
+        },
+    }
+    assert batch_result == {
+        "source": "local",
+        "results": [
+            {
+                "index": 0,
+                "method": "tools/list",
+                "ok": True,
+                "result": {"method": "tools/list", "echo": {}},
+                "governance": {
+                    "resolved_action_id": "mcp.inventory.list.local",
+                    "registry_capability_id": "local_mcp_runtime",
+                    "decision": "inherit",
+                    "matched_rule_id": None,
+                    "notes": None,
+                },
+            },
+            {
+                "index": 1,
+                "method": "prompts/list",
+                "ok": True,
+                "result": {"method": "prompts/list", "echo": {}},
+                "governance": {
+                    "resolved_action_id": "mcp.inventory.list.local",
+                    "registry_capability_id": "local_mcp_runtime",
+                    "decision": "inherit",
+                    "matched_rule_id": None,
+                    "notes": None,
+                },
+            },
+        ],
+    }
+    assert runtime_delegate.calls == [
+        (
+            "status.get",
+            {
+                "server_id": "local:tldw_chatbook",
+                "server_label": "tldw_chatbook local MCP",
+                "mcp_sdk_available": False,
+                "tool_count": 2,
+                "resource_count": 1,
+                "prompt_count": 1,
+            },
+        ),
+        (
+            "status.get",
+            {
+                "server_id": "local:tldw_chatbook",
+                "server_label": "tldw_chatbook local MCP",
+                "mcp_sdk_available": False,
+                "tool_count": 2,
+                "resource_count": 1,
+                "prompt_count": 1,
+            },
+        ),
+        ("runtime.request", {"method": "tools/list", "params": {"scope": "local"}}),
+        ("runtime.request", {"method": "tools/list", "params": {}}),
+        ("runtime.request", {"method": "prompts/list", "params": {}}),
+    ]
+
+
+def test_local_runtime_delegate_builds_protocol_diagnostics_from_manifest():
+    delegate = LocalMCPRuntimeDelegate(
+        manifest_provider=lambda: {
+            "server_id": "local:test",
+            "server_label": "Test MCP",
+            "tools": [
+                {"name": "search_notes"},
+                {"name": "chat_with_llm"},
+                {"name": "missing_tool"},
+            ],
+            "resources": [
+                {"uri": "note://{id}"},
+                {"uri": "conversation://{id}"},
+            ],
+            "prompts": [
+                {"name": "summarize_conversation"},
+                {"name": "missing_prompt"},
+            ],
+        }
+    )
+
+    diagnostics = delegate.get_protocol_diagnostics()
+
+    assert diagnostics["protocol_version"] == "2025-03-26"
+    assert diagnostics["transport"] == "in_process"
+    assert diagnostics["manifest"] == {"tools": 3, "resources": 2, "prompts": 2}
+    assert diagnostics["methods"][0] == {"name": "initialize", "supported": True}
+    assert diagnostics["implementation"]["tools"] == {
+        "implemented": ["search_notes"],
+        "unavailable": ["chat_with_llm"],
+        "missing": ["missing_tool"],
+    }
+    assert diagnostics["implementation"]["resources"]["supported_uri_prefixes"] == [
+        "conversation://",
+        "note://",
+    ]
+    assert diagnostics["implementation"]["prompts"] == {
+        "implemented": ["summarize_conversation"],
+        "missing": ["missing_prompt"],
+    }
+
+
+def test_local_runtime_delegate_reports_runtime_health_from_lifecycle():
+    delegate = LocalMCPRuntimeDelegate(
+        manifest_provider=lambda: {
+            "tools": [{"name": "search_notes"}],
+            "resources": [{"uri": "note://{id}"}],
+            "prompts": [{"name": "summarize_conversation"}],
+        }
+    )
+
+    health = delegate.get_runtime_health()
+
+    assert health["state"] == "ready"
+    assert health["adapter"] == "direct_in_process"
+    assert health["transport"] == "in_process"
+    assert health["manifest"] == {
+        "loaded": True,
+        "tools": 1,
+        "resources": 1,
+        "prompts": 1,
+    }
+    assert health["component_cache"] == {
+        "tools_loaded": False,
+        "resources_loaded": False,
+        "prompts_loaded": False,
+    }
+    assert isinstance(health["initialized_at"], str)
+    assert health["uptime_seconds"] >= 0
+    assert health["issues"] == []
+
+
+@pytest.mark.asyncio
+async def test_local_control_service_previews_and_enforces_runtime_governance():
+    runtime_delegate = FakeLocalRuntimeDelegate()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=runtime_delegate,
+    )
+    service.save_governance_rule(
+        {
+            "rule_id": "rule-deny-notes-list",
+            "capability_id": "notes.list.local",
+            "decision": "deny",
+            "notes": "Local note listing is blocked.",
+        }
+    )
+
+    preview = service.preview_runtime_access(
+        "tool.execute",
+        {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
+    )
+
+    assert preview == {
+        "source": "local",
+        "action_name": "tool.execute",
+        "resolved_action_id": "notes.list.local",
+        "registry_capability_id": "notes_workspaces",
+        "decision": "deny",
+        "matched_rule_id": "rule-deny-notes-list",
+        "notes": "Local note listing is blocked.",
+    }
+
+    with pytest.raises(PermissionError, match="notes.list.local"):
+        await service.execute_tool("search_notes", {"query": "roadmap"})
+
+    with pytest.raises(PermissionError, match="notes.list.local"):
+        await service.run_runtime_request(
+            "tools/call",
+            {"name": "search_notes", "arguments": {"query": "roadmap"}},
+        )
+
+    batch_result = await service.run_runtime_batch(
+        [
+            {"method": "tools/call", "params": {"name": "search_notes", "arguments": {"query": "roadmap"}}},
+            {"method": "tools/list", "params": {}},
+        ]
+    )
+
+    assert batch_result == {
+        "source": "local",
+        "results": [
+            {
+                "index": 0,
+                "method": "tools/call",
+                "ok": False,
+                "blocked": True,
+                "error": "Denied by local governance: notes.list.local",
+                "governance": {
+                    "resolved_action_id": "notes.list.local",
+                    "registry_capability_id": "notes_workspaces",
+                    "decision": "deny",
+                    "matched_rule_id": "rule-deny-notes-list",
+                    "notes": "Local note listing is blocked.",
+                },
+            },
+            {
+                "index": 1,
+                "method": "tools/list",
+                "ok": True,
+                "result": {"method": "tools/list", "echo": {}},
+                "governance": {
+                    "resolved_action_id": "mcp.inventory.list.local",
+                    "registry_capability_id": "local_mcp_runtime",
+                    "decision": "inherit",
+                    "matched_rule_id": None,
+                    "notes": None,
+                },
+            },
+        ],
+    }
+    assert runtime_delegate.calls == [
+        ("runtime.request", {"method": "tools/list", "params": {}}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_control_service_creates_and_resolves_local_runtime_approvals():
+    runtime_delegate = FakeLocalRuntimeDelegate()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=runtime_delegate,
+    )
+    service.save_governance_rule(
+        {
+            "rule_id": "rule-ask-notes-list",
+            "capability_id": "notes.list.local",
+            "decision": "ask",
+            "notes": "Approval required for local note listing.",
+        }
+    )
+
+    initial_preview = service.preview_runtime_access(
+        "tool.execute",
+        {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
+    )
+
+    with pytest.raises(PermissionError, match="Approval required"):
+        await service.execute_tool("search_notes", {"query": "roadmap"})
+
+    approval_requests = service.list_approval_requests()
+    pending_preview = service.preview_runtime_access(
+        "tool.execute",
+        {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
+    )
+
+    approved_request = service.approve_approval_request(approval_requests[0]["request_id"])
+    tool_result = await service.execute_tool("search_notes", {"query": "roadmap"})
+
+    assert initial_preview == {
+        "source": "local",
+        "action_name": "tool.execute",
+        "resolved_action_id": "notes.list.local",
+        "registry_capability_id": "notes_workspaces",
+        "decision": "ask",
+        "matched_rule_id": "rule-ask-notes-list",
+        "notes": "Approval required for local note listing.",
+        "approval_request_id": None,
+        "approval_status": None,
+    }
+    assert approval_requests[0]["status"] == "pending"
+    assert pending_preview["approval_status"] == "pending"
+    assert pending_preview["approval_request_id"] == approval_requests[0]["request_id"]
+    assert approved_request["status"] == "approved"
+    assert service.list_approval_requests(status="approved")[0]["request_id"] == approval_requests[0]["request_id"]
+    assert service.list_approval_requests(status="pending") == []
+    assert service.list_approval_requests(resolved_action_id="notes.list.local")[0]["status"] == "approved"
+    assert tool_result["governance"] == {
+        "resolved_action_id": "notes.list.local",
+        "registry_capability_id": "notes_workspaces",
+        "decision": "ask",
+        "matched_rule_id": "rule-ask-notes-list",
+        "notes": "Approval required for local note listing.",
+        "approval_request_id": approval_requests[0]["request_id"],
+        "approval_status": "approved",
+    }
+    assert runtime_delegate.calls == [
+        ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "roadmap"}}),
+    ]
+    assert service.delete_approval_request(approval_requests[0]["request_id"]) is True
+    assert service.list_approval_requests() == []
+
+
+@pytest.mark.asyncio
+async def test_local_control_service_exposes_recent_runtime_activity():
+    runtime_delegate = FakeLocalRuntimeDelegate()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=runtime_delegate,
+    )
+    service.save_governance_rule(
+        {
+            "rule_id": "rule-deny-notes-list",
+            "capability_id": "notes.list.local",
+            "decision": "deny",
+            "notes": "Local note listing is blocked.",
+        }
+    )
+
+    await service.run_runtime_request("tools/list", {})
+
+    with pytest.raises(PermissionError, match="Denied by local governance"):
+        await service.execute_tool("search_notes", {"query": "roadmap"})
+
+    activity = service.get_runtime_activity(limit=5)
+    advanced = service.get_advanced()
+
+    assert activity == {
+        "source": "local",
+        "limit": 5,
+        "entries": [
+            {
+                "activity_id": "activity-2",
+                "action_name": "tool.execute",
+                "target": "search_notes",
+                "ok": False,
+                "blocked": True,
+                "error": "Denied by local governance: notes.list.local",
+                "resolved_action_id": "notes.list.local",
+                "decision": "deny",
+                "matched_rule_id": "rule-deny-notes-list",
+                "approval_request_id": None,
+                "approval_status": None,
+                "occurred_at": activity["entries"][0]["occurred_at"],
+            },
+            {
+                "activity_id": "activity-1",
+                "action_name": "runtime.request",
+                "target": "tools/list",
+                "ok": True,
+                "blocked": False,
+                "error": None,
+                "resolved_action_id": "mcp.inventory.list.local",
+                "decision": "inherit",
+                "matched_rule_id": None,
+                "approval_request_id": None,
+                "approval_status": None,
+                "occurred_at": activity["entries"][1]["occurred_at"],
+            },
+        ],
+    }
+    assert advanced["recent_activity_count"] == 2
+    assert len(advanced["recent_activity"]) == 2
+    assert advanced["recent_activity"][0]["action_name"] == "tool.execute"
+    assert advanced["recent_activity"][1]["action_name"] == "runtime.request"
+
+
+@pytest.mark.asyncio
+async def test_local_control_service_persists_runtime_activity_across_instances(tmp_path):
+    store_path = tmp_path / "local_mcp_store.json"
+    first_service = LocalMCPControlService(
+        store=LocalMCPStore(store_path),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=FakeLocalRuntimeDelegate(),
+    )
+
+    await first_service.run_runtime_request("tools/list", {})
+
+    second_service = LocalMCPControlService(
+        store=LocalMCPStore(store_path),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=FakeLocalRuntimeDelegate(),
+    )
+
+    activity = second_service.get_runtime_activity(limit=5)
+    advanced = second_service.get_advanced()
+
+    assert activity["entries"] == [
+        {
+            "activity_id": activity["entries"][0]["activity_id"],
+            "action_name": "runtime.request",
+            "target": "tools/list",
+            "ok": True,
+            "blocked": False,
+            "error": None,
+            "resolved_action_id": "mcp.inventory.list.local",
+            "decision": "inherit",
+            "matched_rule_id": None,
+            "approval_request_id": None,
+            "approval_status": None,
+            "occurred_at": activity["entries"][0]["occurred_at"],
+        }
+    ]
+    assert advanced["recent_activity_count"] == 1
+    assert advanced["recent_activity"][0]["action_name"] == "runtime.request"
 
 
 @pytest.mark.asyncio

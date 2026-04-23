@@ -11,6 +11,10 @@ from ..tldw_api import (
     FlashcardDeckCreateRequest,
     FlashcardReviewRequest,
     FlashcardUpdateRequest,
+    StudyPackCreateJobRequest,
+    StudyPackSourceSelection,
+    SuggestionActionRequest,
+    SuggestionRefreshRequest,
     TLDWAPIClient,
 )
 
@@ -172,4 +176,92 @@ class ServerStudyService:
 
     async def end_review_session(self, review_session_id: int) -> dict[str, Any]:
         response = await self._require_client().end_flashcard_review_session(review_session_id)
+        return self._model_to_dict(response)
+
+    async def create_study_pack_job(
+        self,
+        *,
+        title: str,
+        source_items: list[Mapping[str, Any]],
+        workspace_id: Optional[str] = None,
+        deck_mode: str = "new",
+    ) -> dict[str, Any]:
+        response = await self._require_client().create_study_pack_job(
+            StudyPackCreateJobRequest(
+                title=title,
+                workspace_id=workspace_id,
+                deck_mode=deck_mode,
+                source_items=[
+                    StudyPackSourceSelection.model_validate(dict(item))
+                    for item in source_items
+                ],
+            )
+        )
+        return self._model_to_dict(response)
+
+    async def get_study_pack_job_status(self, job_id: int) -> dict[str, Any]:
+        response = await self._require_client().get_study_pack_job_status(int(job_id))
+        return self._model_to_dict(response)
+
+    async def get_study_pack(self, pack_id: int) -> dict[str, Any]:
+        payload = self._model_to_dict(await self._require_client().get_study_pack(int(pack_id)))
+        payload["source"] = "server"
+        payload["record_id"] = f"server:study-pack:{payload.get('id')}"
+        return payload
+
+    async def regenerate_study_pack(self, pack_id: int) -> dict[str, Any]:
+        response = await self._require_client().regenerate_study_pack(int(pack_id))
+        return self._model_to_dict(response)
+
+    async def get_study_suggestion_status(self, *, anchor_type: str, anchor_id: int) -> dict[str, Any]:
+        response = await self._require_client().get_study_suggestion_status(anchor_type, int(anchor_id))
+        payload = self._model_to_dict(response)
+        payload["source"] = "server"
+        return payload
+
+    async def get_study_suggestion_snapshot(self, snapshot_id: int) -> dict[str, Any]:
+        payload = self._model_to_dict(await self._require_client().get_study_suggestion_snapshot(int(snapshot_id)))
+        payload["source"] = "server"
+        return payload
+
+    async def refresh_study_suggestion_snapshot(
+        self,
+        snapshot_id: int,
+        *,
+        reason: Optional[str] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().refresh_study_suggestion_snapshot(
+            int(snapshot_id),
+            SuggestionRefreshRequest(reason=reason),
+        )
+        return self._model_to_dict(response)
+
+    async def trigger_study_suggestion_action(
+        self,
+        snapshot_id: int,
+        *,
+        target_service: str,
+        target_type: str,
+        action_kind: str,
+        selected_topic_ids: Optional[list[str]] = None,
+        selected_topic_edits: Optional[list[dict[str, str]]] = None,
+        manual_topic_labels: Optional[list[str]] = None,
+        has_explicit_selection: bool = False,
+        generator_version: str = "v1",
+        force_regenerate: bool = False,
+    ) -> dict[str, Any]:
+        response = await self._require_client().trigger_study_suggestion_action(
+            int(snapshot_id),
+            SuggestionActionRequest(
+                target_service=target_service,
+                target_type=target_type,
+                action_kind=action_kind,
+                selected_topic_ids=selected_topic_ids or [],
+                selected_topic_edits=selected_topic_edits or [],
+                manual_topic_labels=manual_topic_labels or [],
+                has_explicit_selection=has_explicit_selection,
+                generator_version=generator_version,
+                force_regenerate=force_regenerate,
+            ),
+        )
         return self._model_to_dict(response)

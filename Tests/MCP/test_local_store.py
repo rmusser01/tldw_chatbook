@@ -5,6 +5,7 @@ import json
 import pytest
 
 from tldw_chatbook.MCP.local_store import (
+    LocalApprovalRequest,
     LocalExternalMCPProfile,
     LocalGovernanceRule,
     LocalMCPStoreLoadError,
@@ -260,6 +261,72 @@ def test_local_store_persists_discovery_snapshots_and_governance_updates(tmp_pat
     raw_payload = json.loads((tmp_path / "local_mcp_store.json").read_text(encoding="utf-8"))
     assert raw_payload["discovery_snapshots"]["profile-a"]["prompts"][0]["name"] == "remote_prompt"
     assert raw_payload["governance_rules"][0]["capability_id"] == "mcp.inventory.list.local"
+
+
+def test_local_store_deletes_governance_rules(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    store.save_governance_rule(
+        LocalGovernanceRule(
+            rule_id="rule-a",
+            capability_id="mcp.inventory.list.local",
+            decision="allow",
+        )
+    )
+
+    deleted = store.delete_governance_rule("rule-a")
+
+    assert deleted is True
+    assert store.list_governance_rules() == []
+
+
+def test_local_store_persists_and_resolves_approval_requests(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    request = LocalApprovalRequest(
+        request_id="approval-a",
+        action_name="tool.execute",
+        resolved_action_id="notes.list.local",
+        registry_capability_id="notes_workspaces",
+        payload={"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
+        payload_fingerprint="fp-notes-list",
+        status="pending",
+        matched_rule_id="rule-ask-notes-list",
+        notes="Approval required for note listing.",
+    )
+
+    saved = store.save_approval_request(request)
+    resolved = store.resolve_approval_request("approval-a", "approved")
+    restored = LocalMCPStore(tmp_path / "local_mcp_store.json")
+
+    requests = restored.list_approval_requests()
+
+    assert saved.request_id == "approval-a"
+    assert saved.status == "pending"
+    assert resolved is not None
+    assert resolved.status == "approved"
+    assert resolved.resolved_at is not None
+    assert requests[0].payload_fingerprint == "fp-notes-list"
+    assert requests[0].status == "approved"
+
+    raw_payload = json.loads((tmp_path / "local_mcp_store.json").read_text(encoding="utf-8"))
+    assert raw_payload["approval_requests"][0]["request_id"] == "approval-a"
+    assert raw_payload["approval_requests"][0]["status"] == "approved"
+
+
+def test_local_store_deletes_approval_requests(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    store.save_approval_request(
+        LocalApprovalRequest(
+            request_id="approval-a",
+            action_name="tool.execute",
+            resolved_action_id="notes.list.local",
+            payload_fingerprint="fp-notes-list",
+            status="pending",
+        )
+    )
+
+    assert store.delete_approval_request("approval-a") is True
+    assert store.list_approval_requests() == []
+    assert store.delete_approval_request("approval-a") is False
 
 
 def test_local_store_clears_stale_discovery_snapshot_only_when_launch_config_changes(tmp_path):

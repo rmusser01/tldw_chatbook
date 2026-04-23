@@ -57,6 +57,29 @@ class ResearchController:
         service = self._require_scope_service()
         return await self._maybe_await(service.get_bundle(run_id, mode=source))
 
+    async def get_artifact(self, source: str, run_id: str, artifact_name: str) -> Any:
+        service = self._require_scope_service()
+        return await self._maybe_await(service.get_artifact(run_id, artifact_name, mode=source))
+
+    async def patch_and_approve_checkpoint(
+        self,
+        source: str,
+        run_id: str,
+        checkpoint_id: str,
+        patch_payload: Mapping[str, Any] | None = None,
+    ) -> Any:
+        service = self._require_scope_service()
+        updated = await self._maybe_await(
+            service.patch_and_approve_checkpoint(
+                run_id,
+                checkpoint_id,
+                mode=source,
+                patch_payload=dict(patch_payload or {}) or None,
+            )
+        )
+        self.selected_run = updated
+        return updated
+
     async def stream_run_events(self, source: str, run_id: str, *, after_id: int = 0):
         service = self._require_scope_service()
         async for event in service.stream_run_events(run_id, mode=source, after_id=after_id):

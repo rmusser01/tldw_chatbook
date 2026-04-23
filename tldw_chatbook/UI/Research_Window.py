@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, Label, ListItem, ListView, Select, Static
+from textual.widgets import Button, Input, Label, ListItem, ListView, Select, Static, TextArea
 
 from tldw_chatbook.UI.Research_Modules import ResearchController
 
@@ -21,6 +22,9 @@ class ResearchWindow(Vertical):
         self.current_source = "local"
         self.runs: list[Any] = []
         self.selected_run: Any | None = None
+        self.current_bundle: dict[str, Any] | None = None
+        self.current_artifact: Any | None = None
+        self.event_log_entries: list[str] = []
         self.status_message = ""
         self.controller = ResearchController(
             getattr(app_instance, "research_scope_service", None)
@@ -49,6 +53,18 @@ class ResearchWindow(Vertical):
                     yield Button("Pause", id="research-pause-run")
                     yield Button("Watch Events", id="research-watch-events")
                     yield Button("Cancel", id="research-cancel-run", variant="error")
+                with Horizontal(id="research-observe-actions"):
+                    yield Input(placeholder="Artifact name", id="research-artifact-name")
+                    yield Button("Load Artifact", id="research-load-artifact")
+                    yield Button("Load Bundle", id="research-load-bundle")
+                yield Input(placeholder="Checkpoint id (defaults to latest)", id="research-checkpoint-id")
+                yield TextArea("{}", id="research-checkpoint-patch")
+                with Horizontal(id="research-checkpoint-actions"):
+                    yield Button("Approve Checkpoint", id="research-approve-checkpoint")
+                    yield Button("Clear Events", id="research-clear-events")
+                yield Static("No bundle loaded.", id="research-bundle-detail")
+                yield Static("No artifact loaded.", id="research-artifact-detail")
+                yield Static("No research events captured yet.", id="research-event-log")
 
     def save_state(self) -> dict[str, Any]:
         return {"source": self.current_source}
@@ -61,6 +77,7 @@ class ResearchWindow(Vertical):
         self.current_source = self._normalize_source(source)
         self.runs = []
         self.selected_run = None
+        self._reset_run_payload_state()
         self._set_status("")
         return await self.load_runs(self.current_source)
 
@@ -84,25 +101,80 @@ class ResearchWindow(Vertical):
         return created
 
     def select_run(self, run: Any) -> None:
-        self.selected_run = run
-        self._update_detail(run)
+        self._set_selected_run(run, reset_payload_state=True)
 
     async def pause_selected_run(self) -> Any:
         run_id = self._selected_run_id()
         updated = await self.controller.pause_run(self.current_source, run_id)
-        self.select_run(updated)
+        self._set_selected_run(updated, reset_payload_state=False)
         return updated
 
     async def resume_selected_run(self) -> Any:
         run_id = self._selected_run_id()
         updated = await self.controller.resume_run(self.current_source, run_id)
-        self.select_run(updated)
+        self._set_selected_run(updated, reset_payload_state=False)
         return updated
 
     async def cancel_selected_run(self) -> Any:
         run_id = self._selected_run_id()
         updated = await self.controller.cancel_run(self.current_source, run_id)
-        self.select_run(updated)
+        self._set_selected_run(updated, reset_payload_state=False)
+        return updated
+
+    async def load_selected_run_bundle(self) -> dict[str, Any]:
+        run_id = self._selected_run_id()
+        bundle = await self.controller.get_bundle(self.current_source, run_id)
+        self.current_bundle = dict(bundle or {})
+        self._render_bundle_detail()
+        if self.current_bundle and self.is_mounted:
+            first_artifact_name = next(iter(self.current_bundle.keys()), "")
+            if first_artifact_name:
+                try:
+                    self.query_one("#research-artifact-name", Input).value = str(first_artifact_name)
+                except Exception:
+                    pass
+        self._set_status(f"Loaded research bundle for {run_id}.")
+        return self.current_bundle
+
+    async def load_selected_run_artifact(self, artifact_name: str | None = None) -> Any:
+        run_id = self._selected_run_id()
+        resolved_artifact_name = self._resolve_artifact_name(artifact_name)
+        if not resolved_artifact_name:
+            self._set_status("Artifact name is required.")
+            return None
+        artifact = await self.controller.get_artifact(self.current_source, run_id, resolved_artifact_name)
+        self.current_artifact = artifact
+        self._render_artifact_detail()
+        self._set_status(f"Loaded research artifact {resolved_artifact_name}.")
+        return artifact
+
+    async def approve_selected_checkpoint(
+        self,
+        *,
+        checkpoint_id: str | None = None,
+        patch_payload: dict[str, Any] | None = None,
+    ) -> Any:
+        try:
+            resolved_checkpoint_id = self._resolve_checkpoint_id(checkpoint_id)
+            if not resolved_checkpoint_id and self.current_source != "local":
+                self._set_status("Checkpoint id is required.")
+                return None
+            if not resolved_checkpoint_id:
+                resolved_checkpoint_id = "local-checkpoint-unavailable"
+            resolved_patch_payload = (
+                patch_payload if patch_payload is not None else self._parse_checkpoint_patch_payload()
+            )
+            updated = await self.controller.patch_and_approve_checkpoint(
+                self.current_source,
+                self._selected_run_id(),
+                resolved_checkpoint_id,
+                resolved_patch_payload,
+            )
+        except Exception as exc:
+            self._set_status(str(exc))
+            return None
+        self._set_selected_run(updated, reset_payload_state=False)
+        self._set_status(f"Approved research checkpoint {resolved_checkpoint_id}.")
         return updated
 
     async def watch_selected_run_events(self, *, after_id: int = 0) -> list[dict[str, Any]]:
@@ -144,7 +216,9 @@ class ResearchWindow(Vertical):
             f"{self._run_title(run)}\n"
             f"Status: {self._record_get(run, 'status', 'unknown')}\n"
             f"Phase: {self._record_get(run, 'phase', 'unknown')}\n"
-            f"Control: {self._record_get(run, 'control_state', 'unknown')}"
+            f"Control: {self._record_get(run, 'control_state', 'unknown')}\n"
+            f"Latest checkpoint: {self._record_get(run, 'latest_checkpoint_id', 'none')}\n"
+            f"Progress: {self._record_get(run, 'progress_message', '') or 'n/a'}"
         )
         if not self.is_mounted:
             return
@@ -158,15 +232,10 @@ class ResearchWindow(Vertical):
         if event.get("event") == "snapshot" and isinstance(data, dict) and isinstance(data.get("run"), dict):
             run_payload = dict(data["run"])
             run_payload.setdefault("query", self._record_get(self.selected_run, "query", ""))
-            self.select_run(run_payload)
+            self._set_selected_run(run_payload, reset_payload_state=False)
         message = self._stream_event_message(event)
         self._set_status(message)
-        if self.is_mounted:
-            try:
-                current_detail = str(self.query_one("#research-run-detail", Static).render())
-                self.query_one("#research-run-detail", Static).update(f"{current_detail}\n{message}")
-            except Exception:
-                pass
+        self._append_event_log_entry(message)
 
     def _stream_event_message(self, event: dict[str, Any]) -> str:
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -193,6 +262,105 @@ class ResearchWindow(Vertical):
         if self.selected_run is None:
             raise ValueError("No research run is selected.")
         return str(self._record_get(self.selected_run, "id") or "")
+
+    def _set_selected_run(self, run: Any, *, reset_payload_state: bool) -> None:
+        self.selected_run = run
+        if reset_payload_state:
+            self._reset_run_payload_state()
+        self._update_detail(run)
+
+    def _reset_run_payload_state(self) -> None:
+        self.current_bundle = None
+        self.current_artifact = None
+        self.event_log_entries = []
+        self._render_bundle_detail()
+        self._render_artifact_detail()
+        self._render_event_log()
+
+    def _append_event_log_entry(self, message: str) -> None:
+        self.event_log_entries.append(message)
+        self._render_event_log()
+
+    def _render_bundle_detail(self) -> None:
+        if not self.is_mounted:
+            return
+        renderable = "No bundle loaded."
+        if self.current_bundle is not None:
+            renderable = json.dumps(self.current_bundle, indent=2, sort_keys=True, default=str)
+        try:
+            self.query_one("#research-bundle-detail", Static).update(renderable)
+        except Exception:
+            pass
+
+    def _render_artifact_detail(self) -> None:
+        if not self.is_mounted:
+            return
+        renderable = "No artifact loaded."
+        if self.current_artifact is not None:
+            artifact = self.current_artifact
+            renderable = (
+                f"Artifact: {self._record_get(artifact, 'artifact_name', '')}\n"
+                f"Type: {self._record_get(artifact, 'content_type', '')}\n"
+                f"Version: {self._record_get(artifact, 'artifact_version', 1)}\n"
+                f"Content:\n{self._render_value(self._record_get(artifact, 'content'))}"
+            )
+        try:
+            self.query_one("#research-artifact-detail", Static).update(renderable)
+        except Exception:
+            pass
+
+    def _render_event_log(self) -> None:
+        if not self.is_mounted:
+            return
+        renderable = "\n".join(self.event_log_entries) if self.event_log_entries else "No research events captured yet."
+        try:
+            self.query_one("#research-event-log", Static).update(renderable)
+        except Exception:
+            pass
+
+    def _resolve_artifact_name(self, artifact_name: str | None) -> str:
+        resolved = str(artifact_name or "").strip()
+        if not resolved and self.is_mounted:
+            try:
+                resolved = self.query_one("#research-artifact-name", Input).value.strip()
+            except Exception:
+                resolved = ""
+        if not resolved and self.current_bundle:
+            resolved = str(next(iter(self.current_bundle.keys()), "")).strip()
+        return resolved
+
+    def _resolve_checkpoint_id(self, checkpoint_id: str | None) -> str:
+        resolved = str(checkpoint_id or "").strip()
+        if not resolved and self.is_mounted:
+            try:
+                resolved = self.query_one("#research-checkpoint-id", Input).value.strip()
+            except Exception:
+                resolved = ""
+        if not resolved:
+            resolved = str(self._record_get(self.selected_run, "latest_checkpoint_id", "") or "").strip()
+        return resolved
+
+    def _parse_checkpoint_patch_payload(self) -> dict[str, Any] | None:
+        raw_text = ""
+        if self.is_mounted:
+            try:
+                raw_text = self.query_one("#research-checkpoint-patch", TextArea).text.strip()
+            except Exception:
+                raw_text = ""
+        if not raw_text:
+            return None
+        payload = json.loads(raw_text)
+        if payload in ({}, None):
+            return None
+        if not isinstance(payload, dict):
+            raise ValueError("Checkpoint patch payload must be a JSON object.")
+        return payload
+
+    @staticmethod
+    def _render_value(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, indent=2, sort_keys=True, default=str)
 
     @staticmethod
     def _normalize_source(source: str) -> str:
@@ -250,3 +418,20 @@ class ResearchWindow(Vertical):
     @on(Button.Pressed, "#research-cancel-run")
     async def _on_cancel_pressed(self, _event: Button.Pressed) -> None:
         await self.cancel_selected_run()
+
+    @on(Button.Pressed, "#research-load-bundle")
+    async def _on_load_bundle_pressed(self, _event: Button.Pressed) -> None:
+        await self.load_selected_run_bundle()
+
+    @on(Button.Pressed, "#research-load-artifact")
+    async def _on_load_artifact_pressed(self, _event: Button.Pressed) -> None:
+        await self.load_selected_run_artifact()
+
+    @on(Button.Pressed, "#research-approve-checkpoint")
+    async def _on_approve_checkpoint_pressed(self, _event: Button.Pressed) -> None:
+        await self.approve_selected_checkpoint()
+
+    @on(Button.Pressed, "#research-clear-events")
+    def _on_clear_events_pressed(self, _event: Button.Pressed) -> None:
+        self.event_log_entries = []
+        self._render_event_log()

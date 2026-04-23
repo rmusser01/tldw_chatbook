@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from uuid import uuid4
 
 from tldw_chatbook.config import DEFAULT_CONFIG_PATH
 
@@ -365,10 +366,138 @@ class LocalGovernanceRule:
 
 
 @dataclass(frozen=True)
+class LocalApprovalRequest:
+    request_id: str
+    action_name: str
+    resolved_action_id: str
+    registry_capability_id: str | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
+    payload_fingerprint: str = ""
+    status: str = "pending"
+    matched_rule_id: str | None = None
+    notes: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    resolved_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "request_id", _text(self.request_id))
+        object.__setattr__(self, "action_name", _text(self.action_name))
+        object.__setattr__(self, "resolved_action_id", _text(self.resolved_action_id))
+        object.__setattr__(self, "registry_capability_id", _text(self.registry_capability_id) or None)
+        object.__setattr__(self, "payload", _coerce_mapping(self.payload))
+        object.__setattr__(self, "payload_fingerprint", _text(self.payload_fingerprint))
+        object.__setattr__(self, "status", _text(self.status))
+        object.__setattr__(self, "matched_rule_id", _text(self.matched_rule_id) or None)
+        object.__setattr__(self, "notes", _text(self.notes) or None)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "action_name": self.action_name,
+            "resolved_action_id": self.resolved_action_id,
+            "registry_capability_id": self.registry_capability_id,
+            "payload": dict(self.payload),
+            "payload_fingerprint": self.payload_fingerprint,
+            "status": self.status,
+            "matched_rule_id": self.matched_rule_id,
+            "notes": self.notes,
+            "created_at": _datetime_to_iso(self.created_at),
+            "updated_at": _datetime_to_iso(self.updated_at),
+            "resolved_at": _datetime_to_iso(self.resolved_at),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "LocalApprovalRequest":
+        if not isinstance(data, Mapping):
+            return cls(request_id="", action_name="", resolved_action_id="")
+        return cls(
+            request_id=_text(data.get("request_id")),
+            action_name=_text(data.get("action_name")),
+            resolved_action_id=_text(data.get("resolved_action_id")),
+            registry_capability_id=_text(data.get("registry_capability_id")) or None,
+            payload=_coerce_mapping(data.get("payload")),
+            payload_fingerprint=_text(data.get("payload_fingerprint")),
+            status=_text(data.get("status")) or "pending",
+            matched_rule_id=_text(data.get("matched_rule_id")) or None,
+            notes=_text(data.get("notes")) or None,
+            created_at=_iso_to_datetime(data.get("created_at")),
+            updated_at=_iso_to_datetime(data.get("updated_at")),
+            resolved_at=_iso_to_datetime(data.get("resolved_at")),
+        )
+
+
+@dataclass(frozen=True)
+class LocalRuntimeActivity:
+    activity_id: str
+    action_name: str
+    target: str
+    ok: bool
+    blocked: bool = False
+    error: str | None = None
+    resolved_action_id: str | None = None
+    decision: str | None = None
+    matched_rule_id: str | None = None
+    approval_request_id: str | None = None
+    approval_status: str | None = None
+    occurred_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "activity_id", _text(self.activity_id))
+        object.__setattr__(self, "action_name", _text(self.action_name))
+        object.__setattr__(self, "target", _text(self.target))
+        object.__setattr__(self, "ok", bool(self.ok))
+        object.__setattr__(self, "blocked", bool(self.blocked))
+        object.__setattr__(self, "error", _text(self.error) or None)
+        object.__setattr__(self, "resolved_action_id", _text(self.resolved_action_id) or None)
+        object.__setattr__(self, "decision", _text(self.decision) or None)
+        object.__setattr__(self, "matched_rule_id", _text(self.matched_rule_id) or None)
+        object.__setattr__(self, "approval_request_id", _text(self.approval_request_id) or None)
+        object.__setattr__(self, "approval_status", _text(self.approval_status) or None)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "activity_id": self.activity_id,
+            "action_name": self.action_name,
+            "target": self.target,
+            "ok": self.ok,
+            "blocked": self.blocked,
+            "error": self.error,
+            "resolved_action_id": self.resolved_action_id,
+            "decision": self.decision,
+            "matched_rule_id": self.matched_rule_id,
+            "approval_request_id": self.approval_request_id,
+            "approval_status": self.approval_status,
+            "occurred_at": _datetime_to_iso(self.occurred_at),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "LocalRuntimeActivity":
+        if not isinstance(data, Mapping):
+            return cls(activity_id="", action_name="", target="", ok=False)
+        return cls(
+            activity_id=_text(data.get("activity_id")),
+            action_name=_text(data.get("action_name")),
+            target=_text(data.get("target")),
+            ok=bool(data.get("ok")),
+            blocked=bool(data.get("blocked")),
+            error=_text(data.get("error")) or None,
+            resolved_action_id=_text(data.get("resolved_action_id")) or None,
+            decision=_text(data.get("decision")) or None,
+            matched_rule_id=_text(data.get("matched_rule_id")) or None,
+            approval_request_id=_text(data.get("approval_request_id")) or None,
+            approval_status=_text(data.get("approval_status")) or None,
+            occurred_at=_iso_to_datetime(data.get("occurred_at")),
+        )
+
+
+@dataclass(frozen=True)
 class LocalMCPStoreState:
     profiles: tuple[LocalExternalMCPProfile, ...] = ()
     discovery_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
     governance_rules: tuple[LocalGovernanceRule, ...] = ()
+    approval_requests: tuple[LocalApprovalRequest, ...] = ()
+    runtime_activity: tuple[LocalRuntimeActivity, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -378,6 +507,8 @@ class LocalMCPStoreState:
                 for server_id, snapshot in self.discovery_snapshots.items()
             },
             "governance_rules": [rule.to_dict() for rule in self.governance_rules],
+            "approval_requests": [request.to_dict() for request in self.approval_requests],
+            "runtime_activity": [activity.to_dict() for activity in self.runtime_activity],
         }
 
     @classmethod
@@ -386,6 +517,8 @@ class LocalMCPStoreState:
             return cls()
         profiles_raw = data.get("profiles")
         governance_raw = data.get("governance_rules")
+        approvals_raw = data.get("approval_requests")
+        activity_raw = data.get("runtime_activity")
         snapshots_raw = data.get("discovery_snapshots")
         profiles = tuple(
             profile
@@ -403,6 +536,22 @@ class LocalMCPStoreState:
             )
             if rule.rule_id and rule.capability_id and rule.decision
         )
+        approval_requests = tuple(
+            request
+            for request in (
+                LocalApprovalRequest.from_dict(item)
+                for item in (approvals_raw if isinstance(approvals_raw, list) else [])
+            )
+            if request.request_id and request.action_name and request.resolved_action_id and request.status
+        )
+        runtime_activity = tuple(
+            activity
+            for activity in (
+                LocalRuntimeActivity.from_dict(item)
+                for item in (activity_raw if isinstance(activity_raw, list) else [])
+            )
+            if activity.activity_id and activity.action_name
+        )
         discovery_snapshots = (
             {
                 str(server_id): dict(snapshot)
@@ -416,6 +565,8 @@ class LocalMCPStoreState:
             profiles=profiles,
             discovery_snapshots=discovery_snapshots,
             governance_rules=governance_rules,
+            approval_requests=approval_requests,
+            runtime_activity=runtime_activity,
         )
 
 
@@ -480,6 +631,8 @@ class LocalMCPStore:
                 profiles=tuple(profiles),
                 discovery_snapshots=discovery_snapshots,
                 governance_rules=current.governance_rules,
+                approval_requests=current.approval_requests,
+                runtime_activity=current.runtime_activity,
             )
         )
         return saved_profile
@@ -497,6 +650,8 @@ class LocalMCPStore:
                 profiles=tuple(profiles),
                 discovery_snapshots=discovery_snapshots,
                 governance_rules=current.governance_rules,
+                approval_requests=current.approval_requests,
+                runtime_activity=current.runtime_activity,
             )
         )
         return True
@@ -515,6 +670,8 @@ class LocalMCPStore:
                 profiles=current.profiles,
                 discovery_snapshots=discovery_snapshots,
                 governance_rules=current.governance_rules,
+                approval_requests=current.approval_requests,
+                runtime_activity=current.runtime_activity,
             )
         )
         return discovery_snapshots[normalized_profile_id]
@@ -549,9 +706,194 @@ class LocalMCPStore:
                 profiles=current.profiles,
                 discovery_snapshots=current.discovery_snapshots,
                 governance_rules=tuple(rules),
+                approval_requests=current.approval_requests,
+                runtime_activity=current.runtime_activity,
             )
         )
         return saved_rule
+
+    def delete_governance_rule(self, rule_id: str) -> bool:
+        current = self.load()
+        normalized_rule_id = _text(rule_id)
+        if not normalized_rule_id:
+            return False
+        rules = [item for item in current.governance_rules if item.rule_id != normalized_rule_id]
+        if len(rules) == len(current.governance_rules):
+            return False
+        self.save(
+            LocalMCPStoreState(
+                profiles=current.profiles,
+                discovery_snapshots=current.discovery_snapshots,
+                governance_rules=tuple(rules),
+                approval_requests=current.approval_requests,
+                runtime_activity=current.runtime_activity,
+            )
+        )
+        return True
+
+    def list_approval_requests(self) -> list[LocalApprovalRequest]:
+        return list(self.load().approval_requests)
+
+    def save_approval_request(self, request: LocalApprovalRequest) -> LocalApprovalRequest:
+        current = self.load()
+        now = datetime.now(timezone.utc)
+        request_id = _require_non_empty_field(request.request_id, "request_id", "Local MCP approval request")
+        action_name = _require_non_empty_field(request.action_name, "action_name", "Local MCP approval request")
+        resolved_action_id = _require_non_empty_field(
+            request.resolved_action_id,
+            "resolved_action_id",
+            "Local MCP approval request",
+        )
+        payload_fingerprint = _require_non_empty_field(
+            request.payload_fingerprint,
+            "payload_fingerprint",
+            "Local MCP approval request",
+        )
+        status = _require_non_empty_field(request.status, "status", "Local MCP approval request")
+        existing_request = next(
+            (item for item in current.approval_requests if item.request_id == request_id),
+            None,
+        )
+        saved_request = LocalApprovalRequest(
+            request_id=request_id,
+            action_name=action_name,
+            resolved_action_id=resolved_action_id,
+            registry_capability_id=request.registry_capability_id,
+            payload=request.payload,
+            payload_fingerprint=payload_fingerprint,
+            status=status,
+            matched_rule_id=request.matched_rule_id,
+            notes=request.notes,
+            created_at=request.created_at or (existing_request.created_at if existing_request else now),
+            updated_at=now,
+            resolved_at=request.resolved_at or (existing_request.resolved_at if existing_request else None),
+        )
+        approval_requests = [item for item in current.approval_requests if item.request_id != saved_request.request_id]
+        approval_requests.append(saved_request)
+        self.save(
+            LocalMCPStoreState(
+                profiles=current.profiles,
+                discovery_snapshots=current.discovery_snapshots,
+                governance_rules=current.governance_rules,
+                approval_requests=tuple(approval_requests),
+                runtime_activity=current.runtime_activity,
+            )
+        )
+        return saved_request
+
+    def resolve_approval_request(self, request_id: str, status: str) -> LocalApprovalRequest | None:
+        normalized_request_id = _text(request_id)
+        normalized_status = _text(status)
+        if not normalized_request_id or not normalized_status:
+            return None
+        current = self.load()
+        existing_request = next(
+            (item for item in current.approval_requests if item.request_id == normalized_request_id),
+            None,
+        )
+        if existing_request is None:
+            return None
+        now = datetime.now(timezone.utc)
+        resolved_request = LocalApprovalRequest(
+            request_id=existing_request.request_id,
+            action_name=existing_request.action_name,
+            resolved_action_id=existing_request.resolved_action_id,
+            registry_capability_id=existing_request.registry_capability_id,
+            payload=existing_request.payload,
+            payload_fingerprint=existing_request.payload_fingerprint,
+            status=normalized_status,
+            matched_rule_id=existing_request.matched_rule_id,
+            notes=existing_request.notes,
+            created_at=existing_request.created_at,
+            updated_at=now,
+            resolved_at=now,
+        )
+        approval_requests = [
+            item if item.request_id != normalized_request_id else resolved_request
+            for item in current.approval_requests
+        ]
+        self.save(
+            LocalMCPStoreState(
+                profiles=current.profiles,
+                discovery_snapshots=current.discovery_snapshots,
+                governance_rules=current.governance_rules,
+                approval_requests=tuple(approval_requests),
+                runtime_activity=current.runtime_activity,
+            )
+        )
+        return resolved_request
+
+    def delete_approval_request(self, request_id: str) -> bool:
+        normalized_request_id = _text(request_id)
+        if not normalized_request_id:
+            return False
+        current = self.load()
+        approval_requests = [
+            item
+            for item in current.approval_requests
+            if item.request_id != normalized_request_id
+        ]
+        if len(approval_requests) == len(current.approval_requests):
+            return False
+        self.save(
+            LocalMCPStoreState(
+                profiles=current.profiles,
+                discovery_snapshots=current.discovery_snapshots,
+                governance_rules=current.governance_rules,
+                approval_requests=tuple(approval_requests),
+                runtime_activity=current.runtime_activity,
+            )
+        )
+        return True
+
+    def list_runtime_activity(self, limit: int = 20) -> list[dict[str, Any]]:
+        normalized_limit = max(1, int(limit or 20))
+        return [
+            activity.to_dict()
+            for activity in reversed(self.load().runtime_activity[-normalized_limit:])
+        ]
+
+    def record_runtime_activity(
+        self,
+        entry: Mapping[str, Any],
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        current = self.load()
+        now = datetime.now(timezone.utc)
+        normalized_limit = max(1, int(limit or 50))
+        parsed_entry = LocalRuntimeActivity.from_dict(entry)
+        action_name = _require_non_empty_field(
+            parsed_entry.action_name,
+            "action_name",
+            "Local MCP runtime activity",
+        )
+        saved_entry = LocalRuntimeActivity(
+            activity_id=parsed_entry.activity_id or f"activity-{uuid4().hex[:12]}",
+            action_name=action_name,
+            target=parsed_entry.target,
+            ok=parsed_entry.ok,
+            blocked=parsed_entry.blocked,
+            error=parsed_entry.error,
+            resolved_action_id=parsed_entry.resolved_action_id,
+            decision=parsed_entry.decision,
+            matched_rule_id=parsed_entry.matched_rule_id,
+            approval_request_id=parsed_entry.approval_request_id,
+            approval_status=parsed_entry.approval_status,
+            occurred_at=parsed_entry.occurred_at or now,
+        )
+        runtime_activity = list(current.runtime_activity)
+        runtime_activity.append(saved_entry)
+        runtime_activity = runtime_activity[-normalized_limit:]
+        self.save(
+            LocalMCPStoreState(
+                profiles=current.profiles,
+                discovery_snapshots=current.discovery_snapshots,
+                governance_rules=current.governance_rules,
+                approval_requests=current.approval_requests,
+                runtime_activity=tuple(runtime_activity),
+            )
+        )
+        return saved_entry.to_dict()
 
     def _read_payload(self) -> Any:
         try:

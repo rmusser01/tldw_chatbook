@@ -378,6 +378,8 @@ class UnifiedMCPPanel(Container):
                 ("Overview", "overview"),
                 ("Inventory", "inventory"),
                 ("External Servers", "external_servers"),
+                ("Governance", "governance"),
+                ("Advanced", "advanced"),
             ]
 
         access_context = self._active_server_access_context()

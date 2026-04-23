@@ -86,6 +86,35 @@ def render_external_servers_section(payload: Mapping[str, Any] | None) -> str:
 
 def render_governance_section(payload: Mapping[str, Any] | None) -> str:
     payload = dict(payload or {})
+    rules = list(payload.get("rules") or [])
+    if rules and not any(
+        payload.get(key)
+        for key in ("permission_profiles", "policy_assignments", "approval_policies", "acp_profiles")
+    ):
+        lines = [
+            "Unified MCP Governance",
+            "",
+            "Server: local",
+            "Scope: personal",
+            "Scope Ref: -",
+            "Cache Mode: live",
+            "",
+            f"Rules ({len(rules)}):",
+        ]
+        if not rules:
+            lines.append("  - none")
+        else:
+            for rule in rules[:10]:
+                if isinstance(rule, Mapping):
+                    lines.append(
+                        f"  - {rule.get('rule_id')}: {rule.get('capability_id')} => {rule.get('decision')}"
+                    )
+                else:
+                    lines.append(f"  - {rule}")
+            if len(rules) > 10:
+                lines.append(f"  - ... {len(rules) - 10} more")
+        return "\n".join(lines)
+
     permission_profiles = list(payload.get("permission_profiles") or [])
     policy_assignments = list(payload.get("policy_assignments") or [])
     approval_policies = list(payload.get("approval_policies") or [])
@@ -119,6 +148,28 @@ def render_governance_section(payload: Mapping[str, Any] | None) -> str:
 
 def render_advanced_section(payload: Mapping[str, Any] | None) -> str:
     payload = dict(payload or {})
+    runtime_status = dict(payload.get("runtime_status") or {})
+    if runtime_status:
+        protocol = dict(payload.get("protocol") or {})
+        request_methods = list(protocol.get("request_methods") or [])
+        lines = [
+            "Unified MCP Advanced",
+            "",
+            f"Server: {runtime_status.get('server_id') or 'local'}",
+            f"Label: {runtime_status.get('server_label') or 'tldw_chatbook local MCP'}",
+            f"MCP SDK Available: {runtime_status.get('mcp_sdk_available')}",
+            f"Tools: {runtime_status.get('tool_count')}",
+            f"Resources: {runtime_status.get('resource_count')}",
+            f"Prompts: {runtime_status.get('prompt_count')}",
+            "",
+            f"Adapter: {protocol.get('adapter') or 'direct_in_process'}",
+            f"Supports Batch: {protocol.get('supports_batch')}",
+            "",
+            f"Request Methods ({len(request_methods)}):",
+        ]
+        lines.extend(_render_named_items(request_methods, key="name"))
+        return "\n".join(lines)
+
     tool_registry_summary = dict(payload.get("tool_registry_summary") or {})
     modules = list(tool_registry_summary.get("modules") or [])
     entries = list(tool_registry_summary.get("entries") or [])

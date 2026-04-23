@@ -33,6 +33,7 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
 from .MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
+from .Outputs_Panel import OutputsPanel
 from .Sharing_Panel import SharingPanel
 from ..Utils.path_validation import validate_path
 from .Theme_Editor_Window import ThemeEditorView
@@ -2691,6 +2692,7 @@ Thank you for using tldw-chatbook! 🎉
             yield Button("Appearance", id="ts-nav-appearance", classes="ts-nav-button")
             yield Button("Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button")
             yield Button("Unified MCP", id="ts-nav-unified-mcp", classes="ts-nav-button")
+            yield Button("Outputs", id="ts-nav-outputs", classes="ts-nav-button")
             yield Button("Sharing", id="ts-nav-sharing", classes="ts-nav-button")
             yield Button("About", id="ts-nav-about", classes="ts-nav-button")
 
@@ -2726,6 +2728,11 @@ Thank you for using tldw-chatbook! 🎉
                 classes="ts-view-area",
             )
             yield Container(
+                OutputsPanel(self.app_instance, id="outputs-panel"),
+                id="ts-view-outputs",
+                classes="ts-view-area",
+            )
+            yield Container(
                 SharingPanel(self.app_instance, id="sharing-panel"),
                 id="ts-view-sharing",
                 classes="ts-view-area",
@@ -2748,6 +2755,12 @@ Thank you for using tldw-chatbook! 🎉
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
         """Refresh runtime-sensitive child panels when source changes."""
         _ = runtime_backend
+        try:
+            panel = self.query_one("#outputs-panel", OutputsPanel)
+        except QueryError:
+            panel = None
+        if panel is not None:
+            await panel.refresh_for_mode()
         try:
             panel = self.query_one("#sharing-panel", SharingPanel)
         except QueryError:
@@ -2772,6 +2785,8 @@ Thank you for using tldw-chatbook! 🎉
             await self._show_view("ts-view-tool-settings")
         elif button_id == "ts-nav-unified-mcp":
             await self._show_view("ts-view-unified-mcp")
+        elif button_id == "ts-nav-outputs":
+            await self._show_view("ts-view-outputs")
         elif button_id == "ts-nav-sharing":
             await self._show_view("ts-view-sharing")
         elif button_id == "ts-nav-about":

@@ -127,6 +127,31 @@ class FakeUnifiedMCPService:
             return {**base, "catalogs": [{"id": 9, "name": "Scoped Catalog"}]}
         if effective_section == "external_servers":
             return {**base, "external_servers": [{"id": "docs", "name": "Docs"}]}
+        if effective_section == "governance" and self.context.selected_source == "local":
+            return {
+                **base,
+                "rules": [
+                    {
+                        "rule_id": "rule-a",
+                        "capability_id": "mcp.inventory.list.local",
+                        "decision": "allow",
+                    }
+                ],
+            }
+        if effective_section == "advanced" and self.context.selected_source == "local":
+            return {
+                **base,
+                "runtime_status": {
+                    "server_id": "local:tldw_chatbook",
+                    "server_label": "tldw_chatbook local MCP",
+                    "tool_count": 2,
+                },
+                "protocol": {
+                    "adapter": "direct_in_process",
+                    "supports_batch": True,
+                    "request_methods": ["tools/list", "resources/list", "prompts/list"],
+                },
+            }
         if effective_section == "governance":
             return {
                 **base,
@@ -149,6 +174,27 @@ class FakeUnifiedMCPService:
         return base
 
     def available_actions(self) -> list[dict]:
+        if self.context.selected_source == "local" and self.context.selected_section == "inventory":
+            return [
+                {
+                    "name": "tool.execute",
+                    "label": "Execute Local Tool",
+                    "action_id": "mcp.runtime.trigger.local",
+                    "payload_template": '{"tool_name":"search_notes","arguments":{"query":"example"}}',
+                },
+                {
+                    "name": "resource.read",
+                    "label": "Read Local Resource",
+                    "action_id": "mcp.inventory.observe.local",
+                    "payload_template": '{"resource_uri":"note://123"}',
+                },
+                {
+                    "name": "prompt.get",
+                    "label": "Get Local Prompt",
+                    "action_id": "mcp.inventory.observe.local",
+                    "payload_template": '{"prompt_name":"summarize_conversation","arguments":{"conversation_id":4}}',
+                },
+            ]
         if self.context.selected_source == "local" and self.context.selected_section == "external_servers":
             return [
                 {
@@ -157,6 +203,90 @@ class FakeUnifiedMCPService:
                     "action_id": "mcp.external_profiles.configure.local",
                     "payload_template": '{"profile_id":"demo","command":"python","args":["-m","demo.server"]}',
                 }
+            ]
+        if self.context.selected_source == "local" and self.context.selected_section == "governance":
+            return [
+                {
+                    "name": "governance_rule.save",
+                    "label": "Save Governance Rule",
+                    "action_id": "mcp.governance.configure.local",
+                    "payload_template": '{"rule_id":"rule-a","capability_id":"mcp.inventory.list.local","decision":"allow"}',
+                },
+                {
+                    "name": "governance_rule.preview",
+                    "label": "Preview Governance Decision",
+                    "action_id": "mcp.governance.observe.local",
+                    "payload_template": '{"capability_id":"mcp.inventory.list.local"}',
+                },
+                {
+                    "name": "governance_rule.delete",
+                    "label": "Delete Governance Rule",
+                    "action_id": "mcp.governance.configure.local",
+                    "payload_template": '{"rule_id":"rule-a"}',
+                },
+            ]
+        if self.context.selected_source == "local" and self.context.selected_section == "advanced":
+            return [
+                {
+                    "name": "runtime.access.preview",
+                    "label": "Preview Local Runtime Access",
+                    "action_id": "mcp.governance.observe.local",
+                    "payload_template": '{"action_name":"tool.execute","payload":{"tool_name":"search_notes","arguments":{"query":"example"}}}',
+                },
+                {
+                    "name": "approval_requests.list",
+                    "label": "List Local Approval Requests",
+                    "action_id": "mcp.governance.observe.local",
+                    "payload_template": '{}',
+                },
+                {
+                    "name": "approval_request.approve",
+                    "label": "Approve Local Request",
+                    "action_id": "mcp.governance.approve.local",
+                    "payload_template": '{"request_id":"approval-a"}',
+                },
+                {
+                    "name": "approval_request.deny",
+                    "label": "Deny Local Request",
+                    "action_id": "mcp.governance.approve.local",
+                    "payload_template": '{"request_id":"approval-a"}',
+                },
+                {
+                    "name": "runtime.activity.list",
+                    "label": "List Local Runtime Activity",
+                    "action_id": "mcp.runtime.observe.local",
+                    "payload_template": '{"limit":5}',
+                },
+                {
+                    "name": "runtime.protocol.inspect",
+                    "label": "Inspect Local Protocol",
+                    "action_id": "mcp.runtime.observe.local",
+                    "payload_template": '{}',
+                },
+                {
+                    "name": "runtime.health.get",
+                    "label": "Get Local Runtime Health",
+                    "action_id": "mcp.runtime.observe.local",
+                    "payload_template": '{}',
+                },
+                {
+                    "name": "runtime.status.get",
+                    "label": "Get Local Runtime Status",
+                    "action_id": "mcp.runtime.observe.local",
+                    "payload_template": '{}',
+                },
+                {
+                    "name": "runtime.request",
+                    "label": "Send Local Runtime Request",
+                    "action_id": "mcp.runtime.trigger.local",
+                    "payload_template": '{"method":"tools/list","params":{}}',
+                },
+                {
+                    "name": "runtime.batch",
+                    "label": "Run Local Runtime Batch",
+                    "action_id": "mcp.runtime.trigger.local",
+                    "payload_template": '{"requests":[{"method":"tools/list"},{"method":"prompts/list"}]}',
+                },
             ]
         if self.context.selected_source == "server" and self.context.selected_section == "catalogs":
             return [
@@ -375,6 +505,103 @@ async def test_unified_mcp_panel_exposes_slice2_sections_for_local_and_server_co
         assert "Catalogs" in server_option_values
         assert "External Servers" in server_option_values
         assert "scoped catalog" in str(content.content).lower()
+
+
+@pytest.mark.asyncio
+async def test_unified_mcp_panel_exposes_local_governance_section_and_actions(tmp_path):
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    target_store.save_targets(
+        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+    )
+    service = FakeUnifiedMCPService(target_store)
+    app = UnifiedMCPPanelApp(service)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = app.query_one(UnifiedMCPPanel)
+
+        await panel.load_context()
+        section_select = panel.query_one("#unified-mcp-section", Select)
+        local_option_values = [option[0] for option in section_select._options]
+
+        await panel.select_section("governance")
+        await pilot.pause()
+
+        action_select = panel.query_one("#unified-mcp-action", Select)
+        content = panel.query_one("#unified-mcp-content", Static)
+        action_values = [option[0] for option in action_select._options]
+
+        assert "Governance" in local_option_values
+        assert action_select.disabled is False
+        assert "Save Governance Rule" in action_values
+        assert "Preview Governance Decision" in action_values
+        assert "Delete Governance Rule" in action_values
+        assert "rule-a" in str(content.content).lower()
+
+
+@pytest.mark.asyncio
+async def test_unified_mcp_panel_exposes_local_inventory_runtime_actions(tmp_path):
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    target_store.save_targets(
+        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+    )
+    service = FakeUnifiedMCPService(target_store)
+    app = UnifiedMCPPanelApp(service)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = app.query_one(UnifiedMCPPanel)
+
+        await panel.load_context()
+        await panel.select_section("inventory")
+        await pilot.pause()
+
+        action_select = panel.query_one("#unified-mcp-action", Select)
+        action_values = [option[0] for option in action_select._options]
+
+        assert action_select.disabled is False
+        assert "Execute Local Tool" in action_values
+        assert "Read Local Resource" in action_values
+        assert "Get Local Prompt" in action_values
+
+
+@pytest.mark.asyncio
+async def test_unified_mcp_panel_exposes_local_advanced_runtime_actions(tmp_path):
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    target_store.save_targets(
+        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+    )
+    service = FakeUnifiedMCPService(target_store)
+    app = UnifiedMCPPanelApp(service)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = app.query_one(UnifiedMCPPanel)
+
+        await panel.load_context()
+        await panel.select_section("advanced")
+        await pilot.pause()
+
+        section_select = panel.query_one("#unified-mcp-section", Select)
+        action_select = panel.query_one("#unified-mcp-action", Select)
+        content = panel.query_one("#unified-mcp-content", Static)
+
+        section_values = [option[0] for option in section_select._options]
+        action_values = [option[0] for option in action_select._options]
+
+        assert "Advanced" in section_values
+        assert action_select.disabled is False
+        assert "local mcp" in str(content.content).lower()
+        assert "Preview Local Runtime Access" in action_values
+        assert "List Local Runtime Activity" in action_values
+        assert "Inspect Local Protocol" in action_values
+        assert "Get Local Runtime Health" in action_values
+        assert "List Local Approval Requests" in action_values
+        assert "Approve Local Request" in action_values
+        assert "Deny Local Request" in action_values
+        assert "Get Local Runtime Status" in action_values
+        assert "Send Local Runtime Request" in action_values
+        assert "Run Local Runtime Batch" in action_values
 
 
 @pytest.mark.asyncio

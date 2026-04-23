@@ -17,6 +17,7 @@ except ImportError:
     AppTest = None
 
 from tldw_chatbook.UI.Tools_Settings_Window import ToolsSettingsWindow
+from tldw_chatbook.UI.Outputs_Panel import OutputsPanel
 from tldw_chatbook.UI.Sharing_Panel import SharingPanel
 # Import DEFAULT_CONFIG_PATH to be monkeypatched, and the function that uses it
 import tldw_chatbook.config
@@ -539,6 +540,38 @@ async def test_tools_settings_window_exposes_sharing_view():
         assert window.query_one("#sharing-panel", SharingPanel) is not None
 
 
+@pytest.mark.asyncio
+async def test_tools_settings_window_exposes_outputs_view():
+    class ToolsSettingsHostApp(App):
+        def __init__(self):
+            super().__init__()
+            self.notify = MagicMock()
+            self.unified_mcp_service = None
+            self.current_runtime_backend = "server"
+            self.server_outputs_scope_service = MagicMock()
+            self.server_sharing_scope_service = MagicMock()
+
+        def get_authoritative_runtime_source(self):
+            return self.current_runtime_backend
+
+        def compose(self):
+            yield ToolsSettingsWindow(app_instance=self)
+
+    app = ToolsSettingsHostApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(ToolsSettingsWindow)
+        nav_button = window.query_one("#ts-nav-outputs", Button)
+
+        assert nav_button.label.plain == "Outputs"
+
+        await window.on_button_pressed(Button.Pressed(nav_button))
+
+        content_switcher = window.query_one("#tools-settings-content-pane")
+        assert content_switcher.current == "ts-view-outputs"
+        assert window.query_one("#outputs-panel", OutputsPanel) is not None
+
+
 class SharingPanelHostApp(App):
     def __init__(self, *, runtime_backend: str, scope_service: MagicMock):
         super().__init__()
@@ -551,6 +584,20 @@ class SharingPanelHostApp(App):
 
     def compose(self):
         yield SharingPanel(self, id="sharing-panel")
+
+
+class OutputsPanelHostApp(App):
+    def __init__(self, *, runtime_backend: str, scope_service: MagicMock):
+        super().__init__()
+        self.notify = MagicMock()
+        self.current_runtime_backend = runtime_backend
+        self.server_outputs_scope_service = scope_service
+
+    def get_authoritative_runtime_source(self):
+        return self.current_runtime_backend
+
+    def compose(self):
+        yield OutputsPanel(self, id="outputs-panel")
 
 
 @pytest.mark.asyncio
@@ -626,3 +673,127 @@ async def test_sharing_panel_routes_server_workspace_share_and_token_operations(
         scope_service.list_shared_with_me.assert_awaited_once_with(mode="server")
         rendered_status = str(panel.query_one("#sharing-status", Static).render())
         assert "server:share:9" in rendered_status
+
+
+@pytest.mark.asyncio
+async def test_outputs_panel_rejects_local_mode_with_explicit_guidance():
+    scope_service = MagicMock()
+    app = OutputsPanelHostApp(runtime_backend="local", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(OutputsPanel)
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        assert panel.query_one("#outputs-disabled", Static).display is True
+        assert panel.query_one("#outputs-main").display is False
+        assert panel.query_one("#outputs-list-templates-btn", Button).disabled is True
+        assert panel.query_one("#outputs-list-artifacts-btn", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_outputs_panel_routes_server_template_and_artifact_operations():
+    scope_service = MagicMock()
+    scope_service.list_output_templates = AsyncMock(
+        return_value={"items": [{"id": "server:output_template:7", "name": "Weekly Briefing"}], "total": 1}
+    )
+    scope_service.create_output_template = AsyncMock(
+        return_value={"id": "server:output_template:7", "name": "Weekly Briefing"}
+    )
+    scope_service.preview_output_template = AsyncMock(
+        return_value={"entity_kind": "output_template_preview", "rendered": "# Preview"}
+    )
+    scope_service.list_outputs = AsyncMock(
+        return_value={"items": [{"id": "server:output:11", "title": "Weekly Briefing"}], "total": 1, "page": 1, "size": 10}
+    )
+    scope_service.create_output = AsyncMock(
+        return_value={"id": "server:output:11", "entity_kind": "output_render_result", "title": "Weekly Briefing"}
+    )
+    scope_service.delete_output = AsyncMock(
+        return_value={"entity_kind": "output_delete", "success": True, "output_id": 11}
+    )
+    app = OutputsPanelHostApp(runtime_backend="server", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(OutputsPanel)
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        panel.query_one("#outputs-template-query", Input).value = "brief"
+        panel.query_one("#outputs-template-limit", Input).value = "25"
+        panel.query_one("#outputs-template-offset", Input).value = "5"
+        panel.query_one("#outputs-template-name", Input).value = "Weekly Briefing"
+        panel.query_one("#outputs-template-type", Select).value = "briefing_markdown"
+        panel.query_one("#outputs-template-format", Select).value = "md"
+        panel.query_one("#outputs-template-description", Input).value = "Render a weekly markdown briefing"
+        panel.query_one("#outputs-template-body", TextArea).text = "# {{ job.name }}"
+        panel.query_one("#outputs-template-default", Checkbox).value = True
+        panel.query_one("#outputs-preview-template-id", Input).value = "7"
+        panel.query_one("#outputs-preview-item-ids", Input).value = "1,2"
+        panel.query_one("#outputs-preview-limit", Input).value = "10"
+
+        await panel.list_output_templates()
+        await panel.create_output_template()
+        await panel.preview_output_template()
+
+        panel.query_one("#outputs-artifact-page", Input).value = "1"
+        panel.query_one("#outputs-artifact-size", Input).value = "10"
+        panel.query_one("#outputs-artifact-run-id", Input).value = "77"
+        panel.query_one("#outputs-artifact-workspace-tag", Input).value = "workspace:demo"
+        panel.query_one("#outputs-create-template-id", Input).value = "7"
+        panel.query_one("#outputs-create-item-ids", Input).value = "1,2"
+        panel.query_one("#outputs-create-title", Input).value = "Weekly Briefing"
+        panel.query_one("#outputs-create-workspace-tag", Input).value = "workspace:demo"
+        panel.query_one("#outputs-create-ingest", Checkbox).value = True
+        panel.query_one("#outputs-delete-output-id", Input).value = "11"
+        panel.query_one("#outputs-delete-hard", Checkbox).value = True
+        panel.query_one("#outputs-delete-file", Checkbox).value = True
+
+        await panel.list_outputs()
+        await panel.create_output()
+        await panel.delete_output()
+
+        scope_service.list_output_templates.assert_awaited_once_with(
+            mode="server",
+            q="brief",
+            limit=25,
+            offset=5,
+        )
+        scope_service.create_output_template.assert_awaited_once_with(
+            mode="server",
+            name="Weekly Briefing",
+            type="briefing_markdown",
+            format="md",
+            body="# {{ job.name }}",
+            description="Render a weekly markdown briefing",
+            is_default=True,
+        )
+        scope_service.preview_output_template.assert_awaited_once_with(
+            mode="server",
+            template_id=7,
+            item_ids=[1, 2],
+            limit=10,
+        )
+        scope_service.list_outputs.assert_awaited_once_with(
+            mode="server",
+            page=1,
+            size=10,
+            run_id=77,
+            workspace_tag="workspace:demo",
+        )
+        scope_service.create_output.assert_awaited_once_with(
+            mode="server",
+            template_id=7,
+            item_ids=[1, 2],
+            title="Weekly Briefing",
+            workspace_tag="workspace:demo",
+            ingest_to_media_db=True,
+        )
+        scope_service.delete_output.assert_awaited_once_with(
+            mode="server",
+            output_id=11,
+            hard=True,
+            delete_file=True,
+        )
+        rendered_status = str(panel.query_one("#outputs-status", Static).render())
+        assert "server:output:11" in rendered_status or "output_delete" in rendered_status

@@ -47,6 +47,20 @@ class StudyScopeService:
             raise ValueError("Server study backend is unavailable.")
         return self.server_service
 
+    def _server_only_service(self, mode: StudyBackend | str | None, feature_label: str) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == StudyBackend.LOCAL:
+            raise ValueError(f"{feature_label} are server-only in Chatbook.")
+        return self._service_for_mode(normalized_mode)
+
+    @staticmethod
+    def _with_server_source(payload: Any) -> Any:
+        if isinstance(payload, Mapping):
+            result = dict(payload)
+            result.setdefault("source", "server")
+            return result
+        return payload
+
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
             return await value
@@ -344,3 +358,128 @@ class StudyScopeService:
         if not hasattr(service, "end_review_session"):
             return None
         return await self._maybe_await(service.end_review_session(review_session_id))
+
+    async def create_study_pack_job(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        title: str,
+        source_items: list[Mapping[str, Any]],
+        workspace_id: str | None = None,
+        deck_mode: str = "new",
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Study packs")
+        payload = await self._maybe_await(
+            service.create_study_pack_job(
+                title=title,
+                source_items=source_items,
+                workspace_id=workspace_id,
+                deck_mode=deck_mode,
+            )
+        )
+        return self._with_server_source(payload)
+
+    async def get_study_pack_job_status(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        job_id: int,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Study packs")
+        return self._with_server_source(
+            await self._maybe_await(service.get_study_pack_job_status(job_id))
+        )
+
+    async def get_study_pack(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        pack_id: int,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Study packs")
+        return self._with_server_source(
+            await self._maybe_await(service.get_study_pack(pack_id))
+        )
+
+    async def regenerate_study_pack(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        pack_id: int,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Study packs")
+        return self._with_server_source(
+            await self._maybe_await(service.regenerate_study_pack(pack_id))
+        )
+
+    async def get_study_suggestion_status(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        anchor_type: str,
+        anchor_id: int,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Study suggestions")
+        return self._with_server_source(
+            await self._maybe_await(
+                service.get_study_suggestion_status(anchor_type=anchor_type, anchor_id=anchor_id)
+            )
+        )
+
+    async def get_study_suggestion_snapshot(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        snapshot_id: int,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Study suggestions")
+        return self._with_server_source(
+            await self._maybe_await(service.get_study_suggestion_snapshot(snapshot_id))
+        )
+
+    async def refresh_study_suggestion_snapshot(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        snapshot_id: int,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Study suggestions")
+        return self._with_server_source(
+            await self._maybe_await(
+                service.refresh_study_suggestion_snapshot(snapshot_id, reason=reason)
+            )
+        )
+
+    async def trigger_study_suggestion_action(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        snapshot_id: int,
+        target_service: str,
+        target_type: str,
+        action_kind: str,
+        selected_topic_ids: list[str] | None = None,
+        selected_topic_edits: list[dict[str, str]] | None = None,
+        manual_topic_labels: list[str] | None = None,
+        has_explicit_selection: bool = False,
+        generator_version: str = "v1",
+        force_regenerate: bool = False,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Study suggestions")
+        return self._with_server_source(
+            await self._maybe_await(
+                service.trigger_study_suggestion_action(
+                    snapshot_id,
+                    target_service=target_service,
+                    target_type=target_type,
+                    action_kind=action_kind,
+                    selected_topic_ids=selected_topic_ids,
+                    selected_topic_edits=selected_topic_edits,
+                    manual_topic_labels=manual_topic_labels,
+                    has_explicit_selection=has_explicit_selection,
+                    generator_version=generator_version,
+                    force_regenerate=force_regenerate,
+                )
+            )
+        )

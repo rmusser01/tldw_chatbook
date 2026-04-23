@@ -172,6 +172,14 @@ class UnifiedMCPControlPlaneService:
             return await self._maybe_await(self.local_service.get_inventory())
         if effective_section == "external_servers":
             return await self._maybe_await(self.local_service.get_external_servers())
+        if effective_section == "governance":
+            return {
+                "source": "local",
+                "section": "governance",
+                "rules": list(await self._maybe_await(self.local_service.get_governance())),
+            }
+        if effective_section == "advanced":
+            return await self._maybe_await(self.local_service.get_advanced())
         raise ValueError(f"Unsupported Unified MCP section: {effective_section}")
 
     async def _maybe_await(self, value: Any) -> Any:
@@ -181,6 +189,27 @@ class UnifiedMCPControlPlaneService:
 
     def available_actions(self) -> list[dict[str, Any]]:
         if self.context.selected_source != "server":
+            if (self.context.selected_section or "overview") == "inventory":
+                return [
+                    {
+                        "name": "tool.execute",
+                        "label": "Execute Local Tool",
+                        "action_id": "mcp.runtime.trigger.local",
+                        "payload_template": '{"tool_name":"search_notes","arguments":{"query":"example"}}',
+                    },
+                    {
+                        "name": "resource.read",
+                        "label": "Read Local Resource",
+                        "action_id": "mcp.inventory.observe.local",
+                        "payload_template": '{"resource_uri":"note://123"}',
+                    },
+                    {
+                        "name": "prompt.get",
+                        "label": "Get Local Prompt",
+                        "action_id": "mcp.inventory.observe.local",
+                        "payload_template": '{"prompt_name":"summarize_conversation","arguments":{"conversation_id":4}}',
+                    },
+                ]
             if (self.context.selected_section or "overview") == "external_servers":
                 return [
                     {
@@ -218,6 +247,96 @@ class UnifiedMCPControlPlaneService:
                         "label": "Refresh Profile",
                         "action_id": "mcp.external_profiles.observe.local",
                         "payload_template": '{"profile_id":"demo"}',
+                    },
+                ]
+            if (self.context.selected_section or "overview") == "governance":
+                return [
+                    {
+                        "name": "governance_rule.save",
+                        "label": "Save Governance Rule",
+                        "action_id": "mcp.governance.configure.local",
+                        "payload_template": '{"rule_id":"rule-a","capability_id":"mcp.inventory.list.local","decision":"allow"}',
+                    },
+                    {
+                        "name": "governance_rule.preview",
+                        "label": "Preview Governance Decision",
+                        "action_id": "mcp.governance.observe.local",
+                        "payload_template": '{"capability_id":"mcp.inventory.list.local"}',
+                    },
+                    {
+                        "name": "governance_rule.delete",
+                        "label": "Delete Governance Rule",
+                        "action_id": "mcp.governance.configure.local",
+                        "payload_template": '{"rule_id":"rule-a"}',
+                    },
+                ]
+            if (self.context.selected_section or "overview") == "advanced":
+                return [
+                    {
+                        "name": "runtime.access.preview",
+                        "label": "Preview Local Runtime Access",
+                        "action_id": "mcp.governance.observe.local",
+                        "payload_template": '{"action_name":"tool.execute","payload":{"tool_name":"search_notes","arguments":{"query":"example"}}}',
+                    },
+                    {
+                        "name": "runtime.activity.list",
+                        "label": "List Local Runtime Activity",
+                        "action_id": "mcp.runtime.observe.local",
+                        "payload_template": '{"limit":5}',
+                    },
+                    {
+                        "name": "runtime.protocol.inspect",
+                        "label": "Inspect Local Protocol",
+                        "action_id": "mcp.runtime.observe.local",
+                        "payload_template": '{}',
+                    },
+                    {
+                        "name": "runtime.health.get",
+                        "label": "Get Local Runtime Health",
+                        "action_id": "mcp.runtime.observe.local",
+                        "payload_template": '{}',
+                    },
+                    {
+                        "name": "approval_requests.list",
+                        "label": "List Local Approval Requests",
+                        "action_id": "mcp.governance.observe.local",
+                        "payload_template": '{}',
+                    },
+                    {
+                        "name": "approval_request.approve",
+                        "label": "Approve Local Request",
+                        "action_id": "mcp.governance.approve.local",
+                        "payload_template": '{"request_id":"approval-a"}',
+                    },
+                    {
+                        "name": "approval_request.deny",
+                        "label": "Deny Local Request",
+                        "action_id": "mcp.governance.approve.local",
+                        "payload_template": '{"request_id":"approval-a"}',
+                    },
+                    {
+                        "name": "approval_request.delete",
+                        "label": "Delete Local Request",
+                        "action_id": "mcp.governance.approve.local",
+                        "payload_template": '{"request_id":"approval-a"}',
+                    },
+                    {
+                        "name": "runtime.status.get",
+                        "label": "Get Local Runtime Status",
+                        "action_id": "mcp.runtime.observe.local",
+                        "payload_template": '{}',
+                    },
+                    {
+                        "name": "runtime.request",
+                        "label": "Send Local Runtime Request",
+                        "action_id": "mcp.runtime.trigger.local",
+                        "payload_template": '{"method":"tools/list","params":{}}',
+                    },
+                    {
+                        "name": "runtime.batch",
+                        "label": "Run Local Runtime Batch",
+                        "action_id": "mcp.runtime.trigger.local",
+                        "payload_template": '{"requests":[{"method":"tools/list"},{"method":"prompts/list"}]}',
                     },
                 ]
             return []
@@ -765,6 +884,81 @@ class UnifiedMCPControlPlaneService:
                 return await self._maybe_await(self.local_service.test_external_profile(self._require_field(payload, "profile_id")))
             if action_name == "profile.refresh":
                 return await self._maybe_await(self.local_service.refresh_external_profile(self._require_field(payload, "profile_id")))
+            if action_name == "tool.execute":
+                return await self._maybe_await(
+                    self.local_service.execute_tool(
+                        self._require_field(payload, "tool_name"),
+                        payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {},
+                    )
+                )
+            if action_name == "resource.read":
+                return await self._maybe_await(
+                    self.local_service.read_resource(self._require_field(payload, "resource_uri"))
+                )
+            if action_name == "prompt.get":
+                return await self._maybe_await(
+                    self.local_service.get_prompt(
+                        self._require_field(payload, "prompt_name"),
+                        payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {},
+                    )
+                )
+            if action_name == "governance_rule.save":
+                return await self._maybe_await(self.local_service.save_governance_rule(payload))
+            if action_name == "governance_rule.preview":
+                return await self._maybe_await(
+                    self.local_service.preview_governance_decision(self._require_field(payload, "capability_id"))
+                )
+            if action_name == "governance_rule.delete":
+                return await self._maybe_await(self.local_service.delete_governance_rule(self._require_field(payload, "rule_id")))
+            if action_name == "runtime.access.preview":
+                nested_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                return await self._maybe_await(
+                    self.local_service.preview_runtime_access(
+                        self._require_field(payload, "action_name"),
+                        nested_payload,
+                    )
+                )
+            if action_name == "runtime.activity.list":
+                return await self._maybe_await(self.local_service.get_runtime_activity(int(payload.get("limit", 20))))
+            if action_name == "runtime.protocol.inspect":
+                return await self._maybe_await(self.local_service.get_runtime_protocol_diagnostics())
+            if action_name == "runtime.health.get":
+                return await self._maybe_await(self.local_service.get_runtime_health())
+            if action_name == "approval_requests.list":
+                status = payload.get("status")
+                resolved_action_id = payload.get("resolved_action_id")
+                return await self._maybe_await(
+                    self.local_service.list_approval_requests(
+                        str(status).strip() if status is not None else None,
+                        str(resolved_action_id).strip() if resolved_action_id is not None else None,
+                    )
+                )
+            if action_name == "approval_request.approve":
+                return await self._maybe_await(
+                    self.local_service.approve_approval_request(self._require_field(payload, "request_id"))
+                )
+            if action_name == "approval_request.deny":
+                return await self._maybe_await(
+                    self.local_service.deny_approval_request(self._require_field(payload, "request_id"))
+                )
+            if action_name == "approval_request.delete":
+                return await self._maybe_await(
+                    self.local_service.delete_approval_request(self._require_field(payload, "request_id"))
+                )
+            if action_name == "runtime.status.get":
+                return await self._maybe_await(self.local_service.get_runtime_status())
+            if action_name == "runtime.request":
+                return await self._maybe_await(
+                    self.local_service.run_runtime_request(
+                        self._require_field(payload, "method"),
+                        payload.get("params") if isinstance(payload.get("params"), dict) else {},
+                    )
+                )
+            if action_name == "runtime.batch":
+                requests = payload.get("requests")
+                if not isinstance(requests, list):
+                    raise ValueError("Unified MCP action requires 'requests'.")
+                return await self._maybe_await(self.local_service.run_runtime_batch(requests))
             raise ValueError(f"Unsupported Unified MCP local action: {action_name}")
 
         target = self._require_active_server_target()

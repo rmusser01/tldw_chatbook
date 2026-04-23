@@ -31,9 +31,184 @@ class FakeLocalMCPControlService:
         self.calls.append("external_servers")
         return {"source": "local", "section": "external_servers", "profiles": [{"profile_id": "local-a"}]}
 
+    def get_governance(self) -> list[dict]:
+        self.calls.append("governance")
+        return [
+            {
+                "rule_id": "rule-a",
+                "capability_id": "mcp.inventory.list.local",
+                "decision": "allow",
+            }
+        ]
+
+    def get_advanced(self) -> dict:
+        self.calls.append("advanced")
+        return {
+            "source": "local",
+            "section": "advanced",
+            "runtime_status": {
+                "server_id": "local:tldw_chatbook",
+                "server_label": "tldw_chatbook local MCP",
+                "tool_count": 2,
+            },
+            "protocol": {
+                "adapter": "direct_in_process",
+                "supports_batch": True,
+                "request_methods": ["tools/list", "resources/list", "prompts/list"],
+            },
+        }
+
     def save_external_profile(self, payload: dict) -> dict:
         self.action_calls.append(("profile.save", dict(payload)))
         return dict(payload)
+
+    def save_governance_rule(self, payload: dict) -> dict:
+        self.action_calls.append(("governance_rule.save", dict(payload)))
+        return dict(payload)
+
+    def delete_governance_rule(self, rule_id: str) -> bool:
+        self.action_calls.append(("governance_rule.delete", {"rule_id": rule_id}))
+        return True
+
+    def preview_governance_decision(self, capability_id: str) -> dict:
+        self.action_calls.append(("governance_rule.preview", {"capability_id": capability_id}))
+        return {
+            "source": "local",
+            "capability_id": capability_id,
+            "decision": "allow",
+            "matched_rule_id": "rule-a",
+            "notes": "Inventory is allowed locally.",
+        }
+
+    async def execute_tool(self, tool_name: str, arguments: dict | None = None) -> dict:
+        payload = {"tool_name": tool_name, "arguments": dict(arguments or {})}
+        self.action_calls.append(("tool.execute", payload))
+        return {"source": "local", "tool_name": tool_name, "result": dict(arguments or {})}
+
+    async def read_resource(self, resource_uri: str) -> dict:
+        payload = {"resource_uri": resource_uri}
+        self.action_calls.append(("resource.read", payload))
+        return {"source": "local", "resource_uri": resource_uri, "result": {"content": "resource-body"}}
+
+    async def get_prompt(self, prompt_name: str, arguments: dict | None = None) -> dict:
+        payload = {"prompt_name": prompt_name, "arguments": dict(arguments or {})}
+        self.action_calls.append(("prompt.get", payload))
+        return {
+            "source": "local",
+            "prompt_name": prompt_name,
+            "arguments": dict(arguments or {}),
+            "messages": [{"role": "assistant", "content": "prompt-body"}],
+        }
+
+    def get_runtime_status(self) -> dict:
+        self.action_calls.append(("runtime.status.get", {}))
+        return {
+            "source": "local",
+            "status": {
+                "server_id": "local:tldw_chatbook",
+                "server_label": "tldw_chatbook local MCP",
+                "tool_count": 2,
+            },
+        }
+
+    def get_runtime_health(self) -> dict:
+        self.action_calls.append(("runtime.health.get", {}))
+        return {
+            "source": "local",
+            "health": {
+                "state": "ready",
+                "adapter": "direct_in_process",
+                "manifest": {"tools": 2, "resources": 1, "prompts": 1},
+            },
+        }
+
+    def get_runtime_activity(self, limit: int = 20) -> dict:
+        self.action_calls.append(("runtime.activity.list", {"limit": limit}))
+        return {
+            "source": "local",
+            "limit": limit,
+            "entries": [
+                {
+                    "action_name": "tool.execute",
+                    "target": "search_notes",
+                    "ok": True,
+                }
+            ],
+        }
+
+    def get_runtime_protocol_diagnostics(self) -> dict:
+        self.action_calls.append(("runtime.protocol.inspect", {}))
+        return {
+            "source": "local",
+            "diagnostics": {
+                "protocol_version": "2025-03-26",
+                "transport": "in_process",
+                "manifest": {"tools": 2, "resources": 1, "prompts": 1},
+            },
+        }
+
+    def list_approval_requests(self, status: str | None = None, resolved_action_id: str | None = None) -> list[dict]:
+        payload = {}
+        if status is not None:
+            payload["status"] = status
+        if resolved_action_id is not None:
+            payload["resolved_action_id"] = resolved_action_id
+        self.action_calls.append(("approval_requests.list", payload))
+        return [
+            {
+                "request_id": "approval-a",
+                "status": status or "pending",
+                "resolved_action_id": resolved_action_id or "notes.list.local",
+            }
+        ]
+
+    def approve_approval_request(self, request_id: str) -> dict:
+        self.action_calls.append(("approval_request.approve", {"request_id": request_id}))
+        return {"request_id": request_id, "status": "approved"}
+
+    def deny_approval_request(self, request_id: str) -> dict:
+        self.action_calls.append(("approval_request.deny", {"request_id": request_id}))
+        return {"request_id": request_id, "status": "denied"}
+
+    def delete_approval_request(self, request_id: str) -> bool:
+        self.action_calls.append(("approval_request.delete", {"request_id": request_id}))
+        return True
+
+    def preview_runtime_access(self, action_name: str, payload: dict | None = None) -> dict:
+        entry = {"action_name": action_name, "payload": dict(payload or {})}
+        self.action_calls.append(("runtime.access.preview", entry))
+        return {
+            "source": "local",
+            "action_name": action_name,
+            "resolved_action_id": "notes.list.local",
+            "registry_capability_id": "notes_workspaces",
+            "decision": "deny",
+            "matched_rule_id": "rule-deny-notes-list",
+            "notes": "Local note listing is blocked.",
+            "approval_request_id": None,
+            "approval_status": None,
+        }
+
+    async def run_runtime_request(self, method: str, params: dict | None = None) -> dict:
+        payload = {"method": method, "params": dict(params or {})}
+        self.action_calls.append(("runtime.request", payload))
+        return {
+            "source": "local",
+            "method": method,
+            "params": dict(params or {}),
+            "result": {"ok": True, "method": method},
+        }
+
+    async def run_runtime_batch(self, requests: list[dict]) -> dict:
+        payload = {"requests": [dict(item) for item in requests]}
+        self.action_calls.append(("runtime.batch", payload))
+        return {
+            "source": "local",
+            "results": [
+                {"index": index, "method": request.get("method"), "ok": True}
+                for index, request in enumerate(requests)
+            ],
+        }
 
 
 class FakeServerUnifiedMCPService:
@@ -395,6 +570,112 @@ async def test_control_plane_service_routes_slice2_sections_by_selected_source(t
 
 
 @pytest.mark.asyncio
+async def test_control_plane_service_routes_local_governance_section_and_actions(tmp_path):
+    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    context_store = UnifiedMCPContextStore(tmp_path / "context.json")
+    local_service = FakeLocalMCPControlService()
+    orchestrator = UnifiedMCPControlPlaneService(
+        target_store=target_store,
+        context_store=context_store,
+        local_service=local_service,
+        server_service=FakeServerUnifiedMCPService(),
+    )
+
+    await orchestrator.select_source("local")
+    local_governance = await orchestrator.load_section("governance")
+    action_names = [descriptor["name"] for descriptor in orchestrator.available_actions()]
+    saved = await orchestrator.run_action(
+        "governance_rule.save",
+        {
+            "rule_id": "rule-b",
+            "capability_id": "mcp.inventory.observe.local",
+            "decision": "deny",
+        },
+    )
+    preview = await orchestrator.run_action(
+        "governance_rule.preview",
+        {"capability_id": "mcp.inventory.list.local"},
+    )
+    deleted = await orchestrator.run_action("governance_rule.delete", {"rule_id": "rule-b"})
+
+    assert local_governance == {
+        "source": "local",
+        "section": "governance",
+        "rules": [
+            {
+                "rule_id": "rule-a",
+                "capability_id": "mcp.inventory.list.local",
+                "decision": "allow",
+            }
+        ],
+    }
+    assert "governance_rule.save" in action_names
+    assert "governance_rule.preview" in action_names
+    assert "governance_rule.delete" in action_names
+    assert saved["rule_id"] == "rule-b"
+    assert preview["decision"] == "allow"
+    assert deleted is True
+    assert local_service.calls == ["governance"]
+    assert local_service.action_calls == [
+        (
+            "governance_rule.save",
+            {
+                "rule_id": "rule-b",
+                "capability_id": "mcp.inventory.observe.local",
+                "decision": "deny",
+            },
+        ),
+        ("governance_rule.preview", {"capability_id": "mcp.inventory.list.local"}),
+        ("governance_rule.delete", {"rule_id": "rule-b"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_control_plane_service_routes_local_inventory_runtime_actions(tmp_path):
+    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    context_store = UnifiedMCPContextStore(tmp_path / "context.json")
+    local_service = FakeLocalMCPControlService()
+    orchestrator = UnifiedMCPControlPlaneService(
+        target_store=target_store,
+        context_store=context_store,
+        local_service=local_service,
+        server_service=FakeServerUnifiedMCPService(),
+    )
+
+    await orchestrator.select_source("local")
+    await orchestrator.select_section("inventory")
+    action_names = [descriptor["name"] for descriptor in orchestrator.available_actions()]
+    tool_result = await orchestrator.run_action(
+        "tool.execute",
+        {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
+    )
+    resource_result = await orchestrator.run_action(
+        "resource.read",
+        {"resource_uri": "note://123"},
+    )
+    prompt_result = await orchestrator.run_action(
+        "prompt.get",
+        {"prompt_name": "summarize_conversation", "arguments": {"conversation_id": 4}},
+    )
+
+    assert "tool.execute" in action_names
+    assert "resource.read" in action_names
+    assert "prompt.get" in action_names
+    assert tool_result["tool_name"] == "search_notes"
+    assert resource_result["resource_uri"] == "note://123"
+    assert prompt_result["prompt_name"] == "summarize_conversation"
+    assert local_service.action_calls == [
+        ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "roadmap"}}),
+        ("resource.read", {"resource_uri": "note://123"}),
+        ("prompt.get", {"prompt_name": "summarize_conversation", "arguments": {"conversation_id": 4}}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_control_plane_service_dispatches_slice2_actions(tmp_path):
     from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
 
@@ -524,6 +805,101 @@ async def test_control_plane_service_routes_advanced_section_and_action(tmp_path
     assert advanced["tool_registry_modules"][0]["module"] == "search"
     assert create_result["name"] == "Workspace Root"
     assert any(action["name"] == "path_scope_object.create" for action in orchestrator.available_actions())
+
+
+@pytest.mark.asyncio
+async def test_control_plane_service_routes_local_advanced_section_and_runtime_actions(tmp_path):
+    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    target_store.save_targets(
+        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+    )
+    context_store = UnifiedMCPContextStore(tmp_path / "context.json")
+    local_service = FakeLocalMCPControlService()
+    orchestrator = UnifiedMCPControlPlaneService(
+        target_store=target_store,
+        context_store=context_store,
+        local_service=local_service,
+        server_service=FakeServerUnifiedMCPService(),
+    )
+
+    advanced = await orchestrator.load_section("advanced")
+    action_names = [descriptor["name"] for descriptor in orchestrator.available_actions()]
+    preview_result = await orchestrator.run_action(
+        "runtime.access.preview",
+        {"action_name": "tool.execute", "payload": {"tool_name": "search_notes", "arguments": {"query": "roadmap"}}},
+    )
+    activity_result = await orchestrator.run_action("runtime.activity.list", {"limit": 5})
+    protocol_result = await orchestrator.run_action("runtime.protocol.inspect", {})
+    health_result = await orchestrator.run_action("runtime.health.get", {})
+    approvals_result = await orchestrator.run_action(
+        "approval_requests.list",
+        {"status": "pending", "resolved_action_id": "notes.list.local"},
+    )
+    approve_result = await orchestrator.run_action("approval_request.approve", {"request_id": "approval-a"})
+    deny_result = await orchestrator.run_action("approval_request.deny", {"request_id": "approval-b"})
+    delete_result = await orchestrator.run_action("approval_request.delete", {"request_id": "approval-c"})
+    status_result = await orchestrator.run_action("runtime.status.get", {})
+    request_result = await orchestrator.run_action("runtime.request", {"method": "tools/list", "params": {}})
+    batch_result = await orchestrator.run_action(
+        "runtime.batch",
+        {"requests": [{"method": "tools/list"}, {"method": "prompts/list"}]},
+    )
+
+    assert advanced["section"] == "advanced"
+    assert advanced["runtime_status"]["server_id"] == "local:tldw_chatbook"
+    assert "runtime.access.preview" in action_names
+    assert "runtime.activity.list" in action_names
+    assert "runtime.protocol.inspect" in action_names
+    assert "runtime.health.get" in action_names
+    assert "approval_requests.list" in action_names
+    assert "approval_request.approve" in action_names
+    assert "approval_request.deny" in action_names
+    assert "approval_request.delete" in action_names
+    assert "runtime.status.get" in action_names
+    assert "runtime.request" in action_names
+    assert "runtime.batch" in action_names
+    assert preview_result["decision"] == "deny"
+    assert preview_result["resolved_action_id"] == "notes.list.local"
+    assert activity_result["entries"][0]["action_name"] == "tool.execute"
+    assert protocol_result["diagnostics"]["protocol_version"] == "2025-03-26"
+    assert health_result["health"]["state"] == "ready"
+    assert approvals_result[0]["request_id"] == "approval-a"
+    assert approve_result["status"] == "approved"
+    assert deny_result["status"] == "denied"
+    assert delete_result is True
+    assert status_result["status"]["server_id"] == "local:tldw_chatbook"
+    assert request_result["result"]["method"] == "tools/list"
+    assert batch_result["results"][1]["method"] == "prompts/list"
+    assert local_service.calls[-1] == "advanced"
+    assert local_service.action_calls == [
+        (
+            "runtime.access.preview",
+            {
+                "action_name": "tool.execute",
+                "payload": {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
+            },
+        ),
+        ("runtime.activity.list", {"limit": 5}),
+        ("runtime.protocol.inspect", {}),
+        ("runtime.health.get", {}),
+        ("approval_requests.list", {"status": "pending", "resolved_action_id": "notes.list.local"}),
+        ("approval_request.approve", {"request_id": "approval-a"}),
+        ("approval_request.deny", {"request_id": "approval-b"}),
+        ("approval_request.delete", {"request_id": "approval-c"}),
+        ("runtime.status.get", {}),
+        ("runtime.request", {"method": "tools/list", "params": {}}),
+        (
+            "runtime.batch",
+            {
+                "requests": [
+                    {"method": "tools/list"},
+                    {"method": "prompts/list"},
+                ]
+            },
+        ),
+    ]
 
 
 @pytest.mark.asyncio

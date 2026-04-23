@@ -112,6 +112,18 @@ from .web_clipper_schemas import (
     WebClipperSaveResponse,
     WebClipperStatusResponse,
 )
+from .outputs_schemas import (
+    OutputArtifactResponse,
+    OutputCreateRequest,
+    OutputListResponse,
+    OutputTemplateCreateRequest,
+    OutputTemplateListResponse,
+    OutputTemplatePreviewRequest,
+    OutputTemplatePreviewResponse,
+    OutputTemplateResponse,
+    OutputTemplateUpdateRequest,
+    OutputUpdateRequest,
+)
 from .sharing_schemas import (
     CloneWorkspaceRequest,
     CloneWorkspaceResponse,
@@ -183,6 +195,18 @@ from .flashcards_schemas import (
     FlashcardReviewSessionEndRequest,
     FlashcardReviewSessionSummary,
     FlashcardUpdateRequest,
+)
+from .study_extensions_schemas import (
+    StudyPackCreateJobRequest,
+    StudyPackJobAcceptedResponse,
+    StudyPackJobStatusResponse,
+    StudyPackSummaryResponse,
+    SuggestionActionRequest,
+    SuggestionActionResponse,
+    SuggestionJobAcceptedResponse,
+    SuggestionRefreshRequest,
+    SuggestionSnapshotResponse,
+    SuggestionStatusResponse,
 )
 from .quizzes_schemas import (
     QuizAttemptListResponse,
@@ -987,6 +1011,140 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return WebClipperEnrichmentResponse.model_validate(response)
+
+    async def list_output_templates(
+        self,
+        *,
+        q: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> OutputTemplateListResponse:
+        params = {"limit": limit, "offset": offset}
+        if q:
+            params["q"] = q
+        response = await self._request("GET", "/api/v1/outputs/templates", params=params)
+        return OutputTemplateListResponse.model_validate(response)
+
+    async def create_output_template(
+        self,
+        request_data: OutputTemplateCreateRequest,
+    ) -> OutputTemplateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/outputs/templates",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return OutputTemplateResponse.model_validate(response)
+
+    async def get_output_template(self, template_id: int) -> OutputTemplateResponse:
+        response = await self._request("GET", f"/api/v1/outputs/templates/{template_id}")
+        return OutputTemplateResponse.model_validate(response)
+
+    async def update_output_template(
+        self,
+        template_id: int,
+        request_data: OutputTemplateUpdateRequest,
+    ) -> OutputTemplateResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/outputs/templates/{template_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+        return OutputTemplateResponse.model_validate(response)
+
+    async def delete_output_template(self, template_id: int) -> dict[str, Any]:
+        response = await self._request("DELETE", f"/api/v1/outputs/templates/{template_id}")
+        return dict(response)
+
+    async def preview_output_template(
+        self,
+        template_id: int,
+        request_data: OutputTemplatePreviewRequest,
+    ) -> OutputTemplatePreviewResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/outputs/templates/{template_id}/preview",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return OutputTemplatePreviewResponse.model_validate(response)
+
+    async def list_outputs(
+        self,
+        *,
+        page: int = 1,
+        size: int = 50,
+        job_id: int | None = None,
+        run_id: int | None = None,
+        type: str | None = None,
+        workspace_tag: str | None = None,
+        include_deleted: bool = False,
+    ) -> OutputListResponse:
+        params: dict[str, Any] = {
+            "page": page,
+            "size": size,
+            "include_deleted": include_deleted,
+        }
+        if job_id is not None:
+            params["job_id"] = job_id
+        if run_id is not None:
+            params["run_id"] = run_id
+        if type is not None:
+            params["type"] = type
+        if workspace_tag is not None:
+            params["workspace_tag"] = workspace_tag
+        response = await self._request("GET", "/api/v1/outputs", params=params)
+        return OutputListResponse.model_validate(response)
+
+    async def list_deleted_outputs(
+        self,
+        *,
+        page: int = 1,
+        size: int = 50,
+    ) -> OutputListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/outputs/deleted",
+            params={"page": page, "size": size},
+        )
+        return OutputListResponse.model_validate(response)
+
+    async def create_output(self, request_data: OutputCreateRequest) -> OutputArtifactResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/outputs",
+            json_data=request_data.model_dump(exclude_none=True, exclude_defaults=True, mode="json"),
+        )
+        return OutputArtifactResponse.model_validate(response)
+
+    async def get_output(self, output_id: int) -> OutputArtifactResponse:
+        response = await self._request("GET", f"/api/v1/outputs/{output_id}")
+        return OutputArtifactResponse.model_validate(response)
+
+    async def update_output(
+        self,
+        output_id: int,
+        request_data: OutputUpdateRequest,
+    ) -> OutputArtifactResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/outputs/{output_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+        return OutputArtifactResponse.model_validate(response)
+
+    async def delete_output(
+        self,
+        output_id: int,
+        *,
+        hard: bool = False,
+        delete_file: bool = False,
+    ) -> dict[str, Any]:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/outputs/{output_id}",
+            params={"hard": hard, "delete_file": delete_file},
+        )
+        return dict(response)
 
     async def share_workspace(self, workspace_id: str, request_data: ShareWorkspaceRequest) -> ShareResponse:
         response = await self._request(
@@ -2022,6 +2180,68 @@ class TLDWAPIClient:
             json_data=FlashcardReviewSessionEndRequest(review_session_id=review_session_id).model_dump(mode="json"),
         )
         return FlashcardReviewSessionSummary.model_validate(response)
+
+    async def create_study_pack_job(
+        self,
+        request_data: StudyPackCreateJobRequest,
+    ) -> StudyPackJobAcceptedResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/study-packs/jobs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return StudyPackJobAcceptedResponse.model_validate(response)
+
+    async def get_study_pack_job_status(self, job_id: int) -> StudyPackJobStatusResponse:
+        response = await self._request("GET", f"/api/v1/flashcards/study-packs/jobs/{job_id}")
+        return StudyPackJobStatusResponse.model_validate(response)
+
+    async def get_study_pack(self, pack_id: int) -> StudyPackSummaryResponse:
+        response = await self._request("GET", f"/api/v1/flashcards/study-packs/{pack_id}")
+        return StudyPackSummaryResponse.model_validate(response)
+
+    async def regenerate_study_pack(self, pack_id: int) -> StudyPackJobAcceptedResponse:
+        response = await self._request("POST", f"/api/v1/flashcards/study-packs/{pack_id}/regenerate")
+        return StudyPackJobAcceptedResponse.model_validate(response)
+
+    async def get_study_suggestion_status(
+        self,
+        anchor_type: str,
+        anchor_id: int,
+    ) -> SuggestionStatusResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/study-suggestions/anchors/{anchor_type}/{anchor_id}/status",
+        )
+        return SuggestionStatusResponse.model_validate(response)
+
+    async def get_study_suggestion_snapshot(self, snapshot_id: int) -> SuggestionSnapshotResponse:
+        response = await self._request("GET", f"/api/v1/study-suggestions/snapshots/{snapshot_id}")
+        return SuggestionSnapshotResponse.model_validate(response)
+
+    async def refresh_study_suggestion_snapshot(
+        self,
+        snapshot_id: int,
+        request_data: SuggestionRefreshRequest,
+    ) -> SuggestionJobAcceptedResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/study-suggestions/snapshots/{snapshot_id}/refresh",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SuggestionJobAcceptedResponse.model_validate(response)
+
+    async def trigger_study_suggestion_action(
+        self,
+        snapshot_id: int,
+        request_data: SuggestionActionRequest,
+    ) -> SuggestionActionResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/study-suggestions/snapshots/{snapshot_id}/actions",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SuggestionActionResponse.model_validate(response)
 
     async def create_quiz(
         self,
