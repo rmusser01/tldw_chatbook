@@ -689,15 +689,6 @@ class WritingScopeService:
         expected_version: int | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode != WritingBackend.LOCAL:
-            return await self.move_scene(
-                scene_id,
-                manuscript_id,
-                chapter_id,
-                mode=normalized_mode,
-                expected_version=expected_version,
-                sort_order=sort_order,
-            )
         self._enforce_policy(normalized_mode, resource="scenes", action="update")
         return await self._call(
             mode=normalized_mode,

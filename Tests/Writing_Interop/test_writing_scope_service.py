@@ -44,6 +44,10 @@ class FakeBackend:
         self.calls.append(("move_scene", scene_id, manuscript_id, chapter_id, kwargs))
         return {"id": scene_id, "source": self.label}
 
+    async def autosave_scene(self, scene_id, **kwargs):
+        self.calls.append(("autosave_scene", scene_id, kwargs))
+        return {"id": scene_id, "source": self.label, **kwargs}
+
     async def create_version(self, entity_kind, entity_id, **kwargs):
         self.calls.append(("create_version", entity_kind, entity_id, kwargs))
         return {"entity_kind": entity_kind, "entity_id": entity_id, "source": self.label}
@@ -292,6 +296,37 @@ async def test_move_scene_local_server_mode_uses_server_reparent_gate():
 
     assert exc_info.value.reason == REASON_SCENE_REPARENT
     assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_autosave_routes_to_server_backend_and_policy():
+    local = FakeBackend("local")
+    server = FakeBackend("server")
+    policy = FakePolicy()
+    service = WritingScopeService(
+        local_service=local,
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    result = await service.autosave_scene(
+        "scene-1",
+        mode="server",
+        body_markdown="Draft",
+        expected_version=2,
+    )
+
+    assert result == {
+        "id": "scene-1",
+        "source": "server",
+        "body_markdown": "Draft",
+        "expected_version": 2,
+    }
+    assert server.calls == [
+        ("autosave_scene", "scene-1", {"body_markdown": "Draft", "expected_version": 2})
+    ]
+    assert local.calls == []
+    assert policy.calls == ["writing.scenes.update.server"]
 
 
 @pytest.mark.asyncio
