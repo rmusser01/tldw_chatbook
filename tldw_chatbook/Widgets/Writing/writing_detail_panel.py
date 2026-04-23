@@ -31,6 +31,7 @@ class WritingDetailPanel(Vertical):
         self.selected_node = None
         self.title = "No selection"
         self.detail_text = "Select a project, manuscript, chapter, or scene."
+        self._refresh_mounted()
 
     def load_node(self, node_data: Mapping[str, Any]) -> None:
         self.selected_node = dict(node_data)
@@ -40,3 +41,16 @@ class WritingDetailPanel(Vertical):
         version = node_data.get("version")
         version_text = f"v{version}" if version is not None else "unversioned"
         self.detail_text = f"{kind} from {source} ({version_text})"
+        self._refresh_mounted()
+
+    def _refresh_mounted(self) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one("#writing-detail-title", Static).update(self.title)
+        except Exception:
+            pass
+        try:
+            self.query_one("#writing-detail-editor", TextArea).text = self.detail_text
+        except Exception:
+            pass

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import ListView, Tree
+from textual.widgets import ListView, Static, TextArea, Tree
 
 from tldw_chatbook.UI.Screens.writing_screen import WritingScreen
 from tldw_chatbook.UI.Writing_Window import WritingWindow
@@ -132,6 +132,25 @@ async def test_missing_server_configuration_shows_unavailable_state_without_loca
 
 
 @pytest.mark.asyncio
+async def test_mounted_server_unavailable_state_updates_visible_status():
+    scope = FakeWritingScopeService(server_available=False)
+    window = _writing_window(scope)
+    app = WritingWindowHarness(window)
+
+    async with app.run_test():
+        await window.load_projects("local")
+        await window.switch_source("server")
+
+        source_status = app.query_one("#writing-source-status", Static)
+        window_status = app.query_one("#writing-status", Static)
+        project_list = app.query_one("#writing-project-list", ListView)
+
+        assert "Server writing backend is unavailable" in str(source_status.render())
+        assert "Server writing backend is unavailable" in str(window_status.render())
+        assert len(project_list.children) == 0
+
+
+@pytest.mark.asyncio
 async def test_outline_renders_project_hierarchy_and_unassigned_chapters():
     scope = FakeWritingScopeService()
     window = _writing_window(scope)
@@ -209,5 +228,9 @@ async def test_mounted_outline_tree_renders_and_selects_nodes():
         assert scene_node.data["kind"] == "scene"
 
         window._handle_outline_node_selected(SimpleNamespace(node=scene_node))
+        detail_title = app.query_one("#writing-detail-title", Static)
+        detail_editor = app.query_one("#writing-detail-editor", TextArea)
 
     assert window.detail_panel.title == "Opening Scene"
+    assert "Opening Scene" in str(detail_title.render())
+    assert "scene from local (v1)" in detail_editor.text
