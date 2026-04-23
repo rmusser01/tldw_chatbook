@@ -4,6 +4,10 @@ from tldw_chatbook.Writing_Interop.local_writing_service import (
     LocalWritingService,
     WRITING_FILTER_UNSET,
 )
+from tldw_chatbook.Writing_Interop.server_writing_service import (
+    ServerWritingService,
+    WritingCapabilityError,
+)
 from tldw_chatbook.Writing_Interop.writing_markdown_adapter import (
     markdown_to_plain_text,
     markdown_to_server_content,
@@ -47,7 +51,9 @@ from tldw_chatbook.Writing_Interop.writing_normalizers import (
 
 __all__ = [
     "LocalWritingService",
+    "ServerWritingService",
     "WRITING_FILTER_UNSET",
+    "WritingCapabilityError",
     "WritingCapability",
     "WritingChapter",
     "WritingDraft",
