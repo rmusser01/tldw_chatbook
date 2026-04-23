@@ -16,6 +16,10 @@ from tldw_chatbook.Writing_Interop.server_writing_service import (
     ServerWritingService,
     WritingCapabilityError,
 )
+from tldw_chatbook.Writing_Interop.writing_scope_service import (
+    WritingBackend,
+    WritingScopeService,
+)
 from tldw_chatbook.Writing_Interop.writing_markdown_adapter import (
     markdown_to_plain_text,
     markdown_to_server_content,
@@ -70,6 +74,8 @@ __all__ = [
     "REASON_TRASH_RESTORE",
     "REASON_VERSION_HISTORY",
     "WritingCapabilityError",
+    "WritingBackend",
+    "WritingScopeService",
     "WritingCapability",
     "WritingChapter",
     "WritingDraft",
