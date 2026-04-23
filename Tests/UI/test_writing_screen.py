@@ -26,3 +26,13 @@ def test_writing_screen_round_trips_window_state():
 
     assert state == {"source": "server"}
     assert window.save_state() == {"source": "local"}
+
+
+def test_writing_screen_applies_state_restored_before_compose():
+    app = SimpleNamespace(writing_scope_service=object())
+    screen = WritingScreen(app)
+
+    screen.restore_state({"source": "server"})
+    widgets = list(screen.compose_content())
+
+    assert widgets[0].save_state() == {"source": "server"}

@@ -20,6 +20,7 @@ class WritingScreen(BaseAppScreen):
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "writing", **kwargs)
         self.writing_window: WritingWindow | None = None
+        self._pending_restore_state: Dict[str, Any] | None = None
 
     def compose_content(self) -> ComposeResult:
         self.writing_window = WritingWindow(
@@ -27,6 +28,9 @@ class WritingScreen(BaseAppScreen):
             id="writing-window",
             classes="window",
         )
+        if self._pending_restore_state is not None:
+            self.writing_window.restore_state(self._pending_restore_state)
+            self._pending_restore_state = None
         yield self.writing_window
 
     def save_state(self) -> Dict[str, Any]:
@@ -35,7 +39,7 @@ class WritingScreen(BaseAppScreen):
         except Exception:
             window = self.writing_window
         if window is None:
-            return {"source": "local"}
+            return self._pending_restore_state or {"source": "local"}
         return window.save_state()
 
     def restore_state(self, state: Dict[str, Any]) -> None:
@@ -44,6 +48,7 @@ class WritingScreen(BaseAppScreen):
         except Exception:
             window = self.writing_window
         if window is None:
-            logger.debug("WritingScreen restore_state called before window was composed")
+            logger.debug("Deferring WritingScreen restore_state until window is composed")
+            self._pending_restore_state = dict(state or {})
             return
         window.restore_state(state)
