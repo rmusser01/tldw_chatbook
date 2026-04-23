@@ -13,6 +13,15 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     CharacterExemplarSearchRequest,
     CharacterExemplarSelectionDebugRequest,
     CharacterExemplarUpdate,
+    CharacterChatMessageCreate,
+    CharacterChatMessageUpdate,
+    CharacterChatSessionCreate,
+    CharacterChatSessionUpdate,
+    CharacterChatSettingsUpdate,
+    CharacterMemoryArchiveRequest,
+    CharacterMemoryCreate,
+    CharacterMemoryExtractRequest,
+    CharacterMemoryUpdate,
     CharacterQueryRequest,
     CharacterUpdateRequest,
     PersonaExemplarCreate,
@@ -250,6 +259,293 @@ class TestCharacterPersonaClient:
             ),
             ("PUT", "/api/v1/chats/presets/custom", {"json_data": {"name": "Updated"}}),
             ("DELETE", "/api/v1/chats/presets/custom", {}),
+        ]
+        assert len(mocked.await_args_list) == len(expected_calls)
+        for call_args, expected in zip(mocked.await_args_list, expected_calls):
+            _assert_request_call(call_args, *expected)
+
+    async def test_character_chat_session_endpoint_wiring(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.create_character_chat_session(
+            CharacterChatSessionCreate(character_id=12, title="Ada"),
+            seed_first_message=True,
+            greeting_strategy="alternate_index",
+            alternate_index=1,
+        )
+        await client.list_character_chat_sessions(
+            character_id=12,
+            character_scope="character",
+            include_settings=True,
+            scope_type="workspace",
+            workspace_id="ws-1",
+            include_message_counts=False,
+            limit=7,
+            offset=3,
+        )
+        await client.get_character_chat_session("chat-1", include_settings=True, scope_type="workspace", workspace_id="ws-1")
+        await client.update_character_chat_session(
+            "chat-1",
+            CharacterChatSessionUpdate(title="Ada v2"),
+            expected_version=4,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.delete_character_chat_session(
+            "chat-1",
+            expected_version=5,
+            hard_delete=True,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.restore_character_chat_session(
+            "chat-1",
+            expected_version=6,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.get_character_chat_settings("chat-1", scope_type="workspace", workspace_id="ws-1")
+        await client.update_character_chat_settings(
+            "chat-1",
+            CharacterChatSettingsUpdate(settings={"presetScope": "chat"}),
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+
+        expected_calls = [
+            (
+                "POST",
+                "/api/v1/chats/",
+                {
+                    "json_data": {"character_id": 12, "title": "Ada"},
+                    "params": {
+                        "seed_first_message": "true",
+                        "greeting_strategy": "alternate_index",
+                        "alternate_index": 1,
+                    },
+                },
+            ),
+            (
+                "GET",
+                "/api/v1/chats/",
+                {
+                    "params": {
+                        "character_id": 12,
+                        "character_scope": "character",
+                        "limit": 7,
+                        "offset": 3,
+                        "include_deleted": "false",
+                        "deleted_only": "false",
+                        "include_settings": "true",
+                        "scope_type": "workspace",
+                        "workspace_id": "ws-1",
+                        "include_message_counts": "false",
+                    },
+                },
+            ),
+            (
+                "GET",
+                "/api/v1/chats/chat-1",
+                {"params": {"include_settings": "true", "scope_type": "workspace", "workspace_id": "ws-1"}},
+            ),
+            (
+                "PUT",
+                "/api/v1/chats/chat-1",
+                {
+                    "json_data": {"title": "Ada v2"},
+                    "params": {"expected_version": 4, "scope_type": "workspace", "workspace_id": "ws-1"},
+                },
+            ),
+            (
+                "DELETE",
+                "/api/v1/chats/chat-1",
+                {
+                    "params": {
+                        "expected_version": 5,
+                        "hard_delete": "true",
+                        "scope_type": "workspace",
+                        "workspace_id": "ws-1",
+                    },
+                },
+            ),
+            (
+                "POST",
+                "/api/v1/chats/chat-1/restore",
+                {"params": {"expected_version": 6, "scope_type": "workspace", "workspace_id": "ws-1"}},
+            ),
+            (
+                "GET",
+                "/api/v1/chats/chat-1/settings",
+                {"params": {"scope_type": "workspace", "workspace_id": "ws-1"}},
+            ),
+            (
+                "PUT",
+                "/api/v1/chats/chat-1/settings",
+                {
+                    "json_data": {"settings": {"presetScope": "chat"}},
+                    "params": {"scope_type": "workspace", "workspace_id": "ws-1"},
+                },
+            ),
+        ]
+        assert len(mocked.await_args_list) == len(expected_calls)
+        for call_args, expected in zip(mocked.await_args_list, expected_calls):
+            _assert_request_call(call_args, *expected)
+
+    async def test_character_chat_message_endpoint_wiring(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.create_character_chat_message(
+            "chat-1",
+            CharacterChatMessageCreate(role="user", content="Hello"),
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.list_character_chat_messages(
+            "chat-1",
+            include_deleted=True,
+            include_character_context=True,
+            format_for_completions=True,
+            include_tool_calls=True,
+            include_metadata=True,
+            include_message_ids=True,
+            scope_type="workspace",
+            workspace_id="ws-1",
+            limit=7,
+            offset=3,
+        )
+        await client.get_character_chat_message(
+            "msg-1",
+            include_tool_calls=True,
+            include_metadata=True,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.update_character_chat_message(
+            "msg-1",
+            CharacterChatMessageUpdate(content="Updated"),
+            expected_version=4,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.delete_character_chat_message(
+            "msg-1",
+            expected_version=5,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.search_character_chat_messages(
+            "chat-1",
+            "hello",
+            scope_type="workspace",
+            workspace_id="ws-1",
+            limit=9,
+        )
+
+        expected_calls = [
+            (
+                "POST",
+                "/api/v1/chats/chat-1/messages",
+                {
+                    "json_data": {"role": "user", "content": "Hello"},
+                    "params": {"scope_type": "workspace", "workspace_id": "ws-1"},
+                },
+            ),
+            (
+                "GET",
+                "/api/v1/chats/chat-1/messages",
+                {
+                    "params": {
+                        "limit": 7,
+                        "offset": 3,
+                        "include_deleted": "true",
+                        "include_character_context": "true",
+                        "format_for_completions": "true",
+                        "include_tool_calls": "true",
+                        "include_metadata": "true",
+                        "include_message_ids": "true",
+                        "scope_type": "workspace",
+                        "workspace_id": "ws-1",
+                    },
+                },
+            ),
+            (
+                "GET",
+                "/api/v1/messages/msg-1",
+                {
+                    "params": {
+                        "include_tool_calls": "true",
+                        "include_metadata": "true",
+                        "scope_type": "workspace",
+                        "workspace_id": "ws-1",
+                    },
+                },
+            ),
+            (
+                "PUT",
+                "/api/v1/messages/msg-1",
+                {
+                    "json_data": {"content": "Updated"},
+                    "params": {"expected_version": 4, "scope_type": "workspace", "workspace_id": "ws-1"},
+                },
+            ),
+            (
+                "DELETE",
+                "/api/v1/messages/msg-1",
+                {"params": {"expected_version": 5, "scope_type": "workspace", "workspace_id": "ws-1"}},
+            ),
+            (
+                "GET",
+                "/api/v1/chats/chat-1/messages/search",
+                {"params": {"query": "hello", "limit": 9, "scope_type": "workspace", "workspace_id": "ws-1"}},
+            ),
+        ]
+        assert len(mocked.await_args_list) == len(expected_calls)
+        for call_args, expected in zip(mocked.await_args_list, expected_calls):
+            _assert_request_call(call_args, *expected)
+
+    async def test_character_memory_endpoint_wiring(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.list_character_memories("12", memory_type="fact", include_archived=True, limit=7, offset=3)
+        await client.create_character_memory("12", CharacterMemoryCreate(content="likes tea", memory_type="fact", salience=0.8))
+        await client.update_character_memory("12", "mem-1", CharacterMemoryUpdate(content="likes coffee"))
+        await client.delete_character_memory("12", "mem-1")
+        await client.archive_character_memory("12", "mem-1", CharacterMemoryArchiveRequest(archived=False))
+        await client.extract_character_memories("12", CharacterMemoryExtractRequest(chat_id="chat-1", message_limit=10))
+
+        expected_calls = [
+            (
+                "GET",
+                "/api/v1/characters/12/memories",
+                {"params": {"memory_type": "fact", "include_archived": "true", "limit": 7, "offset": 3}},
+            ),
+            (
+                "POST",
+                "/api/v1/characters/12/memories",
+                {"json_data": {"content": "likes tea", "memory_type": "fact", "salience": 0.8}},
+            ),
+            (
+                "PATCH",
+                "/api/v1/characters/12/memories/mem-1",
+                {"json_data": {"content": "likes coffee"}},
+            ),
+            ("DELETE", "/api/v1/characters/12/memories/mem-1", {}),
+            (
+                "POST",
+                "/api/v1/characters/12/memories/mem-1/archive",
+                {"json_data": {"archived": False}},
+            ),
+            (
+                "POST",
+                "/api/v1/characters/12/memories/extract",
+                {"json_data": {"chat_id": "chat-1", "message_limit": 10}},
+            ),
         ]
         assert len(mocked.await_args_list) == len(expected_calls)
         for call_args, expected in zip(mocked.await_args_list, expected_calls):

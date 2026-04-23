@@ -32,6 +32,8 @@ At that point, the next unresolved Tranche 2 focus moved to `Local MCP Runtime`,
 
 `Chat` now has backend-only source-aware conversation and chat-loop seams. Chatbook wires local conversation metadata/history/delete, server conversation list/detail/update/tree operations, server chat-loop start/event/approve/reject/cancel operations, server conversation share-link operations, public share-token resolution, server RAG-context persistence/readback, messages-with-context, and conversation citation retrieval behind source-scoped policy actions, preserving local workspace scope filtering and avoiding any chat UI rewrite. Remaining Chat work is mounted remote launch/message handoff, remote delete pending a server conversation-delete contract, attachment/export identity, and mounted UX for explicit local/server conversation browsing.
 
+`Characters / Personas / CCP` now has a backend-only server contract foundation beyond catalog reads. Chatbook has typed server character/persona catalog and exemplar methods, greeting/preset helpers, character chat session CRUD/settings methods, character chat message CRUD/search methods, character memory CRUD/archive/extract methods, service wrappers, runtime-policy scope enforcement, and app wiring for the policy enforcer. Remaining CCP work is mounted source-separated UX, local adapter normalization for centralized session/message/memory paths, shared local/server identifiers, and character import/export/world-book parity.
+
 ## Immediate Post-Tranche-0 Order
 
 1. `Local MCP Runtime`
@@ -86,6 +88,7 @@ Execution intent for this tranche:
 - Finish the strongest existing local/server seams before building fresh remote-only surfaces.
 - Prefer source-separated crosswalks and normalization work over redesigning mature local flows.
 - Use these domains to prove the runtime-policy model in everyday product surfaces before expanding to more ambitious missing capabilities.
+- Treat the first backend-only `Characters / Personas / CCP` contract seam as landed for server sessions, messages, and character memories; continue the row with mounted source-separated UX and local adapter normalization rather than duplicating route coverage.
 
 ## Tranche 2: Add Missing High-Value Local / Remote Surfaces
 

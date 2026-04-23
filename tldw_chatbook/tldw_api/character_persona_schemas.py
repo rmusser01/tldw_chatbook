@@ -20,6 +20,12 @@ PersonaConfirmationMode = Literal["always", "destructive_only", "never"]
 PersonaSetupStatus = Literal["not_started", "in_progress", "completed"]
 PersonaSetupStep = Literal["archetype", "persona", "voice", "commands", "safety", "test"]
 PersonaSetupTestType = Literal["dry_run", "live_session"]
+CharacterChatAssistantKind = Literal["character", "persona"]
+CharacterChatPersonaMemoryMode = Literal["read_only", "read_write"]
+CharacterChatSessionState = Literal["in-progress", "resolved", "backlog", "non-viable"]
+CharacterChatScopeType = Literal["global", "workspace"]
+CharacterChatMessageRole = Literal["user", "assistant", "system"]
+CharacterMemoryType = Literal["fact", "relationship", "event", "preference", "manual"]
 
 
 def _strip_optional_text(value: Any) -> Any:
@@ -237,6 +243,88 @@ class CharacterExemplarDeletionResponse(BaseModel):
     message: str
     character_id: int
     exemplar_id: str
+
+
+class CharacterChatSessionCreate(BaseModel):
+    """Request body for server-backed character/persona chat session creation."""
+
+    character_id: int | None = Field(default=None, gt=0)
+    assistant_kind: CharacterChatAssistantKind | None = None
+    assistant_id: str | None = Field(default=None, min_length=1)
+    persona_memory_mode: CharacterChatPersonaMemoryMode | None = None
+    title: str | None = None
+    parent_conversation_id: str | None = None
+    forked_from_message_id: str | None = None
+    state: CharacterChatSessionState | None = None
+    topic_label: str | None = None
+    cluster_id: str | None = None
+    source: str | None = None
+    external_ref: str | None = None
+    scope_type: CharacterChatScopeType | None = None
+    workspace_id: str | None = None
+
+
+class CharacterChatSessionUpdate(BaseModel):
+    """Request body for server-backed character/persona chat session metadata updates."""
+
+    title: str | None = None
+    rating: int | None = Field(default=None, ge=1, le=5)
+    state: CharacterChatSessionState | None = None
+    topic_label: str | None = None
+    cluster_id: str | None = None
+    source: str | None = None
+    external_ref: str | None = None
+
+
+class CharacterChatSettingsUpdate(BaseModel):
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
+class CharacterChatMessageCreate(BaseModel):
+    role: CharacterChatMessageRole
+    content: str | None = Field(default=None, min_length=1)
+    parent_message_id: str | None = None
+    image_base64: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_content_or_image(self) -> "CharacterChatMessageCreate":
+        if not (self.content and self.content.strip()) and not (self.image_base64 and self.image_base64.strip()):
+            raise ValueError("Provide either non-empty content or image_base64.")
+        return self
+
+
+class CharacterChatMessageUpdate(BaseModel):
+    content: str | None = Field(default=None, min_length=1)
+    pinned: bool | None = None
+
+    @model_validator(mode="after")
+    def _validate_content_or_pin_update(self) -> "CharacterChatMessageUpdate":
+        if not (self.content and self.content.strip()) and self.pinned is None:
+            raise ValueError("Provide either non-empty content or pinned.")
+        return self
+
+
+class CharacterMemoryCreate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=2000)
+    memory_type: CharacterMemoryType = "manual"
+    salience: float = Field(default=0.7, ge=0.0, le=1.0)
+
+
+class CharacterMemoryUpdate(BaseModel):
+    content: str | None = Field(default=None, min_length=1, max_length=2000)
+    memory_type: CharacterMemoryType | None = None
+    salience: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class CharacterMemoryArchiveRequest(BaseModel):
+    archived: bool = True
+
+
+class CharacterMemoryExtractRequest(BaseModel):
+    chat_id: str
+    message_limit: int = Field(default=50, ge=1, le=200)
+    provider: str | None = None
+    model: str | None = None
 
 
 class PersonaBuddyVisualSummary(BaseModel):
@@ -595,6 +683,21 @@ __all__ = [
     "CharacterExemplarScore",
     "CharacterExemplarSelectionDebug",
     "CharacterExemplarDeletionResponse",
+    "CharacterChatAssistantKind",
+    "CharacterChatPersonaMemoryMode",
+    "CharacterChatSessionState",
+    "CharacterChatScopeType",
+    "CharacterChatMessageRole",
+    "CharacterChatSessionCreate",
+    "CharacterChatSessionUpdate",
+    "CharacterChatSettingsUpdate",
+    "CharacterChatMessageCreate",
+    "CharacterChatMessageUpdate",
+    "CharacterMemoryType",
+    "CharacterMemoryCreate",
+    "CharacterMemoryUpdate",
+    "CharacterMemoryArchiveRequest",
+    "CharacterMemoryExtractRequest",
     "PersonaMode",
     "PersonaSessionStatus",
     "PersonaProfileCreate",

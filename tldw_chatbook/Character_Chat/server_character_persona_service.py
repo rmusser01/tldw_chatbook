@@ -8,6 +8,15 @@ from typing import Any, Mapping, Optional
 
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
 from ..tldw_api import (
+    CharacterChatMessageCreate,
+    CharacterChatMessageUpdate,
+    CharacterChatSessionCreate,
+    CharacterChatSessionUpdate,
+    CharacterChatSettingsUpdate,
+    CharacterMemoryArchiveRequest,
+    CharacterMemoryCreate,
+    CharacterMemoryExtractRequest,
+    CharacterMemoryUpdate,
     PersonaProfileCreate,
     PersonaProfileUpdate,
     PresetCreate,
@@ -98,3 +107,184 @@ class ServerCharacterPersonaService:
     async def delete_chat_preset(self, preset_id: str) -> Any:
         client = self._require_client()
         return await client.delete_preset(preset_id)
+
+    async def create_character_chat_session(
+        self,
+        request_data: CharacterChatSessionCreate | Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        client = self._require_client()
+        request = (
+            request_data
+            if isinstance(request_data, CharacterChatSessionCreate)
+            else CharacterChatSessionCreate.model_validate(dict(request_data))
+        )
+        return await client.create_character_chat_session(request, **kwargs)
+
+    async def list_character_chat_sessions(self, **kwargs: Any) -> Any:
+        client = self._require_client()
+        return await client.list_character_chat_sessions(**kwargs)
+
+    async def get_character_chat_session(self, chat_id: str, **kwargs: Any) -> Any:
+        client = self._require_client()
+        return await client.get_character_chat_session(chat_id, **kwargs)
+
+    async def update_character_chat_session(
+        self,
+        chat_id: str,
+        request_data: CharacterChatSessionUpdate | Mapping[str, Any],
+        *,
+        expected_version: int,
+        **kwargs: Any,
+    ) -> Any:
+        client = self._require_client()
+        request = (
+            request_data
+            if isinstance(request_data, CharacterChatSessionUpdate)
+            else CharacterChatSessionUpdate.model_validate(dict(request_data))
+        )
+        return await client.update_character_chat_session(
+            chat_id,
+            request,
+            expected_version=expected_version,
+            **kwargs,
+        )
+
+    async def delete_character_chat_session(self, chat_id: str, **kwargs: Any) -> Any:
+        client = self._require_client()
+        return await client.delete_character_chat_session(chat_id, **kwargs)
+
+    async def restore_character_chat_session(self, chat_id: str, **kwargs: Any) -> Any:
+        client = self._require_client()
+        return await client.restore_character_chat_session(chat_id, **kwargs)
+
+    async def get_character_chat_settings(self, chat_id: str, **kwargs: Any) -> Any:
+        client = self._require_client()
+        return await client.get_character_chat_settings(chat_id, **kwargs)
+
+    async def update_character_chat_settings(
+        self,
+        chat_id: str,
+        request_data: CharacterChatSettingsUpdate | Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        client = self._require_client()
+        request = (
+            request_data
+            if isinstance(request_data, CharacterChatSettingsUpdate)
+            else CharacterChatSettingsUpdate.model_validate(dict(request_data))
+        )
+        return await client.update_character_chat_settings(chat_id, request, **kwargs)
+
+    async def create_character_chat_message(
+        self,
+        chat_id: str,
+        request_data: CharacterChatMessageCreate | Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        client = self._require_client()
+        request = (
+            request_data
+            if isinstance(request_data, CharacterChatMessageCreate)
+            else CharacterChatMessageCreate.model_validate(dict(request_data))
+        )
+        return await client.create_character_chat_message(chat_id, request, **kwargs)
+
+    async def list_character_chat_messages(self, chat_id: str, **kwargs: Any) -> Any:
+        client = self._require_client()
+        return await client.list_character_chat_messages(chat_id, **kwargs)
+
+    async def get_character_chat_message(self, message_id: str, **kwargs: Any) -> Any:
+        client = self._require_client()
+        return await client.get_character_chat_message(message_id, **kwargs)
+
+    async def update_character_chat_message(
+        self,
+        message_id: str,
+        request_data: CharacterChatMessageUpdate | Mapping[str, Any],
+        *,
+        expected_version: int,
+        **kwargs: Any,
+    ) -> Any:
+        client = self._require_client()
+        request = (
+            request_data
+            if isinstance(request_data, CharacterChatMessageUpdate)
+            else CharacterChatMessageUpdate.model_validate(dict(request_data))
+        )
+        return await client.update_character_chat_message(
+            message_id,
+            request,
+            expected_version=expected_version,
+            **kwargs,
+        )
+
+    async def delete_character_chat_message(self, message_id: str, **kwargs: Any) -> Any:
+        client = self._require_client()
+        return await client.delete_character_chat_message(message_id, **kwargs)
+
+    async def search_character_chat_messages(self, chat_id: str, query: str, **kwargs: Any) -> Any:
+        client = self._require_client()
+        return await client.search_character_chat_messages(chat_id, query, **kwargs)
+
+    async def list_character_memories(self, character_id: str, **kwargs: Any) -> Any:
+        client = self._require_client()
+        return await client.list_character_memories(character_id, **kwargs)
+
+    async def create_character_memory(
+        self,
+        character_id: str,
+        request_data: CharacterMemoryCreate | Mapping[str, Any],
+    ) -> Any:
+        client = self._require_client()
+        request = (
+            request_data
+            if isinstance(request_data, CharacterMemoryCreate)
+            else CharacterMemoryCreate.model_validate(dict(request_data))
+        )
+        return await client.create_character_memory(character_id, request)
+
+    async def update_character_memory(
+        self,
+        character_id: str,
+        memory_id: str,
+        request_data: CharacterMemoryUpdate | Mapping[str, Any],
+    ) -> Any:
+        client = self._require_client()
+        request = (
+            request_data
+            if isinstance(request_data, CharacterMemoryUpdate)
+            else CharacterMemoryUpdate.model_validate(dict(request_data))
+        )
+        return await client.update_character_memory(character_id, memory_id, request)
+
+    async def delete_character_memory(self, character_id: str, memory_id: str) -> Any:
+        client = self._require_client()
+        return await client.delete_character_memory(character_id, memory_id)
+
+    async def archive_character_memory(
+        self,
+        character_id: str,
+        memory_id: str,
+        request_data: CharacterMemoryArchiveRequest | Mapping[str, Any],
+    ) -> Any:
+        client = self._require_client()
+        request = (
+            request_data
+            if isinstance(request_data, CharacterMemoryArchiveRequest)
+            else CharacterMemoryArchiveRequest.model_validate(dict(request_data))
+        )
+        return await client.archive_character_memory(character_id, memory_id, request)
+
+    async def extract_character_memories(
+        self,
+        character_id: str,
+        request_data: CharacterMemoryExtractRequest | Mapping[str, Any],
+    ) -> Any:
+        client = self._require_client()
+        request = (
+            request_data
+            if isinstance(request_data, CharacterMemoryExtractRequest)
+            else CharacterMemoryExtractRequest.model_validate(dict(request_data))
+        )
+        return await client.extract_character_memories(character_id, request)

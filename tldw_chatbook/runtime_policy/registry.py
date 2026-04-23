@@ -217,7 +217,9 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=SEPARATED_SOURCES,
         resources=(
             _resource("character.persona", actions=CRUD_ACTIONS),
-            _resource("character.sessions", actions=(LAUNCH,)),
+            _resource("character.sessions", actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH,))),
+            _resource("character.messages", actions=CRUD_ACTIONS),
+            _resource("character.memory", actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH,))),
         ),
     ),
     _capability(

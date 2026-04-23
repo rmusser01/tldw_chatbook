@@ -284,11 +284,20 @@ from .chat_loop_schemas import (
     ChatLoopStartResponse,
 )
 from .character_persona_schemas import (
+    CharacterChatMessageCreate,
+    CharacterChatMessageUpdate,
+    CharacterChatSessionCreate,
+    CharacterChatSessionUpdate,
+    CharacterChatSettingsUpdate,
     CharacterCreateRequest,
     CharacterExemplarCreate,
     CharacterExemplarSearchRequest,
     CharacterExemplarSelectionDebugRequest,
     CharacterExemplarUpdate,
+    CharacterMemoryArchiveRequest,
+    CharacterMemoryCreate,
+    CharacterMemoryExtractRequest,
+    CharacterMemoryUpdate,
     CharacterQueryRequest,
     CharacterResponse,
     CharacterUpdateRequest,
@@ -3085,6 +3094,348 @@ class TLDWAPIClient:
 
     async def delete_preset(self, preset_id: str) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/chats/presets/{preset_id}")
+
+    async def create_character_chat_session(
+        self,
+        request_data: CharacterChatSessionCreate,
+        *,
+        seed_first_message: bool = False,
+        greeting_strategy: Literal["default", "alternate_random", "alternate_index"] = "default",
+        alternate_index: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            "seed_first_message": str(seed_first_message).lower(),
+            "greeting_strategy": greeting_strategy,
+        }
+        if alternate_index is not None:
+            params["alternate_index"] = alternate_index
+        return await self._request(
+            "POST",
+            "/api/v1/chats/",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            params=params,
+        )
+
+    async def list_character_chat_sessions(
+        self,
+        *,
+        character_id: Optional[int] = None,
+        character_scope: Literal["all", "character", "non_character"] = "all",
+        limit: int = 50,
+        offset: int = 0,
+        include_deleted: bool = False,
+        deleted_only: bool = False,
+        include_settings: bool = False,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+        include_message_counts: bool = True,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            "character_scope": character_scope,
+            "limit": limit,
+            "offset": offset,
+            "include_deleted": str(include_deleted).lower(),
+            "deleted_only": str(deleted_only).lower(),
+            "include_settings": str(include_settings).lower(),
+            "include_message_counts": str(include_message_counts).lower(),
+        }
+        if character_id is not None:
+            params["character_id"] = character_id
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request("GET", "/api/v1/chats/", params=params)
+
+    async def get_character_chat_session(
+        self,
+        chat_id: str,
+        *,
+        include_settings: bool = False,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"include_settings": str(include_settings).lower()}
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request("GET", f"/api/v1/chats/{chat_id}", params=params)
+
+    async def update_character_chat_session(
+        self,
+        chat_id: str,
+        request_data: CharacterChatSessionUpdate,
+        *,
+        expected_version: int,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"expected_version": expected_version}
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request(
+            "PUT",
+            f"/api/v1/chats/{chat_id}",
+            json_data=request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json"),
+            params=params,
+        )
+
+    async def delete_character_chat_session(
+        self,
+        chat_id: str,
+        *,
+        expected_version: Optional[int] = None,
+        hard_delete: bool = False,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"hard_delete": str(hard_delete).lower()}
+        if expected_version is not None:
+            params["expected_version"] = expected_version
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request("DELETE", f"/api/v1/chats/{chat_id}", params=params)
+
+    async def restore_character_chat_session(
+        self,
+        chat_id: str,
+        *,
+        expected_version: Optional[int] = None,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if expected_version is not None:
+            params["expected_version"] = expected_version
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request("POST", f"/api/v1/chats/{chat_id}/restore", params=params)
+
+    async def get_character_chat_settings(
+        self,
+        chat_id: str,
+        *,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request("GET", f"/api/v1/chats/{chat_id}/settings", params=params)
+
+    async def update_character_chat_settings(
+        self,
+        chat_id: str,
+        request_data: CharacterChatSettingsUpdate,
+        *,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request(
+            "PUT",
+            f"/api/v1/chats/{chat_id}/settings",
+            json_data=request_data.model_dump(mode="json"),
+            params=params,
+        )
+
+    async def create_character_chat_message(
+        self,
+        chat_id: str,
+        request_data: CharacterChatMessageCreate,
+        *,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request(
+            "POST",
+            f"/api/v1/chats/{chat_id}/messages",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            params=params,
+        )
+
+    async def list_character_chat_messages(
+        self,
+        chat_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        include_deleted: bool = False,
+        include_character_context: bool = False,
+        format_for_completions: bool = False,
+        include_tool_calls: bool = False,
+        include_metadata: bool = False,
+        include_message_ids: bool = False,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "include_deleted": str(include_deleted).lower(),
+            "include_character_context": str(include_character_context).lower(),
+            "format_for_completions": str(format_for_completions).lower(),
+            "include_tool_calls": str(include_tool_calls).lower(),
+            "include_metadata": str(include_metadata).lower(),
+            "include_message_ids": str(include_message_ids).lower(),
+        }
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request("GET", f"/api/v1/chats/{chat_id}/messages", params=params)
+
+    async def get_character_chat_message(
+        self,
+        message_id: str,
+        *,
+        include_tool_calls: bool = False,
+        include_metadata: bool = False,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            "include_tool_calls": str(include_tool_calls).lower(),
+            "include_metadata": str(include_metadata).lower(),
+        }
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request("GET", f"/api/v1/messages/{message_id}", params=params)
+
+    async def update_character_chat_message(
+        self,
+        message_id: str,
+        request_data: CharacterChatMessageUpdate,
+        *,
+        expected_version: int,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"expected_version": expected_version}
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request(
+            "PUT",
+            f"/api/v1/messages/{message_id}",
+            json_data=request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json"),
+            params=params,
+        )
+
+    async def delete_character_chat_message(
+        self,
+        message_id: str,
+        *,
+        expected_version: int,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"expected_version": expected_version}
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request("DELETE", f"/api/v1/messages/{message_id}", params=params)
+
+    async def search_character_chat_messages(
+        self,
+        chat_id: str,
+        query: str,
+        *,
+        limit: int = 50,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"query": query, "limit": limit}
+        if scope_type is not None:
+            params["scope_type"] = scope_type
+        if workspace_id is not None:
+            params["workspace_id"] = workspace_id
+        return await self._request("GET", f"/api/v1/chats/{chat_id}/messages/search", params=params)
+
+    async def list_character_memories(
+        self,
+        character_id: str,
+        *,
+        memory_type: Optional[str] = None,
+        include_archived: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            "include_archived": str(include_archived).lower(),
+            "limit": limit,
+            "offset": offset,
+        }
+        if memory_type is not None:
+            params["memory_type"] = memory_type
+        return await self._request("GET", f"/api/v1/characters/{character_id}/memories", params=params)
+
+    async def create_character_memory(self, character_id: str, request_data: CharacterMemoryCreate) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/characters/{character_id}/memories",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def update_character_memory(
+        self,
+        character_id: str,
+        memory_id: str,
+        request_data: CharacterMemoryUpdate,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/characters/{character_id}/memories/{memory_id}",
+            json_data=request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json"),
+        )
+
+    async def delete_character_memory(self, character_id: str, memory_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/characters/{character_id}/memories/{memory_id}")
+
+    async def archive_character_memory(
+        self,
+        character_id: str,
+        memory_id: str,
+        request_data: CharacterMemoryArchiveRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/characters/{character_id}/memories/{memory_id}/archive",
+            json_data=request_data.model_dump(mode="json"),
+        )
+
+    async def extract_character_memories(
+        self,
+        character_id: str,
+        request_data: CharacterMemoryExtractRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/characters/{character_id}/memories/extract",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
 
     async def list_chat_conversations(
         self,

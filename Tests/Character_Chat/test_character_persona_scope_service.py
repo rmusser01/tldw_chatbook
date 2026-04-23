@@ -23,6 +23,15 @@ class FakeCharacterPersonaClient:
         self.create_preset_calls = []
         self.update_preset_calls = []
         self.delete_preset_calls = []
+        self.session_calls = []
+        self.message_calls = []
+        self.memory_calls = []
+
+    @staticmethod
+    def _payload_dict(payload):
+        if hasattr(payload, "model_dump"):
+            return payload.model_dump(exclude_none=True, mode="json")
+        return dict(payload)
 
     async def list_characters(self, limit=100, offset=0):
         self.list_characters_calls.append({"limit": limit, "offset": offset})
@@ -136,6 +145,95 @@ class FakeCharacterPersonaClient:
             "preset_id": preset_id,
         }
 
+    async def create_character_chat_session(self, payload, **kwargs):
+        payload = self._payload_dict(payload)
+        self.session_calls.append(("create", payload, kwargs))
+        return {"id": "chat-1", "title": payload.get("title")}
+
+    async def list_character_chat_sessions(self, **kwargs):
+        self.session_calls.append(("list", kwargs))
+        return {"chats": [{"id": "chat-1"}], "total": 1}
+
+    async def get_character_chat_session(self, chat_id, **kwargs):
+        self.session_calls.append(("detail", chat_id, kwargs))
+        return {"id": chat_id}
+
+    async def update_character_chat_session(self, chat_id, payload, *, expected_version, **kwargs):
+        payload = self._payload_dict(payload)
+        self.session_calls.append(("update", chat_id, payload, expected_version, kwargs))
+        return {"id": chat_id, "title": payload.get("title"), "version": expected_version + 1}
+
+    async def delete_character_chat_session(self, chat_id, **kwargs):
+        self.session_calls.append(("delete", chat_id, kwargs))
+        return {"deleted": True}
+
+    async def restore_character_chat_session(self, chat_id, **kwargs):
+        self.session_calls.append(("restore", chat_id, kwargs))
+        return {"id": chat_id, "deleted": False}
+
+    async def get_character_chat_settings(self, chat_id, **kwargs):
+        self.session_calls.append(("settings-detail", chat_id, kwargs))
+        return {"conversation_id": chat_id, "settings": {}}
+
+    async def update_character_chat_settings(self, chat_id, payload, **kwargs):
+        payload = self._payload_dict(payload)
+        self.session_calls.append(("settings-update", chat_id, payload, kwargs))
+        return {"conversation_id": chat_id, "settings": payload.get("settings", {})}
+
+    async def create_character_chat_message(self, chat_id, payload, **kwargs):
+        payload = self._payload_dict(payload)
+        self.message_calls.append(("create", chat_id, payload, kwargs))
+        return {"id": "msg-1", "conversation_id": chat_id, "content": payload.get("content")}
+
+    async def list_character_chat_messages(self, chat_id, **kwargs):
+        self.message_calls.append(("list", chat_id, kwargs))
+        return {"messages": [{"id": "msg-1", "conversation_id": chat_id}], "total": 1}
+
+    async def get_character_chat_message(self, message_id, **kwargs):
+        self.message_calls.append(("detail", message_id, kwargs))
+        return {"id": message_id}
+
+    async def update_character_chat_message(self, message_id, payload, *, expected_version, **kwargs):
+        payload = self._payload_dict(payload)
+        self.message_calls.append(("update", message_id, payload, expected_version, kwargs))
+        return {"id": message_id, "version": expected_version + 1}
+
+    async def delete_character_chat_message(self, message_id, **kwargs):
+        self.message_calls.append(("delete", message_id, kwargs))
+        return {"deleted": True}
+
+    async def search_character_chat_messages(self, chat_id, query, **kwargs):
+        self.message_calls.append(("search", chat_id, query, kwargs))
+        return {"messages": [], "total": 0}
+
+    async def list_character_memories(self, character_id, **kwargs):
+        self.memory_calls.append(("list", character_id, kwargs))
+        return {"memories": [], "total": 0}
+
+    async def create_character_memory(self, character_id, payload):
+        payload = self._payload_dict(payload)
+        self.memory_calls.append(("create", character_id, payload))
+        return {"id": "mem-1", "character_id": character_id, "content": payload.get("content")}
+
+    async def update_character_memory(self, character_id, memory_id, payload):
+        payload = self._payload_dict(payload)
+        self.memory_calls.append(("update", character_id, memory_id, payload))
+        return {"id": memory_id, "character_id": character_id, "content": payload.get("content")}
+
+    async def delete_character_memory(self, character_id, memory_id):
+        self.memory_calls.append(("delete", character_id, memory_id))
+        return {"deleted": True}
+
+    async def archive_character_memory(self, character_id, memory_id, payload):
+        payload = self._payload_dict(payload)
+        self.memory_calls.append(("archive", character_id, memory_id, payload))
+        return {"id": memory_id, "archived": payload.get("archived")}
+
+    async def extract_character_memories(self, character_id, payload):
+        payload = self._payload_dict(payload)
+        self.memory_calls.append(("extract", character_id, payload))
+        return {"extracted": 1, "skipped_duplicates": 0, "memories": []}
+
 
 class FakeLocalCharacterBackend:
     def __init__(self):
@@ -144,6 +242,14 @@ class FakeLocalCharacterBackend:
     def list_character_cards(self, limit=100, offset=0):
         self.list_character_cards_calls.append({"limit": limit, "offset": offset})
         return [{"id": 2, "name": "Local Ada"}]
+
+
+class FakePolicyEnforcer:
+    def __init__(self):
+        self.actions = []
+
+    def require_allowed(self, *, action_id):
+        self.actions.append(action_id)
 
 
 @pytest.mark.asyncio
@@ -290,6 +396,94 @@ async def test_scope_service_routes_chat_execution_support_to_server_backend():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_server_ccp_sessions_messages_and_memory_with_policy():
+    server_service = FakeCharacterPersonaClient()
+    policy = FakePolicyEnforcer()
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterBackend(),
+        server_service=server_service,
+        policy_enforcer=policy,
+    )
+
+    await scope_service.create_character_chat_session(
+        {"character_id": 12, "title": "Ada"},
+        mode="server",
+        seed_first_message=True,
+    )
+    await scope_service.list_character_chat_sessions(mode="server", character_id=12)
+    await scope_service.get_character_chat_session("chat-1", mode="server")
+    await scope_service.update_character_chat_session(
+        "chat-1",
+        {"title": "Ada v2"},
+        expected_version=4,
+        mode="server",
+    )
+    await scope_service.delete_character_chat_session("chat-1", expected_version=5, mode="server")
+    await scope_service.restore_character_chat_session("chat-1", expected_version=6, mode="server")
+    await scope_service.get_character_chat_settings("chat-1", mode="server")
+    await scope_service.update_character_chat_settings("chat-1", {"settings": {"presetScope": "chat"}}, mode="server")
+    await scope_service.create_character_chat_message("chat-1", {"role": "user", "content": "Hello"}, mode="server")
+    await scope_service.list_character_chat_messages("chat-1", mode="server")
+    await scope_service.get_character_chat_message("msg-1", mode="server")
+    await scope_service.update_character_chat_message("msg-1", {"content": "Updated"}, expected_version=7, mode="server")
+    await scope_service.delete_character_chat_message("msg-1", expected_version=8, mode="server")
+    await scope_service.search_character_chat_messages("chat-1", "hello", mode="server")
+    await scope_service.list_character_memories("12", mode="server", include_archived=True)
+    await scope_service.create_character_memory("12", {"content": "likes tea"}, mode="server")
+    await scope_service.update_character_memory("12", "mem-1", {"content": "likes coffee"}, mode="server")
+    await scope_service.archive_character_memory("12", "mem-1", {"archived": True}, mode="server")
+    await scope_service.delete_character_memory("12", "mem-1", mode="server")
+    await scope_service.extract_character_memories("12", {"chat_id": "chat-1"}, mode="server")
+
+    assert policy.actions == [
+        "character.sessions.create.server",
+        "character.sessions.list.server",
+        "character.sessions.detail.server",
+        "character.sessions.update.server",
+        "character.sessions.delete.server",
+        "character.sessions.update.server",
+        "character.sessions.detail.server",
+        "character.sessions.update.server",
+        "character.messages.create.server",
+        "character.messages.list.server",
+        "character.messages.detail.server",
+        "character.messages.update.server",
+        "character.messages.delete.server",
+        "character.messages.list.server",
+        "character.memory.list.server",
+        "character.memory.create.server",
+        "character.memory.update.server",
+        "character.memory.update.server",
+        "character.memory.delete.server",
+        "character.memory.launch.server",
+    ]
+    assert server_service.session_calls[0][0] == "create"
+    assert server_service.message_calls[0][0] == "create"
+    assert server_service.memory_calls[0][0] == "list"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_local_ccp_server_contract_operations_before_policy():
+    policy = FakePolicyEnforcer()
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterBackend(),
+        server_service=FakeCharacterPersonaClient(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="requires server mode"):
+        await scope_service.create_character_chat_session({"character_id": 12}, mode="local")
+
+    with pytest.raises(ValueError, match="requires server mode"):
+        await scope_service.create_character_chat_message("chat-1", {"role": "user", "content": "Hi"}, mode="local")
+
+    with pytest.raises(ValueError, match="requires server mode"):
+        await scope_service.list_character_memories("12", mode="local")
+
+    assert policy.actions == []
+
+
+@pytest.mark.asyncio
 async def test_scope_service_raises_when_local_backend_lacks_persona_method():
     class LocalBackend:
         def list_characters(self, limit=100, offset=0):
@@ -401,6 +595,23 @@ async def test_server_character_persona_service_delegates_chat_execution_support
     assert deleted["status"] == "deleted"
 
 
+@pytest.mark.asyncio
+async def test_server_character_persona_service_delegates_ccp_session_message_and_memory_to_client():
+    client = FakeCharacterPersonaClient()
+    service = ServerCharacterPersonaService(client=client)
+
+    session = await service.create_character_chat_session({"character_id": 12, "title": "Ada"})
+    message = await service.create_character_chat_message("chat-1", {"role": "user", "content": "Hello"})
+    memory = await service.create_character_memory("12", {"content": "likes tea"})
+
+    assert session["id"] == "chat-1"
+    assert message["id"] == "msg-1"
+    assert memory["id"] == "mem-1"
+    assert client.session_calls[0][0] == "create"
+    assert client.message_calls[0][0] == "create"
+    assert client.memory_calls[0][0] == "create"
+
+
 def test_server_character_persona_service_from_config_uses_api_client(monkeypatch):
     sentinel_client = Mock()
     build_client = Mock(return_value=sentinel_client)
@@ -429,19 +640,26 @@ def test_app_wires_character_persona_services(monkeypatch):
     )
     original_scope_service = app_module.CharacterPersonaScopeService
 
-    def scope_service_factory(*, local_service, server_service):
+    def scope_service_factory(*, local_service, server_service, policy_enforcer=None):
         captured["local_service"] = local_service
         captured["server_service"] = server_service
-        return original_scope_service(local_service=local_service, server_service=server_service)
+        captured["policy_enforcer"] = policy_enforcer
+        return original_scope_service(
+            local_service=local_service,
+            server_service=server_service,
+            policy_enforcer=policy_enforcer,
+        )
 
     monkeypatch.setattr(app_module, "CharacterPersonaScopeService", scope_service_factory)
 
     fake_app = Mock()
     fake_app.app_config = {"tldw_api": {"base_url": "https://example.com"}}
     fake_app.chachanotes_db = object()
+    fake_app.service_policy_enforcer = object()
 
     app_module.TldwCli._wire_character_persona_services(fake_app)
 
     assert fake_app.server_character_persona_service is server_service
     assert captured["local_service"] is fake_app.chachanotes_db
     assert captured["server_service"] is server_service
+    assert captured["policy_enforcer"] is fake_app.service_policy_enforcer

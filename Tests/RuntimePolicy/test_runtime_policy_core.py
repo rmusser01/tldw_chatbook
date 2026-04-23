@@ -248,8 +248,40 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         character.persona.list.server
         character.persona.update.local
         character.persona.update.server
+        character.memory.create.local
+        character.memory.create.server
+        character.memory.delete.local
+        character.memory.delete.server
+        character.memory.detail.local
+        character.memory.detail.server
+        character.memory.launch.local
+        character.memory.launch.server
+        character.memory.list.local
+        character.memory.list.server
+        character.memory.update.local
+        character.memory.update.server
+        character.messages.create.local
+        character.messages.create.server
+        character.messages.delete.local
+        character.messages.delete.server
+        character.messages.detail.local
+        character.messages.detail.server
+        character.messages.list.local
+        character.messages.list.server
+        character.messages.update.local
+        character.messages.update.server
+        character.sessions.create.local
+        character.sessions.create.server
+        character.sessions.delete.local
+        character.sessions.delete.server
+        character.sessions.detail.local
+        character.sessions.detail.server
         character.sessions.launch.local
         character.sessions.launch.server
+        character.sessions.list.local
+        character.sessions.list.server
+        character.sessions.update.local
+        character.sessions.update.server
     """),
     "chat": _action_ids("""
         chat.create.local
