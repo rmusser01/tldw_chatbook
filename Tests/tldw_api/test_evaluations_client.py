@@ -13,6 +13,13 @@ from tldw_chatbook.tldw_api import (
     EvaluationRunListResponse,
     EvaluationRunResponse,
     EvaluationSpec,
+    SyntheticEvalGenerationRequest,
+    SyntheticEvalGenerationResponse,
+    SyntheticEvalPromotionRequest,
+    SyntheticEvalPromotionResponse,
+    SyntheticEvalQueueResponse,
+    SyntheticEvalReviewActionRecord,
+    SyntheticEvalReviewRequest,
     TLDWAPIClient,
     UpdateEvaluationRequest,
 )
@@ -321,3 +328,125 @@ async def test_evaluation_run_routes_wire_and_return_typed_models(monkeypatch):
     assert isinstance(fetched, EvaluationRunResponse)
     assert cancelled == {"status": "cancelled", "run_id": "run_123"}
     assert fetched.progress.percent_complete == 100.0
+
+
+@pytest.mark.asyncio
+async def test_synthetic_evaluation_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "generation_batch_id": "batch_123",
+                "samples": [
+                    {
+                        "sample_id": "sample_123",
+                        "recipe_kind": "rag_answer_quality",
+                        "provenance": "synthetic_from_seed_examples",
+                        "review_state": "draft",
+                        "sample_payload": {"question": "What changed?"},
+                        "sample_metadata": {"source": "seed"},
+                        "source_kind": "seed",
+                        "created_by": "u1",
+                    }
+                ],
+                "source_breakdown": {"seed": 1},
+                "coverage": {"topics": ["sync"]},
+                "missing_coverage": {},
+                "corpus_scope": {"workspace_id": "ws_1"},
+            },
+            {
+                "data": [
+                    {
+                        "sample_id": "sample_123",
+                        "recipe_kind": "rag_answer_quality",
+                        "provenance": "synthetic_from_seed_examples",
+                        "review_state": "in_review",
+                        "sample_payload": {"question": "What changed?"},
+                        "sample_metadata": {"source": "seed"},
+                    }
+                ],
+                "total": 1,
+            },
+            {
+                "action_id": "action_123",
+                "sample_id": "sample_123",
+                "action": "approve",
+                "reviewer_id": "u1",
+                "notes": "Looks usable",
+                "action_payload": {},
+                "resulting_review_state": "approved",
+            },
+            {
+                "dataset_id": "dataset_123",
+                "dataset_snapshot_ref": "snapshot_123",
+                "promotion_ids": ["promotion_123"],
+                "sample_count": 1,
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    generated = await client.generate_synthetic_evaluation_drafts(
+        SyntheticEvalGenerationRequest(
+            recipe_kind="rag_answer_quality",
+            corpus_scope={"workspace_id": "ws_1"},
+            seed_examples=[{"question": "What changed?", "answer": "Sync support"}],
+            target_sample_count=1,
+        )
+    )
+    queue = await client.list_synthetic_evaluation_queue(
+        recipe_kind="rag_answer_quality",
+        review_state="in_review",
+        source_kind="seed",
+        generation_batch_id="batch_123",
+        limit=25,
+        offset=5,
+    )
+    review = await client.review_synthetic_evaluation_sample(
+        "sample_123",
+        SyntheticEvalReviewRequest(
+            action="approve",
+            reviewer_id="u1",
+            notes="Looks usable",
+            resulting_review_state="approved",
+        ),
+    )
+    promoted = await client.promote_synthetic_evaluation_samples(
+        SyntheticEvalPromotionRequest(
+            sample_ids=["sample_123"],
+            dataset_name="Approved RAG samples",
+            dataset_metadata={"project": "parity"},
+            promotion_reason="manual_review",
+        )
+    )
+
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/synthetic/drafts/generate",
+    )
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/synthetic/queue")
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "recipe_kind": "rag_answer_quality",
+        "review_state": "in_review",
+        "source_kind": "seed",
+        "generation_batch_id": "batch_123",
+        "limit": 25,
+        "offset": 5,
+    }
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/synthetic/queue/sample_123/review",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/synthetic/promotions",
+    )
+
+    assert isinstance(generated, SyntheticEvalGenerationResponse)
+    assert isinstance(queue, SyntheticEvalQueueResponse)
+    assert isinstance(review, SyntheticEvalReviewActionRecord)
+    assert isinstance(promoted, SyntheticEvalPromotionResponse)
+    assert generated.samples[0].sample_id == "sample_123"
+    assert queue.total == 1
+    assert review.resulting_review_state == "approved"
+    assert promoted.dataset_snapshot_ref == "snapshot_123"

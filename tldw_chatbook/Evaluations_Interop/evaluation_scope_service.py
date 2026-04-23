@@ -46,6 +46,12 @@ class EvaluationScopeService:
             raise ValueError("Server evaluations backend is unavailable.")
         return self.server_service
 
+    def _server_only_service(self, mode: EvaluationBackend | str | None, feature_name: str) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != EvaluationBackend.SERVER:
+            raise ValueError(f"{feature_name} is server-only in this Chatbook parity slice.")
+        return self._service_for_mode(normalized_mode)
+
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
             return await value
@@ -349,3 +355,113 @@ class EvaluationScopeService:
         result.setdefault("backend", normalized_mode.value)
         result.setdefault("id", run_id)
         return result
+
+    async def generate_synthetic_drafts(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_kind: str,
+        corpus_scope: dict[str, Any] | list[str] | None = None,
+        generation_metadata: dict[str, Any] | None = None,
+        context_snapshot_ref: str | None = None,
+        retrieval_baseline_ref: str | None = None,
+        reference_answer: str | None = None,
+        real_examples: list[dict[str, Any]] | None = None,
+        seed_examples: list[dict[str, Any]] | None = None,
+        target_sample_count: int = 0,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Synthetic evaluation draft generation")
+        return dict(
+            await self._maybe_await(
+                service.generate_synthetic_drafts(
+                    recipe_kind=recipe_kind,
+                    corpus_scope=corpus_scope,
+                    generation_metadata=generation_metadata,
+                    context_snapshot_ref=context_snapshot_ref,
+                    retrieval_baseline_ref=retrieval_baseline_ref,
+                    reference_answer=reference_answer,
+                    real_examples=real_examples,
+                    seed_examples=seed_examples,
+                    target_sample_count=target_sample_count,
+                )
+            )
+            or {}
+        )
+
+    async def list_synthetic_queue(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_kind: str | None = None,
+        review_state: str | None = None,
+        source_kind: str | None = None,
+        generation_batch_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Synthetic evaluation queue")
+        return dict(
+            await self._maybe_await(
+                service.list_synthetic_queue(
+                    recipe_kind=recipe_kind,
+                    review_state=review_state,
+                    source_kind=source_kind,
+                    generation_batch_id=generation_batch_id,
+                    limit=limit,
+                    offset=offset,
+                )
+            )
+            or {}
+        )
+
+    async def review_synthetic_sample(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        sample_id: str,
+        action: str,
+        reviewer_id: str | None = None,
+        notes: str | None = None,
+        action_payload: dict[str, Any] | None = None,
+        resulting_review_state: str | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Synthetic evaluation review")
+        return dict(
+            await self._maybe_await(
+                service.review_synthetic_sample(
+                    sample_id,
+                    action=action,
+                    reviewer_id=reviewer_id,
+                    notes=notes,
+                    action_payload=action_payload,
+                    resulting_review_state=resulting_review_state,
+                )
+            )
+            or {}
+        )
+
+    async def promote_synthetic_samples(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        sample_ids: list[str],
+        dataset_name: str,
+        dataset_description: str | None = None,
+        dataset_metadata: dict[str, Any] | None = None,
+        promoted_by: str | None = None,
+        promotion_reason: str | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Synthetic evaluation promotion")
+        return dict(
+            await self._maybe_await(
+                service.promote_synthetic_samples(
+                    sample_ids=sample_ids,
+                    dataset_name=dataset_name,
+                    dataset_description=dataset_description,
+                    dataset_metadata=dataset_metadata,
+                    promoted_by=promoted_by,
+                    promotion_reason=promotion_reason,
+                )
+            )
+            or {}
+        )

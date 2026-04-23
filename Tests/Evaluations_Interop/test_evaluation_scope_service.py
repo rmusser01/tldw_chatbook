@@ -184,6 +184,94 @@ class FakeServerEvaluationService:
         self.calls.append(("cancel_run", run_id))
         return {"status": "cancellation_requested", "id": run_id}
 
+    async def generate_synthetic_drafts(self, **kwargs):
+        self.calls.append(("generate_synthetic_drafts", kwargs))
+        return {
+            "generation_batch_id": "batch_123",
+            "samples": [{"sample_id": "sample_123", "review_state": "draft"}],
+        }
+
+    async def list_synthetic_queue(
+        self,
+        *,
+        recipe_kind=None,
+        review_state=None,
+        source_kind=None,
+        generation_batch_id=None,
+        limit=50,
+        offset=0,
+    ):
+        self.calls.append(
+            (
+                "list_synthetic_queue",
+                recipe_kind,
+                review_state,
+                source_kind,
+                generation_batch_id,
+                limit,
+                offset,
+            )
+        )
+        return {"data": [{"sample_id": "sample_123", "review_state": "in_review"}], "total": 1}
+
+    async def review_synthetic_sample(
+        self,
+        sample_id,
+        *,
+        action,
+        reviewer_id=None,
+        notes=None,
+        action_payload=None,
+        resulting_review_state=None,
+    ):
+        self.calls.append(
+            (
+                "review_synthetic_sample",
+                sample_id,
+                action,
+                reviewer_id,
+                notes,
+                action_payload,
+                resulting_review_state,
+            )
+        )
+        return {
+            "action_id": "action_123",
+            "sample_id": sample_id,
+            "action": action,
+            "reviewer_id": reviewer_id,
+            "notes": notes,
+            "resulting_review_state": resulting_review_state,
+        }
+
+    async def promote_synthetic_samples(
+        self,
+        *,
+        sample_ids,
+        dataset_name,
+        dataset_description=None,
+        dataset_metadata=None,
+        promoted_by=None,
+        promotion_reason=None,
+    ):
+        self.calls.append(
+            (
+                "promote_synthetic_samples",
+                sample_ids,
+                dataset_name,
+                dataset_description,
+                dataset_metadata,
+                promoted_by,
+                promotion_reason,
+            )
+        )
+        return {
+            "dataset_id": "dataset_123",
+            "dataset_snapshot_ref": "snapshot_123",
+            "promotion_ids": ["promotion_123"],
+            "sample_count": len(sample_ids),
+        }
+
 
 @pytest.mark.asyncio
 async def test_scope_service_routes_evaluation_list_by_backend():
@@ -297,3 +385,63 @@ async def test_scope_service_cancel_run_returns_backend_response():
 
     assert local_payload["status"] == "cancelled"
     assert server_payload["status"] == "cancellation_requested"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_synthetic_evaluation_actions_to_server_only():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    generated = await scope.generate_synthetic_drafts(
+        mode="server",
+        recipe_kind="rag_answer_quality",
+        corpus_scope={"workspace_id": "ws_1"},
+        seed_examples=[{"question": "What changed?"}],
+        target_sample_count=1,
+    )
+    queue = await scope.list_synthetic_queue(
+        mode="server",
+        recipe_kind="rag_answer_quality",
+        review_state="in_review",
+        source_kind="seed",
+        generation_batch_id="batch_123",
+        limit=25,
+        offset=5,
+    )
+    review = await scope.review_synthetic_sample(
+        mode="server",
+        sample_id="sample_123",
+        action="approve",
+        reviewer_id="u1",
+        notes="Looks usable",
+        resulting_review_state="approved",
+    )
+    promoted = await scope.promote_synthetic_samples(
+        mode="server",
+        sample_ids=["sample_123"],
+        dataset_name="Approved RAG samples",
+        dataset_metadata={"project": "parity"},
+        promotion_reason="manual_review",
+    )
+
+    assert generated["generation_batch_id"] == "batch_123"
+    assert queue["total"] == 1
+    assert review["resulting_review_state"] == "approved"
+    assert promoted["dataset_snapshot_ref"] == "snapshot_123"
+    assert server.calls[-4][0] == "generate_synthetic_drafts"
+    assert server.calls[-3] == (
+        "list_synthetic_queue",
+        "rag_answer_quality",
+        "in_review",
+        "seed",
+        "batch_123",
+        25,
+        5,
+    )
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.generate_synthetic_drafts(
+            mode="local",
+            recipe_kind="rag_answer_quality",
+        )

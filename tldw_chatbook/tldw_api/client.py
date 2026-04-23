@@ -221,6 +221,13 @@ from .evaluations_schemas import (
     EvaluationRunCreateRequest,
     EvaluationRunListResponse,
     EvaluationRunResponse,
+    SyntheticEvalGenerationRequest,
+    SyntheticEvalGenerationResponse,
+    SyntheticEvalPromotionRequest,
+    SyntheticEvalPromotionResponse,
+    SyntheticEvalQueueResponse,
+    SyntheticEvalReviewActionRecord,
+    SyntheticEvalReviewRequest,
     UpdateEvaluationRequest,
 )
 from .flashcards_schemas import (
@@ -2443,6 +2450,68 @@ class TLDWAPIClient:
 
     async def cancel_evaluation_run(self, run_id: str) -> Dict[str, Any]:
         return await self._request("POST", f"/api/v1/evaluations/runs/{run_id}/cancel")
+
+    async def generate_synthetic_evaluation_drafts(
+        self,
+        request_data: SyntheticEvalGenerationRequest,
+    ) -> SyntheticEvalGenerationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/synthetic/drafts/generate",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SyntheticEvalGenerationResponse.model_validate(response)
+
+    async def list_synthetic_evaluation_queue(
+        self,
+        *,
+        recipe_kind: str | None = None,
+        review_state: str | None = None,
+        source_kind: str | None = None,
+        generation_batch_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> SyntheticEvalQueueResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/evaluations/synthetic/queue",
+            params={
+                key: value
+                for key, value in {
+                    "recipe_kind": recipe_kind,
+                    "review_state": review_state,
+                    "source_kind": source_kind,
+                    "generation_batch_id": generation_batch_id,
+                    "limit": limit,
+                    "offset": offset,
+                }.items()
+                if value is not None
+            },
+        )
+        return SyntheticEvalQueueResponse.model_validate(response)
+
+    async def review_synthetic_evaluation_sample(
+        self,
+        sample_id: str,
+        request_data: SyntheticEvalReviewRequest,
+    ) -> SyntheticEvalReviewActionRecord:
+        response = await self._request(
+            "POST",
+            f"/api/v1/evaluations/synthetic/queue/{sample_id}/review",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SyntheticEvalReviewActionRecord.model_validate(response)
+
+    async def promote_synthetic_evaluation_samples(
+        self,
+        request_data: SyntheticEvalPromotionRequest,
+    ) -> SyntheticEvalPromotionResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/synthetic/promotions",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SyntheticEvalPromotionResponse.model_validate(response)
 
     async def create_flashcard_deck(
         self,
