@@ -79,15 +79,15 @@ The server does **not** currently expose a first-class `manuscript` entity disti
 - Server writing adapter for current server manuscript project, part, chapter, scene, structure, reorder, and soft-delete routes.
 - Scope service that routes every action to the selected source and centralizes unsupported server capability checks.
 - Source-switched writing destination in the TUI.
-- Browse/detail/create/update/delete/restore for local and supported server records.
+- Browse/detail/create/update/delete/restore for local records and for server records only where the current server contract supports the action.
 - Markdown editor for scene working drafts.
 - Manual version creation for manuscript, chapter, and scene.
 - Read-only historical version viewing.
 - Restore-from-version behavior.
-- Soft-delete trash view with restore behavior.
+- Local soft-delete trash view with restore behavior.
 - Outline tree/list that shows manuscripts, chapters, and scenes in source order.
 - Reorder chapters and scenes.
-- Move scenes between chapters and manuscript-level placement where supported.
+- Move scenes between chapters and manuscript-level placement where supported by the active source.
 - Optional status fields for project, manuscript, chapter, and scene.
 - Explicit unavailable states for server-only unsupported actions.
 
@@ -100,6 +100,8 @@ The server does **not** currently expose a first-class `manuscript` entity disti
 - Mixed local/server writing search or browse.
 - Integration with `Notes` or `Workspaces`.
 - Server API changes.
+- Server trash restore without a verified server restore endpoint.
+- Server scene reparenting without a verified server scene-parent update endpoint.
 - Server analysis/research routes in `writing_manuscripts.py`.
 - Characters, relationships, world info, plot lines, plot events, plot holes, citations, scene links, and research endpoints beyond avoiding schema collisions.
 - Full prose IDE features such as split panes, focus mode, grammar checking, or version diffs.
@@ -204,14 +206,37 @@ Server gaps:
 - Direct manuscript-level scenes are not supported by the current server route shape because scenes are created under chapters.
 - Markdown is not first-class on the server; server scenes expose TipTap JSON and plain text.
 - Manual historical versions for manuscript/chapter/scene are not first-class in the current server manuscript endpoint.
+- Trash listing and restore are not verified on the current server manuscript endpoint.
+- Scene reparenting between chapters is not verified on the current server manuscript endpoint.
 
 Contract-honest handling:
 
 - Direct manuscript-level scene creation/move is available locally.
 - In server mode, direct manuscript-level scene creation/move is disabled centrally unless the server contract adds parentless scene support.
 - The server adapter may display server chapters without scenes and server scenes under chapters, but it must not invent hidden chapters to fake direct scene support.
+- Server scene reorder within the existing chapter may use the reorder endpoint when verified.
+- Server scene reparenting between chapters is disabled centrally unless a verified endpoint supports changing the scene parent.
+- Server soft-delete is supported where server delete routes soft-delete records.
+- Server trash listing and restore are disabled centrally unless verified server endpoints exist.
 - Markdown is preserved through a deterministic adapter format rather than silently stripped.
 - Server version history support is capability-gated. If the current server contract cannot persist historical versions, `Create New Version` for server records is disabled or implemented only if a verified server endpoint exists. Local manual versioning remains fully available.
+
+### Capability Matrix
+
+| Capability | Local v1 | Server v1 on current contract |
+| --- | --- | --- |
+| Project CRUD | Supported | Supported through `ManuscriptProject` |
+| Multiple manuscripts per project | Supported | Supported by mapping manuscripts to `ManuscriptPart` |
+| Chapter CRUD | Supported | Supported through `ManuscriptChapter` |
+| Scene CRUD under chapter | Supported | Supported through `ManuscriptScene` |
+| Direct manuscript-level scenes | Supported | Disabled until server supports parentless scenes |
+| Scene reorder within current parent | Supported | Supported only where current reorder contract verifies cleanly |
+| Scene reparent between chapters | Supported | Disabled until server supports scene parent updates |
+| Manual versions | Supported for manuscript/chapter/scene | Disabled until server version endpoint exists |
+| Historical version restore | Supported for local versions | Disabled until server version/restore endpoint exists |
+| Soft-delete | Supported | Supported where server delete routes soft-delete |
+| Trash listing and restore | Supported | Disabled until server list-deleted/restore endpoints exist |
+| Markdown fidelity | Native Markdown | Best-effort wrapper plus plain-text fallback |
 
 ### Markdown Adapter
 
@@ -284,6 +309,36 @@ Restore:
 - does not mutate the historical version
 - does not advance the version number until the user creates another version
 
+### Version Payloads
+
+`WritingVersion` payloads are entity-specific.
+
+Scene version:
+
+- snapshots scene title, synopsis, optional status, metadata, Markdown body, word count, and parent IDs
+- restore copies those fields back into the scene working draft
+- restore does not move the scene unless the stored parent differs and the active source supports scene reparenting
+
+Chapter version:
+
+- snapshots chapter title, synopsis, optional status, metadata, ordered child scene IDs, and a rendered assembled Markdown snapshot for read-only viewing
+- does not duplicate child scene version bodies
+- restore copies chapter metadata and, where supported, restores ordering/membership for existing child scenes
+- restore does not recreate missing scenes
+- restore does not delete extra current scenes unless a later exact-structure restore mode is explicitly designed
+- if referenced scenes are missing, deleted, or cannot be reparented in the active source, restore reports a conflict and leaves the working draft unchanged
+
+Manuscript version:
+
+- snapshots manuscript title, synopsis, optional status, metadata, ordered outline node IDs, and a rendered assembled Markdown snapshot for read-only viewing
+- does not duplicate child chapter or scene version bodies
+- restore copies manuscript metadata and, where supported, restores ordering/membership for existing chapters and direct manuscript-level scenes
+- restore does not recreate missing child records
+- restore does not delete extra current child records unless a later exact-structure restore mode is explicitly designed
+- if the active source cannot support a stored direct scene or scene reparent operation, restore reports a capability conflict and leaves the working draft unchanged
+
+This keeps local manual versions useful without turning container restore into implicit destructive child editing.
+
 ## Error Handling
 
 ### Source Boundary
@@ -316,6 +371,8 @@ High-impact failures should emit a notification and keep the relevant inline err
 - Failed reorder/move leaves the visible outline in the last confirmed order unless a tested rollback path exists.
 - Deleted-parent restore conflicts should be explicit and resolvable.
 - If the original parent is deleted or missing, restore requires the user to choose a valid parent.
+- Server trash restore is unavailable unless the server exposes verified list-deleted and restore operations.
+- Server soft-deleted records may disappear from normal browse without being restorable from Chatbook in v1.
 
 ## Components
 
@@ -397,7 +454,9 @@ Cover:
 - reorder payloads
 - optimistic-lock headers
 - soft-delete mapping
+- trash/restore capability disabled when server has no restore endpoint
 - unsupported direct manuscript-level scenes
+- unsupported server scene reparenting
 - unsupported server historical versions when no endpoint exists
 - Markdown wrapper conversion
 - plain-text fallback with fidelity warning
@@ -412,6 +471,7 @@ Cover:
 - no local persistence in server mode
 - unsupported action blocking
 - capability results for direct scene and versioning support
+- capability results for server scene reparenting and trash restore
 - consistent normalized records across local/server paths
 
 ### UI/State Tests
@@ -429,7 +489,9 @@ Cover:
 - restore action
 - soft-delete and trash restore
 - unsupported server direct-scene affordance disabled
+- unsupported server scene-reparent affordance disabled
 - unsupported server manual-version affordance disabled when no server endpoint exists
+- unsupported server trash-restore affordance disabled when no server endpoint exists
 
 ### Regression Tests
 
@@ -464,7 +526,8 @@ Cover:
 - Server unsupported actions are disabled centrally and clearly explained.
 - Markdown content is preserved locally and through the server adapter convention when possible.
 - Historical versions are read-only until explicit restore or draft derivation.
-- Delete is soft-delete with visible trash and restore.
+- Local delete is soft-delete with visible trash and restore.
+- Server delete maps to the current server soft-delete routes, while server trash restore is disabled unless verified endpoints exist.
 - Writing data stays separate from notes and workspaces.
 - Tests prove source separation, version behavior, structural editing, and unsupported server capabilities.
 
