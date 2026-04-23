@@ -26,6 +26,14 @@ def service(db):
 
 
 @pytest.mark.asyncio
+async def test_unavailable_local_backend_fails_visibly():
+    service = LocalWritingService(None)
+
+    with pytest.raises(ValueError, match="Local writing backend is unavailable"):
+        await service.list_projects()
+
+
+@pytest.mark.asyncio
 async def test_project_manuscript_chapter_scene_crud_returns_normalized_dataclasses(service):
     project = await service.create_project(
         title="First Novel",

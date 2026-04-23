@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tldw_chatbook.DB.Writing_DB import _UNSET, WritingDatabase
+from tldw_chatbook.DB.Writing_DB import _UNSET as _DB_UNSET, WritingDatabase
 from tldw_chatbook.Writing_Interop.writing_models import (
     WritingChapter,
     WritingManuscript,
@@ -22,6 +22,9 @@ from tldw_chatbook.Writing_Interop.writing_normalizers import (
     normalize_local_trash_row,
     normalize_local_version_row,
 )
+
+
+WRITING_FILTER_UNSET = object()
 
 
 class LocalWritingService:
@@ -58,6 +61,10 @@ class LocalWritingService:
         else:
             data.setdefault("entity_id", data.get("id"))
         return normalize_local_trash_row(data)
+
+    @staticmethod
+    def _db_filter(value: Any) -> Any:
+        return _DB_UNSET if value is WRITING_FILTER_UNSET else value
 
     async def list_projects(
         self,
@@ -201,14 +208,14 @@ class LocalWritingService:
         self,
         project_id: str,
         *,
-        manuscript_id: Any = _UNSET,
+        manuscript_id: Any = WRITING_FILTER_UNSET,
         include_deleted: bool = False,
         limit: int = 100,
         offset: int = 0,
     ) -> list[WritingChapter]:
         rows = self._require_db().list_chapters(
             project_id,
-            manuscript_id=manuscript_id,
+            manuscript_id=self._db_filter(manuscript_id),
             include_deleted=include_deleted,
             limit=limit,
             offset=offset,
@@ -288,16 +295,16 @@ class LocalWritingService:
         self,
         project_id: str,
         *,
-        manuscript_id: Any = _UNSET,
-        chapter_id: Any = _UNSET,
+        manuscript_id: Any = WRITING_FILTER_UNSET,
+        chapter_id: Any = WRITING_FILTER_UNSET,
         include_deleted: bool = False,
         limit: int = 100,
         offset: int = 0,
     ) -> list[WritingScene]:
         rows = self._require_db().list_scenes(
             project_id,
-            manuscript_id=manuscript_id,
-            chapter_id=chapter_id,
+            manuscript_id=self._db_filter(manuscript_id),
+            chapter_id=self._db_filter(chapter_id),
             include_deleted=include_deleted,
             limit=limit,
             offset=offset,
@@ -590,27 +597,28 @@ class LocalWritingService:
         *,
         expected_version: int | None = None,
     ) -> WritingManuscript | WritingChapter | WritingScene:
-        row = self._require_db().restore_version_to_working_state(
+        db = self._require_db()
+        version = db.get_version(version_id)
+        if version is None:
+            raise ValueError("Version not found.")
+        row = db.restore_version_to_working_state(
             version_id,
             expected_version=expected_version,
         )
-        entity_kind = row["entity_kind"] if "entity_kind" in row else None
+        return self._normalize_restored_row(row, version["entity_kind"])
+
+    def _normalize_restored_row(
+        self,
+        row: Any,
+        entity_kind: str,
+    ) -> WritingManuscript | WritingChapter | WritingScene:
         if entity_kind == "manuscript":
             return normalize_local_manuscript_row(row)
         if entity_kind == "chapter":
             return normalize_local_chapter_row(row)
         if entity_kind == "scene":
             return normalize_local_scene_row(row)
-
-        version = self._require_db().get_version(version_id)
-        if version is None:
-            raise ValueError("Version not found.")
-        version_kind = version["entity_kind"]
-        if version_kind == "manuscript":
-            return normalize_local_manuscript_row(row)
-        if version_kind == "chapter":
-            return normalize_local_chapter_row(row)
-        return normalize_local_scene_row(row)
+        raise ValueError(f"Unsupported writing version entity kind: {entity_kind}")
 
     async def list_trash(
         self,
