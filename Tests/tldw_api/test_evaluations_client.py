@@ -14,10 +14,15 @@ from tldw_chatbook.tldw_api import (
     EmbeddingsABTestRunRequest,
     EmbeddingsABTestStatusResponse,
     EmbeddingsABTestResultSummary,
+    EvaluationBenchmarkListResponse,
     EvaluationDatasetCreateRequest,
     EvaluationDatasetListResponse,
     EvaluationDatasetResponse,
     EvaluationListResponse,
+    EvaluationRecipeDatasetValidationRequest,
+    EvaluationRecipeDatasetValidationResponse,
+    EvaluationRecipeLaunchReadiness,
+    EvaluationRecipeManifest,
     EvaluationResponse,
     EvaluationRunCreateRequest,
     EvaluationRunListResponse,
@@ -570,3 +575,111 @@ async def test_embeddings_abtest_routes_wire_and_return_typed_models(monkeypatch
     assert summary.arms[0].metrics["ndcg"] == 0.91
     assert results.results[0].ranked_ids == ["42"]
     assert significance["significant"] is True
+
+
+@pytest.mark.asyncio
+async def test_evaluation_recipe_and_benchmark_discovery_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "name": "truthfulqa",
+                        "description": "Truthfulness benchmark",
+                        "evaluation_type": "qa",
+                        "categories": ["truthfulness"],
+                    }
+                ],
+                "total": 1,
+            },
+            {
+                "name": "truthfulqa",
+                "description": "Truthfulness benchmark",
+                "evaluation_type": "qa",
+                "categories": ["truthfulness"],
+            },
+            [
+                {
+                    "recipe_id": "rag_answer_quality",
+                    "recipe_version": "1.0.0",
+                    "name": "RAG answer quality",
+                    "description": "Compare answer quality",
+                    "launchable": True,
+                    "supported_modes": ["labeled"],
+                    "tags": ["rag"],
+                    "capabilities": {"evaluation_modes": ["fixed_context"]},
+                    "default_run_config": {"evaluation_mode": "fixed_context"},
+                }
+            ],
+            {
+                "recipe_id": "rag_answer_quality",
+                "recipe_version": "1.0.0",
+                "name": "RAG answer quality",
+                "description": "Compare answer quality",
+                "launchable": True,
+                "supported_modes": ["labeled"],
+                "tags": ["rag"],
+                "capabilities": {"evaluation_modes": ["fixed_context"]},
+                "default_run_config": {"evaluation_mode": "fixed_context"},
+            },
+            {
+                "recipe_id": "rag_answer_quality",
+                "ready": True,
+                "can_enqueue_runs": True,
+                "can_reuse_completed_runs": True,
+                "runtime_checks": {"recipe_launchable": True, "recipe_run_worker_enabled": True},
+            },
+            {
+                "valid": True,
+                "errors": [],
+                "dataset_mode": "labeled",
+                "sample_count": 2,
+                "dataset_snapshot_ref": "snapshot_123",
+                "dataset_content_hash": "hash_123",
+                "coverage": {"questions": 2},
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    benchmarks = await client.list_evaluation_benchmarks()
+    benchmark = await client.get_evaluation_benchmark("truthfulqa")
+    recipes = await client.list_evaluation_recipes()
+    recipe = await client.get_evaluation_recipe("rag_answer_quality")
+    readiness = await client.get_evaluation_recipe_launch_readiness("rag_answer_quality")
+    validation = await client.validate_evaluation_recipe_dataset(
+        "rag_answer_quality",
+        EvaluationRecipeDatasetValidationRequest(
+            dataset_id="dataset_123",
+            run_config={"evaluation_mode": "fixed_context"},
+        ),
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/evaluations/benchmarks")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/benchmarks/truthfulqa",
+    )
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/evaluations/recipes")
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/recipes/rag_answer_quality",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/recipes/rag_answer_quality/launch-readiness",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/recipes/rag_answer_quality/validate-dataset",
+    )
+
+    assert isinstance(benchmarks, EvaluationBenchmarkListResponse)
+    assert isinstance(recipes[0], EvaluationRecipeManifest)
+    assert isinstance(recipe, EvaluationRecipeManifest)
+    assert isinstance(readiness, EvaluationRecipeLaunchReadiness)
+    assert isinstance(validation, EvaluationRecipeDatasetValidationResponse)
+    assert benchmark["name"] == "truthfulqa"
+    assert validation.model_extra["coverage"] == {"questions": 2}

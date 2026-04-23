@@ -298,6 +298,30 @@ class FakeServerEvaluationService:
         self.calls.append(("get_embeddings_abtest_significance", test_id, metric))
         return {"metric": metric, "significant": True}
 
+    async def list_benchmarks(self):
+        self.calls.append(("list_benchmarks",))
+        return {"object": "list", "data": [{"name": "truthfulqa"}], "total": 1}
+
+    async def get_benchmark(self, benchmark_name):
+        self.calls.append(("get_benchmark", benchmark_name))
+        return {"name": benchmark_name, "description": "Truthfulness benchmark"}
+
+    async def list_recipes(self):
+        self.calls.append(("list_recipes",))
+        return [{"recipe_id": "rag_answer_quality", "launchable": True}]
+
+    async def get_recipe(self, recipe_id):
+        self.calls.append(("get_recipe", recipe_id))
+        return {"recipe_id": recipe_id, "launchable": True}
+
+    async def get_recipe_launch_readiness(self, recipe_id):
+        self.calls.append(("get_recipe_launch_readiness", recipe_id))
+        return {"recipe_id": recipe_id, "ready": True, "can_enqueue_runs": True}
+
+    async def validate_recipe_dataset(self, recipe_id, *, dataset_id=None, dataset=None, run_config=None):
+        self.calls.append(("validate_recipe_dataset", recipe_id, dataset_id, dataset, run_config))
+        return {"valid": True, "errors": [], "dataset_id": dataset_id, "sample_count": 2}
+
 
 @pytest.mark.asyncio
 async def test_scope_service_routes_evaluation_list_by_backend():
@@ -524,3 +548,42 @@ async def test_scope_service_routes_embeddings_abtest_actions_to_server_only():
 
     with pytest.raises(ValueError, match="server-only"):
         await scope.get_embeddings_abtest_summary(mode="local", test_id="abtest_123")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_evaluation_catalog_actions_to_server_only():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    benchmarks = await scope.list_benchmarks(mode="server")
+    benchmark = await scope.get_benchmark(mode="server", benchmark_name="truthfulqa")
+    recipes = await scope.list_recipes(mode="server")
+    recipe = await scope.get_recipe(mode="server", recipe_id="rag_answer_quality")
+    readiness = await scope.get_recipe_launch_readiness(
+        mode="server",
+        recipe_id="rag_answer_quality",
+    )
+    validation = await scope.validate_recipe_dataset(
+        mode="server",
+        recipe_id="rag_answer_quality",
+        dataset_id="dataset_123",
+        run_config={"evaluation_mode": "fixed_context"},
+    )
+
+    assert benchmarks["total"] == 1
+    assert benchmark["name"] == "truthfulqa"
+    assert recipes[0]["recipe_id"] == "rag_answer_quality"
+    assert recipe["recipe_id"] == "rag_answer_quality"
+    assert readiness["ready"] is True
+    assert validation["valid"] is True
+    assert server.calls[-1] == (
+        "validate_recipe_dataset",
+        "rag_answer_quality",
+        "dataset_123",
+        None,
+        {"evaluation_mode": "fixed_context"},
+    )
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.list_benchmarks(mode="local")

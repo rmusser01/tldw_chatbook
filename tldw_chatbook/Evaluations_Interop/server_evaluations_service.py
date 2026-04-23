@@ -12,6 +12,7 @@ from ..tldw_api import (
     EmbeddingsABTestCreateRequest,
     EmbeddingsABTestRunRequest,
     EvaluationDatasetCreateRequest,
+    EvaluationRecipeDatasetValidationRequest,
     EvaluationRunCreateRequest,
     SyntheticEvalGenerationRequest,
     SyntheticEvalPromotionRequest,
@@ -366,4 +367,41 @@ class ServerEvaluationsService:
                 test_id,
                 metric=metric,
             )
+        )
+
+    async def list_benchmarks(self) -> dict[str, Any]:
+        return self._dump_model(await self._require_client().list_evaluation_benchmarks())
+
+    async def get_benchmark(self, benchmark_name: str) -> dict[str, Any]:
+        return self._dump_model(await self._require_client().get_evaluation_benchmark(benchmark_name))
+
+    async def list_recipes(self) -> list[dict[str, Any]]:
+        return [
+            self._dump_model(item)
+            for item in await self._require_client().list_evaluation_recipes()
+        ]
+
+    async def get_recipe(self, recipe_id: str) -> dict[str, Any]:
+        return self._dump_model(await self._require_client().get_evaluation_recipe(recipe_id))
+
+    async def get_recipe_launch_readiness(self, recipe_id: str) -> dict[str, Any]:
+        return self._dump_model(
+            await self._require_client().get_evaluation_recipe_launch_readiness(recipe_id)
+        )
+
+    async def validate_recipe_dataset(
+        self,
+        recipe_id: str,
+        *,
+        dataset_id: str | None = None,
+        dataset: list[dict[str, Any]] | None = None,
+        run_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        request = EvaluationRecipeDatasetValidationRequest(
+            dataset_id=dataset_id,
+            dataset=dataset,
+            run_config=run_config,
+        )
+        return self._dump_model(
+            await self._require_client().validate_evaluation_recipe_dataset(recipe_id, request)
         )

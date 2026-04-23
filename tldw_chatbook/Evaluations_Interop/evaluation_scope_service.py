@@ -550,3 +550,71 @@ class EvaluationScopeService:
             )
             or {}
         )
+
+    async def list_benchmarks(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation benchmark discovery")
+        return dict(await self._maybe_await(service.list_benchmarks()) or {})
+
+    async def get_benchmark(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        benchmark_name: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation benchmark detail")
+        return dict(await self._maybe_await(service.get_benchmark(benchmark_name)) or {})
+
+    async def list_recipes(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        service = self._server_only_service(mode, "Evaluation recipe discovery")
+        return list(await self._maybe_await(service.list_recipes()) or [])
+
+    async def get_recipe(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_id: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation recipe detail")
+        return dict(await self._maybe_await(service.get_recipe(recipe_id)) or {})
+
+    async def get_recipe_launch_readiness(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_id: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation recipe launch readiness")
+        return dict(
+            await self._maybe_await(service.get_recipe_launch_readiness(recipe_id))
+            or {}
+        )
+
+    async def validate_recipe_dataset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_id: str,
+        dataset_id: str | None = None,
+        dataset: list[dict[str, Any]] | None = None,
+        run_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation recipe dataset validation")
+        return dict(
+            await self._maybe_await(
+                service.validate_recipe_dataset(
+                    recipe_id,
+                    dataset_id=dataset_id,
+                    dataset=dataset,
+                    run_config=run_config,
+                )
+            )
+            or {}
+        )

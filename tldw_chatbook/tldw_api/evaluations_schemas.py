@@ -395,3 +395,53 @@ class EmbeddingsABTestResultsResponse(BaseModel):
     total: int = 0
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class EvaluationBenchmarkListResponse(BaseModel):
+    object: str = "list"
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    total: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvaluationRecipeManifest(BaseModel):
+    recipe_id: str
+    recipe_version: str
+    name: str
+    description: str
+    launchable: bool = True
+    supported_modes: list[Literal["labeled", "unlabeled"]] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    capabilities: dict[str, Any] = Field(default_factory=dict)
+    default_run_config: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvaluationRecipeLaunchReadiness(BaseModel):
+    recipe_id: str
+    ready: bool
+    can_enqueue_runs: bool
+    can_reuse_completed_runs: bool = True
+    runtime_checks: dict[str, bool] = Field(default_factory=dict)
+    message: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvaluationRecipeDatasetValidationRequest(BaseModel):
+    dataset_id: str | None = None
+    dataset: list[dict[str, Any]] | None = None
+    run_config: dict[str, Any] | None = None
+
+
+class EvaluationRecipeDatasetValidationResponse(BaseModel):
+    valid: bool
+    errors: list[str] = Field(default_factory=list)
+    dataset_mode: str | None = None
+    sample_count: int = Field(default=0, ge=0)
+    dataset_snapshot_ref: str | None = None
+    dataset_content_hash: str | None = None
+
+    model_config = ConfigDict(extra="allow", from_attributes=True)

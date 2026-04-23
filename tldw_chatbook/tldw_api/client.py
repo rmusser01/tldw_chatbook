@@ -222,7 +222,12 @@ from .evaluations_schemas import (
     EvaluationDatasetCreateRequest,
     EvaluationDatasetListResponse,
     EvaluationDatasetResponse,
+    EvaluationBenchmarkListResponse,
     EvaluationListResponse,
+    EvaluationRecipeDatasetValidationRequest,
+    EvaluationRecipeDatasetValidationResponse,
+    EvaluationRecipeLaunchReadiness,
+    EvaluationRecipeManifest,
     EvaluationResponse,
     EvaluationRunCreateRequest,
     EvaluationRunListResponse,
@@ -2580,6 +2585,46 @@ class TLDWAPIClient:
             f"/api/v1/evaluations/embeddings/abtest/{test_id}/significance",
             params={"metric": metric},
         )
+
+    async def list_evaluation_benchmarks(self) -> EvaluationBenchmarkListResponse:
+        response = await self._request("GET", "/api/v1/evaluations/benchmarks")
+        return EvaluationBenchmarkListResponse.model_validate(response)
+
+    async def get_evaluation_benchmark(self, benchmark_name: str) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/evaluations/benchmarks/{benchmark_name}",
+        )
+
+    async def list_evaluation_recipes(self) -> list[EvaluationRecipeManifest]:
+        response = await self._request("GET", "/api/v1/evaluations/recipes")
+        return [EvaluationRecipeManifest.model_validate(item) for item in list(response or [])]
+
+    async def get_evaluation_recipe(self, recipe_id: str) -> EvaluationRecipeManifest:
+        response = await self._request("GET", f"/api/v1/evaluations/recipes/{recipe_id}")
+        return EvaluationRecipeManifest.model_validate(response)
+
+    async def get_evaluation_recipe_launch_readiness(
+        self,
+        recipe_id: str,
+    ) -> EvaluationRecipeLaunchReadiness:
+        response = await self._request(
+            "GET",
+            f"/api/v1/evaluations/recipes/{recipe_id}/launch-readiness",
+        )
+        return EvaluationRecipeLaunchReadiness.model_validate(response)
+
+    async def validate_evaluation_recipe_dataset(
+        self,
+        recipe_id: str,
+        request_data: EvaluationRecipeDatasetValidationRequest,
+    ) -> EvaluationRecipeDatasetValidationResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/evaluations/recipes/{recipe_id}/validate-dataset",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return EvaluationRecipeDatasetValidationResponse.model_validate(response)
 
     async def create_flashcard_deck(
         self,
