@@ -8,6 +8,9 @@ from typing import Any, Optional
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
 from ..tldw_api import (
     CreateEvaluationRequest,
+    EmbeddingsABTestConfig,
+    EmbeddingsABTestCreateRequest,
+    EmbeddingsABTestRunRequest,
     EvaluationDatasetCreateRequest,
     EvaluationRunCreateRequest,
     SyntheticEvalGenerationRequest,
@@ -296,4 +299,71 @@ class ServerEvaluationsService:
         )
         return self._dump_model(
             await self._require_client().promote_synthetic_evaluation_samples(request)
+        )
+
+    async def create_embeddings_abtest(
+        self,
+        *,
+        name: str,
+        config: dict[str, Any] | EmbeddingsABTestConfig,
+        run_immediately: bool | None = False,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        request = EmbeddingsABTestCreateRequest(
+            name=name,
+            config=config,
+            run_immediately=run_immediately,
+        )
+        return self._dump_model(
+            await self._require_client().create_embeddings_abtest(
+                request,
+                idempotency_key=idempotency_key,
+            )
+        )
+
+    async def run_embeddings_abtest(
+        self,
+        test_id: str,
+        *,
+        config: dict[str, Any] | EmbeddingsABTestConfig,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        request = EmbeddingsABTestRunRequest(config=config)
+        return self._dump_model(
+            await self._require_client().run_embeddings_abtest(
+                test_id,
+                request,
+                idempotency_key=idempotency_key,
+            )
+        )
+
+    async def get_embeddings_abtest_summary(self, test_id: str) -> dict[str, Any]:
+        return self._dump_model(await self._require_client().get_embeddings_abtest_summary(test_id))
+
+    async def get_embeddings_abtest_results(
+        self,
+        test_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        return self._dump_model(
+            await self._require_client().get_embeddings_abtest_results(
+                test_id,
+                page=page,
+                page_size=page_size,
+            )
+        )
+
+    async def get_embeddings_abtest_significance(
+        self,
+        test_id: str,
+        *,
+        metric: str = "ndcg",
+    ) -> dict[str, Any]:
+        return self._dump_model(
+            await self._require_client().get_embeddings_abtest_significance(
+                test_id,
+                metric=metric,
+            )
         )

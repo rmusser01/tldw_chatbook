@@ -3,7 +3,17 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tldw_chatbook.tldw_api import (
+    ABTestArm,
+    ABTestQuery,
+    ABTestRetrieval,
     CreateEvaluationRequest,
+    EmbeddingsABTestConfig,
+    EmbeddingsABTestCreateRequest,
+    EmbeddingsABTestCreateResponse,
+    EmbeddingsABTestResultsResponse,
+    EmbeddingsABTestRunRequest,
+    EmbeddingsABTestStatusResponse,
+    EmbeddingsABTestResultSummary,
     EvaluationDatasetCreateRequest,
     EvaluationDatasetListResponse,
     EvaluationDatasetResponse,
@@ -450,3 +460,113 @@ async def test_synthetic_evaluation_routes_wire_and_return_typed_models(monkeypa
     assert queue.total == 1
     assert review.resulting_review_state == "approved"
     assert promoted.dataset_snapshot_ref == "snapshot_123"
+
+
+@pytest.mark.asyncio
+async def test_embeddings_abtest_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {"test_id": "abtest_123", "status": "created"},
+            {"test_id": "abtest_123", "status": "running", "progress": {"phase": 0.05}},
+            {
+                "test_id": "abtest_123",
+                "status": "completed",
+                "arms": [
+                    {
+                        "arm_id": "arm_a",
+                        "provider": "openai",
+                        "model": "text-embedding-3-small",
+                        "dimensions": 1536,
+                        "metrics": {"ndcg": 0.91},
+                        "latency_ms": {"mean": 21.0},
+                        "doc_counts": {"docs": 3},
+                    }
+                ],
+            },
+            {
+                "summary": {
+                    "test_id": "abtest_123",
+                    "status": "completed",
+                    "arms": [
+                        {
+                            "arm_id": "arm_a",
+                            "provider": "openai",
+                            "model": "text-embedding-3-small",
+                            "metrics": {"ndcg": 0.91},
+                            "latency_ms": {"mean": 21.0},
+                            "doc_counts": {},
+                        }
+                    ],
+                },
+                "results": [
+                    {
+                        "result_id": "result_123",
+                        "test_id": "abtest_123",
+                        "arm_id": "arm_a",
+                        "query_id": "query_1",
+                        "ranked_ids": ["42"],
+                        "scores": [0.99],
+                        "metrics": {"ndcg": 1.0},
+                        "latency_ms": 20.5,
+                    }
+                ],
+                "page": 2,
+                "page_size": 10,
+                "total": 1,
+            },
+            {"metric": "ndcg", "p_value": 0.03, "significant": True},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    config = EmbeddingsABTestConfig(
+        arms=[ABTestArm(provider="openai", model="text-embedding-3-small", dimensions=1536)],
+        media_ids=[42],
+        retrieval=ABTestRetrieval(k=10, search_mode="vector"),
+        queries=[ABTestQuery(text="What changed?", expected_ids=[42], metadata={"topic": "sync"})],
+    )
+    created = await client.create_embeddings_abtest(
+        EmbeddingsABTestCreateRequest(name="embedding comparison", config=config),
+        idempotency_key="create-key",
+    )
+    run_status = await client.run_embeddings_abtest(
+        "abtest_123",
+        EmbeddingsABTestRunRequest(config=config),
+        idempotency_key="run-key",
+    )
+    summary = await client.get_embeddings_abtest_summary("abtest_123")
+    results = await client.get_embeddings_abtest_results("abtest_123", page=2, page_size=10)
+    significance = await client.get_embeddings_abtest_significance("abtest_123", metric="ndcg")
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/evaluations/embeddings/abtest")
+    assert mocked.await_args_list[0].kwargs["headers"] == {"Idempotency-Key": "create-key"}
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/embeddings/abtest/abtest_123/run",
+    )
+    assert mocked.await_args_list[1].kwargs["headers"] == {"Idempotency-Key": "run-key"}
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/embeddings/abtest/abtest_123",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/embeddings/abtest/abtest_123/results",
+    )
+    assert mocked.await_args_list[3].kwargs["params"] == {"page": 2, "page_size": 10}
+    assert mocked.await_args_list[4].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/embeddings/abtest/abtest_123/significance",
+    )
+    assert mocked.await_args_list[4].kwargs["params"] == {"metric": "ndcg"}
+
+    assert isinstance(created, EmbeddingsABTestCreateResponse)
+    assert isinstance(run_status, EmbeddingsABTestStatusResponse)
+    assert isinstance(summary, EmbeddingsABTestResultSummary)
+    assert isinstance(results, EmbeddingsABTestResultsResponse)
+    assert created.test_id == "abtest_123"
+    assert run_status.progress["phase"] == 0.05
+    assert summary.arms[0].metrics["ndcg"] == 0.91
+    assert results.results[0].ranked_ids == ["42"]
+    assert significance["significant"] is True

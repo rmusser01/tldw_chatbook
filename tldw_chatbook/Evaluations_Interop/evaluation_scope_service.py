@@ -465,3 +465,88 @@ class EvaluationScopeService:
             )
             or {}
         )
+
+    async def create_embeddings_abtest(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+        config: dict[str, Any],
+        run_immediately: bool | None = False,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Embedding A/B test creation")
+        return dict(
+            await self._maybe_await(
+                service.create_embeddings_abtest(
+                    name=name,
+                    config=config,
+                    run_immediately=run_immediately,
+                    idempotency_key=idempotency_key,
+                )
+            )
+            or {}
+        )
+
+    async def run_embeddings_abtest(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        test_id: str,
+        config: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Embedding A/B test run")
+        return dict(
+            await self._maybe_await(
+                service.run_embeddings_abtest(
+                    test_id,
+                    config=config,
+                    idempotency_key=idempotency_key,
+                )
+            )
+            or {}
+        )
+
+    async def get_embeddings_abtest_summary(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        test_id: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Embedding A/B test summary")
+        return dict(
+            await self._maybe_await(service.get_embeddings_abtest_summary(test_id))
+            or {}
+        )
+
+    async def get_embeddings_abtest_results(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        test_id: str,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Embedding A/B test results")
+        return dict(
+            await self._maybe_await(
+                service.get_embeddings_abtest_results(test_id, page=page, page_size=page_size)
+            )
+            or {}
+        )
+
+    async def get_embeddings_abtest_significance(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        test_id: str,
+        metric: str = "ndcg",
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Embedding A/B test significance")
+        return dict(
+            await self._maybe_await(
+                service.get_embeddings_abtest_significance(test_id, metric=metric)
+            )
+            or {}
+        )

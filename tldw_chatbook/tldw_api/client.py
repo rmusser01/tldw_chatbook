@@ -213,6 +213,12 @@ from .rag_admin_schemas import (
 )
 from .evaluations_schemas import (
     CreateEvaluationRequest,
+    EmbeddingsABTestCreateRequest,
+    EmbeddingsABTestCreateResponse,
+    EmbeddingsABTestResultSummary,
+    EmbeddingsABTestResultsResponse,
+    EmbeddingsABTestRunRequest,
+    EmbeddingsABTestStatusResponse,
     EvaluationDatasetCreateRequest,
     EvaluationDatasetListResponse,
     EvaluationDatasetResponse,
@@ -2512,6 +2518,68 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return SyntheticEvalPromotionResponse.model_validate(response)
+
+    async def create_embeddings_abtest(
+        self,
+        request_data: EmbeddingsABTestCreateRequest,
+        *,
+        idempotency_key: str | None = None,
+    ) -> EmbeddingsABTestCreateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/embeddings/abtest",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
+        )
+        return EmbeddingsABTestCreateResponse.model_validate(response)
+
+    async def run_embeddings_abtest(
+        self,
+        test_id: str,
+        request_data: EmbeddingsABTestRunRequest,
+        *,
+        idempotency_key: str | None = None,
+    ) -> EmbeddingsABTestStatusResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/evaluations/embeddings/abtest/{test_id}/run",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
+        )
+        return EmbeddingsABTestStatusResponse.model_validate(response)
+
+    async def get_embeddings_abtest_summary(self, test_id: str) -> EmbeddingsABTestResultSummary:
+        response = await self._request(
+            "GET",
+            f"/api/v1/evaluations/embeddings/abtest/{test_id}",
+        )
+        return EmbeddingsABTestResultSummary.model_validate(response)
+
+    async def get_embeddings_abtest_results(
+        self,
+        test_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> EmbeddingsABTestResultsResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/evaluations/embeddings/abtest/{test_id}/results",
+            params={"page": page, "page_size": page_size},
+        )
+        return EmbeddingsABTestResultsResponse.model_validate(response)
+
+    async def get_embeddings_abtest_significance(
+        self,
+        test_id: str,
+        *,
+        metric: str = "ndcg",
+    ) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/evaluations/embeddings/abtest/{test_id}/significance",
+            params={"metric": metric},
+        )
 
     async def create_flashcard_deck(
         self,

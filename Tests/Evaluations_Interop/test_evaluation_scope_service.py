@@ -272,6 +272,32 @@ class FakeServerEvaluationService:
             "sample_count": len(sample_ids),
         }
 
+    async def create_embeddings_abtest(self, **kwargs):
+        self.calls.append(("create_embeddings_abtest", kwargs))
+        return {"test_id": "abtest_123", "status": "created"}
+
+    async def run_embeddings_abtest(self, test_id, **kwargs):
+        self.calls.append(("run_embeddings_abtest", test_id, kwargs))
+        return {"test_id": test_id, "status": "running", "progress": {"phase": 0.05}}
+
+    async def get_embeddings_abtest_summary(self, test_id):
+        self.calls.append(("get_embeddings_abtest_summary", test_id))
+        return {"test_id": test_id, "status": "completed", "arms": []}
+
+    async def get_embeddings_abtest_results(self, test_id, *, page=1, page_size=50):
+        self.calls.append(("get_embeddings_abtest_results", test_id, page, page_size))
+        return {
+            "summary": {"test_id": test_id, "status": "completed", "arms": []},
+            "results": [],
+            "page": page,
+            "page_size": page_size,
+            "total": 0,
+        }
+
+    async def get_embeddings_abtest_significance(self, test_id, *, metric="ndcg"):
+        self.calls.append(("get_embeddings_abtest_significance", test_id, metric))
+        return {"metric": metric, "significant": True}
+
 
 @pytest.mark.asyncio
 async def test_scope_service_routes_evaluation_list_by_backend():
@@ -445,3 +471,56 @@ async def test_scope_service_routes_synthetic_evaluation_actions_to_server_only(
             mode="local",
             recipe_kind="rag_answer_quality",
         )
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_embeddings_abtest_actions_to_server_only():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+    config = {
+        "arms": [{"provider": "openai", "model": "text-embedding-3-small"}],
+        "media_ids": [42],
+        "retrieval": {"k": 10, "search_mode": "vector"},
+        "queries": [{"text": "What changed?", "expected_ids": [42]}],
+    }
+
+    created = await scope.create_embeddings_abtest(
+        mode="server",
+        name="embedding comparison",
+        config=config,
+        idempotency_key="create-key",
+    )
+    run_status = await scope.run_embeddings_abtest(
+        mode="server",
+        test_id="abtest_123",
+        config=config,
+        idempotency_key="run-key",
+    )
+    summary = await scope.get_embeddings_abtest_summary(mode="server", test_id="abtest_123")
+    results = await scope.get_embeddings_abtest_results(
+        mode="server",
+        test_id="abtest_123",
+        page=2,
+        page_size=10,
+    )
+    significance = await scope.get_embeddings_abtest_significance(
+        mode="server",
+        test_id="abtest_123",
+        metric="recall",
+    )
+
+    assert created["test_id"] == "abtest_123"
+    assert run_status["progress"]["phase"] == 0.05
+    assert summary["status"] == "completed"
+    assert results["page"] == 2
+    assert significance["metric"] == "recall"
+    assert server.calls[-5][0] == "create_embeddings_abtest"
+    assert server.calls[-4] == (
+        "run_embeddings_abtest",
+        "abtest_123",
+        {"config": config, "idempotency_key": "run-key"},
+    )
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.get_embeddings_abtest_summary(mode="local", test_id="abtest_123")

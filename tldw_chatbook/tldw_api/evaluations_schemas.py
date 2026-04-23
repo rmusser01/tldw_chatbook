@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -264,5 +264,134 @@ class SyntheticEvalPromotionResponse(BaseModel):
     dataset_snapshot_ref: str
     promotion_ids: list[str] = Field(default_factory=list)
     sample_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ABTestArm(BaseModel):
+    provider: str
+    model: str
+    dimensions: int | None = None
+
+
+class ABTestChunking(BaseModel):
+    method: str
+    size: int = Field(ge=1)
+    overlap: int = Field(ge=0)
+    language: str | None = None
+
+
+class ABTestReRanker(BaseModel):
+    provider: str
+    model: str
+
+
+class ABTestRetrieval(BaseModel):
+    k: int = Field(ge=1, le=1000)
+    search_mode: Literal["fts", "vector", "hybrid"] | None = "vector"
+    hybrid_alpha: float | None = None
+    re_ranker: ABTestReRanker | None = None
+    index_params: dict[str, str] | None = None
+    apply_reranker: bool | None = False
+
+
+class ABTestQuery(BaseModel):
+    text: str
+    expected_ids: list[int] | None = None
+    metadata: dict[str, str] | None = None
+
+
+class ABTestLimits(BaseModel):
+    max_docs: int | None = Field(default=None, ge=1)
+    timeout_s: int | None = Field(default=None, ge=1)
+
+
+class ABTestCleanupPolicy(BaseModel):
+    on_complete: bool = False
+    ttl_hours: int | None = Field(default=None, ge=1)
+
+
+class EmbeddingsABTestConfig(BaseModel):
+    arms: list[ABTestArm] = Field(min_length=1)
+    media_ids: list[int] = Field(default_factory=list)
+    chunking: ABTestChunking | None = None
+    retrieval: ABTestRetrieval
+    queries: list[ABTestQuery] = Field(min_length=1)
+    metric_level: Literal["media", "chunk"] | None = "media"
+    limits: ABTestLimits | None = None
+    reuse_existing: bool | None = True
+    cleanup_policy: ABTestCleanupPolicy | None = None
+
+
+class EmbeddingsABTestCreateRequest(BaseModel):
+    name: str
+    config: EmbeddingsABTestConfig
+    run_immediately: bool | None = False
+
+
+class EmbeddingsABTestRunRequest(BaseModel):
+    config: EmbeddingsABTestConfig
+
+
+class EmbeddingsABTestCreateResponse(BaseModel):
+    test_id: str
+    status: str = "created"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmbeddingsABTestStatusResponse(BaseModel):
+    test_id: str
+    status: str
+    progress: dict[str, float] | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ArmSummary(BaseModel):
+    arm_id: str
+    provider: str
+    model: str
+    dimensions: int | None = None
+    metrics: dict[str, float] = Field(default_factory=dict)
+    latency_ms: dict[str, float] = Field(default_factory=dict)
+    doc_counts: dict[str, int] = Field(default_factory=dict)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmbeddingsABTestResultSummary(BaseModel):
+    test_id: str
+    status: str
+    arms: list[ArmSummary] = Field(default_factory=list)
+    per_query: list[dict[str, Any]] | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmbeddingsABTestResultRow(BaseModel):
+    result_id: str
+    test_id: str
+    arm_id: str
+    query_id: str
+    ranked_ids: list[str] = Field(default_factory=list)
+    scores: list[float] | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    latency_ms: float | None = None
+    ranked_distances: list[float] | None = None
+    ranked_metadatas: list[dict[str, Any]] | None = None
+    ranked_documents: list[str] | None = None
+    rerank_scores: list[float] | None = None
+    created_at: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmbeddingsABTestResultsResponse(BaseModel):
+    summary: EmbeddingsABTestResultSummary
+    results: list[EmbeddingsABTestResultRow] = Field(default_factory=list)
+    page: int = 1
+    page_size: int = 50
+    total: int = 0
 
     model_config = ConfigDict(from_attributes=True)
