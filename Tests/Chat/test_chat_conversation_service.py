@@ -24,6 +24,7 @@ class FakeDB:
     calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = field(default_factory=list)
     replaced_keyword_ids: list[tuple[str, list[int]]] = field(default_factory=list)
     updates: list[tuple[str, dict[str, Any], int]] = field(default_factory=list)
+    deletes: list[tuple[str, int]] = field(default_factory=list)
 
     def search_conversations_page(self, query, **kwargs):
         self.calls.append(("search_conversations_page", (query,), kwargs))
@@ -68,6 +69,11 @@ class FakeDB:
     def update_conversation(self, conversation_id, update_data, expected_version):
         self.calls.append(("update_conversation", (conversation_id,), {"update_data": update_data, "expected_version": expected_version}))
         self.updates.append((conversation_id, update_data, expected_version))
+        return True
+
+    def soft_delete_conversation(self, conversation_id, expected_version):
+        self.calls.append(("soft_delete_conversation", (conversation_id,), {"expected_version": expected_version}))
+        self.deletes.append((conversation_id, expected_version))
         return True
 
     def count_root_messages_for_conversation(self, conversation_id, include_deleted_conversation=False):
@@ -425,6 +431,17 @@ def test_update_conversation_metadata_rejects_workspace_id_clears_without_explic
 
     with pytest.raises(ValueError, match="workspace_id is required"):
         service.update_conversation_metadata("conv-1", {"workspace_id": None}, expected_version=3)
+
+
+def test_delete_conversation_metadata_routes_soft_delete():
+    db = FakeDB()
+    service = ChatConversationService(db)
+
+    result = service.delete_conversation("conv-1", expected_version=4)
+
+    assert result is True
+    assert db.deletes == [("conv-1", 4)]
+    assert db.calls[-1] == ("soft_delete_conversation", ("conv-1",), {"expected_version": 4})
 
 
 def test_get_conversation_metadata_uses_real_message_count_when_missing_from_row():

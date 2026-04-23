@@ -57,6 +57,10 @@ class FakeLocalConversationService:
         self.calls.append(("update_conversation_metadata", (conversation_id, update_data, expected_version), {}))
         return True
 
+    def delete_conversation(self, conversation_id: str, expected_version: int) -> bool:
+        self.calls.append(("delete_conversation", (conversation_id, expected_version), {}))
+        return True
+
     def get_conversation_tree(self, conversation_id: str, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(("get_conversation_tree", (conversation_id,), kwargs))
         return {
@@ -209,6 +213,36 @@ async def test_scope_service_updates_server_conversation_with_policy_and_scope()
         )
     ]
     assert policy.calls == ["chat.update.server"]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_deletes_local_conversation_with_policy() -> None:
+    local = FakeLocalConversationService()
+    server = FakeServerConversationService()
+    policy = FakePolicyEnforcer()
+    service = ChatConversationScopeService(local_service=local, server_service=server, policy_enforcer=policy)
+
+    result = await service.delete_conversation("conv-1", expected_version=7)
+
+    assert result is True
+    assert local.calls == [("delete_conversation", ("conv-1", 7), {})]
+    assert server.calls == []
+    assert policy.calls == ["chat.delete.local"]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_server_delete_until_contract_exists() -> None:
+    local = FakeLocalConversationService()
+    server = FakeServerConversationService()
+    policy = FakePolicyEnforcer()
+    service = ChatConversationScopeService(local_service=local, server_service=server, policy_enforcer=policy)
+
+    with pytest.raises(ValueError, match="Server chat conversation delete is not available"):
+        await service.delete_conversation("conv-1", expected_version=7, mode="server")
+
+    assert local.calls == []
+    assert server.calls == []
+    assert policy.calls == []
 
 
 @pytest.mark.asyncio

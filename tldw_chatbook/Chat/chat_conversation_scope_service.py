@@ -19,6 +19,7 @@ class ChatConversationScopeService:
         "list": "chat.list",
         "detail": "chat.detail",
         "update": "chat.update",
+        "delete": "chat.delete",
     }
 
     def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
@@ -194,3 +195,18 @@ class ChatConversationScopeService:
         if normalized_mode == ChatConversationBackend.SERVER:
             kwargs.update({"scope_type": scope_type, "workspace_id": workspace_id})
         return await self._maybe_await(service.get_conversation_tree(conversation_id, **kwargs))
+
+    async def delete_conversation(
+        self,
+        conversation_id: str,
+        *,
+        expected_version: int,
+        mode: ChatConversationBackend | str | None = None,
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == ChatConversationBackend.SERVER:
+            raise ValueError("Server chat conversation delete is not available in the current server contract.")
+
+        self._enforce_policy(normalized_mode, "delete")
+        service = self._service_for_mode(normalized_mode)
+        return bool(await self._maybe_await(service.delete_conversation(conversation_id, expected_version)))
