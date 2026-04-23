@@ -158,3 +158,40 @@ def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_facto
     assert removed["is_read_it_later"] is False
     assert removed["saved_at"] is None
     assert db.get_media_read_it_later_state(media_id) is None
+
+
+def test_local_service_reading_highlights_round_trip(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Annotated",
+        content="Important sentence in the document",
+        media_type="article",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+
+    created = service.create_reading_highlight(
+        media_id,
+        quote="Important sentence",
+        start_offset=0,
+        end_offset=18,
+        color="yellow",
+        note="Check this",
+    )
+    listed = service.list_reading_highlights(media_id)
+    updated = service.update_reading_highlight(
+        created["id"],
+        color="blue",
+        note="Updated",
+        state="active",
+    )
+    deleted = service.delete_reading_highlight(created["id"])
+
+    assert created["media_id"] == media_id
+    assert created["quote"] == "Important sentence"
+    assert created["anchor_strategy"] == "fuzzy_quote"
+    assert listed == [created]
+    assert updated["color"] == "blue"
+    assert updated["note"] == "Updated"
+    assert deleted is True
+    assert service.list_reading_highlights(media_id) == []

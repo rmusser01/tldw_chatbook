@@ -35,6 +35,12 @@ def build_tldw_api_client_from_config(config: Mapping[str, Any]) -> TLDWAPIClien
     return TLDWAPIClient(base_url=base_url, token=auth_token)
 
 
+def build_server_chatbook_service_from_config(config: Mapping[str, Any]) -> tuple["ServerChatbookService", TLDWAPIClient]:
+    """Build a server chatbook service plus its owned API client from application config."""
+    client = build_tldw_api_client_from_config(config)
+    return ServerChatbookService(client=client), client
+
+
 def build_server_import_selections_from_manifest(
     manifest: Optional[ChatbookManifest],
     import_media: bool = False,
@@ -96,6 +102,14 @@ def record_server_job(app_instance: Any, job_record: Mapping[str, Any]) -> List[
     records.insert(0, dict(job_record))
     setattr(app_instance, "_chatbook_server_jobs", records)
     return records
+
+
+def _to_plain_dict(value: Any) -> Dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise TypeError(f"Expected mapping-like chatbook response, got {type(value).__name__}")
 
 
 class ServerChatbookService:
@@ -271,14 +285,46 @@ class ServerChatbookService:
 
     async def get_export_job(self, job_id: str) -> Dict[str, Any]:
         client = self._require_client()
-        return await client.get_chatbook_export_job(job_id)
+        return _to_plain_dict(await client.get_chatbook_export_job(job_id))
 
     async def continue_export(self, job_id: str) -> Dict[str, Any]:
         return await self.get_export_job(job_id)
 
     async def get_import_job(self, job_id: str) -> Dict[str, Any]:
         client = self._require_client()
-        return await client.get_chatbook_import_job(job_id)
+        return _to_plain_dict(await client.get_chatbook_import_job(job_id))
 
     async def continue_import(self, job_id: str) -> Dict[str, Any]:
         return await self.get_import_job(job_id)
+
+    async def list_export_jobs(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        client = self._require_client()
+        return _to_plain_dict(await client.list_chatbook_export_jobs(limit=limit, offset=offset))
+
+    async def list_import_jobs(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        client = self._require_client()
+        return _to_plain_dict(await client.list_chatbook_import_jobs(limit=limit, offset=offset))
+
+    async def cancel_export_job(self, job_id: str) -> Dict[str, Any]:
+        client = self._require_client()
+        return _to_plain_dict(await client.cancel_chatbook_export_job(job_id))
+
+    async def cancel_import_job(self, job_id: str) -> Dict[str, Any]:
+        client = self._require_client()
+        return _to_plain_dict(await client.cancel_chatbook_import_job(job_id))
+
+    async def remove_export_job(self, job_id: str) -> Dict[str, Any]:
+        client = self._require_client()
+        return _to_plain_dict(await client.remove_chatbook_export_job(job_id))
+
+    async def download_export_job(self, job_id: str, destination_path: Union[str, Path]) -> Path:
+        client = self._require_client()
+        payload = await client.download_chatbook_export(job_id)
+        path = Path(destination_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        return path
+
+    async def remove_import_job(self, job_id: str) -> Dict[str, Any]:
+        client = self._require_client()
+        return _to_plain_dict(await client.remove_chatbook_import_job(job_id))

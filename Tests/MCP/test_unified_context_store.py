@@ -10,16 +10,19 @@ def test_unified_mcp_context_partitions_per_server_state(tmp_path):
         selected_source="server",
         selected_active_server_id="server-a",
         selected_scope="personal",
+        selected_scope_ref=None,
         selected_section="overview",
         per_server_state={
             "server-a": ServerAccessContext(
                 server_id="server-a",
                 selected_scope="personal",
+                selected_scope_ref=None,
                 selected_section="inventory",
             ),
             "server-b": ServerAccessContext(
                 server_id="server-b",
                 selected_scope="team",
+                selected_scope_ref="21",
                 selected_section="catalogs",
             ),
         },
@@ -31,8 +34,10 @@ def test_unified_mcp_context_partitions_per_server_state(tmp_path):
     assert restored.selected_source == "server"
     assert restored.selected_active_server_id == "server-a"
     assert restored.selected_scope == "personal"
+    assert restored.selected_scope_ref is None
     assert restored.selected_section == "overview"
     assert restored.per_server_state["server-a"].selected_section == "inventory"
+    assert restored.per_server_state["server-b"].selected_scope_ref == "21"
     assert restored.per_server_state["server-b"].selected_section == "catalogs"
 
 
@@ -83,11 +88,13 @@ def test_unified_mcp_context_store_keeps_destination_local_state_separate_from_r
         selected_source="server",
         selected_active_server_id="server-a",
         selected_scope="team",
+        selected_scope_ref="21",
         selected_section="governance",
         per_server_state={
             "server-a": ServerAccessContext(
                 server_id="server-a",
                 selected_scope="team",
+                selected_scope_ref="21",
                 selected_section="governance",
             )
         },

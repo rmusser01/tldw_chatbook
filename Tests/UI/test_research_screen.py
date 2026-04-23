@@ -1,0 +1,91 @@
+from types import SimpleNamespace
+
+import pytest
+
+from tldw_chatbook.UI.Research_Modules.research_controller import ResearchController
+from tldw_chatbook.UI.Research_Window import ResearchWindow
+from tldw_chatbook.UI.Screens.research_screen import ResearchScreen
+
+
+def test_research_screen_composes_research_window():
+    app = SimpleNamespace(research_scope_service=object())
+    screen = ResearchScreen(app)
+
+    widgets = list(screen.compose_content())
+
+    assert len(widgets) == 1
+    assert isinstance(widgets[0], ResearchWindow)
+
+
+def test_research_screen_round_trips_window_state():
+    app = SimpleNamespace(research_scope_service=object())
+    screen = ResearchScreen(app)
+    window = ResearchWindow(app)
+    window.restore_state({"source": "server"})
+    screen.query_one = lambda *_args, **_kwargs: window
+
+    state = screen.save_state()
+    screen.restore_state({"source": "local"})
+
+    assert state == {"source": "server"}
+    assert window.save_state() == {"source": "local"}
+
+
+class FakeResearchScopeService:
+    def __init__(self):
+        self.calls = []
+        self.runs = {
+            "local": [SimpleNamespace(id="local-run", query="Local query", status="draft", phase="planning")],
+            "server": [SimpleNamespace(id="server-run", query="Server query", status="running", phase="collecting")],
+        }
+
+    async def list_runs(self, *, mode, limit=25):
+        self.calls.append(("list_runs", mode, limit))
+        return list(self.runs[mode])
+
+    async def create_run(self, *, mode, **payload):
+        self.calls.append(("create_run", mode, dict(payload)))
+        run = SimpleNamespace(
+            id=f"{mode}-created",
+            query=payload["query"],
+            status="draft" if mode == "local" else "running",
+            phase="planning",
+        )
+        self.runs[mode].insert(0, run)
+        return run
+
+    async def pause_run(self, run_id, *, mode):
+        self.calls.append(("pause_run", mode, run_id))
+        return SimpleNamespace(id=run_id, query="Paused", status="running", control_state="paused")
+
+
+@pytest.mark.asyncio
+async def test_research_controller_routes_runs_by_source():
+    service = FakeResearchScopeService()
+    controller = ResearchController(service)
+
+    local_runs = await controller.load_runs("local")
+    server_created = await controller.create_run("server", {"query": "Server query"})
+
+    assert [run.id for run in local_runs] == ["local-run"]
+    assert server_created.id == "server-created"
+    assert service.calls == [
+        ("list_runs", "local", 25),
+        ("create_run", "server", {"query": "Server query"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_research_window_loads_and_selects_runs_without_mixed_sources():
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service)
+    window = ResearchWindow(app)
+
+    local_runs = await window.load_runs("local")
+    server_runs = await window.switch_source("server")
+    window.select_run(server_runs[0])
+
+    assert [run.id for run in local_runs] == ["local-run"]
+    assert [run.id for run in server_runs] == ["server-run"]
+    assert window.current_source == "server"
+    assert window.selected_run.id == "server-run"

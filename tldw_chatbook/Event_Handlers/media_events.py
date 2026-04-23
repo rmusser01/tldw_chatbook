@@ -190,6 +190,78 @@ class MediaReadItLaterToggleEvent(Message):
         self.record_id = record_id if record_id is not None else media_id
         self.save_for_later = save_for_later
 
+
+class MediaReadingHighlightCreateEvent(Message):
+    """Event fired when creating a reading highlight for a media/reading record."""
+
+    def __init__(
+        self,
+        media_id: Any,
+        *,
+        record_id: Any = None,
+        quote: str,
+        color: str | None = None,
+        note: str | None = None,
+        start_offset: int | None = None,
+        end_offset: int | None = None,
+        anchor_strategy: str = "fuzzy_quote",
+        media_data: Dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
+        self.quote = quote
+        self.color = color
+        self.note = note
+        self.start_offset = start_offset
+        self.end_offset = end_offset
+        self.anchor_strategy = anchor_strategy
+        self.media_data = dict(media_data or {})
+
+
+class MediaReadingHighlightUpdateEvent(Message):
+    """Event fired when updating an existing reading highlight."""
+
+    def __init__(
+        self,
+        media_id: Any,
+        *,
+        record_id: Any = None,
+        highlight_id: Any,
+        quote: str | None = None,
+        color: str | None = None,
+        note: str | None = None,
+        state: str = "active",
+        media_data: Dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
+        self.highlight_id = highlight_id
+        self.quote = quote
+        self.color = color
+        self.note = note
+        self.state = state
+        self.media_data = dict(media_data or {})
+
+
+class MediaReadingHighlightDeleteEvent(Message):
+    """Event fired when deleting an existing reading highlight."""
+
+    def __init__(
+        self,
+        media_id: Any,
+        *,
+        record_id: Any = None,
+        highlight_id: Any,
+        media_data: Dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
+        self.highlight_id = highlight_id
+        self.media_data = dict(media_data or {})
+
 #
 # Functions:
 

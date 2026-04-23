@@ -67,14 +67,16 @@ from .config import (
     get_media_db_path,
     get_notifications_db_path,
     get_prompts_db_path,
+    get_research_db_path,
     get_subscriptions_db_path,
     get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Research_DB import ResearchDatabase
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.DB.Writing_DB import WritingDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
@@ -82,6 +84,7 @@ from tldw_chatbook.Logging_Config import RichLogHandler
 from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
 from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
+from tldw_chatbook.Prompt_Management.prompt_scope_service import build_prompt_scope_service
 from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.server_watchlists_service import ServerWatchlistsService
 from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistScopeService
@@ -141,6 +144,11 @@ from .Writing_Interop import (
     ServerWritingService,
     WritingScopeService,
 )
+from .Research_Interop import (
+    LocalResearchService,
+    ResearchScopeService,
+    ServerResearchService,
+)
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
@@ -183,6 +191,7 @@ from .UI.Screens.stats_screen import StatsScreen
 from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
 from .UI.Screens.writing_screen import WritingScreen
+from .UI.Screens.research_screen import ResearchScreen
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
 # The legacy per-view navigation (ingest-nav-*/ingest-view-*) is not used anymore.
 # Keep these as empty to avoid wiring legacy handlers.
@@ -1171,6 +1180,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.runtime_policy
         )
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+        self.local_mcp_store = None
+        self.local_mcp_control_service = None
+        self.mcp_server_target_store = None
+        self.mcp_context_store = None
+        self.server_mcp_unified_service = None
+        self.unified_mcp_service = None
+        self._init_unified_mcp_control_plane()
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
         self.loguru_logger = loguru_logger
@@ -1332,6 +1348,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         else:
             self.prompts_db = None # Ensure it's None if service failed
             logging.warning("Prompts service not initialized, self.prompts_db set to None.")
+        self.prompt_scope_service = build_prompt_scope_service(
+            prompt_db=self.prompts_db,
+            app_config=self.app_config,
+            policy_enforcer=self.service_policy_enforcer,
+        )
 
         if self.notes_service and hasattr(self.notes_service, 'db') and self.notes_service.db:
             self.chachanotes_db = self.notes_service.db # ChaChaNotesDB is used by NotesInteropService
@@ -1376,6 +1397,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self._wire_evaluation_services()
         self._wire_study_services()
         self._wire_writing_services()
+        self._wire_research_services()
         self._wire_character_persona_services()
         self._notes_tab_initializer = NotesTabInitializer(self)
 
@@ -1498,6 +1520,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             policy_enforcer=self.service_policy_enforcer,
         )
 
+    def _wire_research_services(self) -> None:
+        try:
+            self.research_db = ResearchDatabase(get_research_db_path(), client_id=self.client_id)
+            self.local_research_service = LocalResearchService(self.research_db)
+        except Exception:
+            logger.warning("Local research service unavailable during app wiring", exc_info=True)
+            self.research_db = None
+            self.local_research_service = None
+
+        try:
+            self.server_research_service = ServerResearchService.from_config(self.app_config)
+        except ValueError:
+            self.server_research_service = ServerResearchService(client=None)
+
+        self.research_scope_service = ResearchScopeService(
+            local_service=self.local_research_service,
+            server_service=self.server_research_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
     def _resolve_initial_media_runtime_backend(self) -> str:
         """Default media backend to local when no valid runtime value is available."""
         for candidate in (
@@ -1580,6 +1622,58 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         callback = getattr(active_screen, "handle_runtime_backend_changed", None)
         if callable(callback):
             await callback(resolved_backend)
+
+
+    def _init_unified_mcp_control_plane(self) -> None:
+        try:
+            from .MCP.local_control_service import LocalMCPControlService
+            from .MCP.local_store import LocalMCPStore
+            from .MCP.server_target_store import ConfiguredServerTargetStore
+            from .MCP.server_unified_service import ServerUnifiedMCPService
+            from .MCP.unified_context_store import UnifiedMCPContextStore
+            from .MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+            from .tldw_api import MCPUnifiedClient, TLDWAPIClient
+
+            self.local_mcp_store = LocalMCPStore()
+            self.local_mcp_control_service = LocalMCPControlService(
+                store=self.local_mcp_store,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+            self.mcp_server_target_store = ConfiguredServerTargetStore()
+            self.mcp_server_target_store.bootstrap_from_legacy_config(self.app_config)
+            self.mcp_context_store = UnifiedMCPContextStore()
+
+            def _client_factory(target) -> MCPUnifiedClient:
+                api_config = dict(self.app_config.get("tldw_api", {}))
+                auth_mode = str(target.auth_mode or api_config.get("auth_mode", "api_key") or "api_key").strip().lower()
+                auth_token = api_config.get("auth_token") or api_config.get("api_key")
+                root_client = TLDWAPIClient(
+                    base_url=target.base_url,
+                    token=auth_token if auth_mode == "api_key" else None,
+                )
+                if auth_mode in {"bearer", "custom_token"}:
+                    root_client.bearer_token = auth_token
+                return MCPUnifiedClient(root_client)
+
+            self.server_mcp_unified_service = ServerUnifiedMCPService(
+                client_factory=_client_factory,
+                policy_enforcer=self.service_policy_enforcer,
+                target_store=self.mcp_server_target_store,
+            )
+            self.unified_mcp_service = UnifiedMCPControlPlaneService(
+                target_store=self.mcp_server_target_store,
+                context_store=self.mcp_context_store,
+                local_service=self.local_mcp_control_service,
+                server_service=self.server_mcp_unified_service,
+            )
+        except Exception as exc:
+            logger.error("Failed to initialize Unified MCP control plane: {}", exc)
+            self.local_mcp_store = None
+            self.local_mcp_control_service = None
+            self.mcp_server_target_store = None
+            self.mcp_context_store = None
+            self.server_mcp_unified_service = None
+            self.unified_mcp_service = None
 
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:
@@ -2005,6 +2099,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             "stts": STTSScreen,
             "study": StudyScreen,
             TAB_WRITING: WritingScreen,
+            TAB_RESEARCH: ResearchScreen,
             "chatbooks": ChatbooksScreen,
             "subscription": SubscriptionScreen,
             "subscriptions": SubscriptionScreen,

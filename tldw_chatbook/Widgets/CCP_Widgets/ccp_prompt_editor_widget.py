@@ -4,7 +4,7 @@ This widget provides a comprehensive form for editing prompts,
 following Textual best practices with focused components.
 """
 
-from typing import TYPE_CHECKING, Optional, Dict, Any, List
+from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
@@ -36,7 +36,7 @@ class PromptSaveRequested(PromptEditorMessage):
 
 class PromptDeleteRequested(PromptEditorMessage):
     """User requested to delete the prompt."""
-    def __init__(self, prompt_id: int) -> None:
+    def __init__(self, prompt_id: Union[int, str]) -> None:
         super().__init__()
         self.prompt_id = prompt_id
 
@@ -470,6 +470,33 @@ class CCPPromptEditorWidget(Container):
                             value="text"
                         )
                         yield Button("Add Variable", id="add-variable-btn", classes="add-variable-btn")
+
+                # Server-backed prompt lifecycle controls. Local mode reports explicit unavailable state.
+                with Container(classes="prompt-section"):
+                    yield Static("Usage & Versions", classes="section-title")
+                    yield Static("Usage: -", id="ccp-editor-prompt-usage-display", classes="field-label")
+                    with Container(classes="add-variable-container"):
+                        yield Input(
+                            placeholder="Version #",
+                            id="ccp-editor-prompt-version-input",
+                            classes="add-variable-input"
+                        )
+                        yield Button(
+                            "Record Usage",
+                            id="ccp-editor-prompt-record-usage-button",
+                            classes="add-variable-btn"
+                        )
+                        yield Button(
+                            "List Versions",
+                            id="ccp-editor-prompt-list-versions-button",
+                            classes="add-variable-btn"
+                        )
+                        yield Button(
+                            "Restore",
+                            id="ccp-editor-prompt-restore-version-button",
+                            classes="add-variable-btn"
+                        )
+                    yield Static("", id="ccp-editor-prompt-version-status", classes="field-label")
                 
                 # Test Section
                 with Container(classes="prompt-section test-section"):

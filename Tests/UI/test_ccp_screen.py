@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.UI.CCP_Modules import PersonaMessage
 from tldw_chatbook.UI.Screens.ccp_screen import CCPScreen, CCPScreenState
@@ -91,6 +92,19 @@ class TestCCPScreenIntegration:
         validated = screen.validate_state(CCPScreenState(active_view="persona_profiles"))
 
         assert validated.active_view == "persona_profiles"
+
+    async def test_prompt_editor_mounts_usage_and_version_controls(self, mock_app_instance):
+        app = CCPTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = pilot.app.screen
+
+            assert isinstance(screen.query_one("#ccp-editor-prompt-usage-display"), Static)
+            assert isinstance(screen.query_one("#ccp-editor-prompt-version-input"), Input)
+            assert isinstance(screen.query_one("#ccp-editor-prompt-record-usage-button"), Button)
+            assert isinstance(screen.query_one("#ccp-editor-prompt-list-versions-button"), Button)
+            assert isinstance(screen.query_one("#ccp-editor-prompt-restore-version-button"), Button)
+            assert isinstance(screen.query_one("#ccp-editor-prompt-version-status"), Static)
 
     async def test_persona_loaded_message_updates_state_and_widgets(self, mock_app_instance):
         app = CCPTestApp(mock_app_instance)

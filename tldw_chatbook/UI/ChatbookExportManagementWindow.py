@@ -14,11 +14,13 @@ Provides interface for:
 
 import os
 import shutil
+import inspect
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
 
 from textual.app import ComposeResult
+from textual import on
 from textual.screen import ModalScreen
 from textual.containers import Container, Horizontal, VerticalScroll, Grid
 from textual.widgets import (
@@ -31,10 +33,26 @@ from loguru import logger
 
 from ..Chatbooks.chatbook_importer import ChatbookImporter
 from ..Chatbooks.chatbook_models import ChatbookManifest
-from ..Chatbooks.server_chatbook_service import get_server_job_records
+from ..Chatbooks.server_chatbook_service import (
+    build_server_chatbook_service_from_config,
+    get_server_job_records,
+)
 
 if TYPE_CHECKING:
     from ..app import TldwCli
+
+
+TERMINAL_SERVER_JOB_STATUSES = {
+    "cancelled",
+    "canceled",
+    "completed",
+    "error",
+    "expired",
+    "failed",
+    "success",
+}
+
+DOWNLOADABLE_SERVER_JOB_STATUSES = {"completed", "success"}
 
 
 class ChatbookExportManagementWindow(ModalScreen):
@@ -147,6 +165,16 @@ class ChatbookExportManagementWindow(ModalScreen):
         background: $background;
         border: round $background-darken-1;
     }
+
+    .server-job-actions {
+        height: 3;
+        margin-top: 1;
+    }
+
+    .server-job-actions Button {
+        margin-right: 1;
+        min-width: 14;
+    }
     
     .details-container {
         width: 65%;
@@ -253,6 +281,8 @@ class ChatbookExportManagementWindow(ModalScreen):
         self.chatbooks_dir = Path.home() / "Documents" / "Chatbooks"
         self.chatbook_files: List[Dict[str, Any]] = []
         self.current_manifest: Optional[ChatbookManifest] = None
+        self.server_job_records: List[Dict[str, Any]] = []
+        self.selected_server_job_record: Optional[Dict[str, Any]] = None
         
     def compose(self) -> ComposeResult:
         """Compose the management UI."""
@@ -288,6 +318,10 @@ class ChatbookExportManagementWindow(ModalScreen):
                             cursor_type="row",
                             zebra_stripes=True,
                         )
+                        with Horizontal(classes="server-job-actions"):
+                            yield Button("Cancel Job", id="cancel-server-job", variant="warning", disabled=True)
+                            yield Button("Download", id="download-server-job", variant="primary", disabled=True)
+                            yield Button("Remove Job", id="remove-server-job", variant="error", disabled=True)
                 
                 # Right: Details
                 with Container(classes="details-container"):
@@ -309,7 +343,7 @@ class ChatbookExportManagementWindow(ModalScreen):
         self.query_one("#details-content", Container).display = False
 
         server_job_table = self.query_one("#server-job-table", DataTable)
-        server_job_table.add_columns("Type", "Status", "Progress", "Chatbook")
+        server_job_table.add_columns("Type", "Status", "Progress", "Chatbook", "Source")
         
         # Create details content structure
         details = self.query_one("#details-content", Container)
@@ -357,7 +391,7 @@ class ChatbookExportManagementWindow(ModalScreen):
         
         # Load chatbooks
         await self.refresh_chatbook_list()
-        self.refresh_server_job_list()
+        await self.refresh_server_job_list()
     
     async def refresh_chatbook_list(self) -> None:
         """Refresh the list of chatbooks."""
@@ -401,30 +435,264 @@ class ChatbookExportManagementWindow(ModalScreen):
             # Update UI
             self._update_list_count()
             self._update_status()
-            self.refresh_server_job_list()
-            
         except Exception as e:
             logger.error(f"Error refreshing chatbook list: {e}")
             self.app_instance.notify(f"Error loading chatbooks: {str(e)}", severity="error")
 
-    def refresh_server_job_list(self) -> None:
-        """Refresh the recent server job table from app state."""
+    async def refresh_server_job_list(self) -> None:
+        """Refresh the server job table from app state plus live server state."""
         table = self.query_one("#server-job-table", DataTable)
         table.clear()
 
-        records = sorted(
-            get_server_job_records(self.app_instance),
-            key=lambda record: record.get("recorded_at", ""),
-            reverse=True,
-        )
+        records = await self._collect_server_job_records()
+        self.server_job_records = records
+        self.selected_server_job_record = None
+        self._update_server_job_action_buttons()
 
-        for record in records[:10]:
+        for index, record in enumerate(records[:10]):
             table.add_row(
                 str(record.get("job_type", "unknown")),
                 str(record.get("status", "unknown")),
                 f"{int(record.get('progress_percentage', 0) or 0)}%",
                 str(record.get("chatbook_name") or record.get("job_id") or "-"),
+                str(record.get("source") or "local"),
+                key=str(index),
             )
+
+    async def _collect_server_job_records(self) -> List[Dict[str, Any]]:
+        local_records = [
+            {**record, "source": record.get("source") or "local"}
+            for record in get_server_job_records(self.app_instance)
+        ]
+        live_records = await self._fetch_live_server_job_records()
+
+        deduped: Dict[tuple[str, str], Dict[str, Any]] = {}
+        for record in local_records:
+            key = (str(record.get("job_type", "")), str(record.get("job_id", "")))
+            deduped[key] = record
+        for record in live_records:
+            key = (str(record.get("job_type", "")), str(record.get("job_id", "")))
+            deduped[key] = record
+
+        return sorted(
+            deduped.values(),
+            key=self._server_job_sort_value,
+            reverse=True,
+        )
+
+    async def _fetch_live_server_job_records(self) -> List[Dict[str, Any]]:
+        config = getattr(self.app_instance, "config_data", {}) or {}
+        try:
+            service, client = build_server_chatbook_service_from_config(config)
+        except Exception as exc:
+            logger.debug(f"Skipping live server chatbook jobs: {exc}")
+            return []
+
+        try:
+            export_payload = await service.list_export_jobs(limit=50, offset=0)
+            import_payload = await service.list_import_jobs(limit=50, offset=0)
+            return [
+                *self._normalize_live_server_jobs("export", export_payload.get("jobs", [])),
+                *self._normalize_live_server_jobs("import", import_payload.get("jobs", [])),
+            ]
+        except Exception as exc:
+            logger.warning(f"Failed to refresh live server chatbook jobs: {exc}")
+            return []
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close_result = close()
+                if inspect.isawaitable(close_result):
+                    await close_result
+
+    def _normalize_live_server_jobs(
+        self,
+        job_type: str,
+        jobs: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        records: List[Dict[str, Any]] = []
+        for job in jobs:
+            job_id = job.get("job_id")
+            if not job_id:
+                continue
+            chatbook_name = job.get("chatbook_name")
+            if not chatbook_name and job.get("chatbook_path"):
+                chatbook_name = Path(str(job["chatbook_path"])).name
+            records.append({
+                "job_type": job_type,
+                "job_id": job_id,
+                "status": job.get("status", "unknown"),
+                "progress_percentage": int(job.get("progress_percentage", 0) or 0),
+                "chatbook_name": chatbook_name or job_id,
+                "recorded_at": (
+                    job.get("created_at")
+                    or job.get("completed_at")
+                    or job.get("started_at")
+                    or ""
+                ),
+                "download_url": job.get("download_url"),
+                "source": "server",
+            })
+        return records
+
+    @staticmethod
+    def _server_job_sort_value(record: Dict[str, Any]) -> str:
+        return str(
+            record.get("recorded_at")
+            or record.get("created_at")
+            or record.get("completed_at")
+            or record.get("started_at")
+            or ""
+        )
+
+    @on(DataTable.RowSelected, "#server-job-table")
+    def handle_server_job_selected(self, event: DataTable.RowSelected) -> None:
+        if event.row_key is None or event.row_key.value is None:
+            return
+        try:
+            index = int(str(event.row_key.value))
+        except ValueError:
+            return
+        if 0 <= index < len(self.server_job_records):
+            self._select_server_job_record(self.server_job_records[index])
+
+    def _select_server_job_record(self, record: Optional[Dict[str, Any]]) -> None:
+        self.selected_server_job_record = record
+        self._update_server_job_action_buttons()
+
+    def _update_server_job_action_buttons(self) -> None:
+        try:
+            cancel_button = self.query_one("#cancel-server-job", Button)
+            download_button = self.query_one("#download-server-job", Button)
+            remove_button = self.query_one("#remove-server-job", Button)
+        except Exception:
+            return
+
+        record = self.selected_server_job_record or {}
+        is_remote = record.get("source") == "server"
+        status = str(record.get("status", "")).lower()
+        is_terminal = status in TERMINAL_SERVER_JOB_STATUSES
+        is_downloadable = status in DOWNLOADABLE_SERVER_JOB_STATUSES
+        has_job_id = bool(record.get("job_id"))
+        is_export = str(record.get("job_type") or "") == "export"
+
+        cancel_button.disabled = not (is_remote and has_job_id and not is_terminal)
+        download_button.disabled = not (is_remote and has_job_id and is_export and is_downloadable)
+        remove_button.disabled = not (is_remote and has_job_id and is_terminal)
+
+    async def _with_server_chatbook_service(self, operation):
+        config = getattr(self.app_instance, "config_data", {}) or {}
+        service, client = build_server_chatbook_service_from_config(config)
+        try:
+            return await operation(service)
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close_result = close()
+                if inspect.isawaitable(close_result):
+                    await close_result
+
+    async def _cancel_selected_server_job(self) -> None:
+        record = self.selected_server_job_record
+        if not record or record.get("source") != "server":
+            self.app_instance.notify("Select a remote server job to cancel.", severity="warning")
+            return
+
+        job_id = str(record.get("job_id") or "")
+        job_type = str(record.get("job_type") or "")
+        if not job_id or job_type not in {"export", "import"}:
+            self.app_instance.notify("Selected server job cannot be cancelled.", severity="warning")
+            return
+
+        async def cancel(service):
+            if job_type == "export":
+                return await service.cancel_export_job(job_id)
+            return await service.cancel_import_job(job_id)
+
+        try:
+            await self._with_server_chatbook_service(cancel)
+            self.app_instance.notify(f"Cancelled server {job_type} job {job_id}", severity="success")
+            await self.refresh_server_job_list()
+        except Exception as exc:
+            logger.error(f"Failed to cancel server chatbook job {job_id}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Failed to cancel server job: {exc}", severity="error")
+
+    async def _remove_selected_server_job(self) -> None:
+        record = self.selected_server_job_record
+        if not record or record.get("source") != "server":
+            self.app_instance.notify("Select a remote server job to remove.", severity="warning")
+            return
+
+        job_id = str(record.get("job_id") or "")
+        job_type = str(record.get("job_type") or "")
+        if not job_id or job_type not in {"export", "import"}:
+            self.app_instance.notify("Selected server job cannot be removed.", severity="warning")
+            return
+
+        async def remove(service):
+            if job_type == "export":
+                return await service.remove_export_job(job_id)
+            return await service.remove_import_job(job_id)
+
+        try:
+            await self._with_server_chatbook_service(remove)
+            self.app_instance.notify(f"Removed server {job_type} job {job_id}", severity="success")
+            await self.refresh_server_job_list()
+        except Exception as exc:
+            logger.error(f"Failed to remove server chatbook job {job_id}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Failed to remove server job: {exc}", severity="error")
+
+    def _server_download_filename(self, record: Dict[str, Any]) -> str:
+        raw_name = str(record.get("chatbook_name") or record.get("job_id") or "server-export").strip()
+        safe_name = Path(raw_name).name.replace(":", "-")
+        safe_name = "".join(char for char in safe_name if char.isprintable()).strip()
+        if not safe_name:
+            safe_name = "server-export"
+        if safe_name.endswith(".chatbook.zip"):
+            return safe_name
+        if safe_name.endswith(".zip"):
+            return f"{safe_name[:-4]}.chatbook.zip"
+        return f"{safe_name}.chatbook.zip"
+
+    def _dedupe_download_path(self, path: Path) -> Path:
+        if not path.exists():
+            return path
+
+        stem = path.name[:-4] if path.name.endswith(".zip") else path.stem
+        suffix = ".zip" if path.name.endswith(".zip") else path.suffix
+        for index in range(2, 1000):
+            candidate = path.with_name(f"{stem} ({index}){suffix}")
+            if not candidate.exists():
+                return candidate
+        raise FileExistsError(f"Could not find an available filename for {path.name}")
+
+    async def _download_selected_server_export(self) -> None:
+        record = self.selected_server_job_record
+        if not record or record.get("source") != "server":
+            self.app_instance.notify("Select a remote server export to download.", severity="warning")
+            return
+
+        job_id = str(record.get("job_id") or "")
+        job_type = str(record.get("job_type") or "")
+        status = str(record.get("status") or "").lower()
+        if not job_id or job_type != "export" or status not in DOWNLOADABLE_SERVER_JOB_STATUSES:
+            self.app_instance.notify("Selected server export is not ready to download.", severity="warning")
+            return
+
+        destination = self._dedupe_download_path(
+            self.chatbooks_dir / self._server_download_filename(record)
+        )
+
+        async def download(service):
+            return await service.download_export_job(job_id, destination)
+
+        try:
+            downloaded_path = await self._with_server_chatbook_service(download)
+            self.app_instance.notify(f"Downloaded server export to {downloaded_path}", severity="success")
+            await self.refresh_chatbook_list()
+        except Exception as exc:
+            logger.error(f"Failed to download server chatbook export {job_id}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Failed to download server export: {exc}", severity="error")
     
     def _format_relative_time(self, dt: datetime) -> str:
         """Format datetime as relative time."""
@@ -544,7 +812,7 @@ class ChatbookExportManagementWindow(ModalScreen):
         
         if button_id == "refresh-list":
             await self.refresh_chatbook_list()
-            self.refresh_server_job_list()
+            await self.refresh_server_job_list()
             self.app_instance.notify("Chatbook list refreshed", severity="success")
             
         elif button_id == "delete-selected" and self.selected_chatbook is not None:
@@ -558,6 +826,15 @@ class ChatbookExportManagementWindow(ModalScreen):
             
         elif button_id == "open-location" and self.selected_chatbook is not None:
             await self._open_location()
+
+        elif button_id == "cancel-server-job":
+            await self._cancel_selected_server_job()
+
+        elif button_id == "download-server-job":
+            await self._download_selected_server_export()
+
+        elif button_id == "remove-server-job":
+            await self._remove_selected_server_job()
             
         elif button_id == "copy-path" and self.selected_chatbook is not None:
             chatbook = self.chatbook_files[self.selected_chatbook]
@@ -653,6 +930,7 @@ class ChatbookExportManagementWindow(ModalScreen):
     def action_refresh(self) -> None:
         """Refresh the list."""
         self.run_worker(self.refresh_chatbook_list())
+        self.run_worker(self.refresh_server_job_list())
     
     def action_re_export(self) -> None:
         """Re-export selected chatbook."""

@@ -14,9 +14,13 @@ That changes the roadmap in one important way: runtime policy remains a cross-cu
 
 `Watchlists` plus `Client Notifications` are also now partially landed for their first slice. See [watchlists-notifications-tranche-2.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-watchlists-notifications-vertical/Docs/Development/watchlists-notifications-tranche-2.md) for the verification record and the precise deferred scope.
 
-That means the next unresolved Tranche 2 focus should move to `Local MCP Runtime`, with `Writing Suite` and `Research Sessions / Runs` following after that.
+At that point, the next unresolved Tranche 2 focus moved to `Local MCP Runtime`, with `Writing Suite` and `Research Sessions / Runs` following after that.
 
 `Collections: Reading List / Read-it-later` is now also landed for the current server contract. The authoritative capability seam, runtime normalization, and search-panel affordance now make the boundary explicit: local saved browsing remains per-media-type, while server saved browsing is aggregate-only in `All Media`. Any future per-media-type server saved view remains blocked on a server contract extension, so the next larger non-MCP row should now move to `Writing Suite`.
+
+`Research Sessions / Runs` now has a first-slice source-separated surface. Chatbook has typed research-runs client methods, local run/artifact persistence, local/server scope routing, a dedicated Research screen, and app navigation wiring. Remaining Research work is no longer "no surface"; it is live server event streaming, richer checkpoint/artifact and bundle UX, and actual local autonomous research execution.
+
+`Prompts / Chatbooks` now has its first contract seam plus source-routed prompt CRUD in the existing CCP prompt editor. Chatbook has typed server prompt CRUD methods, typed server chatbook job list/status/cancel/remove/download methods, a plain-dict-preserving server chatbook service, live remote server job browsing plus cancel/download/remove controls in the export management window, a normalized local/server prompt scope service, source-aware server prompt usage/version/restore routing, app-level prompt scope wiring, CCP prompt list/load/create/update/delete routing through the active runtime source, and mounted CCP controls for prompt usage, server version listing, and server version restore. Remaining work is mostly prompt collections/workflows, chatbook cleanup/continuation affordances, and deeper import/export identity alignment.
 
 ## Immediate Post-Tranche-0 Order
 
@@ -25,14 +29,16 @@ That means the next unresolved Tranche 2 focus should move to `Local MCP Runtime
 2. `Writing Suite`
    This is now the next larger non-MCP row. The read-it-later tranche is landed for the current server contract, and Chatbook still lacks a serious standalone project and manuscript hierarchy.
 3. `Research Sessions / Runs`
-   Research is a user-priority local-first domain, but it depends on several adjacent capabilities becoming less fragmented first: local notifications, stronger collection/media seams, and a clearer execution/status model.
+   First-slice source-separated CRUD/control is landed. Continue this row only when adding live event streaming, richer artifact/checkpoint/bundle affordances, or a real local research execution engine.
 4. `Media / Reading / Ingestion Sources`
-   The approved `Read-it-later` follow-up is landed for the current server contract. Remaining work in this area is the broader media and ingestion parity surface plus any future server contract change for per-media-type saved views.
-5. `Watchlists` plus `Client Notifications`
+   The approved `Read-it-later` follow-up is landed for the current server contract, and Chatbook now has typed server ingest-job submit/status/list/cancel/event-stream seams, typed server web-content ingest helpers with first-class server ingest controls, local/server reading-highlight CRUD seams with first-class viewer authoring controls, and a server job tab with last-batch refresh/cancel, selected-job cancel, selected-batch live watch, and known-batch lookup by ID. Remaining work is true historical batch discovery, always-on live updates beyond the selected or manually entered batch, and any future server contract change for per-media-type saved views.
+5. `Prompts / Chatbooks`
+   First contract seam, active-source prompt CRUD routing in CCP, live remote job browsing/actions, export download, and mounted prompt usage/version controls are landed. Continue this row when exposing prompt collections/workflows or chatbook cleanup/continuation controls.
+6. `Watchlists` plus `Client Notifications`
    Partially landed. Chatbook now has a source-aware subscriptions shell, remote watchlist source CRUD, and a persisted local notifications inbox. Remaining work is the broader watchlists execution and control-plane surface plus any later server reminder/feed client.
-6. `Workflows`, `Scheduler Workflows`, and `Chat Workflows`
+7. `Workflows`, `Scheduler Workflows`, and `Chat Workflows`
    These remain remote-only acceptable, but once the local-first rows above are in place, Chatbook should add discover/trigger/observe support for connected-server workflow surfaces.
-7. `Server Reminders / Notification Feeds`, `Sharing`, and `Web Clipper`
+8. `Server Reminders / Notification Feeds`, `Sharing`, and `Web Clipper`
    These are still worthwhile remote surfaces, but they should follow the higher-value standalone rows and the remote workflow/control surfaces they often depend on.
 
 ## Tranche 0: Runtime Policy And Capability Map
@@ -89,7 +95,7 @@ Execution intent for this tranche:
 - Crosswalk `Watchlists` onto existing local subscriptions and notification plumbing before inventing a separate remote-first model.
 - Treat the first-slice watchlists source CRUD and client-notifications inbox as landed foundations; keep watchlist groups, jobs, runs, alert rules, restore UX, and server reminder or feed surfaces as later follow-on work.
 - Treat `Collections: Reading List / Read-it-later` as landed for the current server contract. Keep any future per-media-type server saved view follow-on explicitly blocked on a server list-contract extension, and keep any sync/mirror contract out of scope until separately approved.
-- Add `Writing Suite` and `Research Sessions / Runs` as serious standalone surfaces with matching remote contracts, not as thin shells around server-only functionality.
+- Treat `Writing Suite` and first-slice `Research Sessions / Runs` as landed foundations; remaining work should deepen UX and execution semantics rather than re-litigating source separation.
 - Keep `Client Notifications` and `Local MCP Runtime` Chatbook-owned so offline capability remains credible even as remote interop improves.
 
 ## Tranche 3: Remote-Only Surfaces And Convenience Layers
@@ -123,6 +129,6 @@ Execution intent for this tranche:
 - `Local MCP runtime parity`: Define the local-first runtime, approvals, catalog, prompts, tools, resources, and status surface before any later remote governance work.
 - `Remote MCP control plane`: The current remote Unified MCP hub-management route surface is now effectively covered inside `Tools & Settings`, with explicit local/server panes, configured server targets, remote browse sections, governance actions, governance-pack source/import/upgrade flows, expanded advanced admin browse/action coverage, assignment workspace membership control, credential-binding administration, slot-status views, and the top-level external-server secret setter. The next follow-on should focus on UI polish, richer structured presentation, and any future server-side MCP surface expansion without collapsing the source-separated local MCP runtime model.
 - `Writing suite parity`: Plan the local-first project, manuscript, chapter, and scene hierarchy together with the server contract and source-separated UI behavior.
-- `Research sessions parity`: Plan the local and remote session lifecycle, run execution, streaming status, and bundle retrieval surface as a standalone-first research vertical.
+- `Research sessions parity`: First-slice local/server run CRUD and control is landed. Follow-on work should add live server event streaming, checkpoint/artifact/bundle UI depth, and a local autonomous research execution engine.
 - `Remote workflows surface`: Split general workflows, scheduler workflows, and chat workflows into a dedicated remote-only plan that covers discovery, scheduler configuration and scheduling control-plane behavior, launch, run status, and observation after the core parity rows land.
 - `Study packs / study suggestions once contract maturity is confirmed`: Hold the vertical plan until the server-side contract is stable enough to justify a focused client surface.

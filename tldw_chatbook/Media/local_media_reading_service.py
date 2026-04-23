@@ -24,6 +24,12 @@ class LocalMediaReadingService:
     def _unsupported_ingestion_sources(self) -> ValueError:
         return ValueError("Local ingestion sources are not available yet.")
 
+    def _unsupported_ingestion_jobs(self) -> ValueError:
+        return ValueError("Local media ingest jobs are not available yet.")
+
+    def _unsupported_web_content_ingest(self) -> ValueError:
+        return ValueError("Local web-content ingest is not available yet.")
+
     def _normalize_media_id_filter(self, media_ids: Any) -> list[int]:
         normalized: list[int] = []
         for media_id in media_ids or []:
@@ -133,6 +139,36 @@ class LocalMediaReadingService:
     def delete_reading_progress(self, media_id: Any) -> Any:
         return self._require_db().delete_reading_progress(self._coerce_media_id(media_id))
 
+    def create_reading_highlight(
+        self,
+        media_id: Any,
+        *,
+        quote: str,
+        start_offset: int | None = None,
+        end_offset: int | None = None,
+        color: str | None = None,
+        note: str | None = None,
+        anchor_strategy: str = "fuzzy_quote",
+    ) -> Any:
+        return self._require_db().create_reading_highlight(
+            self._coerce_media_id(media_id),
+            quote=quote,
+            start_offset=start_offset,
+            end_offset=end_offset,
+            color=color,
+            note=note,
+            anchor_strategy=anchor_strategy,
+        )
+
+    def list_reading_highlights(self, media_id: Any) -> Any:
+        return self._require_db().list_reading_highlights(self._coerce_media_id(media_id))
+
+    def update_reading_highlight(self, highlight_id: Any, **changes: Any) -> Any:
+        return self._require_db().update_reading_highlight(int(highlight_id), **changes)
+
+    def delete_reading_highlight(self, highlight_id: Any) -> Any:
+        return self._require_db().delete_reading_highlight(int(highlight_id))
+
     def save_to_read_it_later(self, media_id: Any) -> Any:
         return self._require_db().save_media_to_read_it_later(self._coerce_media_id(media_id))
 
@@ -172,6 +208,37 @@ class LocalMediaReadingService:
 
     def upload_ingestion_source_archive(self, source_id: Any, archive_path: str) -> Any:
         raise self._unsupported_ingestion_sources()
+
+    def submit_media_ingest_jobs(
+        self,
+        *,
+        media_type: str,
+        urls: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        **options: Any,
+    ) -> Any:
+        raise self._unsupported_ingestion_jobs()
+
+    def get_media_ingest_job(self, job_id: Any) -> Any:
+        raise self._unsupported_ingestion_jobs()
+
+    def list_media_ingest_jobs(self, *, batch_id: str, limit: int = 100) -> Any:
+        raise self._unsupported_ingestion_jobs()
+
+    def cancel_media_ingest_job(self, job_id: Any, *, reason: str | None = None) -> Any:
+        raise self._unsupported_ingestion_jobs()
+
+    def cancel_media_ingest_jobs_batch(
+        self,
+        *,
+        batch_id: str | None = None,
+        session_id: str | None = None,
+        reason: str | None = None,
+    ) -> Any:
+        raise self._unsupported_ingestion_jobs()
+
+    def ingest_web_content(self, **kwargs: Any) -> Any:
+        raise self._unsupported_web_content_ingest()
 
     def list_document_versions(self, media_id: Any, *, include_deleted: bool = False) -> Any:
         return self._require_db().get_all_document_versions(

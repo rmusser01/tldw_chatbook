@@ -306,18 +306,32 @@ class ConfiguredServerTarget:
 @dataclass(frozen=True)
 class ServerAccessContext:
     server_id: str
+    principal_user_id: int | None = None
     selected_scope: str | None = None
+    selected_scope_ref: str | None = None
     selected_section: str | None = None
+    can_use_personal_scope: bool = True
+    manageable_team_ids: tuple[int, ...] = field(default_factory=tuple)
+    manageable_org_ids: tuple[int, ...] = field(default_factory=tuple)
+    can_use_system_admin_scope: bool = False
     section_capabilities: SectionCapabilityFlags = field(default_factory=SectionCapabilityFlags)
+    endpoint_capabilities: dict[str, bool] = field(default_factory=dict)
     target_status: TargetStatusMetadata = field(default_factory=TargetStatusMetadata)
     panel_records: tuple[NormalizedPanelRecord, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "server_id": self.server_id,
+            "principal_user_id": self.principal_user_id,
             "selected_scope": self.selected_scope,
+            "selected_scope_ref": self.selected_scope_ref,
             "selected_section": self.selected_section,
+            "can_use_personal_scope": self.can_use_personal_scope,
+            "manageable_team_ids": list(self.manageable_team_ids),
+            "manageable_org_ids": list(self.manageable_org_ids),
+            "can_use_system_admin_scope": self.can_use_system_admin_scope,
             "section_capabilities": self.section_capabilities.to_dict(),
+            "endpoint_capabilities": dict(self.endpoint_capabilities),
             "target_status": self.target_status.to_dict(),
             "panel_records": [record.to_dict() for record in self.panel_records],
         }
@@ -337,12 +351,26 @@ class ServerAccessContext:
             normalized_panels = ()
         return cls(
             server_id=_text_or_none(data.get("server_id")) or "",
+            principal_user_id=_coerce_optional_int(data.get("principal_user_id")),
             selected_scope=_scope_or_none(data.get("selected_scope")),
+            selected_scope_ref=_text_or_none(data.get("selected_scope_ref")),
             selected_section=_text_or_none(data.get("selected_section")),
+            can_use_personal_scope=bool(data.get("can_use_personal_scope", True)),
+            manageable_team_ids=_coerce_int_tuple(data.get("manageable_team_ids")),
+            manageable_org_ids=_coerce_int_tuple(data.get("manageable_org_ids")),
+            can_use_system_admin_scope=bool(data.get("can_use_system_admin_scope", False)),
             section_capabilities=SectionCapabilityFlags.from_dict(data.get("section_capabilities")),
+            endpoint_capabilities=_coerce_bool_mapping(data.get("endpoint_capabilities")),
             target_status=TargetStatusMetadata.from_dict(data.get("target_status")),
             panel_records=normalized_panels,
         )
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -350,6 +378,7 @@ class UnifiedMCPContext:
     selected_source: str = "local"
     selected_active_server_id: str | None = None
     selected_scope: str | None = None
+    selected_scope_ref: str | None = None
     selected_section: str | None = None
     per_server_state: dict[str, ServerAccessContext] = field(default_factory=dict)
 
@@ -358,6 +387,7 @@ class UnifiedMCPContext:
             "selected_source": self.selected_source,
             "selected_active_server_id": self.selected_active_server_id,
             "selected_scope": self.selected_scope,
+            "selected_scope_ref": self.selected_scope_ref,
             "selected_section": self.selected_section,
             "per_server_state": {
                 server_id: context.to_dict()
@@ -384,9 +414,36 @@ class UnifiedMCPContext:
             selected_source=_selected_source_or_default(data.get("selected_source")),
             selected_active_server_id=_text_or_none(data.get("selected_active_server_id")),
             selected_scope=_scope_or_none(data.get("selected_scope")),
+            selected_scope_ref=_text_or_none(data.get("selected_scope_ref")),
             selected_section=_text_or_none(data.get("selected_section")),
             per_server_state=restored_state,
         )
+
+
+def _coerce_int_tuple(value: Any) -> tuple[int, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    normalized: list[int] = []
+    for item in value:
+        if isinstance(item, bool):
+            continue
+        try:
+            coerced = int(item)
+        except (TypeError, ValueError):
+            continue
+        if coerced not in normalized:
+            normalized.append(coerced)
+    return tuple(normalized)
+
+
+def _coerce_bool_mapping(value: Any) -> dict[str, bool]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): bool(item)
+        for key, item in value.items()
+        if str(key).strip()
+    }
 
 
 def _text_or_none(value: Any) -> str | None:

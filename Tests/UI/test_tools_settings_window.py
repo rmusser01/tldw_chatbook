@@ -481,3 +481,27 @@ async def test_database_error_handling(settings_window: ToolsSettingsWindow, moc
         calls = mock_app_instance.notify.call_args_list
         assert any("error" in str(call).lower() for call in calls)
 
+
+@pytest.mark.asyncio
+async def test_tools_settings_window_exposes_unified_mcp_view():
+    class ToolsSettingsHostApp(App):
+        def __init__(self):
+            super().__init__()
+            self.notify = MagicMock()
+            self.unified_mcp_service = None
+
+        def compose(self):
+            yield ToolsSettingsWindow(app_instance=self)
+
+    app = ToolsSettingsHostApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(ToolsSettingsWindow)
+        nav_button = window.query_one("#ts-nav-unified-mcp", Button)
+
+        assert nav_button.label.plain == "Unified MCP"
+
+        await window.on_button_pressed(Button.Pressed(nav_button))
+
+        content_switcher = window.query_one("#tools-settings-content-pane")
+        assert content_switcher.current == "ts-view-unified-mcp"

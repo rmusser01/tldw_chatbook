@@ -16,6 +16,9 @@ def build_media_entity_id(backend: str, entity_kind: str, source_id: Any) -> str
 def _as_mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return dict(model_dump(mode="json"))
     return {}
 
 
@@ -105,6 +108,36 @@ def normalize_reading_progress(
         "zoom_level": progress.get("zoom_level"),
         "cfi": progress.get("cfi"),
         "last_read_at": _clean_timestamp(progress.get("last_read_at"), progress.get("last_modified")),
+    }
+
+
+def normalize_reading_highlight(
+    highlight: Mapping[str, Any],
+    *,
+    backend: str,
+) -> dict[str, Any]:
+    highlight_data = _as_mapping(highlight)
+    source_id = str(highlight_data.get("id"))
+    item_id = highlight_data.get("item_id", highlight_data.get("media_id"))
+    return {
+        "id": build_canonical_media_id(backend, "reading_highlight", source_id),
+        "backend": str(backend),
+        "entity_kind": "reading_highlight",
+        "source_id": source_id,
+        "item_id": str(item_id) if item_id is not None else None,
+        "backing_media_id": item_id,
+        "quote": highlight_data.get("quote") or "",
+        "start_offset": highlight_data.get("start_offset"),
+        "end_offset": highlight_data.get("end_offset"),
+        "color": highlight_data.get("color"),
+        "note": highlight_data.get("note"),
+        "anchor_strategy": highlight_data.get("anchor_strategy") or "fuzzy_quote",
+        "content_hash_ref": highlight_data.get("content_hash_ref"),
+        "context_before": highlight_data.get("context_before"),
+        "context_after": highlight_data.get("context_after"),
+        "state": highlight_data.get("state") or "active",
+        "created_at": _clean_timestamp(highlight_data.get("created_at")),
+        "updated_at": _clean_timestamp(highlight_data.get("updated_at")),
     }
 
 
@@ -243,4 +276,140 @@ def normalize_ingestion_source_item(
         "present_in_source": bool(item.get("present_in_source", True)),
         "created_at": _clean_timestamp(item.get("created_at")),
         "updated_at": _clean_timestamp(item.get("updated_at")),
+    }
+
+
+def normalize_media_ingest_job(
+    job: Mapping[str, Any],
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    job_data = _as_mapping(job)
+    raw_source_id = job_data.get("id", job_data.get("job_id"))
+    source_id = str(raw_source_id)
+    return {
+        "id": build_canonical_media_id(backend, "ingestion_job", source_id),
+        "backend": backend,
+        "entity_kind": "ingestion_job",
+        "source_id": source_id,
+        "job_id": raw_source_id,
+        "uuid": job_data.get("uuid"),
+        "status": job_data.get("status"),
+        "job_type": job_data.get("job_type"),
+        "owner_user_id": job_data.get("owner_user_id"),
+        "created_at": _clean_timestamp(job_data.get("created_at")),
+        "started_at": _clean_timestamp(job_data.get("started_at")),
+        "completed_at": _clean_timestamp(job_data.get("completed_at")),
+        "cancelled_at": _clean_timestamp(job_data.get("cancelled_at")),
+        "cancellation_reason": job_data.get("cancellation_reason"),
+        "progress_percent": job_data.get("progress_percent"),
+        "progress_message": job_data.get("progress_message"),
+        "result": _as_mapping(job_data.get("result")) if job_data.get("result") is not None else None,
+        "error_message": job_data.get("error_message"),
+        "media_type": job_data.get("media_type"),
+        "source": job_data.get("source"),
+        "source_kind": job_data.get("source_kind"),
+        "batch_id": job_data.get("batch_id"),
+    }
+
+
+def normalize_media_ingest_job_submission(
+    payload: Mapping[str, Any],
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    payload_data = _as_mapping(payload)
+    return {
+        "batch_id": payload_data.get("batch_id"),
+        "jobs": [
+            normalize_media_ingest_job(job, backend=backend)
+            for job in list(payload_data.get("jobs") or [])
+        ],
+        "errors": list(payload_data.get("errors") or []),
+    }
+
+
+def normalize_media_ingest_job_list(
+    payload: Mapping[str, Any],
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    payload_data = _as_mapping(payload)
+    return {
+        "batch_id": payload_data.get("batch_id"),
+        "jobs": [
+            normalize_media_ingest_job(job, backend=backend)
+            for job in list(payload_data.get("jobs") or [])
+        ],
+    }
+
+
+def normalize_media_ingest_job_stream_event(
+    event: Mapping[str, Any],
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    event_data = _as_mapping(event)
+    event_name = str(event_data.get("event") or "message")
+    payload = event_data.get("data")
+    payload_data = _as_mapping(payload) if payload is not None else {}
+
+    if event_name == "snapshot":
+        return {
+            "event": "snapshot",
+            "domain": payload_data.get("domain"),
+            "batch_id": payload_data.get("batch_id"),
+            "jobs": [
+                normalize_media_ingest_job(job, backend=backend)
+                for job in list(payload_data.get("jobs") or [])
+            ],
+        }
+
+    if event_name == "job":
+        job_id = payload_data.get("job_id")
+        attrs = _as_mapping(payload_data.get("attrs"))
+        return {
+            "event": "job",
+            "event_id": payload_data.get("event_id") or event_data.get("id"),
+            "job_id": job_id,
+            "id": build_canonical_media_id(backend, "ingestion_job", job_id) if job_id is not None else None,
+            "event_type": payload_data.get("event_type"),
+            "attrs": attrs,
+        }
+
+    return {
+        "event": event_name,
+        "id": event_data.get("id"),
+        "data": payload if payload is not None else payload_data,
+    }
+
+
+def normalize_media_ingest_job_cancel(
+    payload: Mapping[str, Any],
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    payload_data = _as_mapping(payload)
+    job_id = payload_data.get("job_id")
+    return {
+        "id": build_canonical_media_id(backend, "ingestion_job", job_id) if job_id is not None else None,
+        "backend": backend,
+        "entity_kind": "ingestion_job_cancel",
+        "job_id": job_id,
+        "success": bool(payload_data.get("success", False)),
+        "status": payload_data.get("status"),
+        "message": payload_data.get("message"),
+    }
+
+
+def normalize_media_ingest_batch_cancel(payload: Mapping[str, Any]) -> dict[str, Any]:
+    payload_data = _as_mapping(payload)
+    return {
+        "success": bool(payload_data.get("success", False)),
+        "batch_id": payload_data.get("batch_id"),
+        "requested": payload_data.get("requested"),
+        "cancelled": payload_data.get("cancelled"),
+        "already_terminal": payload_data.get("already_terminal"),
+        "failed": payload_data.get("failed", 0),
+        "message": payload_data.get("message"),
     }

@@ -98,7 +98,7 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 4  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 5  # Define the version this code supports
     
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
@@ -122,11 +122,16 @@ class MediaDatabase:
             'function': '_apply_migration_v3_to_v4',
             'description': 'Add local read-it-later store'
         },
+        4: {
+            'to_version': 5,
+            'function': '_apply_migration_v4_to_v5',
+            'description': 'Add local reading highlights store'
+        },
         # Future migrations: just add new entries here
-        # 4: {
-        #     'to_version': 5,
-        #     'function': '_apply_migration_v4_to_v5',
-        #     'description': 'Description of v5 changes'
+        # 5: {
+        #     'to_version': 6,
+        #     'function': '_apply_migration_v5_to_v6',
+        #     'description': 'Description of v6 changes'
         # },
     }
 
@@ -447,6 +452,29 @@ class MediaDatabase:
         updated_at DATETIME NOT NULL,
         FOREIGN KEY (media_id) REFERENCES Media(id) ON DELETE CASCADE
     );
+    """
+
+    _READING_HIGHLIGHTS_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS ReadingHighlights (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        media_id INTEGER NOT NULL,
+        quote TEXT NOT NULL,
+        start_offset INTEGER,
+        end_offset INTEGER,
+        color TEXT,
+        note TEXT,
+        anchor_strategy TEXT NOT NULL DEFAULT 'fuzzy_quote',
+        content_hash_ref TEXT,
+        context_before TEXT,
+        context_after TEXT,
+        state TEXT NOT NULL DEFAULT 'active',
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        FOREIGN KEY (media_id) REFERENCES Media(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reading_highlights_media_id ON ReadingHighlights(media_id);
+    CREATE INDEX IF NOT EXISTS idx_reading_highlights_state ON ReadingHighlights(state);
     """
 
     def __init__(self, db_path: Union[str, Path], client_id: str, 
@@ -1027,6 +1055,26 @@ class MediaDatabase:
             logging.error(f"[Migration v3->v4] Unexpected error during migration: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during migration v3->v4: {e}") from e
 
+    def _apply_migration_v4_to_v5(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 4 to version 5 (adds local reading highlights)."""
+        logging.info(f"Applying migration from version 4 to 5 (reading highlights store) to DB: {self.db_path_str}...")
+        try:
+            migration_sql = f"""
+            {self._READING_HIGHLIGHTS_TABLE_SQL}
+            UPDATE schema_version SET version = 5;
+            """
+
+            with self.transaction():
+                logging.debug("[Migration v4->v5] Creating ReadingHighlights table...")
+                conn.executescript(migration_sql)
+                logging.info("[Migration v4->v5] ReadingHighlights migration applied successfully.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v4->v5] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v4->v5 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v4->v5] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v4->v5: {e}") from e
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -1038,15 +1086,15 @@ class MediaDatabase:
 
             if current_db_version == target_version:
                 logging.debug("Database schema is up to date.")
-                # Ensure FTS and the read-it-later table exist even if schema version matches
+                # Ensure FTS and local-only tables exist even if schema version matches
                 try:
                     conn.executescript(
-                        f"{self._FTS_TABLES_SQL}\n{self._LOCAL_ONLY_TABLES_SQL}"
+                        f"{self._FTS_TABLES_SQL}\n{self._LOCAL_ONLY_TABLES_SQL}\n{self._READING_HIGHLIGHTS_TABLE_SQL}"
                     )
                     conn.commit()
-                    logging.debug("Verified FTS and read-it-later tables exist.")
+                    logging.debug("Verified FTS and local-only media tables exist.")
                 except sqlite3.Error as fts_err:
-                    logging.warning(f"Could not verify/create FTS or read-it-later tables on already correct schema version: {fts_err}")
+                    logging.warning(f"Could not verify/create FTS or local-only media tables on already correct schema version: {fts_err}")
                 return
 
             if current_db_version > target_version:
@@ -2119,6 +2167,163 @@ class MediaDatabase:
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error deleting reading progress for media_id={media_id} from DB '{self.db_path_str}': {e}")
             raise DatabaseError(f"Failed to delete reading progress for media_id {media_id}") from e
+
+    @staticmethod
+    def _reading_highlight_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "media_id": row["media_id"],
+            "item_id": row["media_id"],
+            "quote": row["quote"],
+            "start_offset": row["start_offset"],
+            "end_offset": row["end_offset"],
+            "color": row["color"],
+            "note": row["note"],
+            "anchor_strategy": row["anchor_strategy"],
+            "content_hash_ref": row["content_hash_ref"],
+            "context_before": row["context_before"],
+            "context_after": row["context_after"],
+            "state": row["state"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def get_reading_highlight(self, highlight_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a local reading highlight by ID."""
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT id, media_id, quote, start_offset, end_offset, color, note,
+                       anchor_strategy, content_hash_ref, context_before, context_after,
+                       state, created_at, updated_at
+                FROM ReadingHighlights
+                WHERE id = ?
+                """,
+                (highlight_id,),
+            )
+            row = cursor.fetchone()
+            return self._reading_highlight_row_to_dict(row) if row else None
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching reading highlight id={highlight_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to fetch reading highlight {highlight_id}") from e
+
+    def create_reading_highlight(
+        self,
+        media_id: int,
+        *,
+        quote: str,
+        start_offset: Optional[int] = None,
+        end_offset: Optional[int] = None,
+        color: Optional[str] = None,
+        note: Optional[str] = None,
+        anchor_strategy: str = "fuzzy_quote",
+        content_hash_ref: Optional[str] = None,
+        context_before: Optional[str] = None,
+        context_after: Optional[str] = None,
+        state: str = "active",
+    ) -> Dict[str, Any]:
+        """Create a local-only reading highlight for a media item."""
+        if not quote:
+            raise InputError("quote is required for reading highlights.")
+        current_time = self._get_current_utc_timestamp_str()
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO ReadingHighlights (
+                        media_id, quote, start_offset, end_offset, color, note,
+                        anchor_strategy, content_hash_ref, context_before, context_after,
+                        state, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        media_id,
+                        quote,
+                        start_offset,
+                        end_offset,
+                        color,
+                        note,
+                        anchor_strategy,
+                        content_hash_ref,
+                        context_before,
+                        context_after,
+                        state,
+                        current_time,
+                        current_time,
+                    ),
+                )
+                highlight_id = int(cursor.lastrowid)
+            created = self.get_reading_highlight(highlight_id)
+            if created is None:
+                raise DatabaseError(f"Failed to fetch newly created reading highlight {highlight_id}")
+            return created
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error creating reading highlight for media_id={media_id} in DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to create reading highlight for media_id {media_id}") from e
+
+    def list_reading_highlights(self, media_id: int) -> List[Dict[str, Any]]:
+        """List local reading highlights for a media item."""
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT id, media_id, quote, start_offset, end_offset, color, note,
+                       anchor_strategy, content_hash_ref, context_before, context_after,
+                       state, created_at, updated_at
+                FROM ReadingHighlights
+                WHERE media_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (media_id,),
+            )
+            return [self._reading_highlight_row_to_dict(row) for row in cursor.fetchall()]
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error listing reading highlights for media_id={media_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to list reading highlights for media_id {media_id}") from e
+
+    def update_reading_highlight(self, highlight_id: int, **changes: Any) -> Dict[str, Any]:
+        """Update mutable local reading highlight fields."""
+        allowed_fields = {"color", "note", "state"}
+        unsupported = sorted(key for key in changes if key not in allowed_fields)
+        if unsupported:
+            unsupported_text = ", ".join(unsupported)
+            raise InputError(f"Unsupported reading highlight update fields: {unsupported_text}")
+
+        current = self.get_reading_highlight(highlight_id)
+        if current is None:
+            raise InputError(f"Reading highlight {highlight_id} not found.")
+        if not changes:
+            return current
+
+        current_time = self._get_current_utc_timestamp_str()
+        assignments = [f"{field} = ?" for field in changes]
+        values = list(changes.values())
+        assignments.append("updated_at = ?")
+        values.append(current_time)
+        values.append(highlight_id)
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    f"UPDATE ReadingHighlights SET {', '.join(assignments)} WHERE id = ?",
+                    tuple(values),
+                )
+            updated = self.get_reading_highlight(highlight_id)
+            if updated is None:
+                raise DatabaseError(f"Failed to fetch updated reading highlight {highlight_id}")
+            return updated
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error updating reading highlight id={highlight_id} in DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to update reading highlight {highlight_id}") from e
+
+    def delete_reading_highlight(self, highlight_id: int) -> bool:
+        """Delete a local reading highlight."""
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute("DELETE FROM ReadingHighlights WHERE id = ?", (highlight_id,))
+                return cursor.rowcount > 0
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error deleting reading highlight id={highlight_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to delete reading highlight {highlight_id}") from e
 
     def get_media_read_it_later_state(self, media_id: int) -> Optional[Dict[str, Any]]:
         """Fetch the local-only read-it-later state for a media item."""

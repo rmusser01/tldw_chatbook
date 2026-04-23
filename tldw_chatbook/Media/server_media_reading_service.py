@@ -5,9 +5,13 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 from ..tldw_api import (
+    IngestWebContentRequest,
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
     MediaSearchRequest,
+    MediaIngestJobSubmitRequest,
+    ReadingHighlightCreateRequest,
+    ReadingHighlightUpdateRequest,
     ReadingProgressUpdate,
     ReadingUpdateRequest,
     TLDWAPIClient,
@@ -81,6 +85,39 @@ class ServerMediaReadingService:
     async def delete_reading_progress(self, media_id: Any) -> Any:
         return await self._require_client().delete_reading_progress(int(media_id))
 
+    async def create_reading_highlight(
+        self,
+        item_id: Any,
+        *,
+        quote: str,
+        start_offset: int | None = None,
+        end_offset: int | None = None,
+        color: str | None = None,
+        note: str | None = None,
+        anchor_strategy: str = "fuzzy_quote",
+    ) -> Any:
+        normalized_item_id = int(item_id)
+        request_data = ReadingHighlightCreateRequest(
+            item_id=normalized_item_id,
+            quote=quote,
+            start_offset=start_offset,
+            end_offset=end_offset,
+            color=color,
+            note=note,
+            anchor_strategy=anchor_strategy,
+        )
+        return await self._require_client().create_reading_highlight(normalized_item_id, request_data)
+
+    async def list_reading_highlights(self, item_id: Any) -> Any:
+        return await self._require_client().list_reading_highlights(int(item_id))
+
+    async def update_reading_highlight(self, highlight_id: Any, **changes: Any) -> Any:
+        request_data = ReadingHighlightUpdateRequest(**changes)
+        return await self._require_client().update_reading_highlight(int(highlight_id), request_data)
+
+    async def delete_reading_highlight(self, highlight_id: Any) -> Any:
+        return await self._require_client().delete_reading_highlight(int(highlight_id))
+
     async def list_ingestion_sources(self) -> Any:
         return await self._require_client().list_ingestion_sources()
 
@@ -121,6 +158,68 @@ class ServerMediaReadingService:
 
     async def upload_ingestion_source_archive(self, source_id: Any, archive_path: str) -> Any:
         return await self._require_client().upload_ingestion_source_archive(int(source_id), archive_path)
+
+    async def submit_media_ingest_jobs(
+        self,
+        *,
+        media_type: str,
+        urls: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        **options: Any,
+    ) -> Any:
+        request_data = MediaIngestJobSubmitRequest(
+            media_type=media_type,
+            urls=urls,
+            **{key: value for key, value in options.items() if value is not None},
+        )
+        return await self._require_client().submit_media_ingest_jobs(
+            request_data,
+            file_paths=file_paths,
+        )
+
+    async def get_media_ingest_job(self, job_id: Any) -> Any:
+        return await self._require_client().get_media_ingest_job(int(job_id))
+
+    async def list_media_ingest_jobs(self, *, batch_id: str, limit: int = 100) -> Any:
+        return await self._require_client().list_media_ingest_jobs(batch_id=batch_id, limit=limit)
+
+    async def cancel_media_ingest_job(self, job_id: Any, *, reason: str | None = None) -> Any:
+        return await self._require_client().cancel_media_ingest_job(int(job_id), reason=reason)
+
+    async def cancel_media_ingest_jobs_batch(
+        self,
+        *,
+        batch_id: str | None = None,
+        session_id: str | None = None,
+        reason: str | None = None,
+    ) -> Any:
+        return await self._require_client().cancel_media_ingest_jobs_batch(
+            batch_id=batch_id,
+            session_id=session_id,
+            reason=reason,
+        )
+
+    async def stream_media_ingest_job_events(
+        self,
+        *,
+        batch_id: str | None = None,
+        after_id: int = 0,
+    ) -> Any:
+        async for event in self._require_client().stream_media_ingest_job_events(
+            batch_id=batch_id,
+            after_id=after_id,
+        ):
+            if hasattr(event, "model_dump"):
+                yield event.model_dump(exclude_none=True, mode="json")
+            else:
+                yield event
+
+    async def ingest_web_content(self, *, urls: list[str], **options: Any) -> Any:
+        request_data = IngestWebContentRequest(
+            urls=list(urls),
+            **{key: value for key, value in options.items() if value is not None},
+        )
+        return await self._require_client().ingest_web_content(request_data)
 
     async def list_document_versions(self, media_id: Any, *, include_deleted: bool = False) -> Any:
         raise ValueError("Server document versions are not available yet.")

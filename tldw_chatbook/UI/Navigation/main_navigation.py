@@ -9,7 +9,7 @@ from textual.widgets import Button, Static
 from textual.message import Message
 from textual import on
 
-from tldw_chatbook.Constants import TAB_WRITING
+from tldw_chatbook.Constants import TAB_RESEARCH, TAB_WRITING
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -85,6 +85,7 @@ class MainNavigationBar(Container):
             ("ccp", "Conv/Char"),
             ("notes", "Notes"),
             (TAB_WRITING, "Writing"),
+            (TAB_RESEARCH, "Research"),
             ("media", "Media"),
             ("search", "Search"),
             ("ingest", "Ingest"),

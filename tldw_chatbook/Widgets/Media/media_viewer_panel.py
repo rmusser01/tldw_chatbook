@@ -487,6 +487,26 @@ class MediaViewerPanel(Container):
                                     disabled=True,
                                 )
                                 yield Button("Delete", id="delete-button", variant="error")
+
+                        with Collapsible(title="Reading Highlights", collapsed=True, id="reading-highlights-editor"):
+                            yield Static("No reading highlights loaded.", id="reading-highlights-status")
+                            yield Select(
+                                [],
+                                prompt="Select highlight",
+                                allow_blank=True,
+                                id="reading-highlight-select",
+                                disabled=True,
+                            )
+                            yield Label("Quote:", classes="edit-label")
+                            yield TextArea("", id="reading-highlight-quote")
+                            yield Label("Note:", classes="edit-label")
+                            yield TextArea("", id="reading-highlight-note")
+                            yield Label("Color:", classes="edit-label")
+                            yield Input("yellow", id="reading-highlight-color")
+                            with Horizontal(classes="edit-actions"):
+                                yield Button("Add Highlight", id="add-reading-highlight-btn", variant="success")
+                                yield Button("Update Highlight", id="update-reading-highlight-btn", variant="primary", disabled=True)
+                                yield Button("Delete Highlight", id="delete-reading-highlight-btn", variant="error", disabled=True)
                     
                     # Edit mode (hidden by default)
                     with Container(id="metadata-edit", classes="edit-section hidden"):
@@ -653,6 +673,7 @@ class MediaViewerPanel(Container):
         """Update display when media data changes."""
         if media_data:
             self._update_read_it_later_button()
+            self._update_reading_highlight_controls()
             self.update_metadata_display()
             self.update_content_display()
             self.update_analysis_display()
@@ -732,6 +753,26 @@ class MediaViewerPanel(Container):
                     if percent_complete is not None:
                         progress_text = f"{progress_text} ({float(percent_complete):.1f}%)"
                     lines.append(f"[bold]Reading Progress:[/bold] {progress_text}")
+
+            highlights = self.media_data.get("reading_highlights") or []
+            if isinstance(highlights, list) and highlights:
+                lines.append(f"[bold]Highlights: {len(highlights)}[/bold]")
+                for highlight in highlights[:3]:
+                    if not isinstance(highlight, dict):
+                        continue
+                    quote = str(highlight.get("quote") or "").strip()
+                    if len(quote) > 80:
+                        quote = f"{quote[:77]}..."
+                    note = str(highlight.get("note") or "").strip()
+                    color = str(highlight.get("color") or "").strip()
+                    summary = f"- {quote}" if quote else "- Highlight"
+                    if color:
+                        summary = f"{summary} ({color})"
+                    if note:
+                        summary = f"{summary}: {note}"
+                    lines.append(summary)
+                if len(highlights) > 3:
+                    lines.append(f"- ... and {len(highlights) - 3} more")
             
             display.update("\n".join(lines))
         except Exception as e:
@@ -834,6 +875,158 @@ class MediaViewerPanel(Container):
         else:
             button.add_class("hidden")
             button.label = "Save for Later"
+
+    def _reading_highlights(self) -> List[Dict[str, Any]]:
+        if not isinstance(self.media_data, dict):
+            return []
+        return [
+            dict(highlight)
+            for highlight in list(self.media_data.get("reading_highlights") or [])
+            if isinstance(highlight, dict)
+        ]
+
+    @staticmethod
+    def _highlight_source_id(highlight: Dict[str, Any]) -> str:
+        source_id = highlight.get("source_id")
+        if source_id not in (None, ""):
+            return str(source_id)
+        highlight_id = highlight.get("id")
+        if isinstance(highlight_id, str) and ":" in highlight_id:
+            return highlight_id.rsplit(":", 1)[-1]
+        return str(highlight_id or "")
+
+    def _selected_highlight(self) -> Optional[Dict[str, Any]]:
+        try:
+            selected_id = self.query_one("#reading-highlight-select", Select).value
+        except Exception:
+            return None
+        if selected_id in (None, "", Select.BLANK):
+            return None
+        selected_id = str(selected_id)
+        for highlight in self._reading_highlights():
+            if self._highlight_source_id(highlight) == selected_id:
+                return highlight
+        return None
+
+    def _populate_highlight_form(self, highlight: Optional[Dict[str, Any]]) -> None:
+        try:
+            quote_input = self.query_one("#reading-highlight-quote", TextArea)
+            note_input = self.query_one("#reading-highlight-note", TextArea)
+            color_input = self.query_one("#reading-highlight-color", Input)
+            if not highlight:
+                return
+            quote_input.text = str(highlight.get("quote") or "")
+            note_input.text = str(highlight.get("note") or "")
+            color_input.value = str(highlight.get("color") or "yellow")
+        except Exception:
+            pass
+
+    def _update_reading_highlight_controls(self) -> None:
+        try:
+            status = self.query_one("#reading-highlights-status", Static)
+            select = self.query_one("#reading-highlight-select", Select)
+            update_button = self.query_one("#update-reading-highlight-btn", Button)
+            delete_button = self.query_one("#delete-reading-highlight-btn", Button)
+        except Exception:
+            return
+
+        highlights = self._reading_highlights()
+        if not highlights:
+            select.set_options([("No highlights", Select.BLANK)])
+            select.value = Select.BLANK
+            select.disabled = True
+            update_button.disabled = True
+            delete_button.disabled = True
+            status.update("No reading highlights for this record yet.")
+            return
+
+        options = []
+        for index, highlight in enumerate(highlights, start=1):
+            source_id = self._highlight_source_id(highlight)
+            quote = str(highlight.get("quote") or "Highlight").strip()
+            if len(quote) > 48:
+                quote = f"{quote[:45]}..."
+            options.append((f"{index}. {quote}", source_id))
+        select.set_options(options)
+        select.disabled = False
+        valid_values = {value for _, value in options}
+        if select.value not in valid_values:
+            select.value = options[0][1]
+        update_button.disabled = False
+        delete_button.disabled = False
+        status.update(f"{len(highlights)} reading highlight(s) loaded.")
+        self._populate_highlight_form(self._selected_highlight())
+
+    @on(Select.Changed, "#reading-highlight-select")
+    def handle_reading_highlight_selected(self, _event: Select.Changed) -> None:
+        """Populate highlight fields from the selected highlight."""
+        self._populate_highlight_form(self._selected_highlight())
+
+    def _highlight_media_id(self) -> Any:
+        if not isinstance(self.media_data, dict):
+            return None
+        return self.media_data.get("source_id", self.media_data.get("id"))
+
+    @on(Button.Pressed, "#add-reading-highlight-btn")
+    def handle_add_reading_highlight(self) -> None:
+        """Post a create event for the current highlight form."""
+        if not isinstance(self.media_data, dict):
+            return
+        quote = self.query_one("#reading-highlight-quote", TextArea).text.strip()
+        if not quote:
+            self.query_one("#reading-highlights-status", Static).update("Quote is required to create a highlight.")
+            return
+        from ...Event_Handlers.media_events import MediaReadingHighlightCreateEvent
+        self.post_message(
+            MediaReadingHighlightCreateEvent(
+                media_id=self._highlight_media_id(),
+                record_id=self.media_data.get("id"),
+                quote=quote,
+                color=self.query_one("#reading-highlight-color", Input).value.strip() or None,
+                note=self.query_one("#reading-highlight-note", TextArea).text.strip() or None,
+                media_data=self.media_data,
+            )
+        )
+
+    @on(Button.Pressed, "#update-reading-highlight-btn")
+    def handle_update_reading_highlight(self) -> None:
+        """Post an update event for the selected highlight."""
+        if not isinstance(self.media_data, dict):
+            return
+        selected = self._selected_highlight()
+        if not selected:
+            return
+        quote = self.query_one("#reading-highlight-quote", TextArea).text.strip()
+        from ...Event_Handlers.media_events import MediaReadingHighlightUpdateEvent
+        self.post_message(
+            MediaReadingHighlightUpdateEvent(
+                media_id=self._highlight_media_id(),
+                record_id=self.media_data.get("id"),
+                highlight_id=self._highlight_source_id(selected),
+                quote=quote or None,
+                color=self.query_one("#reading-highlight-color", Input).value.strip() or None,
+                note=self.query_one("#reading-highlight-note", TextArea).text.strip() or None,
+                media_data=self.media_data,
+            )
+        )
+
+    @on(Button.Pressed, "#delete-reading-highlight-btn")
+    def handle_delete_reading_highlight(self) -> None:
+        """Post a delete event for the selected highlight."""
+        if not isinstance(self.media_data, dict):
+            return
+        selected = self._selected_highlight()
+        if not selected:
+            return
+        from ...Event_Handlers.media_events import MediaReadingHighlightDeleteEvent
+        self.post_message(
+            MediaReadingHighlightDeleteEvent(
+                media_id=self._highlight_media_id(),
+                record_id=self.media_data.get("id"),
+                highlight_id=self._highlight_source_id(selected),
+                media_data=self.media_data,
+            )
+        )
     
     def _format_content_for_reading(self, content: str) -> str:
         """Format content for better readability."""

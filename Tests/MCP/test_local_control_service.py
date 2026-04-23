@@ -40,6 +40,13 @@ class FakeLocalStore:
         self.profiles[profile.profile_id] = profile
         return profile
 
+    def delete_profile(self, profile_id: str):
+        if profile_id not in self.profiles:
+            return False
+        self.profiles.pop(profile_id, None)
+        self.discovery_snapshots.pop(profile_id, None)
+        return True
+
     def save_discovery_snapshot(self, profile_id: str, snapshot):
         self.discovery_snapshots[profile_id] = snapshot
         return snapshot
@@ -62,20 +69,35 @@ class FakeLocalStore:
 class FakeMCPClient:
     def __init__(self) -> None:
         self.connected = []
+        self.disconnected = []
+        self.describe_calls = []
+        self.sessions = {}
 
     async def connect_to_server(self, server_id: str, command: str, args=None, env=None):
         self.connected.append(
             {"server_id": server_id, "command": command, "args": args or [], "env": env or {}}
         )
+        self.sessions[server_id] = {
+            "server_id": server_id,
+            "command": command,
+            "args": list(args or []),
+            "env": dict(env or {}),
+        }
         return True
 
     async def describe_server(self, server_id: str):
+        self.describe_calls.append(server_id)
         return {
             "server_id": server_id,
             "tools": [{"name": "remote_tool"}],
             "resources": [{"uri": "remote://resource"}],
             "prompts": [{"name": "remote_prompt"}],
         }
+
+    async def disconnect_from_server(self, server_id: str):
+        self.disconnected.append(server_id)
+        self.sessions.pop(server_id, None)
+        return True
 
 
 class EmptySnapshotClient(FakeMCPClient):
@@ -577,6 +599,30 @@ async def test_local_control_service_rejects_empty_capability_snapshots():
         with pytest.raises(RuntimeError):
             await service.connect_profile("profile-a")
 
+    assert "profile-a" not in store.discovery_snapshots
+
+
+@pytest.mark.asyncio
+async def test_local_control_service_tests_refreshes_disconnects_and_deletes_external_profiles():
+    store = FakeLocalStore()
+    client = FakeMCPClient()
+    service = LocalMCPControlService(store=store, client=client, manifest_provider=lambda: {})
+
+    with patch.dict(os.environ, {"API_KEY": "resolved-api-key", "PATH": "/usr/bin"}, clear=True):
+        test_result = await service.test_external_profile("profile-a")
+        await service.connect_profile("profile-a")
+        refreshed = await service.refresh_external_profile("profile-a")
+        disconnected = await service.disconnect_profile("profile-a")
+
+    deleted = service.delete_external_profile("profile-a")
+
+    assert test_result["ok"] is True
+    assert test_result["profile_id"] == "profile-a"
+    assert refreshed["tools"][0]["name"] == "remote_tool"
+    assert disconnected is True
+    assert deleted is True
+    assert client.disconnected.count("profile-a") >= 2
+    assert store.get_profile("profile-a") is None
     assert "profile-a" not in store.discovery_snapshots
 
 

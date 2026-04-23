@@ -6,7 +6,19 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 MCPServerScopeKind = Literal["personal", "team", "org", "system_admin"]
+MCPHubOwnerScopeType = Literal["global", "org", "team", "user"]
 MCPMembershipRole = Literal["owner", "admin", "lead", "member", "viewer", "contributor"]
+MCPPermissionProfileMode = Literal["preset", "custom"]
+MCPAssignmentTargetType = Literal["default", "group", "persona"]
+MCPApprovalMode = Literal[
+    "allow_silently",
+    "ask_every_time",
+    "ask_outside_profile",
+    "ask_on_sensitive_actions",
+    "temporary_elevation_allowed",
+]
+MCPApprovalDecisionType = Literal["approved", "denied"]
+MCPApprovalDuration = Literal["once", "session", "conversation"]
 
 
 class UnifiedMCPAccessContext(BaseModel):
@@ -33,6 +45,199 @@ class CatalogConnectionTestRequest(BaseModel):
     auth_type: str = "none"
     secret: Optional[str] = None
     auth_key_name: Optional[str] = None
+
+
+class ScopedToolCatalogCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class ScopedToolCatalogEntryCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool_name: str
+    module_id: Optional[str] = None
+
+
+class ExternalServerCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    server_id: str
+    name: str
+    transport: str
+    config: Dict[str, Any] = Field(default_factory=dict)
+    owner_scope_type: Optional[str] = None
+    owner_scope_id: Optional[int] = None
+    enabled: bool = True
+
+
+class ExternalServerUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = None
+    transport: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+    owner_scope_type: Optional[str] = None
+    owner_scope_id: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
+class ExternalServerAuthTemplateUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str
+    mappings: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ExternalServerCredentialSlotCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    slot_name: str
+    display_name: str
+    secret_kind: str
+    privilege_class: str
+    is_required: bool = False
+
+
+class ExternalServerCredentialSlotUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: Optional[str] = None
+    secret_kind: Optional[str] = None
+    privilege_class: Optional[str] = None
+    is_required: Optional[bool] = None
+
+
+class ExternalSecretSetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    secret: str
+
+
+class PermissionProfileCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: Optional[str] = None
+    owner_scope_type: MCPHubOwnerScopeType = "user"
+    owner_scope_id: Optional[int] = None
+    mode: MCPPermissionProfileMode = "custom"
+    path_scope_object_id: Optional[int] = None
+    policy_document: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+
+
+class PermissionProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    owner_scope_type: Optional[MCPHubOwnerScopeType] = None
+    owner_scope_id: Optional[int] = None
+    mode: Optional[MCPPermissionProfileMode] = None
+    path_scope_object_id: Optional[int] = None
+    policy_document: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+
+class PolicyAssignmentCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_type: MCPAssignmentTargetType
+    target_id: Optional[str] = None
+    owner_scope_type: MCPHubOwnerScopeType = "user"
+    owner_scope_id: Optional[int] = None
+    profile_id: Optional[int] = None
+    path_scope_object_id: Optional[int] = None
+    workspace_source_mode: Optional[str] = None
+    workspace_set_object_id: Optional[int] = None
+    inline_policy_document: Dict[str, Any] = Field(default_factory=dict)
+    approval_policy_id: Optional[int] = None
+    is_active: bool = True
+
+
+class PolicyAssignmentUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_type: Optional[MCPAssignmentTargetType] = None
+    target_id: Optional[str] = None
+    owner_scope_type: Optional[MCPHubOwnerScopeType] = None
+    owner_scope_id: Optional[int] = None
+    profile_id: Optional[int] = None
+    path_scope_object_id: Optional[int] = None
+    workspace_source_mode: Optional[str] = None
+    workspace_set_object_id: Optional[int] = None
+    inline_policy_document: Optional[Dict[str, Any]] = None
+    approval_policy_id: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class PolicyOverrideUpsertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    override_policy_document: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+
+
+class ApprovalPolicyCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: Optional[str] = None
+    owner_scope_type: MCPHubOwnerScopeType = "user"
+    owner_scope_id: Optional[int] = None
+    mode: MCPApprovalMode
+    rules: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+
+
+class ApprovalPolicyUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    owner_scope_type: Optional[MCPHubOwnerScopeType] = None
+    owner_scope_id: Optional[int] = None
+    mode: Optional[MCPApprovalMode] = None
+    rules: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+
+class ApprovalDecisionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approval_policy_id: Optional[int] = None
+    context_key: str
+    conversation_id: Optional[str] = None
+    tool_name: str
+    scope_key: str
+    decision: MCPApprovalDecisionType
+    duration: MCPApprovalDuration = "once"
+
+
+class ACPProfileCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: Optional[str] = None
+    owner_scope_type: MCPHubOwnerScopeType = "user"
+    owner_scope_id: Optional[int] = None
+    profile: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+
+
+class ACPProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    owner_scope_type: Optional[MCPHubOwnerScopeType] = None
+    owner_scope_id: Optional[int] = None
+    profile: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
 
 
 class MCPUserProfileIdentity(BaseModel):

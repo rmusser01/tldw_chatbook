@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 from textual.reactive import reactive
 
+from ..runtime_policy.types import RuntimeSourceState
 from .navigation_state import NavigationState
 from .chat_state import ChatState
 from .notes_state import NotesState
@@ -24,6 +25,7 @@ class AppState:
     chat: ChatState = field(default_factory=ChatState)
     notes: NotesState = field(default_factory=NotesState)
     ui: UIState = field(default_factory=UIState)
+    runtime_source: RuntimeSourceState = field(default_factory=RuntimeSourceState)
     
     # App-level state
     version: str = "1.0.0"
@@ -41,6 +43,7 @@ class AppState:
         self.chat = ChatState()
         self.notes = NotesState()
         self.ui = UIState()
+        self.runtime_source = RuntimeSourceState()
         self.is_ready = False
     
     def to_dict(self) -> dict:
@@ -72,7 +75,8 @@ class AppState:
                 "show_tooltips": self.ui.show_tooltips,
                 "show_animations": self.ui.show_animations,
                 "compact_mode": self.ui.compact_mode,
-            }
+            },
+            "runtime_source": self.runtime_source.to_dict(),
         }
     
     @classmethod
@@ -113,5 +117,8 @@ class AppState:
             state.ui.show_tooltips = ui.get("show_tooltips", True)
             state.ui.show_animations = ui.get("show_animations", True)
             state.ui.compact_mode = ui.get("compact_mode", False)
+
+        if "runtime_source" in data:
+            state.runtime_source = RuntimeSourceState.from_dict(data["runtime_source"])
         
         return state

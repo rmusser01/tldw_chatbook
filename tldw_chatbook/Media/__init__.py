@@ -7,6 +7,7 @@ from .media_reading_normalizers import (
     normalize_ingestion_source,
     normalize_ingestion_source_item,
     normalize_local_media_row,
+    normalize_reading_highlight,
     normalize_reading_progress,
     normalize_server_reading_item,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "normalize_ingestion_source",
     "normalize_ingestion_source_item",
     "normalize_local_media_row",
+    "normalize_reading_highlight",
     "normalize_reading_progress",
     "normalize_server_reading_item",
 ]

@@ -4,7 +4,7 @@ This screen provides a unified interface for managing conversations, characters,
 prompts, and dictionaries following Textual best practices with Screen-based architecture.
 """
 
-from typing import TYPE_CHECKING, Optional, Dict, Any, List
+from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
 from dataclasses import dataclass, field
 from loguru import logger
 from textual.app import ComposeResult
@@ -128,7 +128,7 @@ class CCPScreenState:
     selected_character_data: Dict[str, Any] = field(default_factory=dict)
     is_editing_character: bool = False
     
-    selected_prompt_id: Optional[int] = None
+    selected_prompt_id: Optional[Union[int, str]] = None
     selected_prompt_name: str = ""
     selected_prompt_data: Dict[str, Any] = field(default_factory=dict)
     is_editing_prompt: bool = False
@@ -671,6 +671,24 @@ class CCPScreen(BaseAppScreen):
         """Handle saving prompt from editor."""
         event.stop()
         await self.prompt_handler.handle_save_prompt()
+
+    @on(Button.Pressed, "#ccp-editor-prompt-record-usage-button")
+    async def handle_record_prompt_usage(self, event: Button.Pressed) -> None:
+        """Handle recording usage for the selected prompt."""
+        event.stop()
+        await self.prompt_handler.handle_record_prompt_usage()
+
+    @on(Button.Pressed, "#ccp-editor-prompt-list-versions-button")
+    async def handle_list_prompt_versions(self, event: Button.Pressed) -> None:
+        """Handle listing server prompt versions."""
+        event.stop()
+        await self.prompt_handler.handle_list_prompt_versions()
+
+    @on(Button.Pressed, "#ccp-editor-prompt-restore-version-button")
+    async def handle_restore_prompt_version(self, event: Button.Pressed) -> None:
+        """Handle restoring a server prompt version."""
+        event.stop()
+        await self.prompt_handler.handle_restore_prompt_version()
     
     @on(Button.Pressed, "#ccp-editor-dict-save-button")
     async def handle_save_dictionary(self, event: Button.Pressed) -> None:

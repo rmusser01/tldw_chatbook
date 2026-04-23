@@ -1,7 +1,7 @@
 """Sidebar widget for the CCP screen."""
 
 import inspect
-from typing import TYPE_CHECKING, Optional, List, Dict, Any
+from typing import TYPE_CHECKING, Optional, List, Dict, Any, Union
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
@@ -54,7 +54,7 @@ class PersonaLoadRequested(CCPSidebarMessage):
 
 class PromptLoadRequested(CCPSidebarMessage):
     """User requested to load a prompt."""
-    def __init__(self, prompt_id: Optional[int] = None) -> None:
+    def __init__(self, prompt_id: Optional[Union[int, str]] = None) -> None:
         super().__init__()
         self.prompt_id = prompt_id
 
@@ -472,6 +472,10 @@ class CCPSidebarWidget(VerticalScroll):
         if prompts_list.highlighted_child:
             # Extract ID from the list item
             item_id = prompts_list.highlighted_child.id
+            prompt_identifier = getattr(prompts_list.highlighted_child, "prompt_identifier", None)
+            if prompt_identifier is not None:
+                self.post_message(PromptLoadRequested(prompt_identifier))
+                return
             if item_id and item_id.startswith("prompt-result-"):
                 prompt_id = int(item_id.replace("prompt-result-", ""))
                 self.post_message(PromptLoadRequested(prompt_id))

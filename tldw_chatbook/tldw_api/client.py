@@ -42,7 +42,10 @@ from .notes_workspace_schemas import (
     WorkspaceUpdateRequest,
 )
 from .media_reading_schemas import (
+    CancelMediaIngestBatchResponse,
+    CancelMediaIngestJobResponse,
     FileCreateRequest,
+    IngestWebContentRequest,
     IngestionSourceCreateRequest,
     IngestionSourceItemListResponse,
     IngestionSourceItemResponse,
@@ -50,8 +53,18 @@ from .media_reading_schemas import (
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
     IngestionSourceSyncTriggerResponse,
+    MediaIngestJobListResponse,
+    MediaIngestJobStatus,
+    MediaIngestJobStreamEvent,
+    MediaIngestJobSubmitRequest,
+    ReadingHighlight,
+    ReadingHighlightCreateRequest,
+    ReadingHighlightDeleteResponse,
+    ReadingHighlightUpdateRequest,
     ReadingProgressUpdate,
     ReadingUpdateRequest,
+    SubmitMediaIngestJobsResponse,
+    WebProcessResponse,
 )
 from .watchlists_schemas import (
     SourceCreateRequest,
@@ -61,10 +74,18 @@ from .watchlists_schemas import (
     SourceUpdateRequest,
 )
 from .prompt_chatbook_schemas import (
+    ChatbookExportJobListResponse,
+    ChatbookExportJobResponse,
     ChatbookExportRequest,
     ChatbookImportRequest,
+    ChatbookImportJobListResponse,
+    ChatbookImportJobResponse,
+    ChatbookJobMutationResponse,
+    PaginatedPromptsResponse,
     PromptCreateRequest,
     PromptPreviewRequest,
+    PromptResponse,
+    PromptVersionResponse,
 )
 from .rag_admin_schemas import (
     ChunkingTemplateApplyRequest,
@@ -115,6 +136,13 @@ from .quizzes_schemas import (
     QuizQuestionUpdateRequest,
     QuizResponse,
     QuizUpdateRequest,
+)
+from .research_runs_schemas import (
+    ResearchArtifactResponse,
+    ResearchCheckpointPatchApproveRequest,
+    ResearchRunCreateRequest,
+    ResearchRunListItemResponse,
+    ResearchRunResponse,
 )
 from .writing_manuscript_schemas import (
     ManuscriptChapterCreateRequest,
@@ -263,6 +291,42 @@ class TLDWAPIClient:
         except json.JSONDecodeError:
             raise APIResponseError(response.status_code, "Failed to decode JSON response", response_data={"raw_text": response.text})
 
+    async def _request_bytes(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> bytes:
+        client = await self._get_client()
+        url = f"{self.base_url}{endpoint}"
+
+        try:
+            response = await client.request(
+                method,
+                endpoint,
+                params=params,
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response.content
+        except httpx.HTTPStatusError as e:
+            error_detail = str(e)
+            response_data = None
+            try:
+                response_data = e.response.json()
+                if isinstance(response_data, dict) and isinstance(response_data.get("detail"), str):
+                    error_detail = response_data["detail"]
+            except Exception:
+                response_data = {"raw_text": e.response.text}
+
+            if e.response.status_code == 401:
+                raise AuthenticationError(f"Authentication failed: {error_detail}")
+            elif e.response.status_code == 422:
+                raise APIRequestError(f"Validation Error: {error_detail}", response_data=response_data)
+            raise APIResponseError(e.response.status_code, error_detail, response_data=response_data)
+        except httpx.RequestError as e:
+            raise APIConnectionError(f"Connection error to {url}: {e}")
 
     async def _stream_request(
         self,
@@ -300,6 +364,83 @@ class TLDWAPIClient:
             raise APIResponseError(e.response.status_code, error_detail, response_data={"raw_text": response_text})
         except httpx.RequestError as e:
             raise APIConnectionError(f"Connection error to {url}: {e}")
+
+    async def _stream_sse_request(
+        self,
+        endpoint: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> AsyncGenerator[MediaIngestJobStreamEvent, None]:
+        client = await self._get_client()
+        url = f"{self.base_url}{endpoint}"
+
+        try:
+            async with client.stream(
+                "GET",
+                endpoint,
+                params=params,
+                headers={"Accept": "text/event-stream"},
+            ) as response:
+                response.raise_for_status()
+                event_name = "message"
+                event_id: str | None = None
+                data_lines: list[str] = []
+
+                async for raw_line in response.aiter_lines():
+                    line = raw_line.strip()
+                    if not line:
+                        if data_lines:
+                            yield self._build_sse_event(event_name, event_id, data_lines)
+                        event_name = "message"
+                        event_id = None
+                        data_lines = []
+                        continue
+
+                    if line.startswith(":"):
+                        continue
+
+                    field, separator, value = line.partition(":")
+                    if not separator:
+                        continue
+                    if value.startswith(" "):
+                        value = value[1:]
+                    if field == "event":
+                        event_name = value
+                    elif field == "id":
+                        event_id = value
+                    elif field == "data":
+                        data_lines.append(value)
+
+                if data_lines:
+                    yield self._build_sse_event(event_name, event_id, data_lines)
+        except httpx.HTTPStatusError as e:
+            error_detail = str(e)
+            response_text = ""
+            try:
+                response_text = await e.response.aread()
+                response_data = json.loads(response_text)
+                if isinstance(response_data, dict) and "detail" in response_data:
+                    error_detail = response_data["detail"]
+            except Exception:
+                pass
+            if e.response.status_code == 401:
+                raise AuthenticationError(f"Authentication failed: {error_detail}")
+            raise APIResponseError(e.response.status_code, error_detail, response_data={"raw_text": response_text})
+        except httpx.RequestError as e:
+            raise APIConnectionError(f"Connection error to {url}: {e}")
+
+    @staticmethod
+    def _build_sse_event(
+        event_name: str,
+        event_id: str | None,
+        data_lines: list[str],
+    ) -> MediaIngestJobStreamEvent:
+        raw_data = "\n".join(data_lines)
+        try:
+            data: dict[str, Any] | str | None = json.loads(raw_data)
+        except json.JSONDecodeError:
+            data = raw_data
+        return MediaIngestJobStreamEvent(event=event_name, id=event_id, data=data)
 
     async def list_server_notes(self, limit: int = 100, offset: int = 0, include_keywords: bool = True) -> Dict[str, Any]:
         return await self._request(
@@ -771,6 +912,86 @@ class TLDWAPIClient:
             headers={"expected-version": str(expected_version)},
         )
 
+    async def create_research_run(
+        self,
+        request: ResearchRunCreateRequest,
+    ) -> ResearchRunResponse:
+        payload = await self._request(
+            "POST",
+            "/api/v1/research/runs",
+            json_data=request.model_dump(mode="json"),
+        )
+        return ResearchRunResponse.model_validate(payload)
+
+    async def list_research_runs(self, *, limit: int = 25) -> list[ResearchRunListItemResponse]:
+        payload = await self._request(
+            "GET",
+            "/api/v1/research/runs",
+            params={"limit": limit},
+        )
+        return [ResearchRunListItemResponse.model_validate(item) for item in payload]
+
+    async def get_research_run(self, session_id: str) -> ResearchRunResponse:
+        payload = await self._request(
+            "GET",
+            f"/api/v1/research/runs/{session_id}",
+        )
+        return ResearchRunResponse.model_validate(payload)
+
+    async def pause_research_run(self, session_id: str) -> ResearchRunResponse:
+        payload = await self._request(
+            "POST",
+            f"/api/v1/research/runs/{session_id}/pause",
+        )
+        return ResearchRunResponse.model_validate(payload)
+
+    async def resume_research_run(self, session_id: str) -> ResearchRunResponse:
+        payload = await self._request(
+            "POST",
+            f"/api/v1/research/runs/{session_id}/resume",
+        )
+        return ResearchRunResponse.model_validate(payload)
+
+    async def cancel_research_run(self, session_id: str) -> ResearchRunResponse:
+        payload = await self._request(
+            "POST",
+            f"/api/v1/research/runs/{session_id}/cancel",
+        )
+        return ResearchRunResponse.model_validate(payload)
+
+    async def get_research_bundle(self, session_id: str) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/research/runs/{session_id}/bundle",
+        )
+
+    async def get_research_artifact(
+        self,
+        session_id: str,
+        artifact_name: str,
+    ) -> ResearchArtifactResponse:
+        payload = await self._request(
+            "GET",
+            f"/api/v1/research/runs/{session_id}/artifacts/{artifact_name}",
+        )
+        return ResearchArtifactResponse.model_validate(payload)
+
+    async def patch_and_approve_research_checkpoint(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+        request: ResearchCheckpointPatchApproveRequest | None = None,
+    ) -> ResearchRunResponse:
+        payload = await self._request(
+            "POST",
+            f"/api/v1/research/runs/{session_id}/checkpoints/{checkpoint_id}/patch-and-approve",
+            json_data=(request or ResearchCheckpointPatchApproveRequest()).model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
+        )
+        return ResearchRunResponse.model_validate(payload)
+
     async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
         response = await self._request(
             "POST",
@@ -818,6 +1039,101 @@ class TLDWAPIClient:
             return IngestionSourceSyncTriggerResponse.model_validate(response)
         finally:
             cleanup_file_objects(httpx_files)
+
+    async def submit_media_ingest_jobs(
+        self,
+        request_data: MediaIngestJobSubmitRequest,
+        file_paths: list[str] | None = None,
+    ) -> SubmitMediaIngestJobsResponse:
+        form_data = model_to_form_data(request_data)
+        httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/media/ingest/jobs",
+                data=form_data,
+                files=httpx_files,
+            )
+            return SubmitMediaIngestJobsResponse.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def get_media_ingest_job(self, job_id: int) -> MediaIngestJobStatus:
+        response = await self._request("GET", f"/api/v1/media/ingest/jobs/{job_id}")
+        return MediaIngestJobStatus.model_validate(response)
+
+    async def list_media_ingest_jobs(
+        self,
+        *,
+        batch_id: str,
+        limit: int = 100,
+    ) -> MediaIngestJobListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/media/ingest/jobs",
+            params={"batch_id": batch_id, "limit": limit},
+        )
+        return MediaIngestJobListResponse.model_validate(response)
+
+    async def cancel_media_ingest_job(
+        self,
+        job_id: int,
+        *,
+        reason: str | None = None,
+    ) -> CancelMediaIngestJobResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/media/ingest/jobs/{job_id}",
+            params={"reason": reason} if reason is not None else None,
+        )
+        return CancelMediaIngestJobResponse.model_validate(response)
+
+    async def cancel_media_ingest_jobs_batch(
+        self,
+        *,
+        batch_id: str | None = None,
+        session_id: str | None = None,
+        reason: str | None = None,
+    ) -> CancelMediaIngestBatchResponse:
+        params = {
+            key: value
+            for key, value in {
+                "batch_id": batch_id,
+                "session_id": session_id,
+                "reason": reason,
+            }.items()
+            if value is not None
+        }
+        response = await self._request(
+            "POST",
+            "/api/v1/media/ingest/jobs/cancel",
+            params=params,
+        )
+        return CancelMediaIngestBatchResponse.model_validate(response)
+
+    async def stream_media_ingest_job_events(
+        self,
+        *,
+        batch_id: str | None = None,
+        after_id: int = 0,
+    ) -> AsyncGenerator[MediaIngestJobStreamEvent, None]:
+        params: Dict[str, Any] = {"after_id": after_id}
+        if batch_id is not None:
+            params["batch_id"] = batch_id
+
+        async for event in self._stream_sse_request(
+            "/api/v1/media/ingest/jobs/events/stream",
+            params=params,
+        ):
+            yield event
+
+    async def ingest_web_content(self, request_data: IngestWebContentRequest) -> WebProcessResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/media/ingest-web-content",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WebProcessResponse.model_validate(response)
 
     async def list_reading_items(
         self,
@@ -886,6 +1202,38 @@ class TLDWAPIClient:
 
     async def delete_reading_progress(self, media_id: int) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/media/{media_id}/progress")
+
+    async def create_reading_highlight(
+        self,
+        item_id: int,
+        request_data: ReadingHighlightCreateRequest,
+    ) -> ReadingHighlight:
+        response = await self._request(
+            "POST",
+            f"/api/v1/reading/items/{item_id}/highlight",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReadingHighlight.model_validate(response)
+
+    async def list_reading_highlights(self, item_id: int) -> list[ReadingHighlight]:
+        response = await self._request("GET", f"/api/v1/reading/items/{item_id}/highlights")
+        return [ReadingHighlight.model_validate(item) for item in response]
+
+    async def update_reading_highlight(
+        self,
+        highlight_id: int,
+        request_data: ReadingHighlightUpdateRequest,
+    ) -> ReadingHighlight:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/reading/highlights/{highlight_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReadingHighlight.model_validate(response)
+
+    async def delete_reading_highlight(self, highlight_id: int) -> ReadingHighlightDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/reading/highlights/{highlight_id}")
+        return ReadingHighlightDeleteResponse.model_validate(response)
 
     async def list_chunking_templates(
         self,
@@ -1581,12 +1929,26 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
-    async def list_prompts(self, include_deleted: bool = False) -> Dict[str, Any]:
-        return await self._request(
+    async def list_prompts(
+        self,
+        page: int = 1,
+        per_page: int = 10,
+        include_deleted: bool = False,
+        sort_by: str = "last_modified",
+        sort_order: str = "desc",
+    ) -> PaginatedPromptsResponse:
+        response = await self._request(
             "GET",
             "/api/v1/prompts",
-            params={"include_deleted": str(include_deleted).lower()},
+            params={
+                "page": page,
+                "per_page": per_page,
+                "include_deleted": str(include_deleted).lower(),
+                "sort_by": sort_by,
+                "sort_order": sort_order,
+            },
         )
+        return PaginatedPromptsResponse.model_validate(response)
 
     async def preview_prompt(self, request_data: PromptPreviewRequest) -> Dict[str, Any]:
         return await self._request(
@@ -1595,12 +1957,43 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True),
         )
 
-    async def create_prompt(self, request_data: PromptCreateRequest) -> Dict[str, Any]:
-        return await self._request(
+    async def create_prompt(self, request_data: PromptCreateRequest) -> PromptResponse:
+        response = await self._request(
             "POST",
             "/api/v1/prompts",
             json_data=request_data.model_dump(exclude_none=True),
         )
+        return PromptResponse.model_validate(response)
+
+    async def get_prompt(self, prompt_identifier: Union[str, int], include_deleted: bool = False) -> PromptResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/prompts/{prompt_identifier}",
+            params={"include_deleted": str(include_deleted).lower()},
+        )
+        return PromptResponse.model_validate(response)
+
+    async def update_prompt(self, prompt_identifier: Union[str, int], request_data: PromptCreateRequest) -> PromptResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/prompts/{prompt_identifier}",
+            json_data=request_data.model_dump(exclude_none=True),
+        )
+        return PromptResponse.model_validate(response)
+
+    async def record_prompt_usage(self, prompt_identifier: Union[str, int]) -> PromptResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/prompts/{prompt_identifier}/use",
+        )
+        return PromptResponse.model_validate(response)
+
+    async def delete_prompt(self, prompt_identifier: Union[str, int]) -> Dict[str, Any]:
+        await self._request(
+            "DELETE",
+            f"/api/v1/prompts/{prompt_identifier}",
+        )
+        return {}
 
     async def query_characters(self, request_data: CharacterQueryRequest) -> Dict[str, Any]:
         return await self._request(
@@ -1950,17 +2343,19 @@ class TLDWAPIClient:
             params.update(scope_params.model_dump(exclude_none=True, mode="json"))
         return await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/tree", params=params)
 
-    async def list_prompt_versions(self, prompt_identifier: Union[str, int]) -> Dict[str, Any]:
-        return await self._request(
+    async def list_prompt_versions(self, prompt_identifier: Union[str, int]) -> List[PromptVersionResponse]:
+        response = await self._request(
             "GET",
             f"/api/v1/prompts/{prompt_identifier}/versions",
         )
+        return [PromptVersionResponse.model_validate(item) for item in response]
 
-    async def restore_prompt_version(self, prompt_identifier: Union[str, int], version: int) -> Dict[str, Any]:
-        return await self._request(
+    async def restore_prompt_version(self, prompt_identifier: Union[str, int], version: int) -> PromptResponse:
+        response = await self._request(
             "POST",
             f"/api/v1/prompts/{prompt_identifier}/versions/{version}/restore",
         )
+        return PromptResponse.model_validate(response)
 
     async def export_chatbook(self, request_data: ChatbookExportRequest) -> Dict[str, Any]:
         return await self._request(
@@ -1995,17 +2390,69 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
-    async def get_chatbook_export_job(self, job_id: str) -> Dict[str, Any]:
-        return await self._request(
+    async def list_chatbook_export_jobs(self, limit: int = 100, offset: int = 0) -> ChatbookExportJobListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/chatbooks/export/jobs",
+            params={"limit": limit, "offset": offset},
+        )
+        return ChatbookExportJobListResponse.model_validate(response)
+
+    async def list_chatbook_import_jobs(self, limit: int = 100, offset: int = 0) -> ChatbookImportJobListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/chatbooks/import/jobs",
+            params={"limit": limit, "offset": offset},
+        )
+        return ChatbookImportJobListResponse.model_validate(response)
+
+    async def get_chatbook_export_job(self, job_id: str) -> ChatbookExportJobResponse:
+        response = await self._request(
             "GET",
             f"/api/v1/chatbooks/export/jobs/{job_id}",
         )
+        return ChatbookExportJobResponse.model_validate(response)
 
-    async def get_chatbook_import_job(self, job_id: str) -> Dict[str, Any]:
-        return await self._request(
+    async def get_chatbook_import_job(self, job_id: str) -> ChatbookImportJobResponse:
+        response = await self._request(
             "GET",
             f"/api/v1/chatbooks/import/jobs/{job_id}",
         )
+        return ChatbookImportJobResponse.model_validate(response)
+
+    async def cancel_chatbook_export_job(self, job_id: str) -> ChatbookJobMutationResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/chatbooks/export/jobs/{job_id}",
+        )
+        return ChatbookJobMutationResponse.model_validate(response)
+
+    async def cancel_chatbook_import_job(self, job_id: str) -> ChatbookJobMutationResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/chatbooks/import/jobs/{job_id}",
+        )
+        return ChatbookJobMutationResponse.model_validate(response)
+
+    async def remove_chatbook_export_job(self, job_id: str) -> ChatbookJobMutationResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/chatbooks/export/jobs/{job_id}/remove",
+        )
+        return ChatbookJobMutationResponse.model_validate(response)
+
+    async def download_chatbook_export(self, job_id: str) -> bytes:
+        return await self._request_bytes(
+            "GET",
+            f"/api/v1/chatbooks/download/{job_id}",
+        )
+
+    async def remove_chatbook_import_job(self, job_id: str) -> ChatbookJobMutationResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/chatbooks/import/jobs/{job_id}/remove",
+        )
+        return ChatbookJobMutationResponse.model_validate(response)
 
 #
 # End of client.py

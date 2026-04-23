@@ -8,6 +8,7 @@ DIRECT_SERVER_CLIENT_ALLOWLIST = {
     "tldw_chatbook/UI/MediaIngestWindowRebuilt.py",
     "tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py",
     "tldw_chatbook/UI/Wizards/ChatbookImportWizard.py",
+    "tldw_chatbook/app.py",
     "tldw_chatbook/runtime_policy/bootstrap.py",
 }
 

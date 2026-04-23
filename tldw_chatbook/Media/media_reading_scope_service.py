@@ -11,6 +11,13 @@ from .media_reading_normalizers import (
     normalize_ingestion_source,
     normalize_ingestion_source_item,
     normalize_local_media_row,
+    normalize_media_ingest_batch_cancel,
+    normalize_media_ingest_job,
+    normalize_media_ingest_job_cancel,
+    normalize_media_ingest_job_list,
+    normalize_media_ingest_job_submission,
+    normalize_media_ingest_job_stream_event,
+    normalize_reading_highlight,
     normalize_reading_progress,
     normalize_server_reading_item,
 )
@@ -88,6 +95,10 @@ class MediaReadingScopeService:
         return f"media.reading_progress.{action}.{mode.value}"
 
     @staticmethod
+    def _reading_highlight_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading_highlights.{action}.{mode.value}"
+
+    @staticmethod
     def _reading_list_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"collections.reading_list.{action}.{mode.value}"
 
@@ -99,6 +110,10 @@ class MediaReadingScopeService:
     def _ingestion_job_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.ingestion_jobs.{action}.{mode.value}"
 
+    @staticmethod
+    def _web_content_ingest_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.web_content_ingest.{action}.{mode.value}"
+
     def _service_for_mode(self, mode: MediaReadingBackend) -> Any:
         if mode == MediaReadingBackend.LOCAL:
             if self.local_service is None:
@@ -107,6 +122,14 @@ class MediaReadingScopeService:
         if self.server_service is None:
             raise ValueError("Server media backend is unavailable.")
         return self.server_service
+
+    @staticmethod
+    def _raise_local_ingestion_jobs_unavailable() -> None:
+        raise ValueError("Local media ingest jobs are not available yet.")
+
+    @staticmethod
+    def _raise_local_web_content_ingest_unavailable() -> None:
+        raise ValueError("Local web-content ingest is not available yet.")
 
     @staticmethod
     def _validate_server_create_source_type(source_type: str) -> str:
@@ -144,6 +167,30 @@ class MediaReadingScopeService:
         if media_id not in (None, ""):
             return media_id
         raise ValueError("A media record or media_id is required for reading progress operations.")
+
+    def _resolve_highlight_item_id(
+        self,
+        *,
+        mode: MediaReadingBackend,
+        record: Optional[Mapping[str, Any]] = None,
+        item_id: Any = None,
+        media_id: Any = None,
+    ) -> Any:
+        if item_id not in (None, ""):
+            return item_id
+        if media_id not in (None, ""):
+            return media_id
+        if isinstance(record, Mapping):
+            if mode == MediaReadingBackend.SERVER:
+                source_id = record.get("source_id")
+                if source_id not in (None, ""):
+                    return source_id
+                raise ValueError("record['source_id'] is required for server reading highlight operations.")
+            backing_media_id = record.get("backing_media_id")
+            if backing_media_id not in (None, ""):
+                return backing_media_id
+            raise ValueError("record['backing_media_id'] is required for local reading highlight operations.")
+        raise ValueError("A media record, item_id, or media_id is required for reading highlight operations.")
 
     async def search_media(
         self,
@@ -312,6 +359,96 @@ class MediaReadingScopeService:
         backing_media_id = self._resolve_backing_media_id(record=record, media_id=media_id)
         return await self._maybe_await(service.delete_reading_progress(backing_media_id))
 
+    async def create_reading_highlight(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        record: Optional[Mapping[str, Any]] = None,
+        item_id: Any = None,
+        media_id: Any = None,
+        quote: str,
+        start_offset: int | None = None,
+        end_offset: int | None = None,
+        color: str | None = None,
+        note: str | None = None,
+        anchor_strategy: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_highlight_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        resolved_item_id = self._resolve_highlight_item_id(
+            mode=normalized_mode,
+            record=record,
+            item_id=item_id,
+            media_id=media_id,
+        )
+        payload = {
+            key: value
+            for key, value in {
+                "quote": quote,
+                "start_offset": start_offset,
+                "end_offset": end_offset,
+                "color": color,
+                "note": note,
+                "anchor_strategy": anchor_strategy,
+            }.items()
+            if value is not None
+        }
+        highlight = await self._maybe_await(service.create_reading_highlight(resolved_item_id, **payload))
+        return normalize_reading_highlight(highlight, backend=normalized_mode.value)
+
+    async def list_reading_highlights(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        record: Optional[Mapping[str, Any]] = None,
+        item_id: Any = None,
+        media_id: Any = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_highlight_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        resolved_item_id = self._resolve_highlight_item_id(
+            mode=normalized_mode,
+            record=record,
+            item_id=item_id,
+            media_id=media_id,
+        )
+        highlights = await self._maybe_await(service.list_reading_highlights(resolved_item_id))
+        return [
+            normalize_reading_highlight(highlight, backend=normalized_mode.value)
+            for highlight in list(highlights or [])
+        ]
+
+    async def update_reading_highlight(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        highlight_id: Any,
+        **changes: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_highlight_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        highlight = await self._maybe_await(
+            service.update_reading_highlight(
+                highlight_id,
+                **{key: value for key, value in changes.items() if value is not None},
+            )
+        )
+        return normalize_reading_highlight(highlight, backend=normalized_mode.value)
+
+    async def delete_reading_highlight(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        highlight_id: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_highlight_action_id(normalized_mode, "delete"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.delete_reading_highlight(highlight_id))
+
     async def list_ingestion_sources(self, *, mode: MediaReadingBackend | str | None = None) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "list"))
@@ -412,6 +549,131 @@ class MediaReadingScopeService:
         self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.upload_ingestion_source_archive(source_id, archive_path))
+
+    async def submit_media_ingest_jobs(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_type: str,
+        urls: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        **options: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_ingestion_jobs_unavailable()
+        self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.submit_media_ingest_jobs(
+                media_type=media_type,
+                urls=urls,
+                file_paths=file_paths,
+                **options,
+            )
+        )
+        return normalize_media_ingest_job_submission(payload, backend=normalized_mode.value)
+
+    async def get_media_ingest_job(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        job_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_ingestion_jobs_unavailable()
+        self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        job = await self._maybe_await(service.get_media_ingest_job(job_id))
+        return normalize_media_ingest_job(job, backend=normalized_mode.value)
+
+    async def list_media_ingest_jobs(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        batch_id: str,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_ingestion_jobs_unavailable()
+        self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.list_media_ingest_jobs(batch_id=batch_id, limit=limit))
+        return normalize_media_ingest_job_list(payload, backend=normalized_mode.value)
+
+    async def stream_media_ingest_job_events(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        batch_id: str | None = None,
+        after_id: int = 0,
+    ):
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_ingestion_jobs_unavailable()
+        self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        stream = service.stream_media_ingest_job_events(batch_id=batch_id, after_id=after_id)
+        async for event in stream:
+            yield normalize_media_ingest_job_stream_event(event, backend=normalized_mode.value)
+
+    async def cancel_media_ingest_job(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        job_id: Any,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_ingestion_jobs_unavailable()
+        self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.cancel_media_ingest_job(job_id, reason=reason))
+        return normalize_media_ingest_job_cancel(payload, backend=normalized_mode.value)
+
+    async def cancel_media_ingest_jobs_batch(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        batch_id: str | None = None,
+        session_id: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_ingestion_jobs_unavailable()
+        self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.cancel_media_ingest_jobs_batch(
+                batch_id=batch_id,
+                session_id=session_id,
+                reason=reason,
+            )
+        )
+        return normalize_media_ingest_batch_cancel(payload)
+
+    async def ingest_web_content(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        urls: list[str],
+        **options: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_web_content_ingest_unavailable()
+        self._enforce_policy(self._web_content_ingest_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.ingest_web_content(
+                urls=urls,
+                **{key: value for key, value in options.items() if value is not None},
+            )
+        )
 
     async def list_document_versions(
         self,
