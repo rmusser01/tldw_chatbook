@@ -318,6 +318,53 @@ def normalize_reading_note_link(
     }
 
 
+def normalize_reading_import_job(
+    job: Mapping[str, Any] | Any,
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    job_data = _as_mapping(job)
+    source_id = str(job_data.get("job_id", job_data.get("id")))
+    return {
+        "id": build_canonical_media_id(backend, "reading_import_job", source_id),
+        "backend": backend,
+        "entity_kind": "reading_import_job",
+        "source_id": source_id,
+        "job_id": job_data.get("job_id", job_data.get("id")),
+        "job_uuid": job_data.get("job_uuid"),
+        "status": job_data.get("status"),
+        "created_at": _clean_timestamp(job_data.get("created_at")),
+        "started_at": _clean_timestamp(job_data.get("started_at")),
+        "completed_at": _clean_timestamp(job_data.get("completed_at")),
+        "progress_percent": job_data.get("progress_percent"),
+        "progress_message": job_data.get("progress_message"),
+        "error_message": job_data.get("error_message"),
+        "result": _as_mapping(job_data.get("result")),
+    }
+
+
+def normalize_reading_archive(
+    archive: Mapping[str, Any] | Any,
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    archive_data = _as_mapping(archive)
+    source_id = str(archive_data.get("output_id", archive_data.get("id")))
+    return {
+        "id": build_canonical_media_id(backend, "reading_archive", source_id),
+        "backend": backend,
+        "entity_kind": "reading_archive",
+        "source_id": source_id,
+        "output_id": archive_data.get("output_id", archive_data.get("id")),
+        "title": archive_data.get("title"),
+        "format": archive_data.get("format"),
+        "storage_path": archive_data.get("storage_path"),
+        "download_url": archive_data.get("download_url"),
+        "created_at": _clean_timestamp(archive_data.get("created_at")),
+        "retention_until": _clean_timestamp(archive_data.get("retention_until")),
+    }
+
+
 def normalize_media_ingest_job(
     job: Mapping[str, Any],
     *,

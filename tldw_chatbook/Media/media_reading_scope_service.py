@@ -17,7 +17,9 @@ from .media_reading_normalizers import (
     normalize_media_ingest_job_list,
     normalize_media_ingest_job_submission,
     normalize_media_ingest_job_stream_event,
+    normalize_reading_archive,
     normalize_reading_highlight,
+    normalize_reading_import_job,
     normalize_reading_note_link,
     normalize_reading_progress,
     normalize_reading_saved_search,
@@ -122,6 +124,14 @@ class MediaReadingScopeService:
         return f"media.reading_note_links.{action}.{mode.value}"
 
     @staticmethod
+    def _reading_import_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading_import.{action}.{mode.value}"
+
+    @staticmethod
+    def _reading_archive_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading_archives.{action}.{mode.value}"
+
+    @staticmethod
     def _ingestion_source_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.ingestion_sources.{action}.{mode.value}"
 
@@ -157,6 +167,14 @@ class MediaReadingScopeService:
     @staticmethod
     def _raise_local_note_links_unavailable() -> None:
         raise ValueError("Local reading note links are not available yet.")
+
+    @staticmethod
+    def _raise_local_reading_import_unavailable() -> None:
+        raise ValueError("Local reading import jobs are not available yet.")
+
+    @staticmethod
+    def _raise_local_reading_archives_unavailable() -> None:
+        raise ValueError("Local reading archives are not available yet.")
 
     @staticmethod
     def _validate_server_create_source_type(source_type: str) -> str:
@@ -599,6 +617,94 @@ class MediaReadingScopeService:
         self._enforce_policy(self._reading_note_link_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.unlink_reading_item_note(item_id, note_id))
+
+    async def import_reading_items(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        file_path: str,
+        source: str = "auto",
+        merge_tags: bool = True,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_import_unavailable()
+        self._enforce_policy(self._reading_import_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        job = await self._maybe_await(
+            service.import_reading_items(file_path, source=source, merge_tags=merge_tags)
+        )
+        return normalize_reading_import_job(job, backend=normalized_mode.value)
+
+    async def list_reading_import_jobs(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_import_unavailable()
+        self._enforce_policy(self._reading_import_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.list_reading_import_jobs(status=status, limit=limit, offset=offset)
+        )
+        payload_map = self._as_mapping_payload(payload)
+        raw_jobs = list(payload_map.get("jobs", []))
+        return {
+            "jobs": [
+                normalize_reading_import_job(job, backend=normalized_mode.value)
+                for job in raw_jobs
+            ],
+            "total": payload_map.get("total", len(raw_jobs)),
+            "limit": payload_map.get("limit", limit),
+            "offset": payload_map.get("offset", offset),
+        }
+
+    async def get_reading_import_job(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        job_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_import_unavailable()
+        self._enforce_policy(self._reading_import_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        job = await self._maybe_await(service.get_reading_import_job(job_id))
+        return normalize_reading_import_job(job, backend=normalized_mode.value)
+
+    async def create_reading_archive(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_id: Any,
+        format: str = "html",
+        source: str = "auto",
+        title: str | None = None,
+        retention_days: int | None = None,
+        retention_until: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_archives_unavailable()
+        self._enforce_policy(self._reading_archive_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        archive = await self._maybe_await(
+            service.create_reading_archive(
+                item_id,
+                format=format,
+                source=source,
+                title=title,
+                retention_days=retention_days,
+                retention_until=retention_until,
+            )
+        )
+        return normalize_reading_archive(archive, backend=normalized_mode.value)
 
     async def list_ingestion_sources(self, *, mode: MediaReadingBackend | str | None = None) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)

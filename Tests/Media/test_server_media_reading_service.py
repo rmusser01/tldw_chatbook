@@ -178,6 +178,33 @@ class FakeClient:
         self.calls.append(("unlink_reading_item_note", item_id, note_id))
         return {"ok": True}
 
+    async def import_reading_items(self, file_path, *, source="auto", merge_tags=True):
+        self.calls.append(("import_reading_items", file_path, source, merge_tags))
+        return {"job_id": 42, "job_uuid": "job-uuid-42", "status": "queued"}
+
+    async def list_reading_import_jobs(self, *, status=None, limit=50, offset=0):
+        self.calls.append(("list_reading_import_jobs", status, limit, offset))
+        return {
+            "jobs": [{"job_id": 42, "job_uuid": "job-uuid-42", "status": "processing"}],
+            "total": 1,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def get_reading_import_job(self, job_id):
+        self.calls.append(("get_reading_import_job", job_id))
+        return {"job_id": job_id, "job_uuid": "job-uuid-42", "status": "completed"}
+
+    async def create_reading_archive(self, item_id, request_data):
+        self.calls.append(("create_reading_archive", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "output_id": 77,
+            "title": "Example Archive",
+            "format": "md",
+            "storage_path": "reading_archive_31.md",
+            "download_url": "/api/v1/outputs/77/download",
+        }
+
     async def submit_media_ingest_jobs(self, request_data, file_paths=None):
         self.calls.append(
             (
@@ -506,6 +533,37 @@ async def test_server_service_routes_ingestion_item_reattach_saved_searches_and_
         ("link_reading_item_note", 31, {"note_id": "note-uuid-1"}),
         ("list_reading_item_note_links", 31),
         ("unlink_reading_item_note", 31, "note-uuid-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_reading_import_jobs_and_archive_creation():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    submitted = await service.import_reading_items("/tmp/pocket.csv", source="pocket", merge_tags=False)
+    jobs = await service.list_reading_import_jobs(status="processing", limit=25, offset=5)
+    job = await service.get_reading_import_job(42)
+    archive = await service.create_reading_archive(
+        31,
+        format="md",
+        source="text",
+        title="Example Archive",
+    )
+
+    assert submitted["status"] == "queued"
+    assert jobs["jobs"][0]["status"] == "processing"
+    assert job["status"] == "completed"
+    assert archive["download_url"] == "/api/v1/outputs/77/download"
+    assert client.calls[-4:] == [
+        ("import_reading_items", "/tmp/pocket.csv", "pocket", False),
+        ("list_reading_import_jobs", "processing", 25, 5),
+        ("get_reading_import_job", 42),
+        (
+            "create_reading_archive",
+            31,
+            {"format": "md", "source": "text", "title": "Example Archive"},
+        ),
     ]
 
 

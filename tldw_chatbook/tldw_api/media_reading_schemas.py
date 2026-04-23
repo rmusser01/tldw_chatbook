@@ -629,6 +629,78 @@ class ReadingNoteLinksListResponse(BaseModel):
     links: list[ReadingNoteLinkResponse] = Field(default_factory=list)
 
 
+ReadingImportJobState = Literal[
+    "queued",
+    "processing",
+    "completed",
+    "failed",
+    "cancelled",
+    "quarantined",
+]
+
+
+class ReadingImportResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    source: str
+    imported: int
+    updated: int
+    skipped: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class ReadingImportJobResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    job_id: int
+    job_uuid: str | None = None
+    status: ReadingImportJobState
+
+
+class ReadingImportJobStatus(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    job_id: int
+    job_uuid: str | None = None
+    status: ReadingImportJobState
+    created_at: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    progress_percent: float | None = None
+    progress_message: str | None = None
+    error_message: str | None = None
+    result: dict[str, Any] | None = None
+
+
+class ReadingImportJobsListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    jobs: list[ReadingImportJobStatus] = Field(default_factory=list)
+    total: int
+    limit: int | None = None
+    offset: int | None = None
+
+
+class ReadingArchiveCreateRequest(BaseModel):
+    format: Literal["html", "md"] = "html"
+    source: Literal["auto", "clean_html", "text"] = "auto"
+    title: str | None = Field(default=None, max_length=200)
+    retention_days: int | None = Field(default=None, ge=0, le=3650)
+    retention_until: str | None = None
+
+
+class ReadingArchiveResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    output_id: int
+    title: str
+    format: Literal["html", "md"]
+    storage_path: str
+    created_at: str | None = None
+    retention_until: str | None = None
+    download_url: str
+
+
 class ReadingDeleteResponse(BaseModel):
     status: str
     item_id: int
@@ -696,9 +768,16 @@ __all__ = [
     "ReadingHighlightCreateRequest",
     "ReadingHighlightDeleteResponse",
     "ReadingHighlightUpdateRequest",
+    "ReadingArchiveCreateRequest",
+    "ReadingArchiveResponse",
     "ReadingItem",
     "ReadingItemDetail",
     "ReadingItemsListResponse",
+    "ReadingImportJobResponse",
+    "ReadingImportJobState",
+    "ReadingImportJobStatus",
+    "ReadingImportJobsListResponse",
+    "ReadingImportResponse",
     "ReadingNoteLinkCreateRequest",
     "ReadingNoteLinkResponse",
     "ReadingNoteLinksListResponse",

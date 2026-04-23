@@ -6,6 +6,8 @@ from tldw_chatbook.tldw_api import (
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
     ReadingProgressUpdate,
+    ReadingArchiveCreateRequest,
+    ReadingImportJobStatus,
     ReadingSavedSearchCreateRequest,
     ReadingSavedSearchUpdateRequest,
     ReadingUpdateRequest,
@@ -72,3 +74,23 @@ def test_reading_saved_search_update_allows_sparse_patch():
     assert request.name is None
     assert request.query == {"status": "read"}
     assert request.sort is None
+
+
+def test_reading_archive_create_defaults_to_html_auto_source():
+    request = ReadingArchiveCreateRequest()
+
+    assert request.format == "html"
+    assert request.source == "auto"
+
+
+def test_reading_import_job_status_accepts_server_payload():
+    status = ReadingImportJobStatus(
+        job_id=42,
+        job_uuid="job-uuid-42",
+        status="completed",
+        progress_percent=100,
+        result={"source": "pocket", "imported": 3, "updated": 1, "skipped": 0, "errors": []},
+    )
+
+    assert status.job_id == 42
+    assert status.result["imported"] == 3

@@ -597,6 +597,81 @@ async def test_reading_saved_search_and_note_link_routes_wire_crud(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reading_import_job_and_archive_routes_wire_payloads(monkeypatch, tmp_path):
+    client = TLDWAPIClient("http://localhost:8000")
+    import_file = tmp_path / "pocket.csv"
+    import_file.write_text("title,url\nExample,https://example.com\n", encoding="utf-8")
+    archive_response = {
+        "output_id": 77,
+        "title": "Example Archive",
+        "format": "md",
+        "storage_path": "reading_archive_31.md",
+        "download_url": "/api/v1/outputs/77/download",
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            {"job_id": 42, "job_uuid": "job-uuid-42", "status": "queued"},
+            {
+                "jobs": [
+                    {
+                        "job_id": 42,
+                        "job_uuid": "job-uuid-42",
+                        "status": "processing",
+                        "progress_percent": 25,
+                    }
+                ],
+                "total": 1,
+                "limit": 50,
+                "offset": 0,
+            },
+            {
+                "job_id": 42,
+                "job_uuid": "job-uuid-42",
+                "status": "completed",
+                "progress_percent": 100,
+            },
+            archive_response,
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    submitted = await client.import_reading_items(
+        str(import_file),
+        source="pocket",
+        merge_tags=False,
+    )
+    jobs = await client.list_reading_import_jobs(status="processing", limit=50, offset=0)
+    job = await client.get_reading_import_job(42)
+    archive = await client.create_reading_archive(
+        31,
+        api.ReadingArchiveCreateRequest(format="md", source="text", title="Example Archive"),
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/import")
+    assert mocked.await_args_list[0].kwargs["data"] == {"source": "pocket", "merge_tags": "false"}
+    assert mocked.await_args_list[0].kwargs["files"][0][0] == "file"
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/import/jobs")
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "status": "processing",
+        "limit": 50,
+        "offset": 0,
+    }
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/reading/import/jobs/42")
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/reading/items/31/archive")
+    assert mocked.await_args_list[3].kwargs["json_data"] == {
+        "format": "md",
+        "source": "text",
+        "title": "Example Archive",
+    }
+
+    assert isinstance(submitted, api.ReadingImportJobResponse)
+    assert isinstance(jobs, api.ReadingImportJobsListResponse)
+    assert isinstance(job, api.ReadingImportJobStatus)
+    assert isinstance(archive, api.ReadingArchiveResponse)
+    assert archive.download_url == "/api/v1/outputs/77/download"
+
+
+@pytest.mark.asyncio
 async def test_list_reading_items_omits_page_size_when_offset_limit_used(monkeypatch):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"items": [], "total": 0, "page": 1, "size": 20})

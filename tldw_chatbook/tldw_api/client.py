@@ -57,10 +57,15 @@ from .media_reading_schemas import (
     MediaIngestJobStatus,
     MediaIngestJobStreamEvent,
     MediaIngestJobSubmitRequest,
+    ReadingArchiveCreateRequest,
+    ReadingArchiveResponse,
     ReadingHighlight,
     ReadingHighlightCreateRequest,
     ReadingHighlightDeleteResponse,
     ReadingHighlightUpdateRequest,
+    ReadingImportJobResponse,
+    ReadingImportJobStatus,
+    ReadingImportJobsListResponse,
     ReadingNoteLinkCreateRequest,
     ReadingNoteLinkResponse,
     ReadingNoteLinksListResponse,
@@ -1856,6 +1861,60 @@ class TLDWAPIClient:
             "DELETE",
             f"/api/v1/reading/items/{item_id}/links/note/{note_id}",
         )
+
+    async def import_reading_items(
+        self,
+        file_path: str,
+        *,
+        source: str = "auto",
+        merge_tags: bool = True,
+    ) -> ReadingImportJobResponse:
+        httpx_files = prepare_files_for_httpx([file_path], upload_field_name="file")
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/reading/import",
+                data={"source": source, "merge_tags": str(bool(merge_tags)).lower()},
+                files=httpx_files,
+            )
+            return ReadingImportJobResponse.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def list_reading_import_jobs(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> ReadingImportJobsListResponse:
+        params = {
+            key: value
+            for key, value in {
+                "status": status,
+                "limit": limit,
+                "offset": offset,
+            }.items()
+            if value is not None
+        }
+        response = await self._request("GET", "/api/v1/reading/import/jobs", params=params)
+        return ReadingImportJobsListResponse.model_validate(response)
+
+    async def get_reading_import_job(self, job_id: int) -> ReadingImportJobStatus:
+        response = await self._request("GET", f"/api/v1/reading/import/jobs/{job_id}")
+        return ReadingImportJobStatus.model_validate(response)
+
+    async def create_reading_archive(
+        self,
+        item_id: int,
+        request_data: ReadingArchiveCreateRequest,
+    ) -> ReadingArchiveResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/reading/items/{item_id}/archive",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReadingArchiveResponse.model_validate(response)
 
     async def get_reading_progress(self, media_id: int) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/media/{media_id}/progress")

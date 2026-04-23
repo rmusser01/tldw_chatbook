@@ -10,6 +10,7 @@ from ..tldw_api import (
     IngestionSourcePatchRequest,
     MediaSearchRequest,
     MediaIngestJobSubmitRequest,
+    ReadingArchiveCreateRequest,
     ReadingHighlightCreateRequest,
     ReadingHighlightUpdateRequest,
     ReadingNoteLinkCreateRequest,
@@ -200,6 +201,54 @@ class ServerMediaReadingService:
 
     async def unlink_reading_item_note(self, item_id: Any, note_id: str) -> Any:
         return await self._require_client().unlink_reading_item_note(int(item_id), str(note_id))
+
+    async def import_reading_items(
+        self,
+        file_path: str,
+        *,
+        source: str = "auto",
+        merge_tags: bool = True,
+    ) -> Any:
+        return await self._require_client().import_reading_items(
+            file_path,
+            source=source,
+            merge_tags=merge_tags,
+        )
+
+    async def list_reading_import_jobs(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Any:
+        return await self._require_client().list_reading_import_jobs(
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def get_reading_import_job(self, job_id: Any) -> Any:
+        return await self._require_client().get_reading_import_job(int(job_id))
+
+    async def create_reading_archive(
+        self,
+        item_id: Any,
+        *,
+        format: str = "html",
+        source: str = "auto",
+        title: str | None = None,
+        retention_days: int | None = None,
+        retention_until: str | None = None,
+    ) -> Any:
+        request_data = ReadingArchiveCreateRequest(
+            format=format,
+            source=source,
+            title=title,
+            retention_days=retention_days,
+            retention_until=retention_until,
+        )
+        return await self._require_client().create_reading_archive(int(item_id), request_data)
 
     async def submit_media_ingest_jobs(
         self,
