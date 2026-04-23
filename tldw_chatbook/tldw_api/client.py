@@ -164,6 +164,8 @@ from .sharing_schemas import (
     VerifyPasswordResponse,
 )
 from .prompt_chatbook_schemas import (
+    ChatbookCleanupResponse,
+    ChatbookContinueExportRequest,
     ChatbookExportJobListResponse,
     ChatbookExportJobResponse,
     ChatbookExportRequest,
@@ -3796,6 +3798,13 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True),
         )
 
+    async def continue_chatbook_export(self, request_data: ChatbookContinueExportRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/chatbooks/export/continue",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
     async def preview_chatbook(self, chatbook_file_path: str) -> Dict[str, Any]:
         httpx_files = prepare_files_for_httpx([chatbook_file_path], upload_field_name="file")
         try:
@@ -3872,6 +3881,13 @@ class TLDWAPIClient:
             f"/api/v1/chatbooks/export/jobs/{job_id}/remove",
         )
         return ChatbookJobMutationResponse.model_validate(response)
+
+    async def cleanup_chatbook_exports(self) -> ChatbookCleanupResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/chatbooks/cleanup",
+        )
+        return ChatbookCleanupResponse.model_validate(response)
 
     async def download_chatbook_export(self, job_id: str) -> bytes:
         return await self._request_bytes(

@@ -15,6 +15,8 @@ from tldw_chatbook.Chatbooks.server_chatbook_service import (
     record_server_job,
 )
 from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
+    ChatbookCleanupResponse,
+    ChatbookContinueExportRequest,
     ChatbookExportJobListResponse,
     ChatbookExportJobResponse,
     ChatbookImportJobListResponse,
@@ -197,6 +199,34 @@ async def test_service_exposes_remote_job_admin_as_plain_dicts():
     assert cancel_import == {"success": True, "message": "cancelled", "job_id": "import-job-1"}
     assert remove_export == {"success": True, "message": "removed", "job_id": "export-job-1"}
     assert remove_import == {"success": True, "message": "removed", "job_id": "import-job-1"}
+
+
+@pytest.mark.asyncio
+async def test_service_exposes_chatbook_continue_and_cleanup_as_plain_dicts():
+    class FakeClient:
+        def __init__(self):
+            self.continue_request = None
+
+        async def continue_chatbook_export(self, request_data):
+            self.continue_request = request_data
+            return {"success": True, "job_id": "continued-job-1"}
+
+        async def cleanup_chatbook_exports(self):
+            return ChatbookCleanupResponse(deleted_count=2, message="Cleaned expired exports")
+
+    client = FakeClient()
+    service = ServerChatbookService(client=client)
+    request = ChatbookContinueExportRequest(
+        export_id="export-job-1",
+        continuations=[{"content_type": "notes", "cursor": "cursor-2"}],
+    )
+
+    continued = await service.continue_chatbook_export(request)
+    cleanup = await service.cleanup_expired_exports()
+
+    assert client.continue_request == request
+    assert continued == {"success": True, "job_id": "continued-job-1"}
+    assert cleanup == {"deleted_count": 2, "message": "Cleaned expired exports"}
 
 
 @pytest.mark.asyncio

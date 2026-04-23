@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
-from ..tldw_api import ChatbookExportRequest, ChatbookImportRequest, TLDWAPIClient
+from ..tldw_api import ChatbookContinueExportRequest, ChatbookExportRequest, ChatbookImportRequest, TLDWAPIClient
 from .chatbook_models import ChatbookManifest, ContentType
 
 
@@ -226,6 +226,10 @@ class ServerChatbookService:
         client = self._require_client()
         return await client.export_chatbook(request_data)
 
+    async def continue_chatbook_export(self, request_data: ChatbookContinueExportRequest) -> Dict[str, Any]:
+        client = self._require_client()
+        return _to_plain_dict(await client.continue_chatbook_export(request_data))
+
     async def export_chatbook_from_selection(
         self,
         name: str,
@@ -316,6 +320,10 @@ class ServerChatbookService:
     async def remove_export_job(self, job_id: str) -> Dict[str, Any]:
         client = self._require_client()
         return _to_plain_dict(await client.remove_chatbook_export_job(job_id))
+
+    async def cleanup_expired_exports(self) -> Dict[str, Any]:
+        client = self._require_client()
+        return _to_plain_dict(await client.cleanup_chatbook_exports())
 
     async def download_export_job(self, job_id: str, destination_path: Union[str, Path]) -> Path:
         client = self._require_client()

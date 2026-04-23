@@ -8,6 +8,8 @@ import pytest
 
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
+    ChatbookCleanupResponse,
+    ChatbookContinueExportRequest,
     ChatbookExportJobListResponse,
     ChatbookExportRequest,
     ChatbookImportRequest,
@@ -263,3 +265,34 @@ class TestPromptChatbookClient:
 
         assert payload == b"zip-bytes"
         mocked.assert_awaited_once_with("GET", "/api/v1/chatbooks/download/job_123")
+
+    async def test_chatbook_continue_and_cleanup_methods_match_server_routes(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(
+            side_effect=[
+                {"success": True, "job_id": "job_continue"},
+                {"deleted_count": 3, "message": "Cleaned expired exports"},
+            ]
+        )
+        monkeypatch.setattr(client, "_request", mocked)
+
+        continued = await client.continue_chatbook_export(
+            ChatbookContinueExportRequest(
+                export_id="export_123",
+                continuations=[{"content_type": "evaluation_runs", "cursor": "next-page"}],
+                name="Continuation Pack",
+            )
+        )
+        cleanup = await client.cleanup_chatbook_exports()
+
+        assert continued == {"success": True, "job_id": "job_continue"}
+        assert isinstance(cleanup, ChatbookCleanupResponse)
+        assert cleanup.deleted_count == 3
+        assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/chatbooks/export/continue")
+        assert mocked.await_args_list[0].kwargs["json_data"] == {
+            "export_id": "export_123",
+            "continuations": [{"content_type": "evaluation_runs", "cursor": "next-page"}],
+            "name": "Continuation Pack",
+            "async_mode": False,
+        }
+        assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/chatbooks/cleanup")

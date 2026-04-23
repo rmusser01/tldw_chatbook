@@ -273,6 +273,8 @@ _EXPORT_GROUPS = (
             "PromptCollectionUpdateRequest",
             "PromptResponse",
             "PromptVersionResponse",
+            "ChatbookCleanupResponse",
+            "ChatbookContinueExportRequest",
             "ChatbookExportRequest",
             "ChatbookImportRequest",
             "ChatbookPreviewResponse",

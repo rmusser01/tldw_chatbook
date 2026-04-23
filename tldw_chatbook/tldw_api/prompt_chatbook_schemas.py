@@ -150,6 +150,15 @@ class ChatbookExportRequest(BaseModel):
     async_mode: bool = False
 
 
+class ChatbookContinueExportRequest(BaseModel):
+    """Request for continuing a previously paginated chatbook export."""
+
+    export_id: str
+    continuations: List[Dict[str, Any]]
+    name: Optional[str] = Field(default=None, max_length=255)
+    async_mode: bool = False
+
+
 class ChatbookImportRequest(BaseModel):
     """Request for importing a portable chatbook archive."""
 
@@ -227,3 +236,10 @@ class ChatbookJobMutationResponse(BaseModel):
     success: bool
     message: str
     job_id: str
+
+
+class ChatbookCleanupResponse(BaseModel):
+    """Server response for cleaning up expired chatbook exports."""
+
+    deleted_count: int
+    message: Optional[str] = None
