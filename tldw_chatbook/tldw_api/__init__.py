@@ -288,6 +288,8 @@ _EXPORT_GROUPS = (
     (
         ".rag_admin_schemas",
         (
+            "BatchMediaEmbeddingsRequest",
+            "BatchMediaEmbeddingsResponse",
             "ChunkingTemplateApplyRequest",
             "ChunkingTemplateApplyResponse",
             "ChunkingTemplateConfig",
@@ -299,6 +301,14 @@ _EXPORT_GROUPS = (
             "EmbeddingCollectionListResponse",
             "EmbeddingCollectionResponse",
             "EmbeddingCollectionStatsResponse",
+            "GenerateMediaEmbeddingsRequest",
+            "GenerateMediaEmbeddingsResponse",
+            "MediaEmbeddingJobListResponse",
+            "MediaEmbeddingJobResponse",
+            "MediaEmbeddingsSearchRequest",
+            "MediaEmbeddingsSearchResponse",
+            "MediaEmbeddingsSearchResult",
+            "MediaEmbeddingsStatusResponse",
         ),
     ),
     (

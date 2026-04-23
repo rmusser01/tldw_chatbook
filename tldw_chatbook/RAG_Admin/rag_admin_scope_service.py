@@ -40,6 +40,12 @@ class RAGAdminScopeService:
             raise ValueError("Server retrieval-admin backend is unavailable.")
         return self.server_service
 
+    def _server_service_for_mode(self, mode: RAGAdminBackend | str | None) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != RAGAdminBackend.SERVER:
+            raise ValueError("Server retrieval-admin backend is required for media embedding operations.")
+        return self._service_for_mode(normalized_mode)
+
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
             return await value
@@ -201,3 +207,123 @@ class RAGAdminScopeService:
     ) -> None:
         service = self._service_for_mode(self._normalize_mode(mode))
         await self._maybe_await(service.delete_collection(collection_name))
+
+    async def get_media_embeddings_status(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        media_id: int,
+    ) -> dict[str, Any]:
+        service = self._server_service_for_mode(mode)
+        return await self._maybe_await(service.get_media_embeddings_status(media_id))
+
+    async def generate_media_embeddings(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        media_id: int,
+        embedding_model: str | None = None,
+        embedding_provider: str | None = None,
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+        force_regenerate: bool = False,
+        priority: int = 50,
+    ) -> dict[str, Any]:
+        service = self._server_service_for_mode(mode)
+        kwargs: dict[str, Any] = {}
+        if embedding_model is not None:
+            kwargs["embedding_model"] = embedding_model
+        if embedding_provider is not None:
+            kwargs["embedding_provider"] = embedding_provider
+        if chunk_size != 1000:
+            kwargs["chunk_size"] = chunk_size
+        if chunk_overlap != 200:
+            kwargs["chunk_overlap"] = chunk_overlap
+        if force_regenerate:
+            kwargs["force_regenerate"] = force_regenerate
+        if priority != 50:
+            kwargs["priority"] = priority
+        return await self._maybe_await(service.generate_media_embeddings(media_id, **kwargs))
+
+    async def generate_media_embeddings_batch(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        media_ids: list[int],
+        embedding_model: str | None = None,
+        embedding_provider: str | None = None,
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+        force_regenerate: bool = False,
+        priority: int = 50,
+    ) -> dict[str, Any]:
+        service = self._server_service_for_mode(mode)
+        return await self._maybe_await(
+            service.generate_media_embeddings_batch(
+                media_ids=media_ids,
+                embedding_model=embedding_model,
+                embedding_provider=embedding_provider,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                force_regenerate=force_regenerate,
+                priority=priority,
+            )
+        )
+
+    async def search_media_embeddings(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        query: str,
+        top_k: int = 5,
+        collection: str | None = None,
+        embedding_model: str | None = None,
+        embedding_provider: str | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_service_for_mode(mode)
+        return await self._maybe_await(
+            service.search_media_embeddings(
+                query=query,
+                top_k=top_k,
+                collection=collection,
+                embedding_model=embedding_model,
+                embedding_provider=embedding_provider,
+                filters=filters,
+            )
+        )
+
+    async def delete_media_embeddings(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        media_id: int,
+    ) -> dict[str, Any]:
+        service = self._server_service_for_mode(mode)
+        return await self._maybe_await(service.delete_media_embeddings(media_id))
+
+    async def get_media_embedding_job(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        job_id: str,
+    ) -> dict[str, Any]:
+        service = self._server_service_for_mode(mode)
+        return await self._maybe_await(service.get_media_embedding_job(job_id))
+
+    async def list_media_embedding_jobs(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        service = self._server_service_for_mode(mode)
+        return await self._maybe_await(
+            service.list_media_embedding_jobs(
+                status=status,
+                limit=limit,
+                offset=offset,
+            )
+        )

@@ -3,6 +3,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tldw_chatbook.tldw_api import (
+    BatchMediaEmbeddingsRequest,
+    BatchMediaEmbeddingsResponse,
     ChunkingTemplateApplyRequest,
     ChunkingTemplateApplyResponse,
     ChunkingTemplateCreateRequest,
@@ -12,6 +14,13 @@ from tldw_chatbook.tldw_api import (
     ChunkingTemplateUpdateRequest,
     EmbeddingCollectionResponse,
     EmbeddingCollectionStatsResponse,
+    GenerateMediaEmbeddingsRequest,
+    GenerateMediaEmbeddingsResponse,
+    MediaEmbeddingJobListResponse,
+    MediaEmbeddingJobResponse,
+    MediaEmbeddingsSearchRequest,
+    MediaEmbeddingsSearchResponse,
+    MediaEmbeddingsStatusResponse,
     TLDWAPIClient,
 )
 
@@ -215,3 +224,132 @@ async def test_embedding_collection_routes_wire_and_stats_are_typed(monkeypatch)
     assert isinstance(collections[0], EmbeddingCollectionResponse)
     assert isinstance(stats, EmbeddingCollectionStatsResponse)
     assert stats.embedding_dimension == 1536
+
+
+@pytest.mark.asyncio
+async def test_media_embedding_admin_routes_wire_and_return_typed_payloads(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "media_id": 42,
+                "has_embeddings": True,
+                "embedding_count": 12,
+                "embedding_model": "nomic",
+                "last_generated": "2026-04-23T10:00:00Z",
+            },
+            {
+                "media_id": 42,
+                "status": "accepted",
+                "message": "Embedding generation started",
+                "embedding_count": None,
+                "embedding_model": "nomic",
+                "chunks_processed": None,
+                "job_id": "job-1",
+            },
+            {
+                "status": "partial",
+                "job_ids": ["job-1"],
+                "submitted": 1,
+                "failed_media_ids": [43],
+                "failure_reasons": ["media_id=43: not found"],
+            },
+            {
+                "results": [
+                    {
+                        "id": "chunk-1",
+                        "document": "alpha",
+                        "metadata": {"media_id": "42"},
+                        "distance": 0.12,
+                    }
+                ],
+                "count": 1,
+            },
+            {"status": "success", "message": "Embeddings deleted for media item 42"},
+            {"uuid": "job-1", "status": "completed", "media_id": 42},
+            {
+                "data": [{"uuid": "job-1", "status": "completed"}],
+                "pagination": {"limit": 10, "offset": 5, "count": 1},
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    status = await client.get_media_embeddings_status(42)
+    generated = await client.generate_media_embeddings(
+        42,
+        GenerateMediaEmbeddingsRequest(
+            embedding_model="nomic",
+            embedding_provider="ollama",
+            force_regenerate=True,
+            priority=75,
+        ),
+    )
+    batch = await client.generate_media_embeddings_batch(
+        BatchMediaEmbeddingsRequest(
+            media_ids=[42, 43],
+            embedding_model="nomic",
+            embedding_provider="ollama",
+            priority=80,
+        )
+    )
+    search = await client.search_media_embeddings(
+        MediaEmbeddingsSearchRequest(
+            query="alpha",
+            top_k=3,
+            collection="user_1_media_embeddings",
+            embedding_model="nomic",
+            embedding_provider="ollama",
+            filters={"media_id": "42"},
+        )
+    )
+    deleted = await client.delete_media_embeddings(42)
+    job = await client.get_media_embedding_job("job-1")
+    jobs = await client.list_media_embedding_jobs(status="completed", limit=10, offset=5)
+
+    assert isinstance(status, MediaEmbeddingsStatusResponse)
+    assert isinstance(generated, GenerateMediaEmbeddingsResponse)
+    assert isinstance(batch, BatchMediaEmbeddingsResponse)
+    assert isinstance(search, MediaEmbeddingsSearchResponse)
+    assert isinstance(job, MediaEmbeddingJobResponse)
+    assert isinstance(jobs, MediaEmbeddingJobListResponse)
+    assert deleted["status"] == "success"
+    assert search.results[0].metadata["media_id"] == "42"
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/media/42/embeddings/status")
+    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/media/42/embeddings")
+    assert mocked.await_args_list[1].kwargs["json_data"] == {
+        "embedding_model": "nomic",
+        "embedding_provider": "ollama",
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "force_regenerate": True,
+        "priority": 75,
+    }
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/media/embeddings/batch")
+    assert mocked.await_args_list[2].kwargs["json_data"] == {
+        "media_ids": [42, 43],
+        "model": "nomic",
+        "provider": "ollama",
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "force_regenerate": False,
+        "priority": 80,
+    }
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/media/embeddings/search")
+    assert mocked.await_args_list[3].kwargs["json_data"] == {
+        "query": "alpha",
+        "top_k": 3,
+        "collection": "user_1_media_embeddings",
+        "model": "nomic",
+        "provider": "ollama",
+        "filters": {"media_id": "42"},
+    }
+    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/media/42/embeddings")
+    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/media/embeddings/jobs/job-1")
+    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/media/embeddings/jobs")
+    assert mocked.await_args_list[6].kwargs["params"] == {
+        "limit": 10,
+        "offset": 5,
+        "status": "completed",
+    }

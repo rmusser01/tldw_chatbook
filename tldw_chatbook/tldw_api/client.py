@@ -185,6 +185,8 @@ from .prompt_chatbook_schemas import (
     PromptVersionResponse,
 )
 from .rag_admin_schemas import (
+    BatchMediaEmbeddingsRequest,
+    BatchMediaEmbeddingsResponse,
     ChunkingTemplateApplyRequest,
     ChunkingTemplateApplyResponse,
     ChunkingTemplateCreateRequest,
@@ -195,6 +197,13 @@ from .rag_admin_schemas import (
     EmbeddingCollectionListResponse,
     EmbeddingCollectionResponse,
     EmbeddingCollectionStatsResponse,
+    GenerateMediaEmbeddingsRequest,
+    GenerateMediaEmbeddingsResponse,
+    MediaEmbeddingJobListResponse,
+    MediaEmbeddingJobResponse,
+    MediaEmbeddingsSearchRequest,
+    MediaEmbeddingsSearchResponse,
+    MediaEmbeddingsStatusResponse,
 )
 from .evaluations_schemas import (
     CreateEvaluationRequest,
@@ -2160,6 +2169,71 @@ class TLDWAPIClient:
     ) -> EmbeddingCollectionStatsResponse:
         response = await self._request("GET", f"/api/v1/embeddings/collections/{collection_name}/stats")
         return EmbeddingCollectionStatsResponse.model_validate(response)
+
+    async def get_media_embeddings_status(self, media_id: int) -> MediaEmbeddingsStatusResponse:
+        response = await self._request("GET", f"/api/v1/media/{media_id}/embeddings/status")
+        return MediaEmbeddingsStatusResponse.model_validate(response)
+
+    async def generate_media_embeddings(
+        self,
+        media_id: int,
+        request_data: GenerateMediaEmbeddingsRequest,
+    ) -> GenerateMediaEmbeddingsResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/embeddings",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return GenerateMediaEmbeddingsResponse.model_validate(response)
+
+    async def generate_media_embeddings_batch(
+        self,
+        request_data: BatchMediaEmbeddingsRequest,
+    ) -> BatchMediaEmbeddingsResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/media/embeddings/batch",
+            json_data=request_data.model_dump(
+                by_alias=True,
+                exclude_none=True,
+                mode="json",
+            ),
+        )
+        return BatchMediaEmbeddingsResponse.model_validate(response)
+
+    async def search_media_embeddings(
+        self,
+        request_data: MediaEmbeddingsSearchRequest,
+    ) -> MediaEmbeddingsSearchResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/media/embeddings/search",
+            json_data=request_data.model_dump(
+                by_alias=True,
+                exclude_none=True,
+                mode="json",
+            ),
+        )
+        return MediaEmbeddingsSearchResponse.model_validate(response)
+
+    async def delete_media_embeddings(self, media_id: int) -> dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/media/{media_id}/embeddings")
+
+    async def get_media_embedding_job(self, job_id: str) -> MediaEmbeddingJobResponse:
+        response = await self._request("GET", f"/api/v1/media/embeddings/jobs/{job_id}")
+        return MediaEmbeddingJobResponse.model_validate(response)
+
+    async def list_media_embedding_jobs(
+        self,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> MediaEmbeddingJobListResponse:
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if status is not None:
+            params["status"] = status
+        response = await self._request("GET", "/api/v1/media/embeddings/jobs", params=params)
+        return MediaEmbeddingJobListResponse.model_validate(response)
 
     async def create_evaluation_dataset(
         self,

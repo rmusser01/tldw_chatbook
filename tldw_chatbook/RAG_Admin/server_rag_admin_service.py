@@ -7,9 +7,12 @@ from typing import Any, Optional
 
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
 from ..tldw_api import (
+    BatchMediaEmbeddingsRequest,
     ChunkingTemplateApplyRequest,
     ChunkingTemplateCreateRequest,
     ChunkingTemplateUpdateRequest,
+    GenerateMediaEmbeddingsRequest,
+    MediaEmbeddingsSearchRequest,
     TLDWAPIClient,
 )
 
@@ -125,3 +128,92 @@ class ServerRAGAdminService:
 
     async def delete_collection(self, collection_name: str) -> None:
         await self._require_client().delete_embedding_collection(collection_name)
+
+    async def get_media_embeddings_status(self, media_id: int) -> dict[str, Any]:
+        return self._dump_model(await self._require_client().get_media_embeddings_status(media_id))
+
+    async def generate_media_embeddings(
+        self,
+        media_id: int,
+        *,
+        embedding_model: Optional[str] = None,
+        embedding_provider: Optional[str] = None,
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+        force_regenerate: bool = False,
+        priority: int = 50,
+    ) -> dict[str, Any]:
+        request = GenerateMediaEmbeddingsRequest(
+            embedding_model=embedding_model,
+            embedding_provider=embedding_provider,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            force_regenerate=force_regenerate,
+            priority=priority,
+        )
+        return self._dump_model(
+            await self._require_client().generate_media_embeddings(media_id, request)
+        )
+
+    async def generate_media_embeddings_batch(
+        self,
+        *,
+        media_ids: Sequence[int],
+        embedding_model: Optional[str] = None,
+        embedding_provider: Optional[str] = None,
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+        force_regenerate: bool = False,
+        priority: int = 50,
+    ) -> dict[str, Any]:
+        request = BatchMediaEmbeddingsRequest(
+            media_ids=list(media_ids),
+            embedding_model=embedding_model,
+            embedding_provider=embedding_provider,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            force_regenerate=force_regenerate,
+            priority=priority,
+        )
+        return self._dump_model(await self._require_client().generate_media_embeddings_batch(request))
+
+    async def search_media_embeddings(
+        self,
+        *,
+        query: str,
+        top_k: int = 5,
+        collection: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+        embedding_provider: Optional[str] = None,
+        filters: Optional[Mapping[str, Any]] = None,
+    ) -> dict[str, Any]:
+        request = MediaEmbeddingsSearchRequest(
+            query=query,
+            top_k=top_k,
+            collection=collection,
+            embedding_model=embedding_model,
+            embedding_provider=embedding_provider,
+            filters=dict(filters) if filters is not None else None,
+        )
+        return self._dump_model(await self._require_client().search_media_embeddings(request))
+
+    async def delete_media_embeddings(self, media_id: int) -> dict[str, Any]:
+        return self._dump_model(await self._require_client().delete_media_embeddings(media_id))
+
+    async def get_media_embedding_job(self, job_id: str) -> dict[str, Any]:
+        return self._dump_model(await self._require_client().get_media_embedding_job(job_id))
+
+    async def list_media_embedding_jobs(
+        self,
+        *,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        return self._dump_model(
+            await self._require_client().list_media_embedding_jobs(
+                status=status,
+                limit=limit,
+                offset=offset,
+            )
+        )

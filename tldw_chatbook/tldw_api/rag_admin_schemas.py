@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -106,3 +106,84 @@ class EmbeddingCollectionStatsResponse(BaseModel):
     count: int
     embedding_dimension: Optional[int] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GenerateMediaEmbeddingsRequest(BaseModel):
+    embedding_model: Optional[str] = None
+    embedding_provider: Optional[str] = None
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
+    force_regenerate: bool = False
+    priority: int = Field(default=50, ge=0, le=100)
+
+
+class MediaEmbeddingsStatusResponse(BaseModel):
+    media_id: int
+    has_embeddings: bool
+    embedding_count: Optional[int] = None
+    embedding_model: Optional[str] = None
+    last_generated: Optional[str] = None
+
+
+class GenerateMediaEmbeddingsResponse(BaseModel):
+    media_id: int
+    status: str
+    message: str
+    embedding_count: Optional[int] = None
+    embedding_model: str
+    chunks_processed: Optional[int] = None
+    job_id: Optional[str] = None
+
+
+class BatchMediaEmbeddingsRequest(BaseModel):
+    media_ids: list[int] = Field(..., min_length=1)
+    embedding_model: Optional[str] = Field(default=None, alias="model")
+    embedding_provider: Optional[str] = Field(default=None, alias="provider")
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
+    force_regenerate: bool = False
+    priority: int = Field(default=50, ge=0, le=100)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class BatchMediaEmbeddingsResponse(BaseModel):
+    status: Literal["accepted", "partial"]
+    job_ids: list[str]
+    submitted: int
+    failed_media_ids: list[int] = Field(default_factory=list)
+    failure_reasons: list[str] = Field(default_factory=list)
+
+
+class MediaEmbeddingsSearchRequest(BaseModel):
+    query: str
+    top_k: int = Field(default=5, gt=0, le=100)
+    collection: Optional[str] = None
+    embedding_model: Optional[str] = Field(default=None, alias="model")
+    embedding_provider: Optional[str] = Field(default=None, alias="provider")
+    filters: Optional[dict[str, Any]] = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class MediaEmbeddingsSearchResult(BaseModel):
+    id: Optional[str] = None
+    document: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    distance: Optional[float] = None
+
+
+class MediaEmbeddingsSearchResponse(BaseModel):
+    results: list[MediaEmbeddingsSearchResult] = Field(default_factory=list)
+    count: int = 0
+
+
+class MediaEmbeddingJobResponse(BaseModel):
+    """Opaque server embedding-job row; server rows vary by backend version."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class MediaEmbeddingJobListResponse(BaseModel):
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    pagination: dict[str, Any] = Field(default_factory=dict)

@@ -32,6 +32,14 @@ class FakeServerService:
         self.calls.append(("get_collection_detail", collection_name))
         return dict(self.collection_detail[collection_name])
 
+    async def generate_media_embeddings(self, media_id, **kwargs):
+        self.calls.append(("generate_media_embeddings", media_id, kwargs))
+        return {"media_id": media_id, "status": "accepted", "job_id": "job-1"}
+
+    async def list_media_embedding_jobs(self, **kwargs):
+        self.calls.append(("list_media_embedding_jobs", kwargs))
+        return {"data": [{"uuid": "job-1", "status": "completed"}], "pagination": {"count": 1}}
+
 
 @pytest.mark.asyncio
 async def test_scope_service_routes_template_list_by_backend():
@@ -93,3 +101,31 @@ async def test_scope_service_uses_stats_endpoint_for_server_collection_detail():
     assert detail["name"] == "demo"
     assert detail["count"] == 3
     assert server.calls == [("get_collection_detail", "demo")]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_media_embedding_operations_to_server_only():
+    server = FakeServerService()
+    scope = RAGAdminScopeService(local_service=FakeLocalService(), server_service=server)
+
+    generated = await scope.generate_media_embeddings(
+        mode="server",
+        media_id=42,
+        embedding_model="nomic",
+        embedding_provider="ollama",
+    )
+    jobs = await scope.list_media_embedding_jobs(mode="server", status="completed")
+
+    assert generated == {"media_id": 42, "status": "accepted", "job_id": "job-1"}
+    assert jobs["pagination"]["count"] == 1
+    assert server.calls == [
+        (
+            "generate_media_embeddings",
+            42,
+            {"embedding_model": "nomic", "embedding_provider": "ollama"},
+        ),
+        ("list_media_embedding_jobs", {"status": "completed", "limit": 50, "offset": 0}),
+    ]
+
+    with pytest.raises(ValueError, match="Server retrieval-admin backend is required"):
+        await scope.generate_media_embeddings(mode="local", media_id=42)
