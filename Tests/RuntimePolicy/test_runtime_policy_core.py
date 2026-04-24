@@ -448,9 +448,15 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.items.delete.server
         media.items.detail.server
         media.items.file.detail.server
+        media.items.identifier_lookup.detail.server
         media.items.keywords.update.server
+        media.items.keywords.list.server
+        media.items.list.server
+        media.items.metadata_search.list.server
         media.items.permanent_delete.server
         media.items.restore.server
+        media.items.trash.delete.server
+        media.items.trash.list.server
         media.items.update.server
         media.reading.create.local
         media.reading.create.server

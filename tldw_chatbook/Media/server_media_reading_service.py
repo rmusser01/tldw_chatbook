@@ -67,6 +67,67 @@ class ServerMediaReadingService:
         params.update({"q": query, "limit": limit, "offset": offset})
         return await client.list_reading_items(**{key: value for key, value in params.items() if value is not None})
 
+    async def list_media_keywords(
+        self,
+        *,
+        query: str | None = None,
+        limit: int = 100,
+    ) -> Any:
+        return await self._require_client().list_media_keywords(query=query, limit=limit)
+
+    async def list_backing_media_items(
+        self,
+        *,
+        page: int = 1,
+        results_per_page: int = 10,
+        include_keywords: bool = False,
+    ) -> Any:
+        return await self._require_client().list_media_items(
+            page=page,
+            results_per_page=results_per_page,
+            include_keywords=include_keywords,
+        )
+
+    async def search_backing_media_items(
+        self,
+        *,
+        page: int = 1,
+        results_per_page: int = 10,
+        **filters: Any,
+    ) -> Any:
+        request_data = MediaSearchRequest(**{key: value for key, value in filters.items() if value is not None})
+        return await self._require_client().search_media_items(
+            request_data,
+            page=page,
+            results_per_page=results_per_page,
+        )
+
+    async def list_media_trash(
+        self,
+        *,
+        page: int = 1,
+        results_per_page: int = 10,
+        include_keywords: bool = False,
+    ) -> Any:
+        return await self._require_client().list_media_trash(
+            page=page,
+            results_per_page=results_per_page,
+            include_keywords=include_keywords,
+        )
+
+    async def empty_media_trash(self) -> Any:
+        return await self._require_client().empty_media_trash()
+
+    async def search_media_metadata(self, **filters: Any) -> Any:
+        return await self._require_client().search_media_metadata(
+            **{key: value for key, value in filters.items() if value is not None}
+        )
+
+    async def get_media_by_identifier(self, **identifiers: Any) -> Any:
+        return await self._require_client().get_media_by_identifier(
+            **{key: value for key, value in identifiers.items() if value is not None}
+        )
+
     async def get_media_detail(self, media_id: Any) -> Any:
         return await self._require_client().get_reading_item(int(media_id))
 

@@ -13,6 +13,46 @@ class FakeClient:
         self.calls.append(("list_reading_items", kwargs))
         return {"items": [{"id": 41, "media_id": 99, "title": "Server Article"}], "total": 1}
 
+    async def list_media_keywords(self, **kwargs):
+        self.calls.append(("list_media_keywords", kwargs))
+        return {"keywords": ["ai", "testing"]}
+
+    async def list_media_items(self, **kwargs):
+        self.calls.append(("list_media_items", kwargs))
+        return {
+            "items": [{"id": 99, "title": "Server Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "pagination": {"page": 1, "results_per_page": 10, "total_pages": 1, "total_items": 1},
+        }
+
+    async def search_media_items(self, request_data, page=1, results_per_page=10):
+        self.calls.append(("search_media_items", request_data.model_dump(exclude_none=True, mode="json"), page, results_per_page))
+        return {
+            "items": [{"id": 99, "title": "Server Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+        }
+
+    async def list_media_trash(self, **kwargs):
+        self.calls.append(("list_media_trash", kwargs))
+        return {
+            "items": [{"id": 99, "title": "Trashed Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "pagination": {"page": 1, "results_per_page": 10, "total_pages": 1, "total_items": 1},
+        }
+
+    async def empty_media_trash(self):
+        self.calls.append(("empty_media_trash",))
+        return {"deleted_count": 1, "failed_count": 0, "failed_ids": [], "remaining_count": 0}
+
+    async def search_media_metadata(self, **kwargs):
+        self.calls.append(("search_media_metadata", kwargs))
+        return {
+            "results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}],
+            "pagination": {"page": 1, "per_page": 20, "total": 1, "total_pages": 1},
+        }
+
+    async def get_media_by_identifier(self, **kwargs):
+        self.calls.append(("get_media_by_identifier", kwargs))
+        return {"results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}], "total": 1}
+
     async def get_reading_item(self, item_id):
         self.calls.append(("get_reading_item", item_id))
         return {"id": item_id, "media_id": 99, "title": "Server Detail"}
@@ -690,6 +730,65 @@ async def test_server_service_rejects_local_only_metadata_fields():
 
     with pytest.raises(ValueError, match="Unsupported server media metadata fields: author"):
         await service.update_media_metadata(41, author="Ada")
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_media_listing_search_and_trash_adjuncts_to_client():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    keywords = await service.list_media_keywords(query="ai", limit=5)
+    listed = await service.list_backing_media_items(page=2, results_per_page=25, include_keywords=True)
+    searched = await service.search_backing_media_items(
+        query="paper",
+        media_types=["pdf"],
+        page=2,
+        results_per_page=25,
+    )
+    trash = await service.list_media_trash(page=1, results_per_page=10, include_keywords=True)
+    emptied = await service.empty_media_trash()
+    metadata = await service.search_media_metadata(
+        filters=[{"field": "doi", "op": "eq", "value": "10/example"}],
+        q="paper",
+        media_types=["pdf"],
+        must_have=["ai"],
+    )
+    identifier = await service.get_media_by_identifier(doi="10/example", group_by_media=False)
+
+    assert keywords == {"keywords": ["ai", "testing"]}
+    assert listed["pagination"]["total_items"] == 1
+    assert searched["items"][0]["id"] == 99
+    assert trash["items"][0]["title"] == "Trashed Media"
+    assert emptied["deleted_count"] == 1
+    assert metadata["results"][0]["safe_metadata"]["doi"] == "10/example"
+    assert identifier["total"] == 1
+    assert client.calls[:7] == [
+        ("list_media_keywords", {"query": "ai", "limit": 5}),
+        ("list_media_items", {"page": 2, "results_per_page": 25, "include_keywords": True}),
+        (
+            "search_media_items",
+            {
+                "query": "paper",
+                "fields": ["title", "content"],
+                "media_types": ["pdf"],
+                "sort_by": "relevance",
+            },
+            2,
+            25,
+        ),
+        ("list_media_trash", {"page": 1, "results_per_page": 10, "include_keywords": True}),
+        ("empty_media_trash",),
+        (
+            "search_media_metadata",
+            {
+                "filters": [{"field": "doi", "op": "eq", "value": "10/example"}],
+                "q": "paper",
+                "media_types": ["pdf"],
+                "must_have": ["ai"],
+            },
+        ),
+        ("get_media_by_identifier", {"doi": "10/example", "group_by_media": False}),
+    ]
 
 
 @pytest.mark.asyncio

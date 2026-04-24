@@ -316,6 +316,82 @@ class MediaKeywordsResponse(BaseModel):
         return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
 
 
+class ServerMediaListItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    title: str
+    url: str
+    type: str
+    keywords: list[str] = Field(default_factory=list)
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def _normalize_keywords(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("keywords_must_be_list")
+        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+
+
+class ServerMediaListPagination(BaseModel):
+    page: int
+    results_per_page: int
+    total_pages: int
+    total_items: int
+
+
+class ServerMediaListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[ServerMediaListItem] = Field(default_factory=list)
+    pagination: ServerMediaListPagination
+    keywords_available: bool | None = None
+    skipped_count: int | None = None
+
+
+class MediaKeywordListResponse(BaseModel):
+    keywords: list[str] = Field(default_factory=list)
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def _normalize_keywords(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("keywords_must_be_list")
+        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+
+
+class MediaMetadataSearchPagination(BaseModel):
+    page: int
+    per_page: int
+    total: int
+    total_pages: int
+
+
+class MediaMetadataSearchResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    results: list[dict[str, Any]] = Field(default_factory=list)
+    pagination: MediaMetadataSearchPagination
+
+
+class MediaIdentifierLookupResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    results: list[dict[str, Any]] = Field(default_factory=list)
+    total: int
+
+
+class MediaTrashEmptyResponse(BaseModel):
+    deleted_count: int
+    failed_count: int
+    failed_ids: list[int] = Field(default_factory=list)
+    remaining_count: int
+
+
 class FileArtifactsPurgeRequest(BaseModel):
     delete_files: bool = False
     soft_deleted_grace_days: int = Field(default=30, ge=0)
@@ -1305,12 +1381,32 @@ __all__ = [
     "ItemsBulkRequest",
     "ItemsBulkResponse",
     "ItemsBulkResult",
+    "MediaContentDetail",
+    "MediaDetailResponse",
+    "MediaIdentifierLookupResponse",
     "MediaIngestJobItem",
     "MediaIngestJobListResponse",
     "MediaIngestMediaType",
     "MediaIngestJobStatus",
     "MediaIngestJobStreamEvent",
     "MediaIngestJobSubmitRequest",
+    "MediaKeywordListResponse",
+    "MediaKeywordsResponse",
+    "MediaKeywordsUpdateMode",
+    "MediaKeywordsUpdateRequest",
+    "MediaMetadataSearchPagination",
+    "MediaMetadataSearchResponse",
+    "MediaNavigationContentResponse",
+    "MediaNavigationFormat",
+    "MediaNavigationNode",
+    "MediaNavigationResponse",
+    "MediaNavigationStats",
+    "MediaNavigationTarget",
+    "MediaNavigationTargetType",
+    "MediaProcessingDetail",
+    "MediaSourceDetail",
+    "MediaTrashEmptyResponse",
+    "MediaUpdateRequest",
     "ReadingDeleteResponse",
     "ReadingCitation",
     "ReadingExportFormat",
@@ -1357,6 +1453,9 @@ __all__ = [
     "ReferenceImageListItem",
     "ReferenceImageListResponse",
     "SubmitMediaIngestJobsResponse",
+    "ServerMediaListItem",
+    "ServerMediaListPagination",
+    "ServerMediaListResponse",
     "ViewMode",
     "WebProcessResponse",
     "WebScrapedItemResult",

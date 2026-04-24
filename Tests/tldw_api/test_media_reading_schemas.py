@@ -20,10 +20,15 @@ from tldw_chatbook.tldw_api import (
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
     MediaDetailResponse,
+    MediaIdentifierLookupResponse,
     MediaKeywordsResponse,
+    MediaKeywordListResponse,
     MediaKeywordsUpdateRequest,
+    MediaMetadataSearchResponse,
     MediaNavigationContentResponse,
     MediaNavigationResponse,
+    MediaSearchRequest,
+    MediaTrashEmptyResponse,
     MediaUpdateRequest,
     ReadingDigestOutput,
     ReadingDigestOutputsListResponse,
@@ -41,7 +46,57 @@ from tldw_chatbook.tldw_api import (
     ReadingSummaryResponse,
     ReadingTTSRequest,
     ReadingUpdateRequest,
+    ServerMediaListResponse,
 )
+
+
+def test_server_media_listing_and_search_adjunct_models_match_server_contracts():
+    listing = ServerMediaListResponse(
+        items=[
+            {
+                "id": 99,
+                "title": "Paper",
+                "url": "/api/v1/media/99",
+                "type": "pdf",
+                "keywords": [" ai ", "testing"],
+            }
+        ],
+        pagination={
+            "page": 1,
+            "results_per_page": 20,
+            "total_pages": 1,
+            "total_items": 1,
+        },
+        keywords_available=True,
+    )
+    keywords = MediaKeywordListResponse(keywords=[" ai ", "testing"])
+    metadata_search = MediaMetadataSearchResponse(
+        results=[
+            {
+                "media_id": 99,
+                "version_number": 1,
+                "safe_metadata": {"doi": "10/example"},
+            }
+        ],
+        pagination={"page": 1, "per_page": 20, "total": 1, "total_pages": 1},
+    )
+    identifier_lookup = MediaIdentifierLookupResponse(
+        results=[{"media_id": 99, "safe_metadata": {"doi": "10/example"}}],
+        total=1,
+    )
+    empty_trash = MediaTrashEmptyResponse(
+        deleted_count=2,
+        failed_count=0,
+        failed_ids=[],
+        remaining_count=0,
+    )
+
+    assert listing.items[0].keywords == ["ai", "testing"]
+    assert listing.pagination.total_items == 1
+    assert keywords.keywords == ["ai", "testing"]
+    assert metadata_search.results[0]["safe_metadata"]["doi"] == "10/example"
+    assert identifier_lookup.total == 1
+    assert empty_trash.deleted_count == 2
 
 
 def test_media_navigation_models_match_server_contracts():

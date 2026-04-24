@@ -29,14 +29,19 @@ from tldw_chatbook.tldw_api import (
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
     MediaDetailResponse,
+    MediaIdentifierLookupResponse,
     MediaIngestJobListResponse,
     MediaIngestJobStatus,
     MediaIngestJobStreamEvent,
     MediaIngestJobSubmitRequest,
     MediaKeywordsResponse,
+    MediaKeywordListResponse,
     MediaKeywordsUpdateRequest,
+    MediaMetadataSearchResponse,
     MediaNavigationContentResponse,
     MediaNavigationResponse,
+    MediaSearchRequest,
+    MediaTrashEmptyResponse,
     MediaUpdateRequest,
     ReadingDigestOutputsListResponse,
     ReadingDigestScheduleCreateRequest,
@@ -50,7 +55,111 @@ from tldw_chatbook.tldw_api import (
     ReadingUpdateRequest,
     SubmitMediaIngestJobsResponse,
     TLDWAPIClient,
+    ServerMediaListResponse,
 )
+
+
+@pytest.mark.asyncio
+async def test_server_media_listing_search_and_trash_adjunct_routes_wire_to_server_contract(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    list_payload = {
+        "items": [
+            {
+                "id": 99,
+                "title": "Paper",
+                "url": "/api/v1/media/99",
+                "type": "pdf",
+                "keywords": ["ai"],
+            }
+        ],
+        "pagination": {
+            "page": 1,
+            "results_per_page": 20,
+            "total_pages": 1,
+            "total_items": 1,
+        },
+        "keywords_available": True,
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            {"keywords": ["ai", "testing"]},
+            list_payload,
+            {**list_payload, "items": [{**list_payload["items"][0], "title": "Trashed Paper"}]},
+            {"deleted_count": 1, "failed_count": 0, "failed_ids": [], "remaining_count": 0},
+            list_payload,
+            {
+                "results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}],
+                "pagination": {"page": 2, "per_page": 10, "total": 1, "total_pages": 1},
+            },
+            {"results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}], "total": 1},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    keywords = await client.list_media_keywords(query="ai", limit=5)
+    listed = await client.list_media_items(page=1, results_per_page=20, include_keywords=True)
+    trash = await client.list_media_trash(page=1, results_per_page=20, include_keywords=True)
+    emptied = await client.empty_media_trash()
+    searched = await client.search_media_items(
+        MediaSearchRequest(query="paper", media_types=["pdf"]),
+        page=1,
+        results_per_page=20,
+    )
+    metadata = await client.search_media_metadata(
+        filters=[{"field": "doi", "op": "eq", "value": "10/example"}],
+        match_mode="all",
+        page=2,
+        per_page=10,
+        q="paper",
+        media_types=["pdf"],
+        must_have=["ai"],
+        must_not_have=["draft"],
+        sort_by="date_desc",
+    )
+    identifier = await client.get_media_by_identifier(doi="10/example", group_by_media=False)
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/media/keywords")
+    assert mocked.await_args_list[0].kwargs["params"] == {"query": "ai", "limit": 5}
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/")
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "page": 1,
+        "results_per_page": 20,
+        "include_keywords": "true",
+    }
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/media/trash")
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/media/trash/empty")
+    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/media/search")
+    assert mocked.await_args_list[4].kwargs["json_data"] == {
+        "query": "paper",
+        "fields": ["title", "content"],
+        "media_types": ["pdf"],
+        "sort_by": "relevance",
+    }
+    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/media/metadata-search")
+    assert mocked.await_args_list[5].kwargs["params"] == {
+        "filters": '[{"field": "doi", "op": "eq", "value": "10/example"}]',
+        "match_mode": "all",
+        "group_by_media": "true",
+        "page": 2,
+        "per_page": 10,
+        "q": "paper",
+        "media_types": "pdf",
+        "must_have": "ai",
+        "must_not_have": "draft",
+        "sort_by": "date_desc",
+    }
+    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/media/by-identifier")
+    assert mocked.await_args_list[6].kwargs["params"] == {
+        "doi": "10/example",
+        "group_by_media": "false",
+    }
+    assert isinstance(keywords, MediaKeywordListResponse)
+    assert isinstance(listed, ServerMediaListResponse)
+    assert isinstance(trash, ServerMediaListResponse)
+    assert isinstance(emptied, MediaTrashEmptyResponse)
+    assert isinstance(searched, ServerMediaListResponse)
+    assert isinstance(metadata, MediaMetadataSearchResponse)
+    assert isinstance(identifier, MediaIdentifierLookupResponse)
 
 
 @pytest.mark.asyncio

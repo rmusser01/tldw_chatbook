@@ -71,14 +71,18 @@ from .media_reading_schemas import (
     ItemsBulkRequest,
     ItemsBulkResponse,
     MediaDetailResponse,
+    MediaIdentifierLookupResponse,
     MediaIngestJobListResponse,
     MediaIngestJobStatus,
     MediaIngestJobStreamEvent,
     MediaIngestJobSubmitRequest,
+    MediaKeywordListResponse,
     MediaKeywordsResponse,
     MediaKeywordsUpdateRequest,
+    MediaMetadataSearchResponse,
     MediaNavigationContentResponse,
     MediaNavigationResponse,
+    MediaTrashEmptyResponse,
     MediaUpdateRequest,
     ReadingArchiveCreateRequest,
     ReadingArchiveResponse,
@@ -106,6 +110,7 @@ from .media_reading_schemas import (
     ReadingSummaryResponse,
     ReadingTTSRequest,
     ReadingUpdateRequest,
+    ServerMediaListResponse,
     SubmitMediaIngestJobsResponse,
     WebProcessResponse,
 )
@@ -902,8 +907,8 @@ class TLDWAPIClient:
         page: int = 1,
         results_per_page: int = 10,
         include_keywords: bool = False,
-    ) -> Dict[str, Any]:
-        return await self._request(
+    ) -> ServerMediaListResponse:
+        response = await self._request(
             "GET",
             "/api/v1/media/",
             params={
@@ -912,6 +917,117 @@ class TLDWAPIClient:
                 "include_keywords": str(include_keywords).lower(),
             },
         )
+        return ServerMediaListResponse.model_validate(response)
+
+    async def list_media_keywords(
+        self,
+        *,
+        query: str | None = None,
+        limit: int = 100,
+    ) -> MediaKeywordListResponse:
+        params = {"query": query, "limit": limit}
+        response = await self._request(
+            "GET",
+            "/api/v1/media/keywords",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return MediaKeywordListResponse.model_validate(response)
+
+    async def list_media_trash(
+        self,
+        page: int = 1,
+        results_per_page: int = 10,
+        include_keywords: bool = False,
+    ) -> ServerMediaListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/media/trash",
+            params={
+                "page": page,
+                "results_per_page": results_per_page,
+                "include_keywords": str(include_keywords).lower(),
+            },
+        )
+        return ServerMediaListResponse.model_validate(response)
+
+    async def empty_media_trash(self) -> MediaTrashEmptyResponse:
+        response = await self._request("POST", "/api/v1/media/trash/empty")
+        return MediaTrashEmptyResponse.model_validate(response)
+
+    async def search_media_metadata(
+        self,
+        *,
+        filters: list[dict[str, Any]] | None = None,
+        field: str | None = None,
+        op: str | None = None,
+        value: str | None = None,
+        match_mode: str = "all",
+        group_by_media: bool = True,
+        page: int = 1,
+        per_page: int = 20,
+        q: str | None = None,
+        media_types: list[str] | str | None = None,
+        must_have: list[str] | str | None = None,
+        must_not_have: list[str] | str | None = None,
+        date_start: str | None = None,
+        date_end: str | None = None,
+        sort_by: str | None = None,
+    ) -> MediaMetadataSearchResponse:
+        def _csv(value: list[str] | str | None) -> str | None:
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            return ",".join(str(entry) for entry in value)
+
+        params: Dict[str, Any] = {
+            "filters": json.dumps(filters) if filters else None,
+            "field": field,
+            "op": op,
+            "value": value,
+            "match_mode": match_mode,
+            "group_by_media": str(group_by_media).lower(),
+            "page": page,
+            "per_page": per_page,
+            "q": q,
+            "media_types": _csv(media_types),
+            "must_have": _csv(must_have),
+            "must_not_have": _csv(must_not_have),
+            "date_start": date_start,
+            "date_end": date_end,
+            "sort_by": sort_by,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/media/metadata-search",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return MediaMetadataSearchResponse.model_validate(response)
+
+    async def get_media_by_identifier(
+        self,
+        *,
+        doi: str | None = None,
+        pmid: str | None = None,
+        pmcid: str | None = None,
+        arxiv_id: str | None = None,
+        s2_paper_id: str | None = None,
+        group_by_media: bool = True,
+    ) -> MediaIdentifierLookupResponse:
+        params: Dict[str, Any] = {
+            "doi": doi,
+            "pmid": pmid,
+            "pmcid": pmcid,
+            "arxiv_id": arxiv_id,
+            "s2_paper_id": s2_paper_id,
+            "group_by_media": str(group_by_media).lower(),
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/media/by-identifier",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return MediaIdentifierLookupResponse.model_validate(response)
 
     async def get_media_item(
         self,
@@ -4040,13 +4156,14 @@ class TLDWAPIClient:
         request_data: MediaSearchRequest,
         page: int = 1,
         results_per_page: int = 10,
-    ) -> Dict[str, Any]:
-        return await self._request(
+    ) -> ServerMediaListResponse:
+        response = await self._request(
             "POST",
             "/api/v1/media/search",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
             params={"page": page, "results_per_page": results_per_page},
         )
+        return ServerMediaListResponse.model_validate(response)
 
     async def process_video(self, request_data: ProcessVideoRequest, file_paths: Optional[List[str]] = None) -> BatchMediaProcessResponse:
         form_data = model_to_form_data(request_data)

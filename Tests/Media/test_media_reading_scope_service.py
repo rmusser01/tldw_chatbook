@@ -253,6 +253,46 @@ class FakeServerMediaService:
             "limit": limit,
         }
 
+    async def list_media_keywords(self, *, query=None, limit=100):
+        self.calls.append(("list_media_keywords", query, limit))
+        return {"keywords": ["ai", "testing"]}
+
+    async def list_backing_media_items(self, *, page=1, results_per_page=10, include_keywords=False):
+        self.calls.append(("list_backing_media_items", page, results_per_page, include_keywords))
+        return {
+            "items": [{"id": 99, "title": "Backing Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+        }
+
+    async def search_backing_media_items(self, *, page=1, results_per_page=10, **filters):
+        self.calls.append(("search_backing_media_items", page, results_per_page, filters))
+        return {
+            "items": [{"id": 99, "title": "Backing Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+        }
+
+    async def list_media_trash(self, *, page=1, results_per_page=10, include_keywords=False):
+        self.calls.append(("list_media_trash", page, results_per_page, include_keywords))
+        return {
+            "items": [{"id": 99, "title": "Trashed Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+        }
+
+    async def empty_media_trash(self):
+        self.calls.append(("empty_media_trash",))
+        return {"deleted_count": 1, "failed_count": 0, "failed_ids": [], "remaining_count": 0}
+
+    async def search_media_metadata(self, **filters):
+        self.calls.append(("search_media_metadata", filters))
+        return {
+            "results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}],
+            "pagination": {"page": 1, "per_page": 20, "total": 1, "total_pages": 1},
+        }
+
+    async def get_media_by_identifier(self, **identifiers):
+        self.calls.append(("get_media_by_identifier", identifiers))
+        return {"results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}], "total": 1}
+
     async def get_media_detail(self, media_id):
         self.calls.append(("get_media_detail", media_id))
         return {
@@ -1036,6 +1076,94 @@ async def test_scope_service_reads_progress_from_record_backing_media_id():
     assert server.calls == [("get_reading_progress", 99)]
     assert progress["backing_media_id"] == 99
     assert progress["percent_complete"] == 25.0
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_media_listing_search_and_trash_adjuncts_with_policy():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    keywords = await scope.list_backing_media_keywords(mode="server", query="ai", limit=5)
+    listed = await scope.list_backing_media_items(mode="server", page=2, results_per_page=25, include_keywords=True)
+    searched = await scope.search_backing_media_items(
+        mode="server",
+        query="paper",
+        media_types=["pdf"],
+        page=2,
+        results_per_page=25,
+    )
+    trash = await scope.list_backing_media_trash(mode="server", page=1, results_per_page=10, include_keywords=True)
+    emptied = await scope.empty_backing_media_trash(mode="server")
+    metadata = await scope.search_backing_media_metadata(
+        mode="server",
+        filters=[{"field": "doi", "op": "eq", "value": "10/example"}],
+        q="paper",
+    )
+    identifier = await scope.get_backing_media_by_identifier(mode="server", doi="10/example", group_by_media=False)
+
+    assert policy.calls == [
+        "media.items.keywords.list.server",
+        "media.items.list.server",
+        "media.items.list.server",
+        "media.items.trash.list.server",
+        "media.items.trash.delete.server",
+        "media.items.metadata_search.list.server",
+        "media.items.identifier_lookup.detail.server",
+    ]
+    assert keywords == {"keywords": ["ai", "testing"]}
+    assert listed["pagination"]["total_items"] == 1
+    assert searched["items"][0]["id"] == 99
+    assert trash["items"][0]["title"] == "Trashed Media"
+    assert emptied["deleted_count"] == 1
+    assert metadata["results"][0]["safe_metadata"]["doi"] == "10/example"
+    assert identifier["total"] == 1
+    assert server.calls[:7] == [
+        ("list_media_keywords", "ai", 5),
+        ("list_backing_media_items", 2, 25, True),
+        ("search_backing_media_items", 2, 25, {"query": "paper", "media_types": ["pdf"]}),
+        ("list_media_trash", 1, 10, True),
+        ("empty_media_trash",),
+        (
+            "search_media_metadata",
+            {
+                "filters": [{"field": "doi", "op": "eq", "value": "10/example"}],
+                "q": "paper",
+            },
+        ),
+        ("get_media_by_identifier", {"doi": "10/example", "group_by_media": False}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_local_server_media_listing_adjuncts_before_policy():
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.list_backing_media_keywords(mode="local")
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.list_backing_media_items(mode="local")
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.search_backing_media_items(mode="local")
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.list_backing_media_trash(mode="local")
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.empty_backing_media_trash(mode="local")
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.search_backing_media_metadata(mode="local")
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.get_backing_media_by_identifier(mode="local", doi="10/example")
+
+    assert policy.calls == []
 
 
 @pytest.mark.asyncio

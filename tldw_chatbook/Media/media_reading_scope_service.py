@@ -205,6 +205,18 @@ class MediaReadingScopeService:
         return f"media.items.keywords.{action}.{mode.value}"
 
     @staticmethod
+    def _media_item_trash_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.items.trash.{action}.{mode.value}"
+
+    @staticmethod
+    def _media_item_metadata_search_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.items.metadata_search.{action}.{mode.value}"
+
+    @staticmethod
+    def _media_item_identifier_lookup_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.items.identifier_lookup.{action}.{mode.value}"
+
+    @staticmethod
     def _media_item_file_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.items.file.{action}.{mode.value}"
 
@@ -392,6 +404,121 @@ class MediaReadingScopeService:
                 backing_media_id=backing_media_id,
             )
         return normalized
+
+    async def list_backing_media_keywords(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        query: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_keywords_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.list_media_keywords(query=query, limit=limit))
+        return self._as_mapping_payload(payload)
+
+    async def list_backing_media_items(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        page: int = 1,
+        results_per_page: int = 10,
+        include_keywords: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.list_backing_media_items(
+                page=page,
+                results_per_page=results_per_page,
+                include_keywords=include_keywords,
+            )
+        )
+        return self._as_mapping_payload(payload)
+
+    async def search_backing_media_items(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        page: int = 1,
+        results_per_page: int = 10,
+        **filters: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.search_backing_media_items(
+                page=page,
+                results_per_page=results_per_page,
+                **filters,
+            )
+        )
+        return self._as_mapping_payload(payload)
+
+    async def list_backing_media_trash(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        page: int = 1,
+        results_per_page: int = 10,
+        include_keywords: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_trash_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.list_media_trash(
+                page=page,
+                results_per_page=results_per_page,
+                include_keywords=include_keywords,
+            )
+        )
+        return self._as_mapping_payload(payload)
+
+    async def empty_backing_media_trash(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_trash_action_id(normalized_mode, "delete"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.empty_media_trash())
+        return self._as_mapping_payload(payload)
+
+    async def search_backing_media_metadata(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        **filters: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_metadata_search_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.search_media_metadata(**filters))
+        return self._as_mapping_payload(payload)
+
+    async def get_backing_media_by_identifier(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        **identifiers: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_identifier_lookup_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.get_media_by_identifier(**identifiers))
+        return self._as_mapping_payload(payload)
 
     async def get_backing_media_item(
         self,
