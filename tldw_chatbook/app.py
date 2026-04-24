@@ -1576,7 +1576,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _wire_writing_services(self) -> None:
         try:
             self.writing_db = WritingDatabase(get_writing_db_path(), client_id=self.client_id)
-            self.local_writing_service = LocalWritingService(self.writing_db)
+            self.local_writing_service = LocalWritingService(
+                self.writing_db,
+                notification_dispatch_service=self.notification_dispatch_service,
+                notification_app=self,
+            )
         except Exception:
             logger.warning("Local writing service unavailable during app wiring", exc_info=True)
             self.writing_db = None

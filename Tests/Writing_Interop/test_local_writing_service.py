@@ -1,6 +1,8 @@
 import pytest
 
 from tldw_chatbook.DB.Writing_DB import WritingDatabase
+from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
 from tldw_chatbook.Writing_Interop.writing_models import (
     WritingChapter,
@@ -258,6 +260,42 @@ async def test_autosave_manual_versions_and_restore_version_semantics(service):
     assert restored.body_markdown == "Draft B"
     assert restored.version == changed.version + 1
     assert [version.version_number for version in versions] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_local_service_dispatches_writing_lifecycle_notifications(db, tmp_path):
+    notifications = ClientNotificationsDB(tmp_path / "notifications.db")
+    dispatcher = NotificationDispatchService(store=notifications)
+    service = LocalWritingService(db, notification_dispatch_service=dispatcher)
+    project = await service.create_project(title="Project")
+    manuscript = await service.create_manuscript(project.id, title="Book")
+    scene = await service.create_scene(
+        project.id,
+        title="Scene",
+        manuscript_id=manuscript.id,
+        body_markdown="Draft A",
+    )
+
+    version = await service.create_version("scene", scene.id, label="Checkpoint")
+    await service.autosave_scene(scene.id, body_markdown="Draft B", expected_version=1)
+    restored = await service.restore_version_to_working_state(version.id, expected_version=2)
+
+    rows = notifications.list_notifications(limit=10, category="writing")
+    assert [row["title"] for row in rows] == [
+        "Local writing version restored",
+        "Local writing version created",
+    ]
+    assert rows[0]["source_backend"] == "local"
+    assert rows[0]["source_entity_kind"] == "writing_scene"
+    assert rows[0]["source_entity_id"] == restored.id
+    assert rows[0]["severity"] == "info"
+    assert rows[0]["payload"]["action"] == "version_restored"
+    assert rows[0]["payload"]["version_id"] == version.id
+    assert rows[1]["source_entity_kind"] == "writing_version"
+    assert rows[1]["source_entity_id"] == version.id
+    assert rows[1]["payload"]["action"] == "version_created"
+    assert rows[1]["payload"]["entity_kind"] == "scene"
+    assert rows[1]["payload"]["entity_id"] == scene.id
 
 
 @pytest.mark.asyncio

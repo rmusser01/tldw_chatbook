@@ -172,6 +172,8 @@ def test_app_initializes_writing_services(app):
     assert isinstance(app.server_writing_service, ServerWritingService)
     assert isinstance(app.writing_scope_service, WritingScopeService)
     assert app.local_writing_service.db is app.writing_db
+    assert app.local_writing_service.notification_dispatch_service is app.notification_dispatch_service
+    assert app.local_writing_service.notification_app is app
     assert app.writing_scope_service.local_service is app.local_writing_service
     assert app.writing_scope_service.server_service is app.server_writing_service
     assert app.writing_scope_service.policy_enforcer is app.service_policy_enforcer

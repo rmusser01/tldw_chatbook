@@ -30,13 +30,59 @@ WRITING_FILTER_UNSET = object()
 class LocalWritingService:
     """Thin local-only wrapper that presents WritingDatabase as an async backend."""
 
-    def __init__(self, db: WritingDatabase | None):
+    def __init__(
+        self,
+        db: WritingDatabase | None,
+        *,
+        notification_dispatch_service: Any = None,
+        notification_app: Any = None,
+    ):
         self.db = db
+        self.notification_dispatch_service = notification_dispatch_service
+        self.notification_app = notification_app
+
+    def configure_notification_dispatch(
+        self,
+        *,
+        notification_dispatch_service: Any = None,
+        notification_app: Any = None,
+    ) -> None:
+        self.notification_dispatch_service = notification_dispatch_service
+        self.notification_app = notification_app
 
     def _require_db(self) -> WritingDatabase:
         if self.db is None:
             raise ValueError("Local writing backend is unavailable.")
         return self.db
+
+    def _dispatch_local_notification(
+        self,
+        *,
+        title: str,
+        message: str,
+        source_entity_id: str | None,
+        source_entity_kind: str,
+        severity: str = "info",
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        dispatcher = getattr(self, "notification_dispatch_service", None)
+        dispatch = getattr(dispatcher, "dispatch", None)
+        if not callable(dispatch):
+            return None
+        try:
+            return dispatch(
+                app=getattr(self, "notification_app", None),
+                category="writing",
+                title=title,
+                message=message,
+                severity=severity,
+                source_backend="local",
+                source_entity_id=source_entity_id,
+                source_entity_kind=source_entity_kind,
+                payload=payload or {},
+            )
+        except Exception:
+            return None
 
     def _normalize_project_or_none(self, row: Any) -> WritingProject | None:
         return None if row is None else normalize_local_project_row(row)
@@ -133,7 +179,9 @@ class LocalWritingService:
         expected_version: int | None = None,
     ) -> WritingProject:
         row = self._require_db().restore_project(project_id, expected_version=expected_version)
-        return normalize_local_project_row(row)
+        project = normalize_local_project_row(row)
+        self._dispatch_restored_entity_notification(entity_kind="project", entity=project)
+        return project
 
     async def list_manuscripts(
         self,
@@ -202,7 +250,9 @@ class LocalWritingService:
         expected_version: int | None = None,
     ) -> WritingManuscript:
         row = self._require_db().restore_manuscript(manuscript_id, expected_version=expected_version)
-        return normalize_local_manuscript_row(row)
+        manuscript = normalize_local_manuscript_row(row)
+        self._dispatch_restored_entity_notification(entity_kind="manuscript", entity=manuscript)
+        return manuscript
 
     async def list_chapters(
         self,
@@ -289,7 +339,9 @@ class LocalWritingService:
         expected_version: int | None = None,
     ) -> WritingChapter:
         row = self._require_db().restore_chapter(chapter_id, expected_version=expected_version)
-        return normalize_local_chapter_row(row)
+        chapter = normalize_local_chapter_row(row)
+        self._dispatch_restored_entity_notification(entity_kind="chapter", entity=chapter)
+        return chapter
 
     async def list_scenes(
         self,
@@ -410,7 +462,9 @@ class LocalWritingService:
         expected_version: int | None = None,
     ) -> WritingScene:
         row = self._require_db().restore_scene(scene_id, expected_version=expected_version)
-        return normalize_local_scene_row(row)
+        scene = normalize_local_scene_row(row)
+        self._dispatch_restored_entity_notification(entity_kind="scene", entity=scene)
+        return scene
 
     async def get_project_structure(self, project_id: str) -> dict[str, Any]:
         structure = self._require_db().get_project_structure(project_id)
@@ -706,7 +760,23 @@ class LocalWritingService:
             body_markdown=body_markdown,
             label=label,
         )
-        return normalize_local_version_row(row)
+        version = normalize_local_version_row(row)
+        self._dispatch_local_notification(
+            title="Local writing version created",
+            message=f"Local writing version created for {entity_kind} {entity_id}.",
+            source_entity_id=version.id,
+            source_entity_kind="writing_version",
+            payload={
+                "action": "version_created",
+                "entity_kind": version.entity_kind,
+                "entity_id": version.entity_id,
+                "project_id": version.project_id,
+                "version_id": version.id,
+                "version_number": version.version_number,
+                "label": label,
+            },
+        )
+        return version
 
     async def list_versions(
         self,
@@ -749,7 +819,22 @@ class LocalWritingService:
             version_id,
             expected_version=expected_version,
         )
-        return self._normalize_restored_row(row, version["entity_kind"])
+        restored = self._normalize_restored_row(row, version["entity_kind"])
+        self._dispatch_local_notification(
+            title="Local writing version restored",
+            message=f"Local writing version restored for {version['entity_kind']} {version['entity_id']}.",
+            source_entity_id=getattr(restored, "id", None),
+            source_entity_kind=f"writing_{version['entity_kind']}",
+            payload={
+                "action": "version_restored",
+                "entity_kind": version["entity_kind"],
+                "entity_id": version["entity_id"],
+                "project_id": version.get("project_id"),
+                "version_id": version_id,
+                "version_number": version.get("version_number"),
+            },
+        )
+        return restored
 
     def _normalize_restored_row(
         self,
@@ -763,6 +848,26 @@ class LocalWritingService:
         if entity_kind == "scene":
             return normalize_local_scene_row(row)
         raise ValueError(f"Unsupported writing version entity kind: {entity_kind}")
+
+    def _dispatch_restored_entity_notification(
+        self,
+        *,
+        entity_kind: str,
+        entity: WritingProject | WritingManuscript | WritingChapter | WritingScene,
+    ) -> None:
+        self._dispatch_local_notification(
+            title=f"Local writing {entity_kind} restored",
+            message=f"Local writing {entity_kind} restored: {entity.title}",
+            source_entity_id=entity.id,
+            source_entity_kind=f"writing_{entity_kind}",
+            payload={
+                "action": "restored",
+                "entity_kind": entity_kind,
+                "entity_id": entity.id,
+                "project_id": getattr(entity, "project_id", entity.id),
+                "version": entity.version,
+            },
+        )
 
     async def list_trash(
         self,
