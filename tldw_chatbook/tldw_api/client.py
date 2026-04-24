@@ -14,7 +14,8 @@ import httpx
 # Local Imports
 from .schemas import (
     ProcessVideoRequest, ProcessAudioRequest, ProcessPDFRequest,
-    ProcessEbookRequest, ProcessDocumentRequest, ProcessXMLRequest, ProcessMediaWikiRequest,
+    ProcessEbookRequest, ProcessDocumentRequest, ProcessCodeRequest, ProcessEmailRequest,
+    ProcessXMLRequest, ProcessMediaWikiRequest,
     ProcessPlaintextRequest,
     BatchMediaProcessResponse, MediaItemProcessResult,
     BatchProcessXMLResponse, ProcessedMediaWikiPage,
@@ -4211,6 +4212,24 @@ class TLDWAPIClient:
         httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
         try:
             response_dict = await self._request("POST", "/api/v1/media/process-documents", data=form_data, files=httpx_files)
+            return BatchMediaProcessResponse(**response_dict)
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def process_code(self, request_data: ProcessCodeRequest, file_paths: Optional[List[str]] = None) -> BatchMediaProcessResponse:
+        form_data = model_to_form_data(request_data)
+        httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
+        try:
+            response_dict = await self._request("POST", "/api/v1/media/process-code", data=form_data, files=httpx_files)
+            return BatchMediaProcessResponse(**response_dict)
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def process_email(self, request_data: ProcessEmailRequest, file_paths: Optional[List[str]] = None) -> BatchMediaProcessResponse:
+        form_data = model_to_form_data(request_data)
+        httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
+        try:
+            response_dict = await self._request("POST", "/api/v1/media/process-emails", data=form_data, files=httpx_files)
             return BatchMediaProcessResponse(**response_dict)
         finally:
             cleanup_file_objects(httpx_files)

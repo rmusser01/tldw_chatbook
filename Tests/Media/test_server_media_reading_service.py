@@ -5,8 +5,10 @@ import pytest
 from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
 from tldw_chatbook.tldw_api import (
     ProcessAudioRequest,
+    ProcessCodeRequest,
     ProcessDocumentRequest,
     ProcessEbookRequest,
+    ProcessEmailRequest,
     ProcessPDFRequest,
     ProcessVideoRequest,
     ReprocessMediaRequest,
@@ -93,6 +95,14 @@ class FakeClient:
 
     async def process_document(self, request_data, file_paths=None):
         self.calls.append(("process_document", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_code(self, request_data, file_paths=None):
+        self.calls.append(("process_code", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_email(self, request_data, file_paths=None):
+        self.calls.append(("process_email", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def get_reading_item(self, item_id):
@@ -850,6 +860,8 @@ async def test_server_service_routes_media_processing_controls_to_client():
     pdf = await service.process_pdf(ProcessPDFRequest(title="PDF"), file_paths=["paper.pdf"])
     ebook = await service.process_ebook(ProcessEbookRequest(title="Book"), file_paths=["book.epub"])
     document = await service.process_document(ProcessDocumentRequest(title="Doc"), file_paths=["doc.docx"])
+    code = await service.process_code(ProcessCodeRequest(chunk_method="lines"), file_paths=["project.py"])
+    email = await service.process_email(ProcessEmailRequest(title="Inbox"), file_paths=["inbox.eml"])
 
     assert models["all_models"] == ["whisper-small"]
     assert reprocessed["chunks_created"] == 3
@@ -858,7 +870,9 @@ async def test_server_service_routes_media_processing_controls_to_client():
     assert pdf["processed_count"] == 1
     assert ebook["processed_count"] == 1
     assert document["processed_count"] == 1
-    assert client.calls[:7] == [
+    assert code["processed_count"] == 1
+    assert email["processed_count"] == 1
+    assert client.calls[:9] == [
         ("get_media_transcription_models",),
         (
             "reprocess_media",
@@ -878,6 +892,8 @@ async def test_server_service_routes_media_processing_controls_to_client():
         ("process_pdf", ProcessPDFRequest(title="PDF").model_dump(exclude_none=True, mode="json"), ["paper.pdf"]),
         ("process_ebook", ProcessEbookRequest(title="Book").model_dump(exclude_none=True, mode="json"), ["book.epub"]),
         ("process_document", ProcessDocumentRequest(title="Doc").model_dump(exclude_none=True, mode="json"), ["doc.docx"]),
+        ("process_code", ProcessCodeRequest(chunk_method="lines").model_dump(exclude_none=True, mode="json"), ["project.py"]),
+        ("process_email", ProcessEmailRequest(title="Inbox").model_dump(exclude_none=True, mode="json"), ["inbox.eml"]),
     ]
 
 

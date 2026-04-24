@@ -44,6 +44,8 @@ from tldw_chatbook.tldw_api import (
     MediaTrashEmptyResponse,
     MediaTranscriptionModelsResponse,
     MediaUpdateRequest,
+    ProcessCodeRequest,
+    ProcessEmailRequest,
     ReadingDigestOutputsListResponse,
     ReadingDigestScheduleCreateRequest,
     ReadingDigestScheduleResponse,
@@ -58,6 +60,54 @@ from tldw_chatbook.tldw_api import (
     TLDWAPIClient,
     ServerMediaListResponse,
 )
+
+
+@pytest.mark.asyncio
+async def test_media_code_and_email_processing_routes_wire_to_server_contract(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {"processed_count": 1, "errors_count": 0, "errors": [], "results": []},
+            {"processed_count": 1, "errors_count": 0, "errors": [], "results": []},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    code = await client.process_code(
+        ProcessCodeRequest(
+            urls=["https://example.com/project.py"],
+            chunk_method="lines",
+            chunk_size=80,
+            chunk_overlap=10,
+        )
+    )
+    email = await client.process_email(
+        ProcessEmailRequest(
+            title="Inbox",
+            accept_archives=True,
+            ingest_attachments=True,
+            max_depth=3,
+        )
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/media/process-code")
+    assert mocked.await_args_list[0].kwargs["data"] == {
+        "urls": ["https://example.com/project.py"],
+        "perform_chunking": "true",
+        "chunk_method": "lines",
+        "chunk_size": "80",
+        "chunk_overlap": "10",
+    }
+    assert mocked.await_args_list[0].kwargs["files"] is None
+    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/media/process-emails")
+    assert mocked.await_args_list[1].kwargs["data"]["media_type"] == "email"
+    assert mocked.await_args_list[1].kwargs["data"]["title"] == "Inbox"
+    assert mocked.await_args_list[1].kwargs["data"]["accept_archives"] == "true"
+    assert mocked.await_args_list[1].kwargs["data"]["ingest_attachments"] == "true"
+    assert mocked.await_args_list[1].kwargs["data"]["max_depth"] == "3"
+    assert mocked.await_args_list[1].kwargs["files"] is None
+    assert code.processed_count == 1
+    assert email.processed_count == 1
 
 
 @pytest.mark.asyncio

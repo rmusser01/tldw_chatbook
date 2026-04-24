@@ -649,6 +649,34 @@ class MediaReadingScopeService:
             file_paths=file_paths,
         )
 
+    async def process_media_code(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+        file_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_code",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
+
+    async def process_media_email(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+        file_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_email",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
+
     async def get_backing_media_item(
         self,
         *,

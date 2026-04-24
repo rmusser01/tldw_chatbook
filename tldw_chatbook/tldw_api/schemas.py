@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, HttpUrl
 # Enum-like Literals from API schema
 MediaType = Literal['video', 'audio', 'document', 'pdf', 'ebook', 'xml', 'mediawiki_dump', 'plaintext']
 ChunkMethod = Literal['semantic', 'tokens', 'paragraphs', 'sentences', 'words', 'ebook_chapters', 'json']
+CodeChunkMethod = Literal['code', 'lines']
 PdfEngine = Literal['pymupdf4llm', 'pymupdf', 'docling']
 ScrapeMethod = Literal["individual", "sitemap", "url_level", "recursive_scraping"]
 
@@ -72,6 +73,26 @@ class ProcessEbookRequest(BaseMediaRequest):
 class ProcessDocumentRequest(BaseMediaRequest):
     chunk_method: Optional[ChunkMethod] = 'sentences' # Default for documents
     chunk_size: int = 1000
+
+class ProcessCodeRequest(BaseModel):
+    # Matches server ProcessCodeForm; this processing-only endpoint does not
+    # accept title/author/keywords metadata.
+    urls: Optional[List[str]] = None
+    perform_chunking: bool = True
+    chunk_method: Optional[CodeChunkMethod] = 'code'
+    chunk_size: int = 4000
+    chunk_overlap: int = 200
+
+class ProcessEmailRequest(BaseMediaRequest):
+    media_type: Literal['email'] = 'email'
+    keep_original_file: bool = False
+    chunk_method: Optional[ChunkMethod] = 'sentences'
+    chunk_size: int = 1000
+    ingest_attachments: bool = False
+    max_depth: int = 2
+    accept_archives: bool = False
+    accept_mbox: bool = False
+    accept_pst: bool = False
 
 class ProcessXMLRequest(BaseModel): # Based on XMLIngestRequest
     title: Optional[str] = None

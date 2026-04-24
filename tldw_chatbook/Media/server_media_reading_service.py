@@ -19,8 +19,10 @@ from ..tldw_api import (
     MediaKeywordsUpdateRequest,
     MediaUpdateRequest,
     ProcessAudioRequest,
+    ProcessCodeRequest,
     ProcessDocumentRequest,
     ProcessEbookRequest,
+    ProcessEmailRequest,
     ProcessPDFRequest,
     ProcessVideoRequest,
     ReadingArchiveCreateRequest,
@@ -155,6 +157,12 @@ class ServerMediaReadingService:
 
     async def process_document(self, request_data: ProcessDocumentRequest, file_paths: list[str] | None = None) -> Any:
         return await self._require_client().process_document(request_data, file_paths=file_paths)
+
+    async def process_code(self, request_data: ProcessCodeRequest, file_paths: list[str] | None = None) -> Any:
+        return await self._require_client().process_code(request_data, file_paths=file_paths)
+
+    async def process_email(self, request_data: ProcessEmailRequest, file_paths: list[str] | None = None) -> Any:
+        return await self._require_client().process_email(request_data, file_paths=file_paths)
 
     async def get_media_detail(self, media_id: Any) -> Any:
         return await self._require_client().get_reading_item(int(media_id))

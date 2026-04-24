@@ -10,8 +10,10 @@ from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingSer
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 from tldw_chatbook.tldw_api import (
     ProcessAudioRequest,
+    ProcessCodeRequest,
     ProcessDocumentRequest,
     ProcessEbookRequest,
+    ProcessEmailRequest,
     ProcessPDFRequest,
     ProcessVideoRequest,
 )
@@ -332,6 +334,14 @@ class FakeServerMediaService:
 
     async def process_document(self, request_data, *, file_paths=None):
         self.calls.append(("process_document", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_code(self, request_data, *, file_paths=None):
+        self.calls.append(("process_code", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_email(self, request_data, *, file_paths=None):
+        self.calls.append(("process_email", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def get_media_detail(self, media_id):
@@ -1229,10 +1239,14 @@ async def test_scope_service_routes_server_media_processing_controls_with_policy
     pdf = await scope.process_media_pdf(mode="server", request_data=ProcessPDFRequest(title="PDF"), file_paths=["paper.pdf"])
     ebook = await scope.process_media_ebook(mode="server", request_data=ProcessEbookRequest(title="Book"), file_paths=["book.epub"])
     document = await scope.process_media_document(mode="server", request_data=ProcessDocumentRequest(title="Doc"), file_paths=["doc.docx"])
+    code = await scope.process_media_code(mode="server", request_data=ProcessCodeRequest(chunk_method="lines"), file_paths=["project.py"])
+    email = await scope.process_media_email(mode="server", request_data=ProcessEmailRequest(title="Inbox"), file_paths=["inbox.eml"])
 
     assert policy.calls == [
         "media.processing_models.list.server",
         "media.items.reprocess.launch.server",
+        "media.processing.launch.server",
+        "media.processing.launch.server",
         "media.processing.launch.server",
         "media.processing.launch.server",
         "media.processing.launch.server",
@@ -1246,7 +1260,9 @@ async def test_scope_service_routes_server_media_processing_controls_with_policy
     assert pdf["processed_count"] == 1
     assert ebook["processed_count"] == 1
     assert document["processed_count"] == 1
-    assert server.calls[:7] == [
+    assert code["processed_count"] == 1
+    assert email["processed_count"] == 1
+    assert server.calls[:9] == [
         ("get_media_transcription_models",),
         ("reprocess_media", 99, {"perform_chunking": True, "generate_embeddings": True}),
         ("process_video", ProcessVideoRequest(title="Video").model_dump(exclude_none=True, mode="json"), ["video.mp4"]),
@@ -1254,6 +1270,8 @@ async def test_scope_service_routes_server_media_processing_controls_with_policy
         ("process_pdf", ProcessPDFRequest(title="PDF").model_dump(exclude_none=True, mode="json"), ["paper.pdf"]),
         ("process_ebook", ProcessEbookRequest(title="Book").model_dump(exclude_none=True, mode="json"), ["book.epub"]),
         ("process_document", ProcessDocumentRequest(title="Doc").model_dump(exclude_none=True, mode="json"), ["doc.docx"]),
+        ("process_code", ProcessCodeRequest(chunk_method="lines").model_dump(exclude_none=True, mode="json"), ["project.py"]),
+        ("process_email", ProcessEmailRequest(title="Inbox").model_dump(exclude_none=True, mode="json"), ["inbox.eml"]),
     ]
 
 
@@ -1280,6 +1298,10 @@ async def test_scope_service_rejects_local_server_media_processing_controls_befo
         await scope.process_media_ebook(mode="local", request_data=ProcessEbookRequest())
     with pytest.raises(ValueError, match="Server media processing requires server mode."):
         await scope.process_media_document(mode="local", request_data=ProcessDocumentRequest())
+    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+        await scope.process_media_code(mode="local", request_data=ProcessCodeRequest())
+    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+        await scope.process_media_email(mode="local", request_data=ProcessEmailRequest())
 
     assert policy.calls == []
 
