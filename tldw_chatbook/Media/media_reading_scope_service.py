@@ -294,10 +294,6 @@ class MediaReadingScopeService:
         raise ValueError("Local reading TTS is not available yet.")
 
     @staticmethod
-    def _raise_local_reading_bulk_update_unavailable() -> None:
-        raise ValueError("Bulk reading item mutation requires server mode.")
-
-    @staticmethod
     def _raise_local_reading_digest_schedules_unavailable() -> None:
         raise ValueError("Local reading digest schedules are not available yet.")
 
@@ -1014,8 +1010,6 @@ class MediaReadingScopeService:
         hard: bool = False,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_bulk_update_unavailable()
         action_kind = "delete" if action == "delete" else "update"
         self._enforce_policy(self._reading_action_id(normalized_mode, action_kind))
         service = self._service_for_mode(normalized_mode)

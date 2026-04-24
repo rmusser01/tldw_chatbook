@@ -371,3 +371,35 @@ def test_local_service_saves_reading_url_to_local_media(memory_db_factory):
     assert detail["content"] == "Locally saved content"
     assert detail["is_read_it_later"] is True
     assert read_it_later == {"item_id": saved["media_id"], "links": []}
+
+
+def test_local_service_bulk_updates_reading_items(memory_db_factory):
+    db = memory_db_factory()
+    first_id, _, _ = db.add_media_with_keywords(title="First", content="A", media_type="article", keywords=["old"])
+    second_id, _, _ = db.add_media_with_keywords(title="Second", content="B", media_type="article", keywords=[])
+    service = LocalMediaReadingService(db)
+
+    saved = service.bulk_update_reading_items(
+        item_ids=[first_id, second_id],
+        action="set_status",
+        status="saved",
+    )
+    tagged = service.bulk_update_reading_items(
+        item_ids=[first_id],
+        action="replace_tags",
+        tags=["new"],
+    )
+
+    assert saved["succeeded"] == 2
+    assert service.get_media_detail(first_id)["is_read_it_later"] is True
+    assert service.get_media_detail(second_id)["is_read_it_later"] is True
+    assert tagged["succeeded"] == 1
+    assert db.fetch_keywords_for_media_batch([first_id]) == {first_id: ["new"]}
+
+    deleted = service.bulk_update_reading_items(
+        item_ids=[second_id],
+        action="delete",
+    )
+
+    assert deleted["succeeded"] == 1
+    assert db.get_media_by_id(second_id) is None

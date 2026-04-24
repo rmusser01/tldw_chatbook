@@ -282,6 +282,15 @@ class FakeLocalMediaService:
             "tags": request_data.tags,
         }
 
+    def bulk_update_reading_items(self, **kwargs):
+        self.calls.append(("bulk_update_reading_items", kwargs))
+        return {
+            "total": len(kwargs["item_ids"]),
+            "succeeded": len(kwargs["item_ids"]),
+            "failed": 0,
+            "results": [{"item_id": item_id, "success": True} for item_id in kwargs["item_ids"]],
+        }
+
     def ingest_web_content(self, **kwargs):
         raise ValueError("Local web-content ingest is not available yet.")
 
@@ -2067,11 +2076,12 @@ async def test_scope_service_local_save_and_remove_delegate_to_local_service():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_server_bulk_reading_item_mutations_and_rejects_local_mode():
+async def test_scope_service_routes_bulk_reading_item_mutations_with_policy():
     server = FakeServerMediaService()
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=server,
         policy_enforcer=policy,
     )
@@ -2097,14 +2107,22 @@ async def test_scope_service_routes_server_bulk_reading_item_mutations_and_rejec
         },
     )
 
-    with pytest.raises(ValueError, match="Bulk reading item mutation requires server mode"):
-        await scope.bulk_update_reading_items(
-            mode="local",
-            item_ids=[12],
-            action="delete",
-            hard=False,
-        )
-    assert policy.calls == ["media.reading.update.server"]
+    local_result = await scope.bulk_update_reading_items(
+        mode="local",
+        item_ids=[12],
+        action="delete",
+        hard=False,
+    )
+    assert local_result["backend"] == "local"
+    assert local_result["succeeded"] == 1
+    assert policy.calls == [
+        "media.reading.update.server",
+        "media.reading.delete.local",
+    ]
+    assert local.calls[-1] == (
+        "bulk_update_reading_items",
+        {"item_ids": [12], "action": "delete", "hard": False},
+    )
 
 
 @pytest.mark.asyncio

@@ -252,6 +252,62 @@ class LocalMediaReadingService:
             "tags": tags,
         }
 
+    def bulk_update_reading_items(
+        self,
+        *,
+        item_ids: list[int],
+        action: str,
+        status: str | None = None,
+        favorite: bool | None = None,
+        tags: list[str] | None = None,
+        hard: bool = False,
+    ) -> dict[str, Any]:
+        if hard:
+            raise ValueError("Local bulk reading delete supports soft delete only.")
+        if action == "set_favorite":
+            raise ValueError("Local bulk reading item mutation does not support favorite state yet.")
+
+        normalized_ids = [self._coerce_media_id(item_id) for item_id in item_ids]
+        normalized_tags = [tag.strip() for tag in self._normalize_filter_list(tags) if tag.strip()]
+        db = self._require_db()
+        results: list[dict[str, Any]] = []
+
+        for item_id in normalized_ids:
+            try:
+                if action == "set_status":
+                    normalized_status = str(status or "").strip().lower()
+                    if normalized_status in {"saved", "read_it_later", "read-it-later"}:
+                        self.save_to_read_it_later(item_id)
+                    elif normalized_status in {"read", "unsaved", "archived", "archive"}:
+                        self.remove_from_read_it_later(item_id)
+                    else:
+                        raise ValueError(f"Unsupported local reading status: {normalized_status}")
+                elif action == "add_tags":
+                    current = db.fetch_keywords_for_media_batch([item_id]).get(item_id, [])
+                    db.update_keywords_for_media(item_id, sorted(set(current) | set(normalized_tags)))
+                elif action == "remove_tags":
+                    current = db.fetch_keywords_for_media_batch([item_id]).get(item_id, [])
+                    db.update_keywords_for_media(item_id, [tag for tag in current if tag not in set(normalized_tags)])
+                elif action == "replace_tags":
+                    db.update_keywords_for_media(item_id, normalized_tags)
+                elif action == "delete":
+                    deleted = self.delete_media(item_id)
+                    if not deleted:
+                        raise ValueError(f"Media item {item_id} was not deleted.")
+                else:
+                    raise ValueError(f"Unsupported local reading bulk action: {action}")
+                results.append({"item_id": item_id, "success": True})
+            except Exception as exc:
+                results.append({"item_id": item_id, "success": False, "error": str(exc)})
+
+        succeeded = sum(1 for result in results if result["success"])
+        return {
+            "total": len(normalized_ids),
+            "succeeded": succeeded,
+            "failed": len(normalized_ids) - succeeded,
+            "results": results,
+        }
+
     def remove_from_read_it_later(self, media_id: Any) -> Any:
         db = self._require_db()
         normalized_media_id = self._coerce_media_id(media_id)
