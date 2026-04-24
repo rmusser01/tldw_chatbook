@@ -719,6 +719,45 @@ def test_local_service_provides_document_workspace_helpers(memory_db_factory):
     assert deleted == {"deleted": True}
 
 
+def test_local_service_extracts_document_figures_from_markdown_and_html(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        url="local://document/figures",
+        title="Figure Doc",
+        media_type="document",
+        content=(
+            "# Figures\n"
+            "![Architecture](images/arch.png \"System architecture\")\n\n"
+            "<img src=\"https://example.com/chart.jpg\" alt=\"Chart\" width=\"120\" height=\"80\">\n"
+            "<img src=\"https://example.com/tiny.gif\" alt=\"Tiny\" width=\"20\" height=\"20\">\n"
+        ),
+        keywords=["workspace"],
+        overwrite=True,
+    )
+    service = LocalMediaReadingService(db)
+
+    figures = service.get_document_figures(media_id, min_size=50)
+
+    assert figures["has_figures"] is True
+    assert figures["total_count"] == 2
+    assert figures["figures"][0] == {
+        "id": "local-figure-1",
+        "page": 1,
+        "width": 50,
+        "height": 50,
+        "format": "png",
+        "data_url": None,
+        "caption": "System architecture",
+        "source_url": "images/arch.png",
+        "alt_text": "Architecture",
+        "line": 2,
+    }
+    assert figures["figures"][1]["source_url"] == "https://example.com/chart.jpg"
+    assert figures["figures"][1]["width"] == 120
+    assert figures["figures"][1]["height"] == 80
+    assert figures["figures"][1]["format"] == "jpg"
+
+
 def test_local_service_ingests_web_content_without_server(memory_db_factory, monkeypatch):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)

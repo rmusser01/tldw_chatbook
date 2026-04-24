@@ -1516,9 +1516,107 @@ class LocalMediaReadingService:
             "total_count": len(outline),
         }
 
+    @staticmethod
+    def _parse_html_attributes(tag: str) -> dict[str, str]:
+        attrs: dict[str, str] = {}
+        for match in re.finditer(r"""([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))""", tag):
+            value = next(group for group in match.groups()[1:] if group is not None)
+            attrs[match.group(1).lower()] = unescape(value.strip())
+        return attrs
+
+    @staticmethod
+    def _document_figure_format(source_url: str) -> str:
+        if source_url.startswith("data:image/"):
+            return source_url.removeprefix("data:image/").split(";", 1)[0].lower() or "image"
+        path = urlparse(source_url).path or source_url
+        suffix = Path(path).suffix.lower().lstrip(".")
+        return suffix or "image"
+
+    @staticmethod
+    def _document_figure_dimension(value: Any, fallback: int) -> int:
+        if value is None:
+            return fallback
+        match = re.search(r"\d+", str(value))
+        return int(match.group(0)) if match else fallback
+
+    def _document_figure_from_source(
+        self,
+        *,
+        index: int,
+        source_url: str,
+        alt_text: str | None,
+        caption: str | None,
+        line_number: int,
+        min_size: int,
+        width: Any = None,
+        height: Any = None,
+    ) -> dict[str, Any] | None:
+        normalized_min_size = max(1, int(min_size))
+        normalized_width = self._document_figure_dimension(width, normalized_min_size)
+        normalized_height = self._document_figure_dimension(height, normalized_min_size)
+        if normalized_width < normalized_min_size or normalized_height < normalized_min_size:
+            return None
+        return {
+            "id": f"local-figure-{index}",
+            "page": 1,
+            "width": normalized_width,
+            "height": normalized_height,
+            "format": self._document_figure_format(source_url),
+            "data_url": source_url if source_url.startswith("data:image/") else None,
+            "caption": caption or alt_text or None,
+            "source_url": source_url,
+            "alt_text": alt_text or None,
+            "line": line_number,
+        }
+
+    def _extract_document_figures(self, content: str, *, min_size: int) -> list[dict[str, Any]]:
+        figures: list[dict[str, Any]] = []
+        markdown_pattern = re.compile(r"""!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+["']([^"']+)["'])?\s*\)""")
+        html_img_pattern = re.compile(r"""(?is)<img\b[^>]*>""")
+
+        for line_number, line in enumerate(content.splitlines(), start=1):
+            for match in markdown_pattern.finditer(line):
+                source_url = unescape(match.group(2).strip())
+                figure = self._document_figure_from_source(
+                    index=len(figures) + 1,
+                    source_url=source_url,
+                    alt_text=unescape(match.group(1).strip()) or None,
+                    caption=unescape(match.group(3).strip()) if match.group(3) else None,
+                    line_number=line_number,
+                    min_size=min_size,
+                )
+                if figure is not None:
+                    figures.append(figure)
+
+            for match in html_img_pattern.finditer(line):
+                attrs = self._parse_html_attributes(match.group(0))
+                source_url = attrs.get("src")
+                if not source_url:
+                    continue
+                figure = self._document_figure_from_source(
+                    index=len(figures) + 1,
+                    source_url=source_url,
+                    alt_text=attrs.get("alt"),
+                    caption=attrs.get("title") or attrs.get("alt"),
+                    line_number=line_number,
+                    min_size=min_size,
+                    width=attrs.get("width"),
+                    height=attrs.get("height"),
+                )
+                if figure is not None:
+                    figures.append(figure)
+
+        return figures
+
     def get_document_figures(self, media_id: Any, *, min_size: int = 50) -> dict[str, Any]:
-        self._local_document_detail(media_id)
-        return {"media_id": self._coerce_media_id(media_id), "has_figures": False, "figures": [], "total_count": 0}
+        detail = self._local_document_detail(media_id)
+        figures = self._extract_document_figures(str(detail.get("content") or ""), min_size=min_size)
+        return {
+            "media_id": self._coerce_media_id(media_id),
+            "has_figures": bool(figures),
+            "figures": figures,
+            "total_count": len(figures),
+        }
 
     @staticmethod
     def _document_annotation_id(highlight_id: Any) -> str:
