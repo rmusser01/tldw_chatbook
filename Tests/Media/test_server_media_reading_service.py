@@ -12,6 +12,7 @@ from tldw_chatbook.tldw_api import (
     ProcessPDFRequest,
     ProcessVideoRequest,
     ReprocessMediaRequest,
+    WebScrapingRequest,
 )
 
 
@@ -731,6 +732,22 @@ class FakeClient:
             ],
         }
 
+    async def process_web_scraping(self, request_data):
+        self.calls.append(("process_web_scraping", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "status": "success",
+            "message": "Web scraping processed",
+            "count": 1,
+            "results": [
+                {
+                    "url": request_data.url_input,
+                    "title": "Scraped Article",
+                    "content": "Body",
+                    "extraction_successful": True,
+                }
+            ],
+        }
+
 
 @pytest.mark.asyncio
 async def test_server_service_delegates_search_and_detail_to_reading_item_endpoints():
@@ -1444,6 +1461,40 @@ async def test_server_service_routes_web_content_ingest_with_schema_object():
                 "hierarchical_chunking": False,
                 "use_cookies": False,
                 "perform_confabulation_check_of_analysis": False,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_legacy_web_scraping_process_contract():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    result = await service.process_web_scraping(
+        WebScrapingRequest(
+            scrape_method="individual",
+            url_input="https://example.com/a",
+            max_pages=3,
+            summarize_checkbox=True,
+            mode="ephemeral",
+        )
+    )
+
+    assert result["status"] == "success"
+    assert result["results"][0]["title"] == "Scraped Article"
+    assert client.calls == [
+        (
+            "process_web_scraping",
+            {
+                "scrape_method": "individual",
+                "url_input": "https://example.com/a",
+                "max_pages": 3,
+                "max_depth": 3,
+                "summarize_checkbox": True,
+                "keywords": "default,no_keyword_set",
+                "temperature": 0.7,
+                "mode": "ephemeral",
             },
         )
     ]

@@ -16,6 +16,7 @@ from tldw_chatbook.tldw_api import (
     ProcessEmailRequest,
     ProcessPDFRequest,
     ProcessVideoRequest,
+    WebScrapingRequest,
 )
 
 
@@ -879,6 +880,22 @@ class FakeServerMediaService:
                 {
                     "url": kwargs["urls"][0],
                     "title": "Article",
+                    "content": "Body",
+                    "extraction_successful": True,
+                }
+            ],
+        }
+
+    async def process_web_scraping(self, request_data):
+        self.calls.append(("process_web_scraping", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "status": "success",
+            "message": "Web scraping processed",
+            "count": 1,
+            "results": [
+                {
+                    "url": request_data.url_input,
+                    "title": "Scraped Article",
                     "content": "Body",
                     "extraction_successful": True,
                 }
@@ -1847,6 +1864,63 @@ async def test_scope_service_routes_server_web_content_ingest_and_denies_local_b
         await denied_scope.ingest_web_content(
             mode="local",
             urls=["https://example.com/a"],
+        )
+    assert denied_policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_legacy_web_scraping_process_contract():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    result = await scope.process_web_scraping(
+        mode="server",
+        request_data=WebScrapingRequest(
+            scrape_method="individual",
+            url_input="https://example.com/a",
+            max_pages=3,
+            summarize_checkbox=True,
+            mode="ephemeral",
+        ),
+    )
+
+    assert policy.calls == ["media.web_content_ingest.launch.server"]
+    assert result["status"] == "success"
+    assert result["results"][0]["title"] == "Scraped Article"
+    assert server.calls == [
+        (
+            "process_web_scraping",
+            {
+                "scrape_method": "individual",
+                "url_input": "https://example.com/a",
+                "max_pages": 3,
+                "max_depth": 3,
+                "summarize_checkbox": True,
+                "keywords": "default,no_keyword_set",
+                "temperature": 0.7,
+                "mode": "ephemeral",
+            },
+        )
+    ]
+
+    denied_policy = FakePolicyEnforcer.deny("blocked")
+    denied_scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=denied_policy,
+    )
+    with pytest.raises(ValueError, match="Local web-content ingest is not available yet."):
+        await denied_scope.process_web_scraping(
+            mode="local",
+            request_data=WebScrapingRequest(
+                scrape_method="individual",
+                url_input="https://example.com/a",
+            ),
         )
     assert denied_policy.calls == []
 

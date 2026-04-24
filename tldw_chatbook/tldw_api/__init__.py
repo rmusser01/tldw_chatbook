@@ -207,6 +207,7 @@ _EXPORT_GROUPS = (
             "ViewMode",
             "WebProcessResponse",
             "WebScrapedItemResult",
+            "WebScrapingRequest",
             "WebScrapeMethod",
         ),
     ),

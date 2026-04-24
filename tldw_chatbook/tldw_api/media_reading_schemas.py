@@ -615,6 +615,28 @@ class IngestWebContentRequest(BaseModel):
     score_threshold: float | None = None
 
 
+class WebScrapingRequest(BaseModel):
+    scrape_method: WebScrapeMethod
+    url_input: str
+    url_level: int | None = None
+    max_pages: int | None = Field(default=None, ge=1)
+    max_depth: int = 3
+    summarize_checkbox: bool = False
+    custom_prompt: str | None = None
+    api_name: str | None = None
+    keywords: str | None = "default,no_keyword_set"
+    custom_titles: str | None = None
+    system_prompt: str | None = None
+    temperature: float = 0.7
+    custom_cookies: list[dict[str, Any]] | None = None
+    mode: Literal["persist", "ephemeral"] = "persist"
+    user_agent: str | None = None
+    custom_headers: dict[str, str] | None = None
+    crawl_strategy: str | None = None
+    include_external: bool | None = None
+    score_threshold: float | None = None
+
+
 class WebScrapedItemResult(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -1402,6 +1424,7 @@ __all__ = [
     "FileValidationIssue",
     "FileValidationResult",
     "IngestWebContentRequest",
+    "WebScrapingRequest",
     "IngestionSourceCreateRequest",
     "IngestionSourceItemListResponse",
     "IngestionSourceItemResponse",

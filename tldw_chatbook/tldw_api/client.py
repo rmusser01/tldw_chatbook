@@ -118,6 +118,7 @@ from .media_reading_schemas import (
     ServerMediaListResponse,
     SubmitMediaIngestJobsResponse,
     WebProcessResponse,
+    WebScrapingRequest,
 )
 from .watchlists_schemas import (
     AlertRuleCreateRequest,
@@ -2208,6 +2209,14 @@ class TLDWAPIClient:
         response = await self._request(
             "POST",
             "/api/v1/media/ingest-web-content",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WebProcessResponse.model_validate(response)
+
+    async def process_web_scraping(self, request_data: WebScrapingRequest) -> WebProcessResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/media/process-web-scraping",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return WebProcessResponse.model_validate(response)

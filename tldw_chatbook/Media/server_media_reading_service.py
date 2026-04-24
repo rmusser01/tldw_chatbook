@@ -43,6 +43,7 @@ from ..tldw_api import (
     ReadingUpdateRequest,
     ReprocessMediaRequest,
     TLDWAPIClient,
+    WebScrapingRequest,
 )
 
 
@@ -609,6 +610,10 @@ class ServerMediaReadingService:
             **{key: value for key, value in options.items() if value is not None},
         )
         return await self._require_client().ingest_web_content(request_data)
+
+    async def process_web_scraping(self, request_data: WebScrapingRequest) -> Any:
+        response = await self._require_client().process_web_scraping(request_data)
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
 
     async def get_document_outline(self, media_id: Any) -> Any:
         response = await self._require_client().get_document_outline(int(media_id))

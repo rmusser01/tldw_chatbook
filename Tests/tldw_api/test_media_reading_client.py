@@ -62,6 +62,7 @@ from tldw_chatbook.tldw_api import (
     SubmitMediaIngestJobsResponse,
     TLDWAPIClient,
     ServerMediaListResponse,
+    WebScrapingRequest,
 )
 
 
@@ -1149,6 +1150,54 @@ async def test_ingest_web_content_route_wires_json_payload(monkeypatch):
     }
     assert isinstance(result, api.WebProcessResponse)
     assert result.count == 1
+    assert result.results[0].title == "Article"
+
+
+@pytest.mark.asyncio
+async def test_process_web_scraping_route_wires_legacy_json_payload(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "status": "success",
+            "message": "Web scraping processed",
+            "count": 1,
+            "results": [
+                {
+                    "url": "https://example.com/a",
+                    "title": "Article",
+                    "content": "Body",
+                    "extraction_successful": True,
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.process_web_scraping(
+        WebScrapingRequest(
+            scrape_method="individual",
+            url_input="https://example.com/a",
+            max_pages=3,
+            summarize_checkbox=True,
+            keywords="ai,web",
+            mode="ephemeral",
+            custom_headers={"X-Test": "1"},
+        )
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/media/process-web-scraping")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "scrape_method": "individual",
+        "url_input": "https://example.com/a",
+        "max_pages": 3,
+        "max_depth": 3,
+        "summarize_checkbox": True,
+        "keywords": "ai,web",
+        "temperature": 0.7,
+        "mode": "ephemeral",
+        "custom_headers": {"X-Test": "1"},
+    }
+    assert isinstance(result, api.WebProcessResponse)
     assert result.results[0].title == "Article"
 
 
