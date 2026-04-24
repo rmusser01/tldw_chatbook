@@ -5,7 +5,7 @@ Scope-aware routing for local notes, server notes, and workspace notes.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 
 class ScopeType(str, Enum):
@@ -40,6 +40,10 @@ class NotesScopeService:
     def _require_server_note_scope(self, scope: ScopeType | str) -> None:
         if self._normalize_scope(scope) != ScopeType.SERVER_NOTE:
             raise ValueError("Notes graph requires server note scope.")
+
+    def _require_server_link_scope(self, scope: ScopeType | str) -> None:
+        if self._normalize_scope(scope) != ScopeType.SERVER_NOTE:
+            raise ValueError("Manual note link creation requires server note scope.")
 
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -106,6 +110,172 @@ class NotesScopeService:
             service.unlink_note_from_keyword(user_id, note_id, existing_keyword_id)
 
         return normalized_keywords
+
+    @staticmethod
+    def _note_id(note: Mapping[str, Any]) -> str:
+        return str(note.get("id") or note.get("uuid") or "")
+
+    @staticmethod
+    def _keyword_id(keyword: Mapping[str, Any]) -> str:
+        value = keyword.get("id")
+        if value is None:
+            value = keyword.get("uuid") or keyword.get("keyword") or keyword.get("text")
+        return str(value)
+
+    @staticmethod
+    def _keyword_label(keyword: Mapping[str, Any]) -> str:
+        return str(keyword.get("keyword") or keyword.get("text") or keyword.get("name") or "")
+
+    def _build_local_notes_graph(
+        self,
+        *,
+        user_id: str,
+        center_note_id: Optional[str] = None,
+        edge_types: Optional[Sequence[str]] = None,
+        max_nodes: Optional[int] = None,
+        max_edges: Optional[int] = None,
+        max_degree: Optional[int] = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        service = self.local_notes_service
+        node_limit = max(1, int(max_nodes or 50))
+        edge_limit = max(0, int(200 if max_edges is None else max_edges))
+        degree_limit = max(1, int(max_degree or 50))
+        edge_type_filter = {str(edge_type) for edge_type in edge_types or []}
+        include_tag_edges = not edge_type_filter or "tag_membership" in edge_type_filter
+
+        nodes: dict[str, dict[str, Any]] = {}
+        edges: dict[str, dict[str, Any]] = {}
+        truncated_by: set[str] = set()
+
+        def add_node(node: dict[str, Any]) -> bool:
+            node_id = str(node.get("id") or "")
+            if not node_id:
+                return False
+            if node_id in nodes:
+                return True
+            if len(nodes) >= node_limit:
+                truncated_by.add("max_nodes")
+                return False
+            nodes[node_id] = node
+            return True
+
+        def add_note_node(note: Mapping[str, Any]) -> bool:
+            note_id = self._note_id(note)
+            return add_node(
+                {
+                    "id": note_id,
+                    "type": "note",
+                    "label": str(note.get("title") or note_id),
+                    "deleted": bool(note.get("deleted", False)),
+                    "degree": 0,
+                }
+            )
+
+        def add_tag_node(keyword: Mapping[str, Any]) -> str | None:
+            keyword_id = self._keyword_id(keyword)
+            label = self._keyword_label(keyword)
+            if not keyword_id or not label:
+                return None
+            tag_node_id = f"tag:{keyword_id}"
+            added = add_node(
+                {
+                    "id": tag_node_id,
+                    "type": "tag",
+                    "label": label,
+                    "degree": 0,
+                    "tag_count": 0,
+                }
+            )
+            return tag_node_id if added else None
+
+        def add_edge(edge: dict[str, Any]) -> None:
+            edge_id = str(edge.get("id") or "")
+            if not edge_id or edge_id in edges:
+                return
+            if len(edges) >= edge_limit:
+                truncated_by.add("max_edges")
+                return
+            edges[edge_id] = edge
+            for endpoint in (edge.get("source"), edge.get("target")):
+                if endpoint in nodes:
+                    nodes[str(endpoint)]["degree"] = int(nodes[str(endpoint)].get("degree") or 0) + 1
+                    if nodes[str(endpoint)].get("type") == "tag":
+                        nodes[str(endpoint)]["tag_count"] = int(nodes[str(endpoint)].get("tag_count") or 0) + 1
+
+        if center_note_id:
+            center_note = service.get_note_by_id(user_id, center_note_id)
+            seed_notes = [center_note] if isinstance(center_note, Mapping) else []
+        elif hasattr(service, "list_notes"):
+            seed_notes = list(service.list_notes(user_id, limit=node_limit, offset=0) or [])
+        else:
+            seed_notes = []
+
+        for note in seed_notes:
+            if not isinstance(note, Mapping):
+                continue
+            note_id = self._note_id(note)
+            if not add_note_node(note) or not include_tag_edges:
+                continue
+            keywords = list(service.get_keywords_for_note(user_id, note_id) or [])
+            for keyword in keywords:
+                if not isinstance(keyword, Mapping):
+                    continue
+                keyword_id = self._keyword_id(keyword)
+                tag_node_id = add_tag_node(keyword)
+                if not tag_node_id:
+                    continue
+                add_edge(
+                    {
+                        "id": f"local:tag_membership:{note_id}:{keyword_id}",
+                        "source": note_id,
+                        "target": tag_node_id,
+                        "type": "tag_membership",
+                        "directed": False,
+                        "weight": 1.0,
+                        "label": self._keyword_label(keyword),
+                    }
+                )
+                if not center_note_id or not hasattr(service, "get_notes_for_keyword"):
+                    continue
+                related_notes = service.get_notes_for_keyword(
+                    user_id,
+                    keyword.get("id"),
+                    limit=degree_limit,
+                    offset=0,
+                )
+                for related_note in list(related_notes or []):
+                    if not isinstance(related_note, Mapping):
+                        continue
+                    related_note_id = self._note_id(related_note)
+                    if not add_note_node(related_note):
+                        continue
+                    add_edge(
+                        {
+                            "id": f"local:tag_membership:{related_note_id}:{keyword_id}",
+                            "source": related_note_id,
+                            "target": tag_node_id,
+                            "type": "tag_membership",
+                            "directed": False,
+                            "weight": 1.0,
+                            "label": self._keyword_label(keyword),
+                        }
+                    )
+
+        return {
+            "nodes": list(nodes.values()),
+            "edges": list(edges.values()),
+            "truncated": bool(truncated_by),
+            "truncated_by": sorted(truncated_by),
+            "has_more": bool(truncated_by),
+            "cursor": None,
+            "limits": {
+                "max_nodes": node_limit,
+                "max_edges": edge_limit,
+                "max_degree": degree_limit,
+            },
+            "radius_cap_applied": False,
+        }
 
     async def save_note(
         self,
@@ -255,7 +425,11 @@ class NotesScopeService:
         scope: ScopeType | str,
         **kwargs: Any,
     ) -> Any:
-        self._require_server_note_scope(scope)
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope == ScopeType.LOCAL_NOTE:
+            local_user_id = self._require_user_id(kwargs.pop("user_id", None))
+            return self._build_local_notes_graph(user_id=local_user_id, **kwargs)
+        self._require_server_note_scope(normalized_scope)
         self._enforce_policy("notes.graph.list.server")
         return await self.server_service.get_notes_graph(**kwargs)
 
@@ -266,7 +440,15 @@ class NotesScopeService:
         note_id: str,
         **kwargs: Any,
     ) -> Any:
-        self._require_server_note_scope(scope)
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope == ScopeType.LOCAL_NOTE:
+            local_user_id = self._require_user_id(kwargs.pop("user_id", None))
+            return self._build_local_notes_graph(
+                user_id=local_user_id,
+                center_note_id=note_id,
+                **kwargs,
+            )
+        self._require_server_note_scope(normalized_scope)
         self._enforce_policy("notes.graph.detail.server")
         return await self.server_service.get_note_neighbors(note_id, **kwargs)
 
@@ -280,7 +462,7 @@ class NotesScopeService:
         weight: Optional[float] = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> Any:
-        self._require_server_note_scope(scope)
+        self._require_server_link_scope(scope)
         self._enforce_policy("notes.graph.create.server")
         payload: dict[str, Any] = {
             "to_note_id": to_note_id,
@@ -298,6 +480,6 @@ class NotesScopeService:
         scope: ScopeType | str,
         edge_id: str,
     ) -> Any:
-        self._require_server_note_scope(scope)
+        self._require_server_link_scope(scope)
         self._enforce_policy("notes.graph.delete.server")
         return await self.server_service.delete_note_link(edge_id)

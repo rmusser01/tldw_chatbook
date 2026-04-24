@@ -22,6 +22,13 @@ class FakeLocalNotes:
                 {"id": 2, "keyword": "stale"},
             ]
         }
+        self.notes_for_keyword = {
+            1: [
+                {"id": "local-1", "title": "Local", "content": "Body", "version": 1},
+                {"id": "local-2", "title": "Related", "content": "More", "version": 1},
+            ],
+            2: [{"id": "local-1", "title": "Local", "content": "Body", "version": 1}],
+        }
 
     def add_note(self, user_id, title, content, note_id=None):
         self.add_calls.append(
@@ -65,8 +72,24 @@ class FakeLocalNotes:
         )
         return [{"id": "local-1", "title": "Local"}]
 
+    def get_note_by_id(self, user_id, note_id):
+        if note_id == "local-1":
+            return {"id": "local-1", "title": "Local", "content": "Body", "version": 1}
+        if note_id == "local-2":
+            return {"id": "local-2", "title": "Related", "content": "More", "version": 1}
+        return None
+
+    def list_notes(self, user_id, limit=100, offset=0):
+        return [
+            {"id": "local-1", "title": "Local", "content": "Body", "version": 1},
+            {"id": "local-2", "title": "Related", "content": "More", "version": 1},
+        ][offset : offset + limit]
+
     def get_keywords_for_note(self, user_id, note_id):
         return list(self.note_keywords.get(note_id, []))
+
+    def get_notes_for_keyword(self, user_id, keyword_id, limit=50, offset=0):
+        return list(self.notes_for_keyword.get(keyword_id, []))[offset : offset + limit]
 
     def get_keyword_by_text(self, user_id, keyword_text):
         return self.keyword_rows.get(keyword_text)
@@ -379,7 +402,7 @@ async def test_scope_service_routes_server_note_graph_actions_with_policy():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_rejects_local_note_graph_before_policy_denial():
+async def test_scope_service_builds_local_keyword_note_graph_without_policy():
     policy = FakePolicyEnforcer.deny()
     scope_service = NotesScopeService(
         local_notes_service=FakeLocalNotes(),
@@ -387,7 +410,49 @@ async def test_scope_service_rejects_local_note_graph_before_policy_denial():
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="requires server note scope"):
-        await scope_service.get_notes_graph(scope=ScopeType.LOCAL_NOTE)
+    graph = await scope_service.get_notes_graph(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        center_note_id="local-1",
+        edge_types=["tag_membership"],
+        max_nodes=10,
+    )
+    neighbors = await scope_service.get_note_neighbors(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        note_id="local-1",
+        edge_types=["tag_membership"],
+        max_nodes=10,
+    )
 
+    assert {node["id"] for node in graph["nodes"]} == {
+        "local-1",
+        "local-2",
+        "tag:1",
+        "tag:2",
+    }
+    assert {
+        (edge["source"], edge["target"], edge["type"], edge["label"])
+        for edge in graph["edges"]
+    } == {
+        ("local-1", "tag:1", "tag_membership", "existing"),
+        ("local-2", "tag:1", "tag_membership", "existing"),
+        ("local-1", "tag:2", "tag_membership", "stale"),
+    }
+    assert neighbors == graph
     assert policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_keeps_local_manual_note_links_unsupported():
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+    )
+
+    with pytest.raises(ValueError, match="requires server note scope"):
+        await scope_service.create_note_link(
+            scope=ScopeType.LOCAL_NOTE,
+            note_id="local-1",
+            to_note_id="local-2",
+        )
