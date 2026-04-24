@@ -1013,6 +1013,28 @@ class ReadingHighlightDeleteResponse(BaseModel):
     success: bool
 
 
+class UnifiedItem(BaseModel):
+    id: int
+    content_item_id: int | None = None
+    media_id: int | None = None
+    title: str
+    url: str | None = None
+    domain: str | None = None
+    summary: str | None = None
+    published_at: str | None = None
+    status: str | None = "saved"
+    favorite: bool = False
+    tags: list[str] = Field(default_factory=list)
+    type: str | None = None
+
+
+class UnifiedItemsListResponse(BaseModel):
+    items: list[UnifiedItem]
+    total: int
+    page: int
+    size: int
+
+
 class ReadingItem(BaseModel):
     id: int
     media_id: int | None = None
@@ -1537,6 +1559,8 @@ __all__ = [
     "ServerMediaListItem",
     "ServerMediaListPagination",
     "ServerMediaListResponse",
+    "UnifiedItem",
+    "UnifiedItemsListResponse",
     "ViewMode",
     "WebProcessResponse",
     "WebScrapedItemResult",

@@ -120,6 +120,8 @@ from .media_reading_schemas import (
     ReadingUpdateRequest,
     ServerMediaListResponse,
     SubmitMediaIngestJobsResponse,
+    UnifiedItem,
+    UnifiedItemsListResponse,
     WebProcessResponse,
     WebScrapingRequest,
 )
@@ -2442,6 +2444,57 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return ReadingItem.model_validate(response)
+
+    async def list_unified_items(
+        self,
+        *,
+        ids: list[int] | None = None,
+        q: str | None = None,
+        tags: list[str] | None = None,
+        domain: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        status_filter: list[str] | None = None,
+        favorite: bool | None = None,
+        origin: str | None = None,
+        job_id: int | None = None,
+        run_id: int | None = None,
+        page: int = 1,
+        size: int = 20,
+    ) -> UnifiedItemsListResponse:
+        params = {
+            "ids": ids,
+            "q": q,
+            "tags": tags,
+            "domain": domain,
+            "date_from": date_from,
+            "date_to": date_to,
+            "status_filter": status_filter,
+            "favorite": favorite,
+            "origin": origin,
+            "job_id": job_id,
+            "run_id": run_id,
+            "page": page,
+            "size": size,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/items",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return UnifiedItemsListResponse.model_validate(response)
+
+    async def get_unified_item(self, item_id: int) -> UnifiedItem:
+        response = await self._request("GET", f"/api/v1/items/{item_id}")
+        return UnifiedItem.model_validate(response)
+
+    async def bulk_update_unified_items(self, request_data: ItemsBulkRequest) -> ItemsBulkResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/items/bulk",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ItemsBulkResponse.model_validate(response)
 
     async def list_reading_items(
         self,

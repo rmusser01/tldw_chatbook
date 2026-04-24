@@ -49,6 +49,8 @@ from tldw_chatbook.tldw_api import (
     ReadingTTSRequest,
     ReadingUpdateRequest,
     ServerMediaListResponse,
+    UnifiedItem,
+    UnifiedItemsListResponse,
 )
 
 
@@ -247,6 +249,46 @@ def test_reading_save_request_matches_server_contract_and_normalizes_tags():
         "favorite": True,
         "notes": "Why this matters",
         "content": "Inline body",
+    }
+
+
+def test_unified_item_models_match_server_items_contract():
+    item = UnifiedItem(
+        id=42,
+        content_item_id=7,
+        media_id=42,
+        title="Unified Article",
+        url="https://example.com/article",
+        domain="example.com",
+        summary="Short summary",
+        published_at="2026-04-23T10:00:00Z",
+        status="saved",
+        favorite=True,
+        tags=["ai", "reading"],
+        type="reading",
+    )
+    response = UnifiedItemsListResponse(items=[item], total=1, page=1, size=20)
+
+    assert response.model_dump(mode="json") == {
+        "items": [
+            {
+                "id": 42,
+                "content_item_id": 7,
+                "media_id": 42,
+                "title": "Unified Article",
+                "url": "https://example.com/article",
+                "domain": "example.com",
+                "summary": "Short summary",
+                "published_at": "2026-04-23T10:00:00Z",
+                "status": "saved",
+                "favorite": True,
+                "tags": ["ai", "reading"],
+                "type": "reading",
+            }
+        ],
+        "total": 1,
+        "page": 1,
+        "size": 20,
     }
 
 

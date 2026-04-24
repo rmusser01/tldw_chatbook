@@ -291,6 +291,7 @@ AUDITED_CAPABILITY_SEEDS = (
                 actions=(LIST, CREATE, DETAIL, UPDATE, DELETE, RESTORE, PERMANENT_DELETE),
                 sources=(SERVER_SOURCE,),
             ),
+            _resource("media.unified_items", actions=(LIST, DETAIL, UPDATE, DELETE), sources=(SERVER_SOURCE,)),
             _resource("media.items.keywords", actions=(LIST, UPDATE), sources=(SERVER_SOURCE,)),
             _resource("media.items.trash", actions=(LIST, DELETE), sources=(SERVER_SOURCE,)),
             _resource("media.items.metadata_search", actions=(LIST,), sources=(SERVER_SOURCE,)),

@@ -10,6 +10,7 @@ from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingSer
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 from tldw_chatbook.tldw_api import (
     AddMediaRequest,
+    ItemsBulkRequest,
     ProcessAudioRequest,
     ProcessCodeRequest,
     ProcessDocumentRequest,
@@ -346,6 +347,52 @@ class FakeServerMediaService:
             "status": request_data.status,
             "favorite": request_data.favorite,
             "tags": request_data.tags,
+        }
+
+    async def list_unified_items(self, **kwargs):
+        self.calls.append(("list_unified_items", kwargs))
+        return {
+            "items": [
+                {
+                    "id": 42,
+                    "content_item_id": 7,
+                    "media_id": 42,
+                    "title": "Unified Article",
+                    "url": "https://example.com/article",
+                    "domain": "example.com",
+                    "status": "saved",
+                    "favorite": True,
+                    "tags": ["ai"],
+                    "type": "reading",
+                }
+            ],
+            "total": 1,
+            "page": kwargs.get("page", 1),
+            "size": kwargs.get("size", 20),
+        }
+
+    async def get_unified_item(self, item_id):
+        self.calls.append(("get_unified_item", item_id))
+        return {
+            "id": item_id,
+            "content_item_id": 7,
+            "media_id": item_id,
+            "title": "Unified Article",
+            "url": "https://example.com/article",
+            "domain": "example.com",
+            "status": "saved",
+            "favorite": True,
+            "tags": ["ai"],
+            "type": "reading",
+        }
+
+    async def bulk_update_unified_items(self, request_data):
+        self.calls.append(("bulk_update_unified_items", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "total": len(request_data.item_ids),
+            "succeeded": len(request_data.item_ids),
+            "failed": 0,
+            "results": [{"item_id": item_id, "success": True} for item_id in request_data.item_ids],
         }
 
     async def process_video(self, request_data, *, file_paths=None):
@@ -1425,6 +1472,77 @@ async def test_scope_service_routes_server_reading_url_save_with_reading_list_cr
         await local_scope.save_reading_item(
             mode="local",
             request_data=ReadingSaveRequest(url="https://example.com/local"),
+        )
+    assert local_policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_unified_items_with_distinct_policy_actions():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    listing = await scope.list_unified_items(mode="server", q="article", origin="reading", page=2, size=10)
+    item = await scope.get_unified_item(mode="server", item_id=42)
+    bulk_update = await scope.bulk_update_unified_items(
+        mode="server",
+        request_data=ItemsBulkRequest(item_ids=[42, 43], action="set_favorite", favorite=True),
+    )
+    bulk_delete = await scope.bulk_update_unified_items(
+        mode="server",
+        request_data=ItemsBulkRequest(item_ids=[44], action="delete", hard=True),
+    )
+
+    assert policy.calls == [
+        "media.unified_items.list.server",
+        "media.unified_items.detail.server",
+        "media.unified_items.update.server",
+        "media.unified_items.delete.server",
+    ]
+    assert listing["total"] == 1
+    assert item["id"] == 42
+    assert bulk_update["succeeded"] == 2
+    assert bulk_delete["succeeded"] == 1
+    assert server.calls == [
+        ("list_unified_items", {"q": "article", "origin": "reading", "page": 2, "size": 10}),
+        ("get_unified_item", 42),
+        (
+            "bulk_update_unified_items",
+            {
+                "item_ids": [42, 43],
+                "action": "set_favorite",
+                "favorite": True,
+                "hard": False,
+            },
+        ),
+        (
+            "bulk_update_unified_items",
+            {
+                "item_ids": [44],
+                "action": "delete",
+                "hard": True,
+            },
+        ),
+    ]
+
+    local_policy = FakePolicyEnforcer()
+    local_scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=local_policy,
+    )
+    with pytest.raises(ValueError, match="Server unified items require server mode."):
+        await local_scope.list_unified_items(mode="local")
+    with pytest.raises(ValueError, match="Server unified items require server mode."):
+        await local_scope.get_unified_item(mode="local", item_id=42)
+    with pytest.raises(ValueError, match="Server unified items require server mode."):
+        await local_scope.bulk_update_unified_items(
+            mode="local",
+            request_data=ItemsBulkRequest(item_ids=[42], action="set_status", status="read"),
         )
     assert local_policy.calls == []
 

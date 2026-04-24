@@ -208,6 +208,8 @@ _EXPORT_GROUPS = (
             "ServerMediaListPagination",
             "ServerMediaListResponse",
             "SubmitMediaIngestJobsResponse",
+            "UnifiedItem",
+            "UnifiedItemsListResponse",
             "ViewMode",
             "WebProcessResponse",
             "WebScrapedItemResult",

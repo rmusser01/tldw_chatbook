@@ -65,6 +65,8 @@ from tldw_chatbook.tldw_api import (
     SubmitMediaIngestJobsResponse,
     TLDWAPIClient,
     ServerMediaListResponse,
+    UnifiedItem,
+    UnifiedItemsListResponse,
     WebScrapingRequest,
 )
 
@@ -229,6 +231,90 @@ async def test_reading_save_route_wires_url_save_payload(monkeypatch):
     assert isinstance(result, api.ReadingItem)
     assert result.id == 77
     assert result.tags == ["ai", "reading"]
+
+
+@pytest.mark.asyncio
+async def test_unified_items_routes_wire_to_server_contract(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "items": [
+                    {
+                        "id": 42,
+                        "content_item_id": 7,
+                        "media_id": 42,
+                        "title": "Unified Article",
+                        "url": "https://example.com/article",
+                        "domain": "example.com",
+                        "status": "saved",
+                        "favorite": True,
+                        "tags": ["ai"],
+                        "type": "reading",
+                    }
+                ],
+                "total": 1,
+                "page": 2,
+                "size": 10,
+            },
+            {
+                "id": 42,
+                "content_item_id": 7,
+                "media_id": 42,
+                "title": "Unified Article",
+                "url": "https://example.com/article",
+                "domain": "example.com",
+                "status": "saved",
+                "favorite": True,
+                "tags": ["ai"],
+                "type": "reading",
+            },
+            {
+                "total": 2,
+                "succeeded": 2,
+                "failed": 0,
+                "results": [
+                    {"item_id": 42, "success": True},
+                    {"item_id": 43, "success": True},
+                ],
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    listing = await client.list_unified_items(
+        q="article",
+        tags=["ai"],
+        status_filter=["saved"],
+        origin="reading",
+        page=2,
+        size=10,
+    )
+    item = await client.get_unified_item(42)
+    bulk = await client.bulk_update_unified_items(
+        ItemsBulkRequest(item_ids=[42, 43], action="set_favorite", favorite=True)
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/items")
+    assert mocked.await_args_list[0].kwargs["params"] == {
+        "q": "article",
+        "tags": ["ai"],
+        "status_filter": ["saved"],
+        "origin": "reading",
+        "page": 2,
+        "size": 10,
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/items/42")
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/items/bulk")
+    assert mocked.await_args_list[2].kwargs["json_data"] == {
+        "item_ids": [42, 43],
+        "action": "set_favorite",
+        "favorite": True,
+        "hard": False,
+    }
+    assert isinstance(listing, UnifiedItemsListResponse)
+    assert isinstance(item, UnifiedItem)
+    assert bulk.succeeded == 2
 
 
 @pytest.mark.asyncio

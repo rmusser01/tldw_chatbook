@@ -158,6 +158,20 @@ class ServerMediaReadingService:
         response = await self._require_client().save_reading_item(request_data)
         return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
 
+    async def list_unified_items(self, **filters: Any) -> Any:
+        response = await self._require_client().list_unified_items(
+            **{key: value for key, value in filters.items() if value is not None}
+        )
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
+
+    async def get_unified_item(self, item_id: Any) -> Any:
+        response = await self._require_client().get_unified_item(int(item_id))
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
+
+    async def bulk_update_unified_items(self, request_data: ItemsBulkRequest) -> Any:
+        response = await self._require_client().bulk_update_unified_items(request_data)
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
+
     async def process_video(self, request_data: ProcessVideoRequest, file_paths: list[str] | None = None) -> Any:
         return await self._require_client().process_video(request_data, file_paths=file_paths)
 

@@ -5,6 +5,7 @@ import pytest
 from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
 from tldw_chatbook.tldw_api import (
     AddMediaRequest,
+    ItemsBulkRequest,
     ProcessAudioRequest,
     ProcessCodeRequest,
     ProcessDocumentRequest,
@@ -107,6 +108,52 @@ class FakeClient:
             "status": request_data.status,
             "favorite": request_data.favorite,
             "tags": request_data.tags,
+        }
+
+    async def list_unified_items(self, **kwargs):
+        self.calls.append(("list_unified_items", kwargs))
+        return {
+            "items": [
+                {
+                    "id": 42,
+                    "content_item_id": 7,
+                    "media_id": 42,
+                    "title": "Unified Article",
+                    "url": "https://example.com/article",
+                    "domain": "example.com",
+                    "status": "saved",
+                    "favorite": True,
+                    "tags": ["ai"],
+                    "type": "reading",
+                }
+            ],
+            "total": 1,
+            "page": kwargs.get("page", 1),
+            "size": kwargs.get("size", 20),
+        }
+
+    async def get_unified_item(self, item_id):
+        self.calls.append(("get_unified_item", item_id))
+        return {
+            "id": item_id,
+            "content_item_id": 7,
+            "media_id": item_id,
+            "title": "Unified Article",
+            "url": "https://example.com/article",
+            "domain": "example.com",
+            "status": "saved",
+            "favorite": True,
+            "tags": ["ai"],
+            "type": "reading",
+        }
+
+    async def bulk_update_unified_items(self, request_data):
+        self.calls.append(("bulk_update_unified_items", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "total": len(request_data.item_ids),
+            "succeeded": len(request_data.item_ids),
+            "failed": 0,
+            "results": [{"item_id": item_id, "success": True} for item_id in request_data.item_ids],
         }
 
     async def process_video(self, request_data, file_paths=None):
@@ -1063,6 +1110,36 @@ async def test_server_service_routes_reading_url_save():
                 "notes": "Why this matters",
             },
         )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_unified_items_surface():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    listing = await service.list_unified_items(q="article", origin="reading", page=2, size=10)
+    item = await service.get_unified_item(42)
+    bulk = await service.bulk_update_unified_items(
+        ItemsBulkRequest(item_ids=[42, 43], action="set_favorite", favorite=True)
+    )
+
+    assert listing["total"] == 1
+    assert listing["page"] == 2
+    assert item["id"] == 42
+    assert bulk["succeeded"] == 2
+    assert client.calls == [
+        ("list_unified_items", {"q": "article", "origin": "reading", "page": 2, "size": 10}),
+        ("get_unified_item", 42),
+        (
+            "bulk_update_unified_items",
+            {
+                "item_ids": [42, 43],
+                "action": "set_favorite",
+                "favorite": True,
+                "hard": False,
+            },
+        ),
     ]
 
 

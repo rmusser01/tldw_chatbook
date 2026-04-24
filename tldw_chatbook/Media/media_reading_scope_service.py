@@ -201,6 +201,10 @@ class MediaReadingScopeService:
         return f"media.items.{action}.{mode.value}"
 
     @staticmethod
+    def _unified_item_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.unified_items.{action}.{mode.value}"
+
+    @staticmethod
     def _media_item_keywords_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.items.keywords.{action}.{mode.value}"
 
@@ -241,6 +245,11 @@ class MediaReadingScopeService:
     def _require_server_media_item_lifecycle(mode: MediaReadingBackend) -> None:
         if mode == MediaReadingBackend.LOCAL:
             raise ValueError("Server media item lifecycle requires server mode.")
+
+    @staticmethod
+    def _require_server_unified_items(mode: MediaReadingBackend) -> None:
+        if mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Server unified items require server mode.")
 
     @staticmethod
     def _require_server_media_processing(mode: MediaReadingBackend) -> None:
@@ -579,6 +588,49 @@ class MediaReadingScopeService:
         self._enforce_policy(self._media_item_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.add_media(request_data, file_paths=file_paths))
+        return self._as_mapping_payload(payload)
+
+    async def list_unified_items(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        **filters: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_unified_items(normalized_mode)
+        self._enforce_policy(self._unified_item_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.list_unified_items(**{key: value for key, value in filters.items() if value is not None})
+        )
+        return self._as_mapping_payload(payload)
+
+    async def get_unified_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_unified_items(normalized_mode)
+        self._enforce_policy(self._unified_item_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.get_unified_item(item_id))
+        return self._as_mapping_payload(payload)
+
+    async def bulk_update_unified_items(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_unified_items(normalized_mode)
+        action = self._as_mapping_payload(request_data).get("action")
+        policy_action = "delete" if action == "delete" else "update"
+        self._enforce_policy(self._unified_item_action_id(normalized_mode, policy_action))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.bulk_update_unified_items(request_data))
         return self._as_mapping_payload(payload)
 
     async def _process_server_media(

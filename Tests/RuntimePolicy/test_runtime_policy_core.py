@@ -462,6 +462,10 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.items.trash.delete.server
         media.items.trash.list.server
         media.items.update.server
+        media.unified_items.delete.server
+        media.unified_items.detail.server
+        media.unified_items.list.server
+        media.unified_items.update.server
         media.reading.create.local
         media.reading.create.server
         media.reading.delete.local
