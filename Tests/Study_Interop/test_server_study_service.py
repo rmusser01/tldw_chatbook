@@ -180,6 +180,47 @@ class FakeClient:
         self.calls.append(("list_flashcard_tag_suggestions", q, limit))
         return {"items": [{"tag": "biology", "count": 3}], "count": 1}
 
+    async def preview_structured_qa_import(self, request_data, *, max_lines=None, max_line_length=None, max_field_length=None):
+        self.calls.append(
+            (
+                "preview_structured_qa_import",
+                request_data.model_dump(mode="json"),
+                max_lines,
+                max_line_length,
+                max_field_length,
+            )
+        )
+        return {
+            "drafts": [
+                {
+                    "front": "What powers cells?",
+                    "back": "ATP",
+                    "line_start": 1,
+                    "line_end": 2,
+                    "tags": ["biology"],
+                }
+            ],
+            "errors": [],
+            "detected_format": "qa_labels",
+            "skipped_blocks": 0,
+        }
+
+    async def import_flashcards_tsv(self, request_data, *, max_lines=None, max_line_length=None, max_field_length=None):
+        self.calls.append(
+            (
+                "import_flashcards_tsv",
+                request_data.model_dump(mode="json"),
+                max_lines,
+                max_line_length,
+                max_field_length,
+            )
+        )
+        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 9}], "errors": []}
+
+    async def export_flashcards(self, **kwargs):
+        self.calls.append(("export_flashcards", kwargs))
+        return b"Deck\tFront\tBack\nBiology\tQ\tA\n"
+
     async def create_flashcard_template(self, request_data):
         payload = request_data.model_dump(mode="json", exclude_none=True)
         self.calls.append(("create_flashcard_template", payload))
@@ -575,6 +616,58 @@ async def test_server_study_service_exposes_flashcard_bulk_and_tag_suggestion_ro
             ],
         ),
         ("list_flashcard_tag_suggestions", "bio", 10),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_exposes_flashcard_import_export_routes():
+    client = FakeClient()
+    service = ServerStudyService(client=client)
+
+    preview = await service.preview_structured_qa_import("Q: What powers cells?\nA: ATP", max_lines=25)
+    imported = await service.import_flashcards_tsv(
+        "Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
+        has_header=True,
+    )
+    exported = await service.export_flashcards(deck_id=9, export_format="csv", include_header=True)
+
+    assert preview["drafts"][0]["front"] == "What powers cells?"
+    assert imported["imported"] == 1
+    assert exported.startswith(b"Deck\tFront")
+    assert client.calls == [
+        (
+            "preview_structured_qa_import",
+            {"content": "Q: What powers cells?\nA: ATP"},
+            25,
+            None,
+            None,
+        ),
+        (
+            "import_flashcards_tsv",
+            {
+                "content": "Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
+                "delimiter": "\t",
+                "has_header": True,
+            },
+            None,
+            None,
+            None,
+        ),
+        (
+            "export_flashcards",
+            {
+                "deck_id": 9,
+                "workspace_id": None,
+                "include_workspace_items": False,
+                "tag": None,
+                "q": None,
+                "export_format": "csv",
+                "include_reverse": False,
+                "delimiter": "\t",
+                "include_header": True,
+                "extended_header": False,
+            },
+        ),
     ]
 
 

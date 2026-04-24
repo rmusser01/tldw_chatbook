@@ -26,6 +26,10 @@ from tldw_chatbook.tldw_api import (
     FlashcardTemplateResponse,
     FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
+    FlashcardsImportRequest,
+    FlashcardsImportResponse,
+    StructuredQaImportPreviewRequest,
+    StructuredQaImportPreviewResponse,
     TLDWAPIClient,
 )
 
@@ -499,6 +503,71 @@ async def test_flashcard_bulk_and_tag_suggestion_routes_wire_and_return_typed_mo
     assert isinstance(suggestions, FlashcardTagSuggestionsResponse)
     assert updated.results[0].flashcard.tags == ["biology", "cell"]
     assert suggestions.items[0].count == 3
+
+
+@pytest.mark.asyncio
+async def test_flashcard_import_preview_and_export_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    request_mock = AsyncMock(
+        side_effect=[
+            {
+                "drafts": [
+                    {
+                        "front": "What powers cells?",
+                        "back": "ATP",
+                        "line_start": 1,
+                        "line_end": 2,
+                        "tags": ["biology"],
+                    }
+                ],
+                "errors": [],
+                "detected_format": "qa_labels",
+                "skipped_blocks": 0,
+            },
+            {"imported": 1, "items": [{"uuid": "card-server-1", "deck_id": 7}], "errors": []},
+        ]
+    )
+    bytes_mock = AsyncMock(return_value=b"Deck\tFront\tBack\nBiology\tQ\tA\n")
+    monkeypatch.setattr(client, "_request", request_mock)
+    monkeypatch.setattr(client, "_request_bytes", bytes_mock)
+
+    preview = await client.preview_structured_qa_import(
+        StructuredQaImportPreviewRequest(content="Q: What powers cells?\nA: ATP"),
+        max_lines=25,
+    )
+    imported = await client.import_flashcards_tsv(
+        FlashcardsImportRequest(
+            content="Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
+            has_header=True,
+        )
+    )
+    exported = await client.export_flashcards(deck_id=7, export_format="csv", include_header=True)
+
+    assert request_mock.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/flashcards/import/structured/preview",
+    )
+    assert request_mock.await_args_list[0].kwargs["json_data"] == {"content": "Q: What powers cells?\nA: ATP"}
+    assert request_mock.await_args_list[0].kwargs["params"] == {"max_lines": 25}
+    assert request_mock.await_args_list[1].args[:2] == ("POST", "/api/v1/flashcards/import")
+    assert request_mock.await_args_list[1].kwargs["json_data"] == {
+        "content": "Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
+        "delimiter": "\t",
+        "has_header": True,
+    }
+    assert bytes_mock.await_args_list[0].args[:2] == ("GET", "/api/v1/flashcards/export")
+    assert bytes_mock.await_args_list[0].kwargs["params"] == {
+        "deck_id": 7,
+        "include_workspace_items": False,
+        "format": "csv",
+        "include_reverse": False,
+        "delimiter": "\t",
+        "include_header": True,
+        "extended_header": False,
+    }
+    assert isinstance(preview, StructuredQaImportPreviewResponse)
+    assert isinstance(imported, FlashcardsImportResponse)
+    assert exported.startswith(b"Deck\tFront")
 
 
 @pytest.mark.asyncio

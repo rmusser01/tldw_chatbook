@@ -297,6 +297,55 @@ class FlashcardTagSuggestionsResponse(BaseModel):
     count: int
 
 
+class StructuredQaImportPreviewRequest(BaseModel):
+    content: str = Field(..., min_length=1)
+
+
+class StructuredQaImportPreviewDraft(BaseModel):
+    front: str
+    back: str
+    line_start: int
+    line_end: int
+    notes: Optional[str] = None
+    extra: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class StructuredQaImportPreviewError(BaseModel):
+    line: Optional[int] = None
+    error: str
+
+
+class StructuredQaImportPreviewResponse(BaseModel):
+    drafts: list[StructuredQaImportPreviewDraft] = Field(default_factory=list)
+    errors: list[StructuredQaImportPreviewError] = Field(default_factory=list)
+    detected_format: Literal["qa_labels"] = "qa_labels"
+    skipped_blocks: int = 0
+
+
+class FlashcardsImportRequest(BaseModel):
+    content: str
+    delimiter: Optional[str] = "\t"
+    has_header: Optional[bool] = False
+
+
+class FlashcardsImportItem(BaseModel):
+    uuid: str
+    deck_id: Optional[int] = None
+
+
+class FlashcardsImportError(BaseModel):
+    line: Optional[int] = None
+    index: Optional[int] = None
+    error: str
+
+
+class FlashcardsImportResponse(BaseModel):
+    imported: int
+    items: list[FlashcardsImportItem] = Field(default_factory=list)
+    errors: list[FlashcardsImportError] = Field(default_factory=list)
+
+
 class FlashcardDeckProgress(BaseModel):
     deck_id: int
     deck_name: str

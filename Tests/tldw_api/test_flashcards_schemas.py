@@ -18,6 +18,10 @@ from tldw_chatbook.tldw_api import (
     FlashcardTemplateResponse,
     FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
+    FlashcardsImportRequest,
+    FlashcardsImportResponse,
+    StructuredQaImportPreviewRequest,
+    StructuredQaImportPreviewResponse,
 )
 
 
@@ -249,6 +253,42 @@ def test_flashcard_bulk_update_and_tag_suggestion_models_round_trip_server_shape
     assert bulk_response.results[0].status == "validation_error"
     assert bulk_response.results[0].error.invalid_deck_ids == [404]
     assert suggestions.items[0].tag == "biology"
+
+
+def test_flashcard_import_preview_and_import_models_round_trip_server_shape():
+    preview_request = StructuredQaImportPreviewRequest(content="Q: What powers cells?\nA: ATP")
+    preview = StructuredQaImportPreviewResponse.model_validate(
+        {
+            "drafts": [
+                {
+                    "front": "What powers cells?",
+                    "back": "ATP",
+                    "line_start": 1,
+                    "line_end": 2,
+                    "tags": ["biology"],
+                }
+            ],
+            "errors": [],
+            "detected_format": "qa_labels",
+            "skipped_blocks": 0,
+        }
+    )
+    import_request = FlashcardsImportRequest(
+        content="Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
+        has_header=True,
+    )
+    imported = FlashcardsImportResponse.model_validate(
+        {
+            "imported": 1,
+            "items": [{"uuid": "card-server-1", "deck_id": 7}],
+            "errors": [],
+        }
+    )
+
+    assert preview_request.model_dump(mode="json") == {"content": "Q: What powers cells?\nA: ATP"}
+    assert preview.drafts[0].front == "What powers cells?"
+    assert import_request.delimiter == "\t"
+    assert imported.items[0].deck_id == 7
 
 
 def test_flashcard_create_request_preserves_optional_fields():

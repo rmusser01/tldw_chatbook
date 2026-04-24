@@ -423,6 +423,85 @@ class StudyScopeService:
         result.setdefault("entity_kind", "flashcard_tag_suggestions")
         return result
 
+    async def preview_structured_qa_import(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        content: str,
+        max_lines: int | None = None,
+        max_line_length: int | None = None,
+        max_field_length: int | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard import preview")
+        payload = await self._maybe_await(
+            service.preview_structured_qa_import(
+                content,
+                max_lines=max_lines,
+                max_line_length=max_line_length,
+                max_field_length=max_field_length,
+            )
+        )
+        result = dict(self._with_server_source(payload or {}))
+        result.setdefault("entity_kind", "flashcard_import_preview")
+        return result
+
+    async def import_flashcards_tsv(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        content: str,
+        delimiter: str = "\t",
+        has_header: bool = False,
+        max_lines: int | None = None,
+        max_line_length: int | None = None,
+        max_field_length: int | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard import")
+        payload = await self._maybe_await(
+            service.import_flashcards_tsv(
+                content,
+                delimiter=delimiter,
+                has_header=has_header,
+                max_lines=max_lines,
+                max_line_length=max_line_length,
+                max_field_length=max_field_length,
+            )
+        )
+        result = dict(self._with_server_source(payload or {}))
+        result.setdefault("entity_kind", "flashcard_import")
+        return result
+
+    async def export_flashcards(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        deck_id: int | None = None,
+        workspace_id: str | None = None,
+        include_workspace_items: bool = False,
+        tag: str | None = None,
+        q: str | None = None,
+        export_format: str = "csv",
+        include_reverse: bool = False,
+        delimiter: str = "\t",
+        include_header: bool = False,
+        extended_header: bool = False,
+    ) -> bytes:
+        service = self._server_only_service(mode, "Flashcard export")
+        return await self._maybe_await(
+            service.export_flashcards(
+                deck_id=deck_id,
+                workspace_id=workspace_id,
+                include_workspace_items=include_workspace_items,
+                tag=tag,
+                q=q,
+                export_format=export_format,
+                include_reverse=include_reverse,
+                delimiter=delimiter,
+                include_header=include_header,
+                extended_header=extended_header,
+            )
+        )
+
     async def get_flashcard_analytics_summary(
         self,
         *,

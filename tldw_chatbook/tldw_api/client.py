@@ -275,6 +275,10 @@ from .flashcards_schemas import (
     FlashcardTemplateResponse,
     FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
+    FlashcardsImportRequest,
+    FlashcardsImportResponse,
+    StructuredQaImportPreviewRequest,
+    StructuredQaImportPreviewResponse,
 )
 from .study_extensions_schemas import (
     StudyPackCreateJobRequest,
@@ -2857,6 +2861,89 @@ class TLDWAPIClient:
             },
         )
         return FlashcardTagSuggestionsResponse.model_validate(response)
+
+    async def preview_structured_qa_import(
+        self,
+        request_data: StructuredQaImportPreviewRequest,
+        *,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> StructuredQaImportPreviewResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/import/structured/preview",
+            json_data=request_data.model_dump(mode="json"),
+            params={
+                key: value
+                for key, value in {
+                    "max_lines": max_lines,
+                    "max_line_length": max_line_length,
+                    "max_field_length": max_field_length,
+                }.items()
+                if value is not None
+            },
+        )
+        return StructuredQaImportPreviewResponse.model_validate(response)
+
+    async def import_flashcards_tsv(
+        self,
+        request_data: FlashcardsImportRequest,
+        *,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> FlashcardsImportResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/import",
+            json_data=request_data.model_dump(mode="json"),
+            params={
+                key: value
+                for key, value in {
+                    "max_lines": max_lines,
+                    "max_line_length": max_line_length,
+                    "max_field_length": max_field_length,
+                }.items()
+                if value is not None
+            },
+        )
+        return FlashcardsImportResponse.model_validate(response)
+
+    async def export_flashcards(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: bool = False,
+        tag: Optional[str] = None,
+        q: Optional[str] = None,
+        export_format: str = "csv",
+        include_reverse: bool = False,
+        delimiter: str = "\t",
+        include_header: bool = False,
+        extended_header: bool = False,
+    ) -> bytes:
+        return await self._request_bytes(
+            "GET",
+            "/api/v1/flashcards/export",
+            params={
+                key: value
+                for key, value in {
+                    "deck_id": deck_id,
+                    "workspace_id": workspace_id,
+                    "include_workspace_items": include_workspace_items,
+                    "tag": tag,
+                    "q": q,
+                    "format": export_format,
+                    "include_reverse": include_reverse,
+                    "delimiter": delimiter,
+                    "include_header": include_header,
+                    "extended_header": extended_header,
+                }.items()
+                if value is not None
+            },
+        )
 
     async def get_flashcard_analytics_summary(
         self,

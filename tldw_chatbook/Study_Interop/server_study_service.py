@@ -17,6 +17,8 @@ from ..tldw_api import (
     FlashcardTemplateCreateRequest,
     FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
+    FlashcardsImportRequest,
+    StructuredQaImportPreviewRequest,
     StudyPackCreateJobRequest,
     StudyPackSourceSelection,
     SuggestionActionRequest,
@@ -228,6 +230,71 @@ class ServerStudyService:
     ) -> dict[str, Any]:
         return self._model_to_dict(
             await self._require_client().list_flashcard_tag_suggestions(q=q, limit=limit)
+        )
+
+    async def preview_structured_qa_import(
+        self,
+        content: str,
+        *,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().preview_structured_qa_import(
+            StructuredQaImportPreviewRequest(content=content),
+            max_lines=max_lines,
+            max_line_length=max_line_length,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def import_flashcards_tsv(
+        self,
+        content: str,
+        *,
+        delimiter: str = "\t",
+        has_header: bool = False,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().import_flashcards_tsv(
+            FlashcardsImportRequest(
+                content=content,
+                delimiter=delimiter,
+                has_header=has_header,
+            ),
+            max_lines=max_lines,
+            max_line_length=max_line_length,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def export_flashcards(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: bool = False,
+        tag: Optional[str] = None,
+        q: Optional[str] = None,
+        export_format: str = "csv",
+        include_reverse: bool = False,
+        delimiter: str = "\t",
+        include_header: bool = False,
+        extended_header: bool = False,
+    ) -> bytes:
+        return await self._require_client().export_flashcards(
+            deck_id=deck_id,
+            workspace_id=workspace_id,
+            include_workspace_items=include_workspace_items,
+            tag=tag,
+            q=q,
+            export_format=export_format,
+            include_reverse=include_reverse,
+            delimiter=delimiter,
+            include_header=include_header,
+            extended_header=extended_header,
         )
 
     async def get_flashcard_analytics_summary(

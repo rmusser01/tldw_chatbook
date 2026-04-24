@@ -279,6 +279,31 @@ class FakeServerStudyService:
         self.calls.append(("list_flashcard_tag_suggestions", q, limit))
         return {"items": [{"tag": "biology", "count": 3}], "count": 1}
 
+    async def preview_structured_qa_import(self, content, *, max_lines=None, max_line_length=None, max_field_length=None):
+        self.calls.append(("preview_structured_qa_import", content, max_lines, max_line_length, max_field_length))
+        return {
+            "drafts": [
+                {
+                    "front": "What powers cells?",
+                    "back": "ATP",
+                    "line_start": 1,
+                    "line_end": 2,
+                    "tags": ["biology"],
+                }
+            ],
+            "errors": [],
+            "detected_format": "qa_labels",
+            "skipped_blocks": 0,
+        }
+
+    async def import_flashcards_tsv(self, content, *, delimiter="\t", has_header=False, max_lines=None, max_line_length=None, max_field_length=None):
+        self.calls.append(("import_flashcards_tsv", content, delimiter, has_header, max_lines, max_line_length, max_field_length))
+        return {"imported": 1, "items": [{"uuid": "card-server-1", "deck_id": 7}], "errors": []}
+
+    async def export_flashcards(self, **kwargs):
+        self.calls.append(("export_flashcards", kwargs))
+        return b"Deck\tFront\tBack\nBiology\tQ\tA\n"
+
     async def create_flashcard_template(
         self,
         *,
@@ -985,6 +1010,60 @@ async def test_scope_service_routes_server_flashcard_bulk_and_tag_suggestion_act
 
     with pytest.raises(ValueError, match="server-only"):
         await scope.list_flashcard_tag_suggestions(mode="local")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_flashcard_import_export_actions():
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+
+    preview = await scope.preview_structured_qa_import(
+        mode="server",
+        content="Q: What powers cells?\nA: ATP",
+        max_lines=25,
+    )
+    imported = await scope.import_flashcards_tsv(
+        mode="server",
+        content="Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
+        has_header=True,
+    )
+    exported = await scope.export_flashcards(mode="server", deck_id=7, export_format="csv", include_header=True)
+
+    assert preview["source"] == "server"
+    assert preview["entity_kind"] == "flashcard_import_preview"
+    assert imported["source"] == "server"
+    assert imported["items"][0]["uuid"] == "card-server-1"
+    assert exported.startswith(b"Deck\tFront")
+    assert server.calls == [
+        ("preview_structured_qa_import", "Q: What powers cells?\nA: ATP", 25, None, None),
+        (
+            "import_flashcards_tsv",
+            "Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
+            "\t",
+            True,
+            None,
+            None,
+            None,
+        ),
+        (
+            "export_flashcards",
+            {
+                "deck_id": 7,
+                "workspace_id": None,
+                "include_workspace_items": False,
+                "tag": None,
+                "q": None,
+                "export_format": "csv",
+                "include_reverse": False,
+                "delimiter": "\t",
+                "include_header": True,
+                "extended_header": False,
+            },
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.export_flashcards(mode="local")
 
 
 @pytest.mark.asyncio

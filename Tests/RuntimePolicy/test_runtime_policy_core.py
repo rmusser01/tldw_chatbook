@@ -661,6 +661,9 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         study.deck.update.server
         study.flashcard.bulk.create.server
         study.flashcard.bulk.update.server
+        study.flashcard.export.export.server
+        study.flashcard.import.import.server
+        study.flashcard.import.preview.server
         study.flashcard.tags.list.server
         study.flashcard.template.create.server
         study.flashcard.template.delete.server

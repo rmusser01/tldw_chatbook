@@ -312,6 +312,18 @@ AUDITED_CAPABILITY_SEEDS = (
                 sources=(SERVER_SOURCE,),
             ),
             _resource(
+                "study.flashcard.import",
+                actions=(PREVIEW, IMPORT),
+                domain_id="study",
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
+                "study.flashcard.export",
+                actions=(EXPORT,),
+                domain_id="study",
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
                 "study.flashcard.tags",
                 actions=(LIST,),
                 domain_id="study",
