@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
+from tldw_chatbook.tldw_api.media_reading_schemas import ReadingSaveRequest
 
 
 _MODULE_PATH = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Media" / "local_media_reading_service.py"
@@ -343,3 +344,30 @@ def test_local_service_lists_and_gets_unified_items(memory_db_factory):
     assert listing["items"][0]["tags"] == ["ai"]
     assert detail["id"] == kept_id
     assert detail["status"] == "saved"
+
+
+def test_local_service_saves_reading_url_to_local_media(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    saved = service.save_reading_item(
+        ReadingSaveRequest(
+            url="https://example.com/local",
+            title="Local Saved URL",
+            tags=[" ai ", "reading"],
+            content="Locally saved content",
+        )
+    )
+
+    detail = service.get_media_detail(saved["media_id"])
+    read_it_later = service.list_reading_item_note_links(saved["media_id"])
+
+    assert saved["id"] == saved["media_id"]
+    assert saved["title"] == "Local Saved URL"
+    assert saved["url"] == "https://example.com/local"
+    assert saved["status"] == "saved"
+    assert saved["favorite"] is False
+    assert saved["tags"] == ["ai", "reading"]
+    assert detail["content"] == "Locally saved content"
+    assert detail["is_read_it_later"] is True
+    assert read_it_later == {"item_id": saved["media_id"], "links": []}

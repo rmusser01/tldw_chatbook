@@ -71,6 +71,13 @@ class LocalMediaReadingService:
             "tags": list(tags or []),
         }
 
+    def _request_to_mapping(self, request_data: Any) -> dict[str, Any]:
+        if hasattr(request_data, "model_dump"):
+            return request_data.model_dump(exclude_none=True, mode="json")
+        if isinstance(request_data, Mapping):
+            return dict(request_data)
+        raise ValueError("request_data must be a mapping or pydantic model.")
+
     def _enrich_with_read_it_later_state(self, row: Mapping[str, Any]) -> dict[str, Any]:
         enriched = dict(row)
         state = self._require_db().get_media_read_it_later_state(self._coerce_media_id(row["id"]))
@@ -206,6 +213,44 @@ class LocalMediaReadingService:
 
     def save_to_read_it_later(self, media_id: Any) -> Any:
         return self._require_db().save_media_to_read_it_later(self._coerce_media_id(media_id))
+
+    def save_reading_item(self, request_data: Any) -> dict[str, Any]:
+        payload = self._request_to_mapping(request_data)
+        url = str(payload.get("url") or "").strip()
+        if not url:
+            raise ValueError("url is required for local reading save.")
+        status = str(payload.get("status") or "saved").strip().lower()
+        if status not in {"saved", "read_it_later", "read-it-later"}:
+            raise ValueError(f"Unsupported local reading save status: {status}")
+        if payload.get("favorite"):
+            raise ValueError("Local reading save does not support favorite state yet.")
+        archive_mode = str(payload.get("archive_mode") or "use_default").strip().lower()
+        if archive_mode == "always":
+            raise ValueError("Local reading save does not support archive creation yet.")
+
+        tags = [tag.strip() for tag in self._normalize_filter_list(payload.get("tags")) if tag.strip()]
+        title = str(payload.get("title") or url).strip()
+        content = payload.get("content") or payload.get("summary") or payload.get("notes") or f"Saved reading item: {url}"
+        media_id, _, _ = self._require_db().add_media_with_keywords(
+            url=url,
+            title=title,
+            media_type="reading",
+            content=str(content),
+            keywords=tags,
+            overwrite=True,
+        )
+        if media_id is None:
+            raise ValueError("Local reading save did not return a media ID.")
+        self.save_to_read_it_later(media_id)
+        return {
+            "id": media_id,
+            "media_id": media_id,
+            "title": title,
+            "url": url,
+            "status": "saved",
+            "favorite": False,
+            "tags": tags,
+        }
 
     def remove_from_read_it_later(self, media_id: Any) -> Any:
         db = self._require_db()

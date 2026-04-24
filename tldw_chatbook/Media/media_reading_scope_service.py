@@ -966,8 +966,6 @@ class MediaReadingScopeService:
         request_data: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            raise ValueError("Local reading URL save is not available yet.")
         self._enforce_policy(self._reading_list_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.save_reading_item(request_data))

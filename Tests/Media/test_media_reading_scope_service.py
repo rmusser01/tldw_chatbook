@@ -270,6 +270,18 @@ class FakeLocalMediaService:
             "status": "saved",
         }
 
+    def save_reading_item(self, request_data):
+        self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "id": 31,
+            "media_id": 31,
+            "title": request_data.title or "Local Article",
+            "url": str(request_data.url),
+            "status": request_data.status,
+            "favorite": False,
+            "tags": request_data.tags,
+        }
+
     def ingest_web_content(self, **kwargs):
         raise ValueError("Local web-content ingest is not available yet.")
 
@@ -1559,17 +1571,41 @@ async def test_scope_service_routes_server_reading_url_save_with_reading_list_cr
     ]
 
     local_policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     local_scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=server,
         policy_enforcer=local_policy,
     )
-    with pytest.raises(ValueError, match="Local reading URL save is not available yet."):
-        await local_scope.save_reading_item(
-            mode="local",
-            request_data=ReadingSaveRequest(url="https://example.com/local"),
-        )
-    assert local_policy.calls == []
+    local_result = await local_scope.save_reading_item(
+        mode="local",
+        request_data=ReadingSaveRequest(
+            url="https://example.com/local",
+            title="Local Saved",
+            tags=["local"],
+        ),
+    )
+    assert local_result == {
+        "id": 31,
+        "media_id": 31,
+        "title": "Local Saved",
+        "url": "https://example.com/local",
+        "status": "saved",
+        "favorite": False,
+        "tags": ["local"],
+    }
+    assert local_policy.calls == ["collections.reading_list.create.local"]
+    assert local.calls[-1] == (
+        "save_reading_item",
+        {
+            "url": "https://example.com/local",
+            "title": "Local Saved",
+            "tags": ["local"],
+            "status": "saved",
+            "archive_mode": "use_default",
+            "favorite": False,
+        },
+    )
 
 
 @pytest.mark.asyncio
