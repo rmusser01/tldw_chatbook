@@ -392,6 +392,19 @@ class MediaTrashEmptyResponse(BaseModel):
     remaining_count: int
 
 
+class MediaTranscriptionModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    value: str
+    label: str
+    description: str | None = None
+
+
+class MediaTranscriptionModelsResponse(BaseModel):
+    categories: dict[str, list[MediaTranscriptionModel]] = Field(default_factory=dict)
+    all_models: list[str] = Field(default_factory=list)
+
+
 class FileArtifactsPurgeRequest(BaseModel):
     delete_files: bool = False
     soft_deleted_grace_days: int = Field(default=30, ge=0)
@@ -1406,6 +1419,8 @@ __all__ = [
     "MediaProcessingDetail",
     "MediaSourceDetail",
     "MediaTrashEmptyResponse",
+    "MediaTranscriptionModel",
+    "MediaTranscriptionModelsResponse",
     "MediaUpdateRequest",
     "ReadingDeleteResponse",
     "ReadingCitation",

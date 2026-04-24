@@ -3,6 +3,14 @@ from unittest.mock import Mock
 import pytest
 
 from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
+from tldw_chatbook.tldw_api import (
+    ProcessAudioRequest,
+    ProcessDocumentRequest,
+    ProcessEbookRequest,
+    ProcessPDFRequest,
+    ProcessVideoRequest,
+    ReprocessMediaRequest,
+)
 
 
 class FakeClient:
@@ -52,6 +60,40 @@ class FakeClient:
     async def get_media_by_identifier(self, **kwargs):
         self.calls.append(("get_media_by_identifier", kwargs))
         return {"results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}], "total": 1}
+
+    async def get_media_transcription_models(self):
+        self.calls.append(("get_media_transcription_models",))
+        return {"categories": {}, "all_models": ["whisper-small"]}
+
+    async def reprocess_media(self, media_id, request_data):
+        self.calls.append(("reprocess_media", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "media_id": media_id,
+            "status": "completed",
+            "message": "Reprocessed",
+            "chunks_created": 3,
+            "embeddings_started": True,
+        }
+
+    async def process_video(self, request_data, file_paths=None):
+        self.calls.append(("process_video", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_audio(self, request_data, file_paths=None):
+        self.calls.append(("process_audio", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_pdf(self, request_data, file_paths=None):
+        self.calls.append(("process_pdf", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_ebook(self, request_data, file_paths=None):
+        self.calls.append(("process_ebook", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_document(self, request_data, file_paths=None):
+        self.calls.append(("process_document", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def get_reading_item(self, item_id):
         self.calls.append(("get_reading_item", item_id))
@@ -788,6 +830,54 @@ async def test_server_service_routes_media_listing_search_and_trash_adjuncts_to_
             },
         ),
         ("get_media_by_identifier", {"doi": "10/example", "group_by_media": False}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_media_processing_controls_to_client():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    models = await service.get_media_transcription_models()
+    reprocessed = await service.reprocess_media(
+        99,
+        perform_chunking=True,
+        generate_embeddings=True,
+        chunk_method="sentences",
+    )
+    video = await service.process_video(ProcessVideoRequest(title="Video"), file_paths=["video.mp4"])
+    audio = await service.process_audio(ProcessAudioRequest(title="Audio"), file_paths=["audio.mp3"])
+    pdf = await service.process_pdf(ProcessPDFRequest(title="PDF"), file_paths=["paper.pdf"])
+    ebook = await service.process_ebook(ProcessEbookRequest(title="Book"), file_paths=["book.epub"])
+    document = await service.process_document(ProcessDocumentRequest(title="Doc"), file_paths=["doc.docx"])
+
+    assert models["all_models"] == ["whisper-small"]
+    assert reprocessed["chunks_created"] == 3
+    assert video["processed_count"] == 1
+    assert audio["processed_count"] == 1
+    assert pdf["processed_count"] == 1
+    assert ebook["processed_count"] == 1
+    assert document["processed_count"] == 1
+    assert client.calls[:7] == [
+        ("get_media_transcription_models",),
+        (
+            "reprocess_media",
+            99,
+            {
+                "perform_chunking": True,
+                "generate_embeddings": True,
+                "chunk_method": "sentences",
+                "chunk_size": 500,
+                "chunk_overlap": 200,
+                "auto_apply_template": False,
+                "force_regenerate_embeddings": False,
+            },
+        ),
+        ("process_video", ProcessVideoRequest(title="Video").model_dump(exclude_none=True, mode="json"), ["video.mp4"]),
+        ("process_audio", ProcessAudioRequest(title="Audio").model_dump(exclude_none=True, mode="json"), ["audio.mp3"]),
+        ("process_pdf", ProcessPDFRequest(title="PDF").model_dump(exclude_none=True, mode="json"), ["paper.pdf"]),
+        ("process_ebook", ProcessEbookRequest(title="Book").model_dump(exclude_none=True, mode="json"), ["book.epub"]),
+        ("process_document", ProcessDocumentRequest(title="Doc").model_dump(exclude_none=True, mode="json"), ["doc.docx"]),
     ]
 
 

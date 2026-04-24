@@ -8,6 +8,13 @@ from tldw_chatbook.Media.media_reading_scope_service import (
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
+from tldw_chatbook.tldw_api import (
+    ProcessAudioRequest,
+    ProcessDocumentRequest,
+    ProcessEbookRequest,
+    ProcessPDFRequest,
+    ProcessVideoRequest,
+)
 
 
 class FakeLocalMediaService:
@@ -292,6 +299,40 @@ class FakeServerMediaService:
     async def get_media_by_identifier(self, **identifiers):
         self.calls.append(("get_media_by_identifier", identifiers))
         return {"results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}], "total": 1}
+
+    async def get_media_transcription_models(self):
+        self.calls.append(("get_media_transcription_models",))
+        return {"categories": {}, "all_models": ["whisper-small"]}
+
+    async def reprocess_media(self, media_id, **options):
+        self.calls.append(("reprocess_media", media_id, options))
+        return {
+            "media_id": media_id,
+            "status": "completed",
+            "message": "Reprocessed",
+            "chunks_created": 3,
+            "embeddings_started": True,
+        }
+
+    async def process_video(self, request_data, *, file_paths=None):
+        self.calls.append(("process_video", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_audio(self, request_data, *, file_paths=None):
+        self.calls.append(("process_audio", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_pdf(self, request_data, *, file_paths=None):
+        self.calls.append(("process_pdf", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_ebook(self, request_data, *, file_paths=None):
+        self.calls.append(("process_ebook", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_document(self, request_data, *, file_paths=None):
+        self.calls.append(("process_document", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def get_media_detail(self, media_id):
         self.calls.append(("get_media_detail", media_id))
@@ -1162,6 +1203,83 @@ async def test_scope_service_rejects_local_server_media_listing_adjuncts_before_
         await scope.search_backing_media_metadata(mode="local")
     with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
         await scope.get_backing_media_by_identifier(mode="local", doi="10/example")
+
+    assert policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_media_processing_controls_with_policy():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    models = await scope.get_media_transcription_models(mode="server")
+    reprocessed = await scope.reprocess_backing_media_item(
+        mode="server",
+        media_id=99,
+        perform_chunking=True,
+        generate_embeddings=True,
+    )
+    video = await scope.process_media_video(mode="server", request_data=ProcessVideoRequest(title="Video"), file_paths=["video.mp4"])
+    audio = await scope.process_media_audio(mode="server", request_data=ProcessAudioRequest(title="Audio"), file_paths=["audio.mp3"])
+    pdf = await scope.process_media_pdf(mode="server", request_data=ProcessPDFRequest(title="PDF"), file_paths=["paper.pdf"])
+    ebook = await scope.process_media_ebook(mode="server", request_data=ProcessEbookRequest(title="Book"), file_paths=["book.epub"])
+    document = await scope.process_media_document(mode="server", request_data=ProcessDocumentRequest(title="Doc"), file_paths=["doc.docx"])
+
+    assert policy.calls == [
+        "media.processing_models.list.server",
+        "media.items.reprocess.launch.server",
+        "media.processing.launch.server",
+        "media.processing.launch.server",
+        "media.processing.launch.server",
+        "media.processing.launch.server",
+        "media.processing.launch.server",
+    ]
+    assert models["all_models"] == ["whisper-small"]
+    assert reprocessed["chunks_created"] == 3
+    assert video["processed_count"] == 1
+    assert audio["processed_count"] == 1
+    assert pdf["processed_count"] == 1
+    assert ebook["processed_count"] == 1
+    assert document["processed_count"] == 1
+    assert server.calls[:7] == [
+        ("get_media_transcription_models",),
+        ("reprocess_media", 99, {"perform_chunking": True, "generate_embeddings": True}),
+        ("process_video", ProcessVideoRequest(title="Video").model_dump(exclude_none=True, mode="json"), ["video.mp4"]),
+        ("process_audio", ProcessAudioRequest(title="Audio").model_dump(exclude_none=True, mode="json"), ["audio.mp3"]),
+        ("process_pdf", ProcessPDFRequest(title="PDF").model_dump(exclude_none=True, mode="json"), ["paper.pdf"]),
+        ("process_ebook", ProcessEbookRequest(title="Book").model_dump(exclude_none=True, mode="json"), ["book.epub"]),
+        ("process_document", ProcessDocumentRequest(title="Doc").model_dump(exclude_none=True, mode="json"), ["doc.docx"]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_local_server_media_processing_controls_before_policy():
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+        await scope.get_media_transcription_models(mode="local")
+    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+        await scope.reprocess_backing_media_item(mode="local", media_id=12)
+    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+        await scope.process_media_video(mode="local", request_data=ProcessVideoRequest())
+    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+        await scope.process_media_audio(mode="local", request_data=ProcessAudioRequest())
+    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+        await scope.process_media_pdf(mode="local", request_data=ProcessPDFRequest())
+    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+        await scope.process_media_ebook(mode="local", request_data=ProcessEbookRequest())
+    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+        await scope.process_media_document(mode="local", request_data=ProcessDocumentRequest())
 
     assert policy.calls == []
 

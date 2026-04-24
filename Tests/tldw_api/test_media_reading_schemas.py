@@ -29,6 +29,7 @@ from tldw_chatbook.tldw_api import (
     MediaNavigationResponse,
     MediaSearchRequest,
     MediaTrashEmptyResponse,
+    MediaTranscriptionModelsResponse,
     MediaUpdateRequest,
     ReadingDigestOutput,
     ReadingDigestOutputsListResponse,
@@ -97,6 +98,24 @@ def test_server_media_listing_and_search_adjunct_models_match_server_contracts()
     assert metadata_search.results[0]["safe_metadata"]["doi"] == "10/example"
     assert identifier_lookup.total == 1
     assert empty_trash.deleted_count == 2
+
+
+def test_media_transcription_models_response_matches_server_contract():
+    payload = MediaTranscriptionModelsResponse(
+        categories={
+            "Whisper Models": [
+                {
+                    "value": "whisper-small",
+                    "label": "Whisper Small",
+                    "description": "Balanced speed/accuracy",
+                }
+            ]
+        },
+        all_models=["whisper-small"],
+    )
+
+    assert payload.categories["Whisper Models"][0].value == "whisper-small"
+    assert payload.all_models == ["whisper-small"]
 
 
 def test_media_navigation_models_match_server_contracts():

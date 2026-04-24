@@ -18,6 +18,11 @@ from ..tldw_api import (
     MediaIngestJobSubmitRequest,
     MediaKeywordsUpdateRequest,
     MediaUpdateRequest,
+    ProcessAudioRequest,
+    ProcessDocumentRequest,
+    ProcessEbookRequest,
+    ProcessPDFRequest,
+    ProcessVideoRequest,
     ReadingArchiveCreateRequest,
     ReadingDigestScheduleCreateRequest,
     ReadingDigestScheduleUpdateRequest,
@@ -31,6 +36,7 @@ from ..tldw_api import (
     ReadingSummarizeRequest,
     ReadingTTSRequest,
     ReadingUpdateRequest,
+    ReprocessMediaRequest,
     TLDWAPIClient,
 )
 
@@ -127,6 +133,28 @@ class ServerMediaReadingService:
         return await self._require_client().get_media_by_identifier(
             **{key: value for key, value in identifiers.items() if value is not None}
         )
+
+    async def get_media_transcription_models(self) -> Any:
+        return await self._require_client().get_media_transcription_models()
+
+    async def reprocess_media(self, media_id: Any, **options: Any) -> Any:
+        request_data = ReprocessMediaRequest(**{key: value for key, value in options.items() if value is not None})
+        return await self._require_client().reprocess_media(int(media_id), request_data)
+
+    async def process_video(self, request_data: ProcessVideoRequest, file_paths: list[str] | None = None) -> Any:
+        return await self._require_client().process_video(request_data, file_paths=file_paths)
+
+    async def process_audio(self, request_data: ProcessAudioRequest, file_paths: list[str] | None = None) -> Any:
+        return await self._require_client().process_audio(request_data, file_paths=file_paths)
+
+    async def process_pdf(self, request_data: ProcessPDFRequest, file_paths: list[str] | None = None) -> Any:
+        return await self._require_client().process_pdf(request_data, file_paths=file_paths)
+
+    async def process_ebook(self, request_data: ProcessEbookRequest, file_paths: list[str] | None = None) -> Any:
+        return await self._require_client().process_ebook(request_data, file_paths=file_paths)
+
+    async def process_document(self, request_data: ProcessDocumentRequest, file_paths: list[str] | None = None) -> Any:
+        return await self._require_client().process_document(request_data, file_paths=file_paths)
 
     async def get_media_detail(self, media_id: Any) -> Any:
         return await self._require_client().get_reading_item(int(media_id))

@@ -42,6 +42,7 @@ from tldw_chatbook.tldw_api import (
     MediaNavigationResponse,
     MediaSearchRequest,
     MediaTrashEmptyResponse,
+    MediaTranscriptionModelsResponse,
     MediaUpdateRequest,
     ReadingDigestOutputsListResponse,
     ReadingDigestScheduleCreateRequest,
@@ -57,6 +58,32 @@ from tldw_chatbook.tldw_api import (
     TLDWAPIClient,
     ServerMediaListResponse,
 )
+
+
+@pytest.mark.asyncio
+async def test_media_transcription_models_route_wires_to_server_contract(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "categories": {
+                "Whisper Models": [
+                    {
+                        "value": "whisper-small",
+                        "label": "Whisper Small",
+                        "description": "Balanced speed/accuracy",
+                    }
+                ]
+            },
+            "all_models": ["whisper-small"],
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    response = await client.get_media_transcription_models()
+
+    mocked.assert_awaited_once_with("GET", "/api/v1/media/transcription-models")
+    assert isinstance(response, MediaTranscriptionModelsResponse)
+    assert response.all_models == ["whisper-small"]
 
 
 @pytest.mark.asyncio

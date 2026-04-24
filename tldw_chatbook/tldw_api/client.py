@@ -83,6 +83,7 @@ from .media_reading_schemas import (
     MediaNavigationContentResponse,
     MediaNavigationResponse,
     MediaTrashEmptyResponse,
+    MediaTranscriptionModelsResponse,
     MediaUpdateRequest,
     ReadingArchiveCreateRequest,
     ReadingArchiveResponse,
@@ -1028,6 +1029,10 @@ class TLDWAPIClient:
             params={key: value for key, value in params.items() if value is not None},
         )
         return MediaIdentifierLookupResponse.model_validate(response)
+
+    async def get_media_transcription_models(self) -> MediaTranscriptionModelsResponse:
+        response = await self._request("GET", "/api/v1/media/transcription-models")
+        return MediaTranscriptionModelsResponse.model_validate(response)
 
     async def get_media_item(
         self,

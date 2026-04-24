@@ -217,6 +217,18 @@ class MediaReadingScopeService:
         return f"media.items.identifier_lookup.{action}.{mode.value}"
 
     @staticmethod
+    def _media_item_reprocess_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.items.reprocess.{action}.{mode.value}"
+
+    @staticmethod
+    def _media_processing_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.processing.{action}.{mode.value}"
+
+    @staticmethod
+    def _media_processing_models_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.processing_models.{action}.{mode.value}"
+
+    @staticmethod
     def _media_item_file_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.items.file.{action}.{mode.value}"
 
@@ -229,6 +241,11 @@ class MediaReadingScopeService:
     def _require_server_media_item_lifecycle(mode: MediaReadingBackend) -> None:
         if mode == MediaReadingBackend.LOCAL:
             raise ValueError("Server media item lifecycle requires server mode.")
+
+    @staticmethod
+    def _require_server_media_processing(mode: MediaReadingBackend) -> None:
+        if mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Server media processing requires server mode.")
 
     def _service_for_mode(self, mode: MediaReadingBackend) -> Any:
         if mode == MediaReadingBackend.LOCAL:
@@ -519,6 +536,118 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.get_media_by_identifier(**identifiers))
         return self._as_mapping_payload(payload)
+
+    async def get_media_transcription_models(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_processing(normalized_mode)
+        self._enforce_policy(self._media_processing_models_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.get_media_transcription_models())
+        return self._as_mapping_payload(payload)
+
+    async def reprocess_backing_media_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        **options: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_processing(normalized_mode)
+        self._enforce_policy(self._media_item_reprocess_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.reprocess_media(media_id, **options))
+        return self._as_mapping_payload(payload)
+
+    async def _process_server_media(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None,
+        method_name: str,
+        request_data: Any,
+        file_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_processing(normalized_mode)
+        self._enforce_policy(self._media_processing_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        method = getattr(service, method_name)
+        payload = await self._maybe_await(method(request_data, file_paths=file_paths))
+        return self._as_mapping_payload(payload)
+
+    async def process_media_video(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+        file_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_video",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
+
+    async def process_media_audio(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+        file_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_audio",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
+
+    async def process_media_pdf(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+        file_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_pdf",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
+
+    async def process_media_ebook(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+        file_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_ebook",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
+
+    async def process_media_document(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+        file_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_document",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
 
     async def get_backing_media_item(
         self,

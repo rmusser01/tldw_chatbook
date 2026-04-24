@@ -146,6 +146,8 @@ _EXPORT_GROUPS = (
             "MediaProcessingDetail",
             "MediaSourceDetail",
             "MediaTrashEmptyResponse",
+            "MediaTranscriptionModel",
+            "MediaTranscriptionModelsResponse",
             "MediaUpdateRequest",
             "ReadingArchiveCreateRequest",
             "ReadingArchiveResponse",
