@@ -281,14 +281,6 @@ class MediaReadingScopeService:
         raise ValueError("Local reading archives are not available yet.")
 
     @staticmethod
-    def _raise_local_reading_digest_schedules_unavailable() -> None:
-        raise ValueError("Local reading digest schedules are not available yet.")
-
-    @staticmethod
-    def _raise_local_reading_digest_outputs_unavailable() -> None:
-        raise ValueError("Local reading digest outputs are not available yet.")
-
-    @staticmethod
     def _validate_server_create_source_type(source_type: str) -> str:
         normalized_source_type = str(source_type or "").strip()
         if normalized_source_type not in ALLOWED_SERVER_CREATE_SOURCE_TYPES:
@@ -1399,8 +1391,6 @@ class MediaReadingScopeService:
         **options: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_digest_schedules_unavailable()
         self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         payload = {key: value for key, value in options.items() if value is not None}
@@ -1414,8 +1404,6 @@ class MediaReadingScopeService:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_digest_schedules_unavailable()
         self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         schedules = await self._maybe_await(service.list_reading_digest_schedules(limit=limit, offset=offset))
@@ -1431,8 +1419,6 @@ class MediaReadingScopeService:
         schedule_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_digest_schedules_unavailable()
         self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         schedule = await self._maybe_await(service.get_reading_digest_schedule(schedule_id))
@@ -1446,8 +1432,6 @@ class MediaReadingScopeService:
         **changes: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_digest_schedules_unavailable()
         self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "update"))
         service = self._service_for_mode(normalized_mode)
         payload = {key: value for key, value in changes.items() if value is not None}
@@ -1461,8 +1445,6 @@ class MediaReadingScopeService:
         schedule_id: str,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_digest_schedules_unavailable()
         self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.delete_reading_digest_schedule(schedule_id))
@@ -1476,8 +1458,6 @@ class MediaReadingScopeService:
         offset: int = 0,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_digest_outputs_unavailable()
         self._enforce_policy(self._reading_digest_output_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(

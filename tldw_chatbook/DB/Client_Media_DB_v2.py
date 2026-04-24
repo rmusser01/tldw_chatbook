@@ -98,7 +98,7 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 10  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 11  # Define the version this code supports
     
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
@@ -151,6 +151,11 @@ class MediaDatabase:
             'to_version': 10,
             'function': '_apply_migration_v9_to_v10',
             'description': 'Add local media ingest jobs'
+        },
+        10: {
+            'to_version': 11,
+            'function': '_apply_migration_v10_to_v11',
+            'description': 'Add local reading digest schedules and outputs'
         },
         # Future migrations: just add new entries here
         # 5: {
@@ -620,6 +625,51 @@ class MediaDatabase:
         ON LocalMediaIngestJobs(status, deleted);
     CREATE INDEX IF NOT EXISTS idx_local_media_ingest_jobs_created
         ON LocalMediaIngestJobs(created_at, id);
+    """
+
+    _LOCAL_READING_DIGESTS_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS LocalReadingDigestSchedules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        cron TEXT NOT NULL,
+        timezone TEXT,
+        enabled BOOLEAN NOT NULL DEFAULT 1,
+        require_online BOOLEAN NOT NULL DEFAULT 0,
+        format TEXT NOT NULL DEFAULT 'md',
+        template_id INTEGER,
+        template_name TEXT,
+        retention_days INTEGER,
+        filters_json TEXT,
+        last_run_at DATETIME,
+        next_run_at DATETIME,
+        last_status TEXT,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        deleted BOOLEAN NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_local_reading_digest_schedules_deleted
+        ON LocalReadingDigestSchedules(deleted);
+    CREATE INDEX IF NOT EXISTS idx_local_reading_digest_schedules_updated
+        ON LocalReadingDigestSchedules(updated_at, id);
+
+    CREATE TABLE IF NOT EXISTS LocalReadingDigestOutputs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        schedule_id INTEGER,
+        title TEXT NOT NULL,
+        format TEXT NOT NULL DEFAULT 'md',
+        download_url TEXT NOT NULL,
+        item_count INTEGER,
+        metadata_json TEXT,
+        created_at DATETIME NOT NULL,
+        deleted BOOLEAN NOT NULL DEFAULT 0,
+        FOREIGN KEY (schedule_id) REFERENCES LocalReadingDigestSchedules(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_local_reading_digest_outputs_schedule
+        ON LocalReadingDigestOutputs(schedule_id, deleted);
+    CREATE INDEX IF NOT EXISTS idx_local_reading_digest_outputs_created
+        ON LocalReadingDigestOutputs(created_at, id);
     """
 
     def __init__(self, db_path: Union[str, Path], client_id: str, 
@@ -1320,6 +1370,26 @@ class MediaDatabase:
             logging.error(f"[Migration v9->v10] Unexpected error during migration: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during migration v9->v10: {e}") from e
 
+    def _apply_migration_v10_to_v11(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 10 to version 11 (adds local reading digests)."""
+        logging.info(f"Applying migration from version 10 to 11 (local reading digests) to DB: {self.db_path_str}...")
+        try:
+            migration_sql = f"""
+            {self._LOCAL_READING_DIGESTS_TABLE_SQL}
+            UPDATE schema_version SET version = 11;
+            """
+
+            with self.transaction():
+                logging.debug("[Migration v10->v11] Creating LocalReadingDigest tables...")
+                conn.executescript(migration_sql)
+                logging.info("[Migration v10->v11] LocalReadingDigest migration applied successfully.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v10->v11] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v10->v11 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v10->v11] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v10->v11: {e}") from e
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -1339,7 +1409,8 @@ class MediaDatabase:
                         f"{self._LOCAL_READING_SAVED_SEARCHES_TABLE_SQL}\n"
                         f"{self._LOCAL_READING_NOTE_LINKS_TABLE_SQL}\n"
                         f"{self._LOCAL_READING_IMPORT_JOBS_TABLE_SQL}\n"
-                        f"{self._LOCAL_MEDIA_INGEST_JOBS_TABLE_SQL}"
+                        f"{self._LOCAL_MEDIA_INGEST_JOBS_TABLE_SQL}\n"
+                        f"{self._LOCAL_READING_DIGESTS_TABLE_SQL}"
                     )
                     conn.commit()
                     logging.debug("Verified FTS and local-only media tables exist.")
@@ -3222,6 +3293,361 @@ class MediaDatabase:
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error listing local media ingest jobs from DB '{self.db_path_str}': {e}")
             raise DatabaseError("Failed to list local media ingest jobs") from e
+
+    @staticmethod
+    def _normalize_local_digest_format(value: Any) -> str:
+        normalized = str(value or "md").strip().lower()
+        if normalized not in {"md", "html"}:
+            raise InputError(f"Unsupported local reading digest format: {normalized}")
+        return normalized
+
+    @staticmethod
+    def _local_reading_digest_schedule_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        filters = MediaDatabase._json_object_from_db(row["filters_json"]) if row["filters_json"] else None
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "cron": row["cron"],
+            "timezone": row["timezone"],
+            "enabled": bool(row["enabled"]),
+            "require_online": bool(row["require_online"]),
+            "format": row["format"],
+            "template_id": row["template_id"],
+            "template_name": row["template_name"],
+            "retention_days": row["retention_days"],
+            "filters": filters,
+            "last_run_at": row["last_run_at"],
+            "next_run_at": row["next_run_at"],
+            "last_status": row["last_status"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "deleted": bool(row["deleted"]),
+        }
+
+    def create_local_reading_digest_schedule(
+        self,
+        *,
+        cron: str,
+        name: Optional[str] = None,
+        timezone: Optional[str] = None,
+        enabled: bool = True,
+        require_online: bool = False,
+        format: str = "md",
+        template_id: Optional[int] = None,
+        template_name: Optional[str] = None,
+        retention_days: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create a local-only reading digest schedule record."""
+        normalized_cron = str(cron or "").strip()
+        if not normalized_cron:
+            raise InputError("cron is required for local reading digest schedules.")
+        if filters is not None and not isinstance(filters, dict):
+            raise InputError("filters must be a dictionary for local reading digest schedules.")
+        if retention_days is not None and not (0 <= int(retention_days) <= 3650):
+            raise InputError("retention_days must be between 0 and 3650 for local reading digest schedules.")
+
+        current_time = self._get_current_utc_timestamp_str()
+        filters_json = json.dumps(filters, separators=(',', ':'), cls=DateTimeEncoder) if filters is not None else None
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO LocalReadingDigestSchedules (
+                        name, cron, timezone, enabled, require_online, format,
+                        template_id, template_name, retention_days, filters_json,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(name).strip() if name is not None else None,
+                        normalized_cron,
+                        str(timezone).strip() if timezone is not None else None,
+                        1 if enabled else 0,
+                        1 if require_online else 0,
+                        self._normalize_local_digest_format(format),
+                        int(template_id) if template_id is not None else None,
+                        str(template_name).strip() if template_name is not None else None,
+                        int(retention_days) if retention_days is not None else None,
+                        filters_json,
+                        current_time,
+                        current_time,
+                    ),
+                )
+                schedule_id = int(cursor.lastrowid)
+            created = self.get_local_reading_digest_schedule(schedule_id)
+            if created is None:
+                raise DatabaseError(f"Failed to fetch newly created local reading digest schedule {schedule_id}")
+            return created
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error creating local reading digest schedule in DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to create local reading digest schedule") from e
+
+    def list_local_reading_digest_schedules(self, *, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        """List non-deleted local reading digest schedules."""
+        normalized_limit = max(1, int(limit))
+        normalized_offset = max(0, int(offset))
+        try:
+            count_cursor = self.execute_query(
+                "SELECT COUNT(*) FROM LocalReadingDigestSchedules WHERE deleted = 0"
+            )
+            total_row = count_cursor.fetchone()
+            total = int(total_row[0]) if total_row else 0
+            cursor = self.execute_query(
+                """
+                SELECT
+                    id, name, cron, timezone, enabled, require_online, format,
+                    template_id, template_name, retention_days, filters_json,
+                    last_run_at, next_run_at, last_status, created_at, updated_at, deleted
+                FROM LocalReadingDigestSchedules
+                WHERE deleted = 0
+                ORDER BY updated_at DESC, id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (normalized_limit, normalized_offset),
+            )
+            return {
+                "items": [self._local_reading_digest_schedule_row_to_dict(row) for row in cursor.fetchall()],
+                "total": total,
+                "limit": normalized_limit,
+                "offset": normalized_offset,
+            }
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error listing local reading digest schedules from DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to list local reading digest schedules") from e
+
+    def get_local_reading_digest_schedule(self, schedule_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a non-deleted local reading digest schedule by ID."""
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT
+                    id, name, cron, timezone, enabled, require_online, format,
+                    template_id, template_name, retention_days, filters_json,
+                    last_run_at, next_run_at, last_status, created_at, updated_at, deleted
+                FROM LocalReadingDigestSchedules
+                WHERE id = ? AND deleted = 0
+                """,
+                (schedule_id,),
+            )
+            row = cursor.fetchone()
+            return self._local_reading_digest_schedule_row_to_dict(row) if row else None
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching local reading digest schedule id={schedule_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to fetch local reading digest schedule {schedule_id}") from e
+
+    def update_local_reading_digest_schedule(self, schedule_id: int, **changes: Any) -> Dict[str, Any]:
+        """Update mutable fields on a local reading digest schedule."""
+        allowed_fields = {
+            "name",
+            "cron",
+            "timezone",
+            "enabled",
+            "require_online",
+            "format",
+            "template_id",
+            "template_name",
+            "retention_days",
+            "filters",
+            "last_run_at",
+            "next_run_at",
+            "last_status",
+        }
+        unsupported = sorted(key for key in changes if key not in allowed_fields)
+        if unsupported:
+            unsupported_text = ", ".join(unsupported)
+            raise InputError(f"Unsupported local reading digest schedule update fields: {unsupported_text}")
+
+        current = self.get_local_reading_digest_schedule(schedule_id)
+        if current is None:
+            raise InputError(f"Local reading digest schedule {schedule_id} not found.")
+        if not changes:
+            return current
+
+        assignments: list[str] = []
+        values: list[Any] = []
+        for field, value in changes.items():
+            if field == "cron":
+                normalized_cron = str(value or "").strip()
+                if not normalized_cron:
+                    raise InputError("cron cannot be empty for local reading digest schedules.")
+                assignments.append("cron = ?")
+                values.append(normalized_cron)
+            elif field == "filters":
+                if value is not None and not isinstance(value, dict):
+                    raise InputError("filters must be a dictionary for local reading digest schedules.")
+                assignments.append("filters_json = ?")
+                values.append(json.dumps(value, separators=(',', ':'), cls=DateTimeEncoder) if value is not None else None)
+            elif field == "format":
+                assignments.append("format = ?")
+                values.append(self._normalize_local_digest_format(value))
+            elif field in {"enabled", "require_online"}:
+                assignments.append(f"{field} = ?")
+                values.append(1 if value else 0)
+            elif field in {"template_id", "retention_days"}:
+                if field == "retention_days" and value is not None and not (0 <= int(value) <= 3650):
+                    raise InputError("retention_days must be between 0 and 3650 for local reading digest schedules.")
+                assignments.append(f"{field} = ?")
+                values.append(int(value) if value is not None else None)
+            else:
+                assignments.append(f"{field} = ?")
+                values.append(str(value).strip() if value is not None and field in {"name", "timezone", "template_name", "last_status"} else value)
+
+        current_time = self._get_current_utc_timestamp_str()
+        assignments.append("updated_at = ?")
+        values.append(current_time)
+        values.append(schedule_id)
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    f"UPDATE LocalReadingDigestSchedules SET {', '.join(assignments)} WHERE id = ? AND deleted = 0",
+                    tuple(values),
+                )
+            updated = self.get_local_reading_digest_schedule(schedule_id)
+            if updated is None:
+                raise DatabaseError(f"Failed to fetch updated local reading digest schedule {schedule_id}")
+            return updated
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error updating local reading digest schedule id={schedule_id} in DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to update local reading digest schedule {schedule_id}") from e
+
+    def delete_local_reading_digest_schedule(self, schedule_id: int) -> Dict[str, bool]:
+        """Soft-delete a local reading digest schedule."""
+        current_time = self._get_current_utc_timestamp_str()
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE LocalReadingDigestSchedules
+                    SET deleted = 1, updated_at = ?
+                    WHERE id = ? AND deleted = 0
+                    """,
+                    (current_time, schedule_id),
+                )
+                return {"ok": cursor.rowcount > 0}
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error deleting local reading digest schedule id={schedule_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to delete local reading digest schedule {schedule_id}") from e
+
+    @staticmethod
+    def _local_reading_digest_output_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        schedule_id = row["schedule_id"]
+        return {
+            "id": row["id"],
+            "output_id": row["id"],
+            "title": row["title"],
+            "format": row["format"],
+            "download_url": row["download_url"],
+            "schedule_id": str(schedule_id) if schedule_id is not None else None,
+            "schedule_name": row["schedule_name"],
+            "item_count": row["item_count"],
+            "metadata": MediaDatabase._json_object_from_db(row["metadata_json"]) if row["metadata_json"] else None,
+            "created_at": row["created_at"],
+            "deleted": bool(row["deleted"]),
+        }
+
+    def create_local_reading_digest_output(
+        self,
+        *,
+        schedule_id: Optional[int] = None,
+        title: str,
+        format: str = "md",
+        download_url: str,
+        item_count: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create a local reading digest output record for a completed local digest run."""
+        normalized_title = str(title or "").strip()
+        normalized_download_url = str(download_url or "").strip()
+        if not normalized_title:
+            raise InputError("title is required for local reading digest outputs.")
+        if not normalized_download_url:
+            raise InputError("download_url is required for local reading digest outputs.")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise InputError("metadata must be a dictionary for local reading digest outputs.")
+        normalized_schedule_id = int(schedule_id) if schedule_id is not None else None
+        if normalized_schedule_id is not None and self.get_local_reading_digest_schedule(normalized_schedule_id) is None:
+            raise InputError(f"Local reading digest schedule {normalized_schedule_id} not found.")
+
+        current_time = self._get_current_utc_timestamp_str()
+        metadata_json = json.dumps(metadata, separators=(',', ':'), cls=DateTimeEncoder) if metadata is not None else None
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO LocalReadingDigestOutputs (
+                        schedule_id, title, format, download_url, item_count, metadata_json, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized_schedule_id,
+                        normalized_title,
+                        self._normalize_local_digest_format(format),
+                        normalized_download_url,
+                        int(item_count) if item_count is not None else None,
+                        metadata_json,
+                        current_time,
+                    ),
+                )
+                output_id = int(cursor.lastrowid)
+            outputs = self.list_local_reading_digest_outputs(limit=1, offset=0)
+            for output in outputs["items"]:
+                if output["output_id"] == output_id:
+                    return output
+            raise DatabaseError(f"Failed to fetch newly created local reading digest output {output_id}")
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error creating local reading digest output in DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to create local reading digest output") from e
+
+    def list_local_reading_digest_outputs(
+        self,
+        *,
+        schedule_id: Optional[int] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """List non-deleted local reading digest outputs."""
+        normalized_limit = max(1, int(limit))
+        normalized_offset = max(0, int(offset))
+        normalized_schedule_id = int(schedule_id) if schedule_id is not None else None
+        where_clauses = ["o.deleted = 0"]
+        params: list[Any] = []
+        if normalized_schedule_id is not None:
+            where_clauses.append("o.schedule_id = ?")
+            params.append(normalized_schedule_id)
+        where_sql = " AND ".join(where_clauses)
+        try:
+            count_cursor = self.execute_query(
+                f"SELECT COUNT(*) FROM LocalReadingDigestOutputs o WHERE {where_sql}",
+                tuple(params),
+            )
+            total_row = count_cursor.fetchone()
+            total = int(total_row[0]) if total_row else 0
+            cursor = self.execute_query(
+                f"""
+                SELECT
+                    o.id, o.schedule_id, o.title, o.format, o.download_url,
+                    o.item_count, o.metadata_json, o.created_at, o.deleted,
+                    s.name AS schedule_name
+                FROM LocalReadingDigestOutputs o
+                LEFT JOIN LocalReadingDigestSchedules s ON s.id = o.schedule_id
+                WHERE {where_sql}
+                ORDER BY o.created_at DESC, o.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                tuple(params + [normalized_limit, normalized_offset]),
+            )
+            return {
+                "items": [self._local_reading_digest_output_row_to_dict(row) for row in cursor.fetchall()],
+                "total": total,
+                "limit": normalized_limit,
+                "offset": normalized_offset,
+            }
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error listing local reading digest outputs from DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to list local reading digest outputs") from e
 
     @staticmethod
     def _local_ingestion_source_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:

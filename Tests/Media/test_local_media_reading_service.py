@@ -613,6 +613,46 @@ async def test_local_service_coerces_reading_tts_stream_string_false(memory_db_f
     assert request.stream is False
 
 
+def test_local_service_persists_reading_digest_schedules_and_outputs(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    created = service.create_reading_digest_schedule(
+        name="Morning Digest",
+        cron="0 8 * * *",
+        timezone="UTC",
+        enabled=True,
+        require_online=False,
+        format="md",
+        retention_days=30,
+        filters={"status": ["saved"], "limit": 10},
+    )
+    output = db.create_local_reading_digest_output(
+        schedule_id=created["id"],
+        title="Morning Digest - 2026-04-24",
+        format="md",
+        download_url=f"local://reading_digest/{created['id']}/1",
+        item_count=2,
+        metadata={"item_ids": [1, 2]},
+    )
+
+    schedules = service.list_reading_digest_schedules(limit=10, offset=0)
+    fetched = service.get_reading_digest_schedule(created["id"])
+    updated = service.update_reading_digest_schedule(created["id"], enabled=False, name="Updated Digest")
+    outputs = service.list_reading_digest_outputs(schedule_id=created["id"], limit=5, offset=0)
+    deleted = service.delete_reading_digest_schedule(created["id"])
+
+    assert schedules[0]["id"] == created["id"]
+    assert fetched["filters"] == {"status": ["saved"], "limit": 10}
+    assert updated["enabled"] is False
+    assert updated["name"] == "Updated Digest"
+    assert outputs["items"][0]["output_id"] == output["output_id"]
+    assert outputs["items"][0]["schedule_id"] == str(created["id"])
+    assert outputs["items"][0]["metadata"] == {"item_ids": [1, 2]}
+    assert deleted == {"ok": True}
+    assert service.list_reading_digest_schedules(limit=10, offset=0) == []
+
+
 def test_local_service_imports_pocket_reading_items(memory_db_factory, tmp_path):
     import_file = tmp_path / "pocket.json"
     import_file.write_text(

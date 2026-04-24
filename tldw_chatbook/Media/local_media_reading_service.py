@@ -673,6 +673,64 @@ class LocalMediaReadingService:
             chunks.append(bytes(chunk))
         return b"".join(chunks)
 
+    def create_reading_digest_schedule(
+        self,
+        *,
+        cron: str,
+        name: str | None = None,
+        timezone: str | None = None,
+        enabled: bool = True,
+        require_online: bool = False,
+        format: str = "md",
+        template_id: int | None = None,
+        template_name: str | None = None,
+        retention_days: int | None = None,
+        filters: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._require_db().create_local_reading_digest_schedule(
+            cron=cron,
+            name=name,
+            timezone=timezone,
+            enabled=enabled,
+            require_online=require_online,
+            format=format,
+            template_id=template_id,
+            template_name=template_name,
+            retention_days=retention_days,
+            filters=dict(filters) if filters is not None else None,
+        )
+
+    def list_reading_digest_schedules(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        payload = self._require_db().list_local_reading_digest_schedules(limit=limit, offset=offset)
+        return list(payload.get("items") or [])
+
+    def get_reading_digest_schedule(self, schedule_id: Any) -> dict[str, Any]:
+        schedule = self._require_db().get_local_reading_digest_schedule(int(schedule_id))
+        if schedule is None:
+            raise ValueError(f"Local reading digest schedule {schedule_id} not found.")
+        return schedule
+
+    def update_reading_digest_schedule(self, schedule_id: Any, **changes: Any) -> dict[str, Any]:
+        normalized_changes = {key: value for key, value in changes.items() if value is not None}
+        return self._require_db().update_local_reading_digest_schedule(int(schedule_id), **normalized_changes)
+
+    def delete_reading_digest_schedule(self, schedule_id: Any) -> dict[str, bool]:
+        return self._require_db().delete_local_reading_digest_schedule(int(schedule_id))
+
+    def list_reading_digest_outputs(
+        self,
+        *,
+        schedule_id: Any | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_schedule_id = int(schedule_id) if schedule_id is not None else None
+        return self._require_db().list_local_reading_digest_outputs(
+            schedule_id=normalized_schedule_id,
+            limit=limit,
+            offset=offset,
+        )
+
     def list_unified_items(self, **filters: Any) -> dict[str, Any]:
         origin = str(filters.get("origin") or "").strip().lower()
         if origin and origin not in {"media", "reading", "local"}:

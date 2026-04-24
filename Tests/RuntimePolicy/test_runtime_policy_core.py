@@ -498,12 +498,19 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.reading.update.server
         media.reading_archives.create.local
         media.reading_archives.create.server
+        media.reading_digest_outputs.list.local
         media.reading_digest_outputs.list.server
+        media.reading_digest_schedules.create.local
         media.reading_digest_schedules.create.server
+        media.reading_digest_schedules.delete.local
         media.reading_digest_schedules.delete.server
+        media.reading_digest_schedules.detail.local
         media.reading_digest_schedules.detail.server
+        media.reading_digest_schedules.list.local
         media.reading_digest_schedules.list.server
+        media.reading_digest_schedules.update.local
         media.reading_digest_schedules.update.server
+        media.reading_export.export.local
         media.reading_export.export.server
         media.reading_import.detail.local
         media.reading_import.detail.server
@@ -511,18 +518,27 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.reading_import.launch.server
         media.reading_import.list.local
         media.reading_import.list.server
+        media.reading_note_links.create.local
         media.reading_note_links.create.server
+        media.reading_note_links.delete.local
         media.reading_note_links.delete.server
+        media.reading_note_links.list.local
         media.reading_note_links.list.server
         media.reading_progress.detail.local
         media.reading_progress.detail.server
         media.reading_progress.update.local
         media.reading_progress.update.server
+        media.reading_saved_searches.create.local
         media.reading_saved_searches.create.server
+        media.reading_saved_searches.delete.local
         media.reading_saved_searches.delete.server
+        media.reading_saved_searches.list.local
         media.reading_saved_searches.list.server
+        media.reading_saved_searches.update.local
         media.reading_saved_searches.update.server
+        media.reading_summaries.create.local
         media.reading_summaries.create.server
+        media.reading_tts.launch.local
         media.reading_tts.launch.server
         media.web_content_ingest.launch.local
         media.web_content_ingest.launch.server
