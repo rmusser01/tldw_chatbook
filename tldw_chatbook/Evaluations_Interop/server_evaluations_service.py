@@ -7,18 +7,25 @@ from typing import Any, Optional
 
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
 from ..tldw_api import (
+    BatchEvaluationRequest,
     CreateEvaluationRequest,
     EmbeddingsABTestConfig,
     EmbeddingsABTestCreateRequest,
     EmbeddingsABTestRunRequest,
     EvaluationBenchmarkRunRequest,
     EvaluationDatasetCreateRequest,
+    EvaluationHistoryRequest,
     EvaluationRecipeDatasetValidationRequest,
     EvaluationRecipeRunCreateRequest,
     EvaluationRunCreateRequest,
     EvaluationWebhookRegistrationRequest,
     EvaluationWebhookTestRequest,
+    GEvalRequest,
+    OCREvaluationRequest,
     PipelinePresetCreate,
+    PropositionEvaluationRequest,
+    RAGEvaluationRequest,
+    ResponseQualityRequest,
     SyntheticEvalGenerationRequest,
     SyntheticEvalPromotionRequest,
     SyntheticEvalReviewRequest,
@@ -214,6 +221,132 @@ class ServerEvaluationsService:
 
     async def cancel_run(self, run_id: str) -> dict[str, Any]:
         return self._dump_model(await self._require_client().cancel_evaluation_run(run_id))
+
+    async def evaluate_geval(
+        self,
+        *,
+        source_text: str,
+        summary: str,
+        metrics: list[str] | None = None,
+        api_name: str | None = "openai",
+        api_key: str | None = None,
+        save_results: bool = False,
+    ) -> dict[str, Any]:
+        request = GEvalRequest(
+            source_text=source_text,
+            summary=summary,
+            **({"metrics": metrics} if metrics is not None else {}),
+            api_name=api_name,
+            api_key=api_key,
+            save_results=save_results,
+        )
+        return self._dump_model(await self._require_client().evaluate_geval(request))
+
+    async def evaluate_rag(
+        self,
+        *,
+        query: str,
+        retrieved_contexts: list[str],
+        generated_response: str,
+        ground_truth: str | None = None,
+        metrics: list[str] | None = None,
+        api_name: str | None = "openai",
+    ) -> dict[str, Any]:
+        request = RAGEvaluationRequest(
+            query=query,
+            retrieved_contexts=retrieved_contexts,
+            generated_response=generated_response,
+            ground_truth=ground_truth,
+            **({"metrics": metrics} if metrics is not None else {}),
+            api_name=api_name,
+        )
+        return self._dump_model(await self._require_client().evaluate_rag(request))
+
+    async def evaluate_response_quality(
+        self,
+        *,
+        prompt: str,
+        response: str,
+        expected_format: str | None = None,
+        evaluation_criteria: dict[str, str] | None = None,
+        api_name: str | None = "openai",
+    ) -> dict[str, Any]:
+        request = ResponseQualityRequest(
+            prompt=prompt,
+            response=response,
+            expected_format=expected_format,
+            evaluation_criteria=evaluation_criteria,
+            api_name=api_name,
+        )
+        return self._dump_model(await self._require_client().evaluate_response_quality(request))
+
+    async def evaluate_propositions(
+        self,
+        *,
+        extracted: list[str],
+        reference: list[str],
+        method: str = "semantic",
+        threshold: float = 0.7,
+    ) -> dict[str, Any]:
+        request = PropositionEvaluationRequest(
+            extracted=extracted,
+            reference=reference,
+            method=method,
+            threshold=threshold,
+        )
+        return self._dump_model(await self._require_client().evaluate_propositions(request))
+
+    async def evaluate_batch(
+        self,
+        *,
+        evaluation_type: str,
+        items: list[dict[str, Any]],
+        parallel_workers: int = 4,
+        continue_on_error: bool = True,
+    ) -> dict[str, Any]:
+        request = BatchEvaluationRequest(
+            evaluation_type=evaluation_type,
+            items=items,
+            parallel_workers=parallel_workers,
+            continue_on_error=continue_on_error,
+        )
+        return self._dump_model(await self._require_client().evaluate_batch(request))
+
+    async def evaluate_ocr(
+        self,
+        *,
+        items: list[dict[str, Any]],
+        metrics: list[str] | None = None,
+        ocr_options: dict[str, Any] | None = None,
+        thresholds: dict[str, float] | None = None,
+    ) -> dict[str, Any]:
+        request = OCREvaluationRequest(
+            items=items,
+            **({"metrics": metrics} if metrics is not None else {}),
+            ocr_options=ocr_options,
+            thresholds=thresholds,
+        )
+        return self._dump_model(await self._require_client().evaluate_ocr(request))
+
+    async def get_evaluation_history(
+        self,
+        *,
+        user_id: str | None = None,
+        evaluation_type: str | None = None,
+        start_date: Any = None,
+        end_date: Any = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        request = EvaluationHistoryRequest(
+            user_id=user_id,
+            evaluation_type=evaluation_type,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+            offset=offset,
+        )
+        return self._dump_model(await self._require_client().get_evaluation_history(request))
 
     async def generate_synthetic_drafts(
         self,

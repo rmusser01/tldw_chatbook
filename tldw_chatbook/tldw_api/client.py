@@ -218,6 +218,8 @@ from .rag_admin_schemas import (
     ReprocessMediaResponse,
 )
 from .evaluations_schemas import (
+    BatchEvaluationRequest,
+    BatchEvaluationResponse,
     CreateEvaluationRequest,
     EmbeddingsABTestCreateRequest,
     EmbeddingsABTestCreateResponse,
@@ -231,6 +233,8 @@ from .evaluations_schemas import (
     EvaluationDatasetCreateRequest,
     EvaluationDatasetListResponse,
     EvaluationDatasetResponse,
+    EvaluationHistoryRequest,
+    EvaluationHistoryResponse,
     EvaluationListResponse,
     EvaluationRecipeDatasetValidationRequest,
     EvaluationRecipeDatasetValidationResponse,
@@ -245,10 +249,20 @@ from .evaluations_schemas import (
     EvaluationWebhookStatusResponse,
     EvaluationWebhookTestRequest,
     EvaluationWebhookTestResponse,
+    GEvalRequest,
+    GEvalResponse,
+    OCREvaluationRequest,
+    OCREvaluationResponse,
     PipelineCleanupResponse,
     PipelinePresetCreate,
     PipelinePresetListResponse,
     PipelinePresetResponse,
+    PropositionEvaluationRequest,
+    PropositionEvaluationResponse,
+    RAGEvaluationRequest,
+    RAGEvaluationResponse,
+    ResponseQualityRequest,
+    ResponseQualityResponse,
     WebhookEventType,
     EvaluationRunCreateRequest,
     EvaluationRunListResponse,
@@ -2584,6 +2598,71 @@ class TLDWAPIClient:
 
     async def cancel_evaluation_run(self, run_id: str) -> Dict[str, Any]:
         return await self._request("POST", f"/api/v1/evaluations/runs/{run_id}/cancel")
+
+    async def evaluate_geval(self, request_data: GEvalRequest) -> GEvalResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/geval",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return GEvalResponse.model_validate(response)
+
+    async def evaluate_rag(self, request_data: RAGEvaluationRequest) -> RAGEvaluationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/rag",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return RAGEvaluationResponse.model_validate(response)
+
+    async def evaluate_response_quality(
+        self,
+        request_data: ResponseQualityRequest,
+    ) -> ResponseQualityResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/response-quality",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ResponseQualityResponse.model_validate(response)
+
+    async def evaluate_propositions(
+        self,
+        request_data: PropositionEvaluationRequest,
+    ) -> PropositionEvaluationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/propositions",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PropositionEvaluationResponse.model_validate(response)
+
+    async def evaluate_batch(self, request_data: BatchEvaluationRequest) -> BatchEvaluationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/batch",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return BatchEvaluationResponse.model_validate(response)
+
+    async def evaluate_ocr(self, request_data: OCREvaluationRequest) -> OCREvaluationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/ocr",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return OCREvaluationResponse.model_validate(response)
+
+    async def get_evaluation_history(
+        self,
+        request_data: EvaluationHistoryRequest,
+    ) -> EvaluationHistoryResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/history",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return EvaluationHistoryResponse.model_validate(response)
 
     async def generate_synthetic_evaluation_drafts(
         self,

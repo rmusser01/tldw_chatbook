@@ -401,6 +401,69 @@ class EvaluationScopeService:
         result.setdefault("id", run_id)
         return result
 
+    async def evaluate_geval(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "G-Eval immediate evaluation")
+        return dict(await self._maybe_await(service.evaluate_geval(**payload)) or {})
+
+    async def evaluate_rag(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "RAG immediate evaluation")
+        return dict(await self._maybe_await(service.evaluate_rag(**payload)) or {})
+
+    async def evaluate_response_quality(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Response quality immediate evaluation")
+        return dict(await self._maybe_await(service.evaluate_response_quality(**payload)) or {})
+
+    async def evaluate_propositions(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Proposition immediate evaluation")
+        return dict(await self._maybe_await(service.evaluate_propositions(**payload)) or {})
+
+    async def evaluate_batch(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Batch immediate evaluation")
+        return dict(await self._maybe_await(service.evaluate_batch(**payload)) or {})
+
+    async def evaluate_ocr(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "OCR immediate evaluation")
+        return dict(await self._maybe_await(service.evaluate_ocr(**payload)) or {})
+
+    async def get_evaluation_history(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation history")
+        return dict(await self._maybe_await(service.get_evaluation_history(**payload)) or {})
+
     async def generate_synthetic_drafts(
         self,
         *,

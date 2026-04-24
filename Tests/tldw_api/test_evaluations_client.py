@@ -14,13 +14,22 @@ from tldw_chatbook.tldw_api import (
     EmbeddingsABTestRunRequest,
     EmbeddingsABTestStatusResponse,
     EmbeddingsABTestResultSummary,
+    BatchEvaluationRequest,
+    BatchEvaluationResponse,
     EvaluationBenchmarkListResponse,
     EvaluationBenchmarkRunRequest,
     EvaluationBenchmarkRunResponse,
     EvaluationDatasetCreateRequest,
     EvaluationDatasetListResponse,
     EvaluationDatasetResponse,
+    EvaluationHistoryRequest,
+    EvaluationHistoryResponse,
     EvaluationListResponse,
+    GEvalRequest,
+    GEvalResponse,
+    OCREvaluationItem,
+    OCREvaluationRequest,
+    OCREvaluationResponse,
     EvaluationRecipeDatasetValidationRequest,
     EvaluationRecipeDatasetValidationResponse,
     EvaluationRecipeLaunchReadiness,
@@ -43,6 +52,12 @@ from tldw_chatbook.tldw_api import (
     EvaluationRunListResponse,
     EvaluationRunResponse,
     EvaluationSpec,
+    PropositionEvaluationRequest,
+    PropositionEvaluationResponse,
+    RAGEvaluationRequest,
+    RAGEvaluationResponse,
+    ResponseQualityRequest,
+    ResponseQualityResponse,
     SyntheticEvalGenerationRequest,
     SyntheticEvalGenerationResponse,
     SyntheticEvalPromotionRequest,
@@ -358,6 +373,136 @@ async def test_evaluation_run_routes_wire_and_return_typed_models(monkeypatch):
     assert isinstance(fetched, EvaluationRunResponse)
     assert cancelled == {"status": "cancelled", "run_id": "run_123"}
     assert fetched.progress.percent_complete == 100.0
+
+
+@pytest.mark.asyncio
+async def test_unified_immediate_evaluation_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "metrics": {"fluency": {"score": 0.91}},
+                "average_score": 0.91,
+                "summary_assessment": "Strong summary",
+                "evaluation_time": 1.2,
+                "metadata": {"evaluation_id": "geval_1"},
+            },
+            {
+                "metrics": {"faithfulness": {"score": 0.86}},
+                "overall_score": 0.86,
+                "retrieval_quality": 0.8,
+                "generation_quality": 0.9,
+                "suggestions": ["Add source coverage"],
+                "metadata": {"evaluation_id": "rag_1"},
+            },
+            {
+                "metrics": {"relevance": {"score": 0.88}},
+                "overall_quality": 0.88,
+                "format_compliance": {"json": True},
+                "issues": [],
+                "improvements": ["Tighten citations"],
+            },
+            {
+                "precision": 0.8,
+                "recall": 0.75,
+                "f1": 0.77,
+                "matched": 3,
+                "total_extracted": 4,
+                "total_reference": 4,
+                "claim_density_per_100_tokens": 2.5,
+                "avg_prop_len_tokens": 8.0,
+                "dedup_rate": 0.0,
+                "details": {"matches": []},
+                "metadata": {"evaluation_id": "prop_1"},
+            },
+            {
+                "total_items": 2,
+                "successful": 2,
+                "failed": 0,
+                "results": [{"id": "item_1", "score": 0.9}],
+                "aggregate_metrics": {"average_score": 0.9},
+                "processing_time": 2.4,
+            },
+            {
+                "evaluation_id": "ocr_1",
+                "results": {"items": [{"id": "doc_1", "cer": 0.02}]},
+                "evaluation_time": 0.5,
+            },
+            {
+                "total_count": 1,
+                "items": [{"evaluation_id": "geval_1", "evaluation_type": "geval"}],
+                "aggregations": {"geval": 1},
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    geval = await client.evaluate_geval(
+        GEvalRequest(source_text="Original text long enough", summary="Summary text long enough")
+    )
+    rag = await client.evaluate_rag(
+        RAGEvaluationRequest(
+            query="What changed?",
+            retrieved_contexts=["Context"],
+            generated_response="Answer",
+            ground_truth="Expected answer",
+        )
+    )
+    quality = await client.evaluate_response_quality(
+        ResponseQualityRequest(prompt="Explain this", response="A complete answer")
+    )
+    propositions = await client.evaluate_propositions(
+        PropositionEvaluationRequest(extracted=["Claim A"], reference=["Claim A"])
+    )
+    batch = await client.evaluate_batch(
+        BatchEvaluationRequest(evaluation_type="geval", items=[{"source_text": "A", "summary": "B"}])
+    )
+    ocr = await client.evaluate_ocr(
+        OCREvaluationRequest(
+            items=[
+                OCREvaluationItem(
+                    id="doc_1",
+                    extracted_text="hello world",
+                    ground_truth_text="hello world",
+                )
+            ]
+        )
+    )
+    history = await client.get_evaluation_history(EvaluationHistoryRequest(evaluation_type="geval", limit=10))
+
+    expected_routes = [
+        ("POST", "/api/v1/evaluations/geval"),
+        ("POST", "/api/v1/evaluations/rag"),
+        ("POST", "/api/v1/evaluations/response-quality"),
+        ("POST", "/api/v1/evaluations/propositions"),
+        ("POST", "/api/v1/evaluations/batch"),
+        ("POST", "/api/v1/evaluations/ocr"),
+        ("POST", "/api/v1/evaluations/history"),
+    ]
+    assert [call.args[:2] for call in mocked.await_args_list] == expected_routes
+    assert mocked.await_args_list[0].kwargs["json_data"]["metrics"] == [
+        "fluency",
+        "consistency",
+        "relevance",
+        "coherence",
+    ]
+    assert mocked.await_args_list[4].kwargs["json_data"]["evaluation_type"] == "geval"
+    assert mocked.await_args_list[5].kwargs["json_data"]["items"][0]["id"] == "doc_1"
+
+    assert isinstance(geval, GEvalResponse)
+    assert isinstance(rag, RAGEvaluationResponse)
+    assert isinstance(quality, ResponseQualityResponse)
+    assert isinstance(propositions, PropositionEvaluationResponse)
+    assert isinstance(batch, BatchEvaluationResponse)
+    assert isinstance(ocr, OCREvaluationResponse)
+    assert isinstance(history, EvaluationHistoryResponse)
+    assert geval.average_score == 0.91
+    assert rag.suggestions == ["Add source coverage"]
+    assert quality.format_compliance == {"json": True}
+    assert propositions.f1 == 0.77
+    assert batch.aggregate_metrics == {"average_score": 0.9}
+    assert ocr.results["items"][0]["cer"] == 0.02
+    assert history.aggregations == {"geval": 1}
 
 
 @pytest.mark.asyncio

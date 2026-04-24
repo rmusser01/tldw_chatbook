@@ -239,6 +239,75 @@ class FakeServerEvaluationService:
         self.calls.append(("cancel_run", run_id))
         return {"status": "cancellation_requested", "id": run_id}
 
+    async def evaluate_geval(self, **kwargs):
+        self.calls.append(("evaluate_geval", kwargs))
+        return {
+            "metrics": {"fluency": {"score": 0.91}},
+            "average_score": 0.91,
+            "summary_assessment": "Strong summary",
+            "evaluation_time": 1.2,
+            "metadata": {"evaluation_id": "geval_1"},
+        }
+
+    async def evaluate_rag(self, **kwargs):
+        self.calls.append(("evaluate_rag", kwargs))
+        return {
+            "metrics": {"faithfulness": {"score": 0.86}},
+            "overall_score": 0.86,
+            "retrieval_quality": 0.8,
+            "generation_quality": 0.9,
+            "suggestions": ["Add source coverage"],
+        }
+
+    async def evaluate_response_quality(self, **kwargs):
+        self.calls.append(("evaluate_response_quality", kwargs))
+        return {
+            "metrics": {"relevance": {"score": 0.88}},
+            "overall_quality": 0.88,
+            "format_compliance": {"json": True},
+        }
+
+    async def evaluate_propositions(self, **kwargs):
+        self.calls.append(("evaluate_propositions", kwargs))
+        return {
+            "precision": 0.8,
+            "recall": 0.75,
+            "f1": 0.77,
+            "matched": 3,
+            "total_extracted": 4,
+            "total_reference": 4,
+            "claim_density_per_100_tokens": 2.5,
+            "avg_prop_len_tokens": 8.0,
+            "dedup_rate": 0.0,
+        }
+
+    async def evaluate_batch(self, **kwargs):
+        self.calls.append(("evaluate_batch", kwargs))
+        return {
+            "total_items": 2,
+            "successful": 2,
+            "failed": 0,
+            "results": [{"id": "item_1", "score": 0.9}],
+            "aggregate_metrics": {"average_score": 0.9},
+            "processing_time": 2.4,
+        }
+
+    async def evaluate_ocr(self, **kwargs):
+        self.calls.append(("evaluate_ocr", kwargs))
+        return {
+            "evaluation_id": "ocr_1",
+            "results": {"items": [{"id": "doc_1", "cer": 0.02}]},
+            "evaluation_time": 0.5,
+        }
+
+    async def get_evaluation_history(self, **kwargs):
+        self.calls.append(("get_evaluation_history", kwargs))
+        return {
+            "total_count": 1,
+            "items": [{"evaluation_id": "geval_1", "evaluation_type": "geval"}],
+            "aggregations": {"geval": 1},
+        }
+
     async def generate_synthetic_drafts(self, **kwargs):
         self.calls.append(("generate_synthetic_drafts", kwargs))
         return {
@@ -606,6 +675,79 @@ async def test_scope_service_cancel_run_returns_backend_response():
 
     assert local_payload["status"] == "cancelled"
     assert server_payload["status"] == "cancellation_requested"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_unified_immediate_evaluations_to_server_only():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    geval = await scope.evaluate_geval(
+        mode="server",
+        source_text="Original text long enough",
+        summary="Summary text long enough",
+    )
+    rag = await scope.evaluate_rag(
+        mode="server",
+        query="What changed?",
+        retrieved_contexts=["Context"],
+        generated_response="Answer",
+        ground_truth="Expected answer",
+    )
+    quality = await scope.evaluate_response_quality(
+        mode="server",
+        prompt="Explain this",
+        response="A complete answer",
+    )
+    propositions = await scope.evaluate_propositions(
+        mode="server",
+        extracted=["Claim A"],
+        reference=["Claim A"],
+    )
+    batch = await scope.evaluate_batch(
+        mode="server",
+        evaluation_type="geval",
+        items=[{"source_text": "A", "summary": "B"}],
+    )
+    ocr = await scope.evaluate_ocr(
+        mode="server",
+        items=[
+            {
+                "id": "doc_1",
+                "extracted_text": "hello world",
+                "ground_truth_text": "hello world",
+            }
+        ],
+    )
+    history = await scope.get_evaluation_history(mode="server", evaluation_type="geval", limit=10)
+
+    assert geval["average_score"] == 0.91
+    assert rag["suggestions"] == ["Add source coverage"]
+    assert quality["format_compliance"] == {"json": True}
+    assert propositions["f1"] == 0.77
+    assert batch["aggregate_metrics"] == {"average_score": 0.9}
+    assert ocr["results"]["items"][0]["cer"] == 0.02
+    assert history["aggregations"] == {"geval": 1}
+    assert server.calls[-7] == (
+        "evaluate_geval",
+        {"source_text": "Original text long enough", "summary": "Summary text long enough"},
+    )
+    assert server.calls[-4] == (
+        "evaluate_propositions",
+        {"extracted": ["Claim A"], "reference": ["Claim A"]},
+    )
+    assert server.calls[-1] == (
+        "get_evaluation_history",
+        {"evaluation_type": "geval", "limit": 10},
+    )
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.evaluate_geval(
+            mode="local",
+            source_text="Original text long enough",
+            summary="Summary text long enough",
+        )
 
 
 @pytest.mark.asyncio
