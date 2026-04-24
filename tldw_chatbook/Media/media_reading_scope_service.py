@@ -1646,8 +1646,6 @@ class MediaReadingScopeService:
         **options: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_ingestion_jobs_unavailable()
         self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
@@ -1667,8 +1665,6 @@ class MediaReadingScopeService:
         job_id: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_ingestion_jobs_unavailable()
         self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         job = await self._maybe_await(service.get_media_ingest_job(job_id))
@@ -1682,8 +1678,6 @@ class MediaReadingScopeService:
         limit: int = 100,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_ingestion_jobs_unavailable()
         self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.list_media_ingest_jobs(batch_id=batch_id, limit=limit))
@@ -1697,8 +1691,6 @@ class MediaReadingScopeService:
         after_id: int = 0,
     ):
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_ingestion_jobs_unavailable()
         self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         stream = service.stream_media_ingest_job_events(batch_id=batch_id, after_id=after_id)
@@ -1713,8 +1705,6 @@ class MediaReadingScopeService:
         reason: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_ingestion_jobs_unavailable()
         self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.cancel_media_ingest_job(job_id, reason=reason))
@@ -1729,8 +1719,6 @@ class MediaReadingScopeService:
         reason: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_ingestion_jobs_unavailable()
         self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(

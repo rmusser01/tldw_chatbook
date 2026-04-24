@@ -597,3 +597,64 @@ def test_local_service_imports_instapaper_reading_items(memory_db_factory, tmp_p
         current["id"]: ["ai", "notes"],
         archived["id"]: ["archive"],
     }
+
+
+def test_local_service_submits_and_persists_media_ingest_jobs(memory_db_factory, tmp_path):
+    local_file = tmp_path / "article.md"
+    local_file.write_text("# Local Article\n\nBody text", encoding="utf-8")
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    submitted = service.submit_media_ingest_jobs(
+        media_type="document",
+        urls=["https://example.com/remote-doc"],
+        file_paths=[str(local_file)],
+        title="Imported Document",
+        tags=["local", "ingest"],
+    )
+    jobs = submitted["jobs"]
+    listed = service.list_media_ingest_jobs(batch_id=submitted["batch_id"], limit=10)
+    fetched = service.get_media_ingest_job(jobs[0]["job_id"])
+    reloaded = LocalMediaReadingService(db).get_media_ingest_job(jobs[1]["job_id"])
+    file_media = db.get_media_by_id(jobs[0]["result"]["media_id"])
+    url_media = db.get_media_by_id(jobs[1]["result"]["media_id"])
+    cancel = service.cancel_media_ingest_job(jobs[0]["job_id"], reason="duplicate")
+    batch_cancel = service.cancel_media_ingest_jobs_batch(batch_id=submitted["batch_id"], reason="duplicate")
+
+    assert submitted["batch_id"].startswith("local-batch-")
+    assert [job["source_kind"] for job in jobs] == ["file", "url"]
+    assert [job["status"] for job in jobs] == ["completed", "completed"]
+    assert listed["batch_id"] == submitted["batch_id"]
+    assert [job["job_id"] for job in listed["jobs"]] == [jobs[0]["job_id"], jobs[1]["job_id"]]
+    assert fetched["source"] == str(local_file)
+    assert reloaded["source"] == "https://example.com/remote-doc"
+    assert file_media["title"] == "Imported Document"
+    assert "# Local Article" in file_media["content"]
+    assert url_media["url"] == "https://example.com/remote-doc"
+    assert "Imported local media URL" in url_media["content"]
+    assert db.fetch_keywords_for_media_batch([file_media["id"], url_media["id"]]) == {
+        file_media["id"]: ["ingest", "local"],
+        url_media["id"]: ["ingest", "local"],
+    }
+    assert cancel["success"] is False
+    assert cancel["status"] == "completed"
+    assert batch_cancel["already_terminal"] == 2
+
+
+@pytest.mark.asyncio
+async def test_local_service_streams_media_ingest_job_snapshot(memory_db_factory, tmp_path):
+    local_file = tmp_path / "article.md"
+    local_file.write_text("Body text", encoding="utf-8")
+    service = LocalMediaReadingService(memory_db_factory())
+    submitted = service.submit_media_ingest_jobs(media_type="document", file_paths=[str(local_file)])
+
+    events = [
+        event
+        async for event in service.stream_media_ingest_job_events(batch_id=submitted["batch_id"], after_id=0)
+    ]
+
+    assert events[0]["event"] == "snapshot"
+    assert events[0]["data"]["batch_id"] == submitted["batch_id"]
+    assert events[0]["data"]["jobs"][0]["job_id"] == submitted["jobs"][0]["job_id"]
+    assert events[1]["event"] == "job"
+    assert events[1]["data"]["event_type"] == "job.completed"

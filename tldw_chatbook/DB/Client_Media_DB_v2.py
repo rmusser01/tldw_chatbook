@@ -98,7 +98,7 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 9  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 10  # Define the version this code supports
     
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
@@ -146,6 +146,11 @@ class MediaDatabase:
             'to_version': 9,
             'function': '_apply_migration_v8_to_v9',
             'description': 'Add local reading import jobs'
+        },
+        9: {
+            'to_version': 10,
+            'function': '_apply_migration_v9_to_v10',
+            'description': 'Add local media ingest jobs'
         },
         # Future migrations: just add new entries here
         # 5: {
@@ -586,6 +591,35 @@ class MediaDatabase:
         ON LocalReadingImportJobs(status, deleted);
     CREATE INDEX IF NOT EXISTS idx_local_reading_import_jobs_created
         ON LocalReadingImportJobs(created_at, id);
+    """
+
+    _LOCAL_MEDIA_INGEST_JOBS_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS LocalMediaIngestJobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_uuid TEXT NOT NULL,
+        batch_id TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at DATETIME NOT NULL,
+        started_at DATETIME,
+        completed_at DATETIME,
+        cancelled_at DATETIME,
+        cancellation_reason TEXT,
+        progress_percent REAL,
+        progress_message TEXT,
+        error_message TEXT,
+        result_json TEXT NOT NULL DEFAULT '{}',
+        deleted BOOLEAN NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_local_media_ingest_jobs_batch
+        ON LocalMediaIngestJobs(batch_id, id);
+    CREATE INDEX IF NOT EXISTS idx_local_media_ingest_jobs_status
+        ON LocalMediaIngestJobs(status, deleted);
+    CREATE INDEX IF NOT EXISTS idx_local_media_ingest_jobs_created
+        ON LocalMediaIngestJobs(created_at, id);
     """
 
     def __init__(self, db_path: Union[str, Path], client_id: str, 
@@ -1266,6 +1300,26 @@ class MediaDatabase:
             logging.error(f"[Migration v8->v9] Unexpected error during migration: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during migration v8->v9: {e}") from e
 
+    def _apply_migration_v9_to_v10(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 9 to version 10 (adds local media ingest jobs)."""
+        logging.info(f"Applying migration from version 9 to 10 (local media ingest jobs) to DB: {self.db_path_str}...")
+        try:
+            migration_sql = f"""
+            {self._LOCAL_MEDIA_INGEST_JOBS_TABLE_SQL}
+            UPDATE schema_version SET version = 10;
+            """
+
+            with self.transaction():
+                logging.debug("[Migration v9->v10] Creating LocalMediaIngestJobs table...")
+                conn.executescript(migration_sql)
+                logging.info("[Migration v9->v10] LocalMediaIngestJobs migration applied successfully.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v9->v10] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v9->v10 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v9->v10] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v9->v10: {e}") from e
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -1284,7 +1338,8 @@ class MediaDatabase:
                         f"{self._READING_HIGHLIGHTS_TABLE_SQL}\n{self._LOCAL_INGESTION_SOURCES_TABLE_SQL}\n"
                         f"{self._LOCAL_READING_SAVED_SEARCHES_TABLE_SQL}\n"
                         f"{self._LOCAL_READING_NOTE_LINKS_TABLE_SQL}\n"
-                        f"{self._LOCAL_READING_IMPORT_JOBS_TABLE_SQL}"
+                        f"{self._LOCAL_READING_IMPORT_JOBS_TABLE_SQL}\n"
+                        f"{self._LOCAL_MEDIA_INGEST_JOBS_TABLE_SQL}"
                     )
                     conn.commit()
                     logging.debug("Verified FTS and local-only media tables exist.")
@@ -2977,6 +3032,196 @@ class MediaDatabase:
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error listing local reading import jobs from DB '{self.db_path_str}': {e}")
             raise DatabaseError("Failed to list local reading import jobs") from e
+
+    @staticmethod
+    def _local_media_ingest_job_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "job_id": row["id"],
+            "uuid": row["job_uuid"],
+            "batch_id": row["batch_id"],
+            "media_type": row["media_type"],
+            "source": row["source"],
+            "source_kind": row["source_kind"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "started_at": row["started_at"],
+            "completed_at": row["completed_at"],
+            "cancelled_at": row["cancelled_at"],
+            "cancellation_reason": row["cancellation_reason"],
+            "progress_percent": row["progress_percent"],
+            "progress_message": row["progress_message"],
+            "error_message": row["error_message"],
+            "result": MediaDatabase._json_object_from_db(row["result_json"]),
+            "deleted": bool(row["deleted"]),
+        }
+
+    def create_local_media_ingest_job(
+        self,
+        *,
+        batch_id: str,
+        media_type: str,
+        source: str,
+        source_kind: str,
+        status: str = "processing",
+        progress_percent: float | None = 0.0,
+        progress_message: str | None = None,
+        result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create a persisted local media ingest job record."""
+        normalized_batch_id = str(batch_id or "").strip()
+        normalized_media_type = str(media_type or "").strip().lower()
+        normalized_source = str(source or "").strip()
+        normalized_source_kind = str(source_kind or "").strip().lower()
+        normalized_status = str(status or "processing").strip().lower()
+        if not normalized_batch_id:
+            raise InputError("batch_id is required for local media ingest jobs.")
+        if not normalized_media_type:
+            raise InputError("media_type is required for local media ingest jobs.")
+        if not normalized_source:
+            raise InputError("source is required for local media ingest jobs.")
+        if normalized_source_kind not in {"file", "url"}:
+            raise InputError(f"Unsupported local media ingest source kind: {normalized_source_kind}")
+
+        current_time = self._get_current_utc_timestamp_str()
+        result_json = json.dumps(result or {}, separators=(',', ':'), cls=DateTimeEncoder)
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO LocalMediaIngestJobs (
+                        job_uuid, batch_id, media_type, source, source_kind, status,
+                        created_at, started_at, progress_percent, progress_message, result_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        self._generate_uuid(),
+                        normalized_batch_id,
+                        normalized_media_type,
+                        normalized_source,
+                        normalized_source_kind,
+                        normalized_status,
+                        current_time,
+                        current_time,
+                        progress_percent,
+                        progress_message,
+                        result_json,
+                    ),
+                )
+                job_id = int(cursor.lastrowid)
+            created = self.get_local_media_ingest_job(job_id)
+            if created is None:
+                raise DatabaseError(f"Failed to fetch newly created local media ingest job {job_id}")
+            return created
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error creating local media ingest job in DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to create local media ingest job") from e
+
+    def update_local_media_ingest_job(self, job_id: int, **changes: Any) -> Dict[str, Any]:
+        """Update mutable local media ingest job fields."""
+        allowed_fields = {
+            "status",
+            "started_at",
+            "completed_at",
+            "cancelled_at",
+            "cancellation_reason",
+            "progress_percent",
+            "progress_message",
+            "error_message",
+            "result",
+        }
+        unsupported = sorted(key for key in changes if key not in allowed_fields)
+        if unsupported:
+            unsupported_text = ", ".join(unsupported)
+            raise InputError(f"Unsupported local media ingest job update fields: {unsupported_text}")
+
+        current = self.get_local_media_ingest_job(job_id)
+        if current is None:
+            raise InputError(f"Local media ingest job {job_id} not found.")
+        if not changes:
+            return current
+
+        assignments: list[str] = []
+        values: list[Any] = []
+        for field, value in changes.items():
+            if field == "result":
+                assignments.append("result_json = ?")
+                values.append(json.dumps(value or {}, separators=(',', ':'), cls=DateTimeEncoder))
+            else:
+                assignments.append(f"{field} = ?")
+                values.append(str(value).strip().lower() if field == "status" and value is not None else value)
+        values.append(job_id)
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    f"UPDATE LocalMediaIngestJobs SET {', '.join(assignments)} WHERE id = ? AND deleted = 0",
+                    tuple(values),
+                )
+            updated = self.get_local_media_ingest_job(job_id)
+            if updated is None:
+                raise DatabaseError(f"Failed to fetch updated local media ingest job {job_id}")
+            return updated
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error updating local media ingest job id={job_id} in DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to update local media ingest job {job_id}") from e
+
+    def get_local_media_ingest_job(self, job_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a non-deleted local media ingest job by ID."""
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT
+                    id, job_uuid, batch_id, media_type, source, source_kind, status,
+                    created_at, started_at, completed_at, cancelled_at, cancellation_reason,
+                    progress_percent, progress_message, error_message, result_json, deleted
+                FROM LocalMediaIngestJobs
+                WHERE id = ? AND deleted = 0
+                """,
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            return self._local_media_ingest_job_row_to_dict(row) if row else None
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching local media ingest job id={job_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to fetch local media ingest job {job_id}") from e
+
+    def list_local_media_ingest_jobs(
+        self,
+        *,
+        batch_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """List non-deleted local media ingest jobs, optionally scoped to a batch."""
+        normalized_limit = max(1, int(limit))
+        normalized_batch_id = str(batch_id).strip() if batch_id is not None else None
+        where_clauses = ["deleted = 0"]
+        params: list[Any] = []
+        if normalized_batch_id:
+            where_clauses.append("batch_id = ?")
+            params.append(normalized_batch_id)
+        where_sql = " AND ".join(where_clauses)
+        try:
+            cursor = self.execute_query(
+                f"""
+                SELECT
+                    id, job_uuid, batch_id, media_type, source, source_kind, status,
+                    created_at, started_at, completed_at, cancelled_at, cancellation_reason,
+                    progress_percent, progress_message, error_message, result_json, deleted
+                FROM LocalMediaIngestJobs
+                WHERE {where_sql}
+                ORDER BY created_at ASC, id ASC
+                LIMIT ?
+                """,
+                tuple(params + [normalized_limit]),
+            )
+            return {
+                "batch_id": normalized_batch_id,
+                "jobs": [self._local_media_ingest_job_row_to_dict(row) for row in cursor.fetchall()],
+            }
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error listing local media ingest jobs from DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to list local media ingest jobs") from e
 
     @staticmethod
     def _local_ingestion_source_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:

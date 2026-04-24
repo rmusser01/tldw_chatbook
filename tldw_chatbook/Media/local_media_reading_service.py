@@ -893,6 +893,86 @@ class LocalMediaReadingService:
             "retention_until": retention_until,
         }
 
+    def _local_ingest_tags(self, options: Mapping[str, Any]) -> list[str]:
+        raw_tags = options.get("tags", options.get("keywords"))
+        return sorted({tag.strip() for tag in self._normalize_filter_list(raw_tags) if tag.strip()})
+
+    def _local_ingest_title(self, source: str, source_kind: str, options: Mapping[str, Any]) -> str:
+        explicit_title = str(options.get("title") or "").strip()
+        if explicit_title:
+            return explicit_title
+        if source_kind == "file":
+            return Path(source).expanduser().name
+        return source
+
+    def _local_ingest_file_content(self, file_path: str) -> tuple[str, str]:
+        path = Path(file_path).expanduser()
+        if not path.is_file():
+            raise ValueError(f"Local ingest file does not exist: {file_path}")
+        content = path.read_text(encoding="utf-8", errors="replace")
+        return path.resolve().as_uri(), content
+
+    def _complete_local_ingest_job(
+        self,
+        *,
+        job_id: int,
+        media_type: str,
+        source: str,
+        source_kind: str,
+        options: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        try:
+            title = self._local_ingest_title(source, source_kind, options)
+            tags = self._local_ingest_tags(options)
+            if source_kind == "file":
+                media_url, content = self._local_ingest_file_content(source)
+            else:
+                media_url = source
+                content = f"Imported local media URL: {source}"
+
+            media_id, _, _ = db.add_media_with_keywords(
+                url=media_url,
+                title=title,
+                media_type=media_type,
+                content=content,
+                keywords=tags,
+                overwrite=True,
+            )
+            if media_id is None:
+                raise ValueError(f"Local media ingest did not return a media ID for {source}.")
+            completed_at = db._get_current_utc_timestamp_str()
+            return db.update_local_media_ingest_job(
+                job_id,
+                status="completed",
+                completed_at=completed_at,
+                progress_percent=100.0,
+                progress_message="Local media ingest completed.",
+                error_message=None,
+                result={
+                    "media_id": media_id,
+                    "media_type": media_type,
+                    "source": source,
+                    "source_kind": source_kind,
+                },
+            )
+        except Exception as exc:
+            completed_at = db._get_current_utc_timestamp_str()
+            return db.update_local_media_ingest_job(
+                job_id,
+                status="failed",
+                completed_at=completed_at,
+                progress_percent=100.0,
+                progress_message="Local media ingest failed.",
+                error_message=str(exc),
+                result={
+                    "media_id": None,
+                    "media_type": media_type,
+                    "source": source,
+                    "source_kind": source_kind,
+                },
+            )
+
     def submit_media_ingest_jobs(
         self,
         *,
@@ -901,16 +981,114 @@ class LocalMediaReadingService:
         file_paths: list[str] | None = None,
         **options: Any,
     ) -> Any:
-        raise self._unsupported_ingestion_jobs()
+        db = self._require_db()
+        normalized_media_type = str(media_type or "").strip().lower()
+        if not normalized_media_type:
+            raise ValueError("media_type is required for local media ingest jobs.")
+
+        sources: list[tuple[str, str]] = []
+        sources.extend(("file", str(file_path)) for file_path in (file_paths or []) if str(file_path).strip())
+        sources.extend(("url", str(url)) for url in (urls or []) if str(url).strip())
+        if not sources:
+            raise ValueError("At least one local file path or URL is required for local media ingest jobs.")
+
+        batch_id = f"local-batch-{uuid4().hex}"
+        jobs: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        for source_kind, source in sources:
+            job = db.create_local_media_ingest_job(
+                batch_id=batch_id,
+                media_type=normalized_media_type,
+                source=source,
+                source_kind=source_kind,
+                status="processing",
+                progress_percent=0.0,
+                progress_message="Running local media ingest.",
+            )
+            completed = self._complete_local_ingest_job(
+                job_id=int(job["job_id"]),
+                media_type=normalized_media_type,
+                source=source,
+                source_kind=source_kind,
+                options=options,
+            )
+            jobs.append(completed)
+            if completed.get("status") == "failed":
+                errors.append(
+                    {
+                        "source": source,
+                        "source_kind": source_kind,
+                        "error": completed.get("error_message"),
+                    }
+                )
+        return {"batch_id": batch_id, "jobs": jobs, "errors": errors}
 
     def get_media_ingest_job(self, job_id: Any) -> Any:
-        raise self._unsupported_ingestion_jobs()
+        job = self._require_db().get_local_media_ingest_job(int(job_id))
+        if job is None:
+            raise ValueError(f"Local media ingest job {job_id} not found.")
+        return job
 
     def list_media_ingest_jobs(self, *, batch_id: str, limit: int = 100) -> Any:
-        raise self._unsupported_ingestion_jobs()
+        return self._require_db().list_local_media_ingest_jobs(batch_id=batch_id, limit=limit)
+
+    async def stream_media_ingest_job_events(self, *, batch_id: str | None = None, after_id: int = 0) -> Any:
+        payload = self._require_db().list_local_media_ingest_jobs(batch_id=batch_id, limit=100)
+        jobs = list(payload.get("jobs") or [])
+        yield {
+            "event": "snapshot",
+            "data": {
+                "domain": "media.ingestion_jobs",
+                "batch_id": batch_id,
+                "jobs": jobs,
+            },
+        }
+        for job in jobs:
+            job_id = int(job["job_id"])
+            if job_id <= int(after_id):
+                continue
+            yield {
+                "event": "job",
+                "data": {
+                    "event_id": job_id,
+                    "job_id": job_id,
+                    "event_type": f"job.{job.get('status') or 'updated'}",
+                    "attrs": {
+                        "status": job.get("status"),
+                        "progress_percent": job.get("progress_percent"),
+                        "progress_message": job.get("progress_message"),
+                        "error_message": job.get("error_message"),
+                    },
+                },
+            }
 
     def cancel_media_ingest_job(self, job_id: Any, *, reason: str | None = None) -> Any:
-        raise self._unsupported_ingestion_jobs()
+        db = self._require_db()
+        normalized_job_id = int(job_id)
+        job = self.get_media_ingest_job(normalized_job_id)
+        terminal_statuses = {"completed", "failed", "cancelled"}
+        if job.get("status") in terminal_statuses:
+            return {
+                "job_id": normalized_job_id,
+                "success": False,
+                "status": job.get("status"),
+                "message": "Job is already terminal.",
+            }
+        cancelled_at = db._get_current_utc_timestamp_str()
+        updated = db.update_local_media_ingest_job(
+            normalized_job_id,
+            status="cancelled",
+            cancelled_at=cancelled_at,
+            completed_at=cancelled_at,
+            cancellation_reason=reason,
+            progress_message="Local media ingest cancelled.",
+        )
+        return {
+            "job_id": normalized_job_id,
+            "success": True,
+            "status": updated.get("status"),
+            "message": "Job cancelled.",
+        }
 
     def cancel_media_ingest_jobs_batch(
         self,
@@ -919,7 +1097,31 @@ class LocalMediaReadingService:
         session_id: str | None = None,
         reason: str | None = None,
     ) -> Any:
-        raise self._unsupported_ingestion_jobs()
+        if not batch_id:
+            raise ValueError("batch_id is required to cancel local media ingest jobs; session_id is server-only.")
+        payload = self._require_db().list_local_media_ingest_jobs(batch_id=batch_id, limit=1000)
+        requested = len(payload.get("jobs") or [])
+        cancelled = 0
+        already_terminal = 0
+        failed = 0
+        for job in payload.get("jobs") or []:
+            try:
+                result = self.cancel_media_ingest_job(job["job_id"], reason=reason)
+                if result.get("success"):
+                    cancelled += 1
+                else:
+                    already_terminal += 1
+            except Exception:
+                failed += 1
+        return {
+            "success": failed == 0,
+            "batch_id": batch_id,
+            "requested": requested,
+            "cancelled": cancelled,
+            "already_terminal": already_terminal,
+            "failed": failed,
+            "message": "Local media ingest batch cancel processed.",
+        }
 
     def ingest_web_content(self, **kwargs: Any) -> Any:
         raise self._unsupported_web_content_ingest()

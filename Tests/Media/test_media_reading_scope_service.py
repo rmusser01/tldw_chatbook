@@ -383,6 +383,60 @@ class FakeLocalMediaService:
             },
         }
 
+    def submit_media_ingest_jobs(self, **kwargs):
+        self.calls.append(("submit_media_ingest_jobs", kwargs))
+        return {
+            "batch_id": "local-batch-1",
+            "jobs": [
+                {
+                    "job_id": 31,
+                    "uuid": "local-job-31",
+                    "source": kwargs["file_paths"][0],
+                    "source_kind": "file",
+                    "status": "completed",
+                    "media_type": kwargs["media_type"],
+                }
+            ],
+            "errors": [],
+        }
+
+    def get_media_ingest_job(self, job_id):
+        self.calls.append(("get_media_ingest_job", job_id))
+        return {"job_id": job_id, "status": "completed", "source_kind": "file"}
+
+    def list_media_ingest_jobs(self, *, batch_id, limit=100):
+        self.calls.append(("list_media_ingest_jobs", batch_id, limit))
+        return {
+            "batch_id": batch_id,
+            "jobs": [{"job_id": 31, "status": "completed", "source_kind": "file"}],
+        }
+
+    async def stream_media_ingest_job_events(self, *, batch_id=None, after_id=0):
+        self.calls.append(("stream_media_ingest_job_events", batch_id, after_id))
+        yield {
+            "event": "snapshot",
+            "data": {
+                "domain": "media.ingestion_jobs",
+                "batch_id": batch_id,
+                "jobs": [{"job_id": 31, "status": "completed", "source_kind": "file"}],
+            },
+        }
+
+    def cancel_media_ingest_job(self, job_id, *, reason=None):
+        self.calls.append(("cancel_media_ingest_job", job_id, reason))
+        return {"job_id": job_id, "success": False, "status": "completed", "message": "Job is already terminal."}
+
+    def cancel_media_ingest_jobs_batch(self, *, batch_id=None, session_id=None, reason=None):
+        self.calls.append(("cancel_media_ingest_jobs_batch", batch_id, session_id, reason))
+        return {
+            "success": True,
+            "batch_id": batch_id,
+            "requested": 1,
+            "cancelled": 0,
+            "already_terminal": 1,
+            "failed": 0,
+        }
+
     def create_reading_archive(self, item_id, **kwargs):
         self.calls.append(("create_reading_archive", item_id, kwargs))
         return {
@@ -2325,7 +2379,65 @@ async def test_scope_service_streams_recent_media_ingest_events_without_batch():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_fails_explicitly_for_local_media_ingest_jobs_before_policy_denial():
+async def test_scope_service_routes_local_media_ingest_jobs_with_policy():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    submitted = await scope.submit_media_ingest_jobs(
+        mode="local",
+        media_type="document",
+        file_paths=["/tmp/article.md"],
+    )
+    detail = await scope.get_media_ingest_job(mode="local", job_id=31)
+    listed = await scope.list_media_ingest_jobs(mode="local", batch_id="local-batch-1", limit=10)
+    events = [
+        event
+        async for event in scope.stream_media_ingest_job_events(
+            mode="local",
+            batch_id="local-batch-1",
+            after_id=0,
+        )
+    ]
+    cancelled = await scope.cancel_media_ingest_job(mode="local", job_id=31, reason="duplicate")
+    batch_cancelled = await scope.cancel_media_ingest_jobs_batch(
+        mode="local",
+        batch_id="local-batch-1",
+        reason="duplicate",
+    )
+
+    assert policy.calls == [
+        "media.ingestion_jobs.launch.local",
+        "media.ingestion_jobs.detail.local",
+        "media.ingestion_jobs.list.local",
+        "media.ingestion_jobs.list.local",
+        "media.ingestion_jobs.launch.local",
+        "media.ingestion_jobs.launch.local",
+    ]
+    assert submitted["jobs"][0]["id"] == "local:ingestion_job:31"
+    assert submitted["jobs"][0]["source_kind"] == "file"
+    assert detail["id"] == "local:ingestion_job:31"
+    assert listed["jobs"][0]["id"] == "local:ingestion_job:31"
+    assert events[0]["event"] == "snapshot"
+    assert events[0]["jobs"][0]["id"] == "local:ingestion_job:31"
+    assert cancelled["id"] == "local:ingestion_job:31"
+    assert batch_cancelled["already_terminal"] == 1
+    assert local.calls[-6:] == [
+        ("submit_media_ingest_jobs", {"media_type": "document", "urls": None, "file_paths": ["/tmp/article.md"]}),
+        ("get_media_ingest_job", 31),
+        ("list_media_ingest_jobs", "local-batch-1", 10),
+        ("stream_media_ingest_job_events", "local-batch-1", 0),
+        ("cancel_media_ingest_job", 31, "duplicate"),
+        ("cancel_media_ingest_jobs_batch", "local-batch-1", None, "duplicate"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_enforces_policy_for_local_media_ingest_jobs():
     policy = FakePolicyEnforcer.deny("blocked")
     scope = MediaReadingScopeService(
         local_service=FakeLocalMediaService(),
@@ -2333,17 +2445,14 @@ async def test_scope_service_fails_explicitly_for_local_media_ingest_jobs_before
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local media ingest jobs are not available yet."):
+    with pytest.raises(PolicyDeniedError):
         await scope.submit_media_ingest_jobs(
             mode="local",
             media_type="document",
-            urls=["https://example.com/document"],
+            file_paths=["/tmp/article.md"],
         )
-    with pytest.raises(ValueError, match="Local media ingest jobs are not available yet."):
-        events = scope.stream_media_ingest_job_events(mode="local", batch_id="batch-1")
-        await anext(events)
 
-    assert policy.calls == []
+    assert policy.calls == ["media.ingestion_jobs.launch.local"]
 
 
 @pytest.mark.asyncio
