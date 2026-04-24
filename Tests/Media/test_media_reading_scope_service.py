@@ -218,6 +218,21 @@ class FakeLocalMediaService:
         self.calls.append(("delete_reading_saved_search", search_id))
         return {"ok": True}
 
+    def link_reading_item_note(self, item_id, *, note_id):
+        self.calls.append(("link_reading_item_note", item_id, note_id))
+        return {"item_id": item_id, "note_id": note_id, "created_at": "2026-04-24T13:00:00Z"}
+
+    def list_reading_item_note_links(self, item_id):
+        self.calls.append(("list_reading_item_note_links", item_id))
+        return {
+            "item_id": item_id,
+            "links": [{"item_id": item_id, "note_id": "note-uuid-1", "created_at": "2026-04-24T13:00:00Z"}],
+        }
+
+    def unlink_reading_item_note(self, item_id, note_id):
+        self.calls.append(("unlink_reading_item_note", item_id, note_id))
+        return {"ok": True}
+
     def ingest_web_content(self, **kwargs):
         raise ValueError("Local web-content ingest is not available yet.")
 
@@ -2566,6 +2581,31 @@ async def test_scope_service_routes_local_reading_saved_searches_with_policy():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_local_reading_note_links_with_policy():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope = MediaReadingScopeService(local_service=local, server_service=None, policy_enforcer=policy)
+
+    linked = await scope.link_reading_item_note(mode="local", item_id=31, note_id="note-uuid-1")
+    links = await scope.list_reading_item_note_links(mode="local", item_id=31)
+    unlinked = await scope.unlink_reading_item_note(mode="local", item_id=31, note_id="note-uuid-1")
+
+    assert linked["id"] == "local:reading_note_link:31:note-uuid-1"
+    assert links["links"][0]["id"] == "local:reading_note_link:31:note-uuid-1"
+    assert unlinked == {"ok": True}
+    assert policy.calls == [
+        "media.reading_note_links.create.local",
+        "media.reading_note_links.list.local",
+        "media.reading_note_links.delete.local",
+    ]
+    assert local.calls[-3:] == [
+        ("link_reading_item_note", 31, "note-uuid-1"),
+        ("list_reading_item_note_links", 31),
+        ("unlink_reading_item_note", 31, "note-uuid-1"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_server_reading_import_jobs_and_archive_creation():
     policy = FakePolicyEnforcer()
     server = FakeServerMediaService()
@@ -2766,7 +2806,7 @@ async def test_scope_service_enforces_policy_for_local_saved_searches():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_fails_explicitly_for_local_note_links_before_policy_denial():
+async def test_scope_service_enforces_policy_for_local_note_links():
     policy = FakePolicyEnforcer.deny("blocked")
     scope = MediaReadingScopeService(
         local_service=FakeLocalMediaService(),
@@ -2774,10 +2814,10 @@ async def test_scope_service_fails_explicitly_for_local_note_links_before_policy
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local reading note links are not available yet."):
+    with pytest.raises(PolicyDeniedError):
         await scope.list_reading_item_note_links(mode="local", item_id=31)
 
-    assert policy.calls == []
+    assert policy.calls == ["media.reading_note_links.list.local"]
 
 
 @pytest.mark.asyncio

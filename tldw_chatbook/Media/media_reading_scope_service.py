@@ -278,10 +278,6 @@ class MediaReadingScopeService:
         raise ValueError("Local MediaWiki dump processing is not available yet.")
 
     @staticmethod
-    def _raise_local_note_links_unavailable() -> None:
-        raise ValueError("Local reading note links are not available yet.")
-
-    @staticmethod
     def _raise_local_reading_import_unavailable() -> None:
         raise ValueError("Local reading import jobs are not available yet.")
 
@@ -1272,8 +1268,6 @@ class MediaReadingScopeService:
         note_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_note_links_unavailable()
         self._enforce_policy(self._reading_note_link_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         link = await self._maybe_await(service.link_reading_item_note(item_id, note_id=note_id))
@@ -1286,8 +1280,6 @@ class MediaReadingScopeService:
         item_id: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_note_links_unavailable()
         self._enforce_policy(self._reading_note_link_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.list_reading_item_note_links(item_id))
@@ -1306,8 +1298,6 @@ class MediaReadingScopeService:
         note_id: str,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_note_links_unavailable()
         self._enforce_policy(self._reading_note_link_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.unlink_reading_item_note(item_id, note_id))

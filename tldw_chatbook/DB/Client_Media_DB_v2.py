@@ -98,7 +98,7 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 7  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 8  # Define the version this code supports
     
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
@@ -136,6 +136,11 @@ class MediaDatabase:
             'to_version': 7,
             'function': '_apply_migration_v6_to_v7',
             'description': 'Add local reading saved searches'
+        },
+        7: {
+            'to_version': 8,
+            'function': '_apply_migration_v7_to_v8',
+            'description': 'Add local reading note links'
         },
         # Future migrations: just add new entries here
         # 5: {
@@ -537,6 +542,23 @@ class MediaDatabase:
 
     CREATE INDEX IF NOT EXISTS idx_local_reading_saved_searches_deleted ON LocalReadingSavedSearches(deleted);
     CREATE INDEX IF NOT EXISTS idx_local_reading_saved_searches_updated ON LocalReadingSavedSearches(updated_at);
+    """
+
+    _LOCAL_READING_NOTE_LINKS_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS LocalReadingNoteLinks (
+        media_id INTEGER NOT NULL,
+        note_id TEXT NOT NULL,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        deleted BOOLEAN NOT NULL DEFAULT 0,
+        PRIMARY KEY (media_id, note_id),
+        FOREIGN KEY (media_id) REFERENCES Media(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_local_reading_note_links_media_deleted
+        ON LocalReadingNoteLinks(media_id, deleted);
+    CREATE INDEX IF NOT EXISTS idx_local_reading_note_links_note_deleted
+        ON LocalReadingNoteLinks(note_id, deleted);
     """
 
     def __init__(self, db_path: Union[str, Path], client_id: str, 
@@ -1177,6 +1199,26 @@ class MediaDatabase:
             logging.error(f"[Migration v6->v7] Unexpected error during migration: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during migration v6->v7: {e}") from e
 
+    def _apply_migration_v7_to_v8(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 7 to version 8 (adds local reading note links)."""
+        logging.info(f"Applying migration from version 7 to 8 (local reading note links) to DB: {self.db_path_str}...")
+        try:
+            migration_sql = f"""
+            {self._LOCAL_READING_NOTE_LINKS_TABLE_SQL}
+            UPDATE schema_version SET version = 8;
+            """
+
+            with self.transaction():
+                logging.debug("[Migration v7->v8] Creating LocalReadingNoteLinks table...")
+                conn.executescript(migration_sql)
+                logging.info("[Migration v7->v8] LocalReadingNoteLinks migration applied successfully.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v7->v8] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v7->v8 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v7->v8] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v7->v8: {e}") from e
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -1193,7 +1235,8 @@ class MediaDatabase:
                     conn.executescript(
                         f"{self._FTS_TABLES_SQL}\n{self._LOCAL_ONLY_TABLES_SQL}\n"
                         f"{self._READING_HIGHLIGHTS_TABLE_SQL}\n{self._LOCAL_INGESTION_SOURCES_TABLE_SQL}\n"
-                        f"{self._LOCAL_READING_SAVED_SEARCHES_TABLE_SQL}"
+                        f"{self._LOCAL_READING_SAVED_SEARCHES_TABLE_SQL}\n"
+                        f"{self._LOCAL_READING_NOTE_LINKS_TABLE_SQL}"
                     )
                     conn.commit()
                     logging.debug("Verified FTS and local-only media tables exist.")
@@ -2603,6 +2646,112 @@ class MediaDatabase:
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error deleting local reading saved search id={search_id} from DB '{self.db_path_str}': {e}")
             raise DatabaseError(f"Failed to delete local reading saved search {search_id}") from e
+
+    @staticmethod
+    def _local_reading_note_link_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "item_id": row["media_id"],
+            "note_id": row["note_id"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "deleted": bool(row["deleted"]),
+        }
+
+    @staticmethod
+    def _normalize_local_note_link_id(note_id: str) -> str:
+        normalized_note_id = str(note_id or "").strip()
+        if not normalized_note_id:
+            raise InputError("note_id is required for local reading note links.")
+        return normalized_note_id
+
+    def get_local_reading_item_note_link(self, media_id: int, note_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a non-deleted local reading item note link."""
+        normalized_note_id = self._normalize_local_note_link_id(note_id)
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT media_id, note_id, created_at, updated_at, deleted
+                FROM LocalReadingNoteLinks
+                WHERE media_id = ? AND note_id = ? AND deleted = 0
+                """,
+                (media_id, normalized_note_id),
+            )
+            row = cursor.fetchone()
+            return self._local_reading_note_link_row_to_dict(row) if row else None
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(
+                f"Error fetching local reading note link media_id={media_id}, note_id={normalized_note_id}: {e}"
+            )
+            raise DatabaseError(f"Failed to fetch local reading note link for media_id {media_id}") from e
+
+    def link_local_reading_item_note(self, media_id: int, *, note_id: str) -> Dict[str, Any]:
+        """Create or reactivate a local-only link from a reading/media item to a note ID."""
+        normalized_note_id = self._normalize_local_note_link_id(note_id)
+        current_time = self._get_current_utc_timestamp_str()
+        try:
+            with self.transaction() as conn:
+                media_row = conn.execute(
+                    "SELECT id FROM Media WHERE id = ? AND deleted = 0",
+                    (media_id,),
+                ).fetchone()
+                if media_row is None:
+                    raise InputError(f"Media item {media_id} not found.")
+                conn.execute(
+                    """
+                    INSERT INTO LocalReadingNoteLinks (media_id, note_id, created_at, updated_at, deleted)
+                    VALUES (?, ?, ?, ?, 0)
+                    ON CONFLICT(media_id, note_id) DO UPDATE SET
+                        deleted = 0,
+                        updated_at = excluded.updated_at
+                    """,
+                    (media_id, normalized_note_id, current_time, current_time),
+                )
+            linked = self.get_local_reading_item_note_link(media_id, normalized_note_id)
+            if linked is None:
+                raise DatabaseError(f"Failed to fetch newly linked local reading note for media_id {media_id}")
+            return linked
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error linking local reading item media_id={media_id} to note_id={normalized_note_id}: {e}")
+            raise DatabaseError(f"Failed to link local reading item {media_id} to note {normalized_note_id}") from e
+
+    def list_local_reading_item_note_links(self, media_id: int) -> Dict[str, Any]:
+        """List non-deleted local note links for a reading/media item."""
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT media_id, note_id, created_at, updated_at, deleted
+                FROM LocalReadingNoteLinks
+                WHERE media_id = ? AND deleted = 0
+                ORDER BY created_at ASC, note_id ASC
+                """,
+                (media_id,),
+            )
+            return {
+                "item_id": media_id,
+                "links": [self._local_reading_note_link_row_to_dict(row) for row in cursor.fetchall()],
+            }
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error listing local reading note links for media_id={media_id}: {e}")
+            raise DatabaseError(f"Failed to list local reading note links for media_id {media_id}") from e
+
+    def unlink_local_reading_item_note(self, media_id: int, note_id: str) -> Dict[str, bool]:
+        """Soft-delete a local-only link from a reading/media item to a note ID."""
+        normalized_note_id = self._normalize_local_note_link_id(note_id)
+        current_time = self._get_current_utc_timestamp_str()
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE LocalReadingNoteLinks
+                    SET deleted = 1, updated_at = ?
+                    WHERE media_id = ? AND note_id = ? AND deleted = 0
+                    """,
+                    (current_time, media_id, normalized_note_id),
+                )
+                return {"ok": cursor.rowcount > 0}
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error unlinking local reading item media_id={media_id} from note_id={normalized_note_id}: {e}")
+            raise DatabaseError(f"Failed to unlink local reading item {media_id} from note {normalized_note_id}") from e
 
     @staticmethod
     def _local_ingestion_source_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:

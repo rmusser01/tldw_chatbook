@@ -263,3 +263,20 @@ def test_local_service_reading_saved_searches_round_trip(memory_db_factory):
     assert updated["query"] == {"status": ["reading"]}
     assert deleted == {"ok": True}
     assert service.list_reading_saved_searches()["items"] == []
+
+
+def test_local_service_reading_note_links_round_trip(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(title="Linked", content="A", media_type="article", keywords=[])
+    service = LocalMediaReadingService(db)
+
+    linked = service.link_reading_item_note(media_id, note_id="note-uuid-1")
+    listed = service.list_reading_item_note_links(media_id)
+    unlinked = service.unlink_reading_item_note(media_id, "note-uuid-1")
+
+    assert linked["item_id"] == media_id
+    assert linked["note_id"] == "note-uuid-1"
+    assert linked["created_at"] is not None
+    assert listed == {"item_id": media_id, "links": [linked]}
+    assert unlinked == {"ok": True}
+    assert service.list_reading_item_note_links(media_id) == {"item_id": media_id, "links": []}

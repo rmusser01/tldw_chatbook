@@ -214,6 +214,15 @@ class LocalMediaReadingService:
     def delete_reading_saved_search(self, search_id: Any) -> Any:
         return self._require_db().delete_local_reading_saved_search(int(search_id))
 
+    def link_reading_item_note(self, item_id: Any, *, note_id: str) -> Any:
+        return self._require_db().link_local_reading_item_note(self._coerce_media_id(item_id), note_id=note_id)
+
+    def list_reading_item_note_links(self, item_id: Any) -> Any:
+        return self._require_db().list_local_reading_item_note_links(self._coerce_media_id(item_id))
+
+    def unlink_reading_item_note(self, item_id: Any, note_id: str) -> Any:
+        return self._require_db().unlink_local_reading_item_note(self._coerce_media_id(item_id), note_id)
+
     def list_ingestion_sources(self) -> Any:
         return self._require_db().list_local_ingestion_sources()
 
