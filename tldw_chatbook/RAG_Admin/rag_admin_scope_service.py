@@ -266,7 +266,7 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
         media_id: int,
     ) -> dict[str, Any]:
-        service = self._server_service_for_mode(mode)
+        service = self._service_for_mode(self._normalize_mode(mode))
         return await self._maybe_await(service.get_media_embeddings_status(media_id))
 
     async def generate_media_embeddings(
@@ -281,7 +281,7 @@ class RAGAdminScopeService:
         force_regenerate: bool = False,
         priority: int = 50,
     ) -> dict[str, Any]:
-        service = self._server_service_for_mode(mode)
+        service = self._service_for_mode(self._normalize_mode(mode))
         kwargs: dict[str, Any] = {}
         if embedding_model is not None:
             kwargs["embedding_model"] = embedding_model
@@ -351,7 +351,7 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
         media_id: int,
     ) -> dict[str, Any]:
-        service = self._server_service_for_mode(mode)
+        service = self._service_for_mode(self._normalize_mode(mode))
         return await self._maybe_await(service.delete_media_embeddings(media_id))
 
     async def get_media_embedding_job(

@@ -17,6 +17,18 @@ class FakeLocalService:
         self.calls.append(("get_collection_detail", collection_name))
         return dict(self.collection_detail[collection_name])
 
+    def get_media_embeddings_status(self, media_id):
+        self.calls.append(("get_media_embeddings_status", media_id))
+        return {"media_id": media_id, "has_embeddings": True, "embedding_count": 2}
+
+    def generate_media_embeddings(self, media_id, **kwargs):
+        self.calls.append(("generate_media_embeddings", media_id, kwargs))
+        return {"media_id": media_id, "status": "completed", "embedding_count": 2}
+
+    def delete_media_embeddings(self, media_id):
+        self.calls.append(("delete_media_embeddings", media_id))
+        return {"media_id": media_id, "status": "success", "deleted_count": 2}
+
 
 class FakeServerService:
     def __init__(self, templates=None, collection_detail=None):
@@ -120,7 +132,7 @@ async def test_scope_service_uses_stats_endpoint_for_server_collection_detail():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_media_embedding_operations_to_server_only():
+async def test_scope_service_routes_server_media_embedding_operations_to_server_backend():
     server = FakeServerService()
     scope = RAGAdminScopeService(local_service=FakeLocalService(), server_service=server)
 
@@ -143,8 +155,29 @@ async def test_scope_service_routes_media_embedding_operations_to_server_only():
         ("list_media_embedding_jobs", {"status": "completed", "limit": 50, "offset": 0}),
     ]
 
-    with pytest.raises(ValueError, match="Server retrieval-admin backend is required"):
-        await scope.generate_media_embeddings(mode="local", media_id=42)
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_media_embedding_lifecycle_to_local_backend():
+    local = FakeLocalService()
+    scope = RAGAdminScopeService(local_service=local, server_service=FakeServerService())
+
+    status = await scope.get_media_embeddings_status(mode="local", media_id=42)
+    generated = await scope.generate_media_embeddings(
+        mode="local",
+        media_id=42,
+        embedding_model="local-embed",
+        chunk_size=250,
+    )
+    deleted = await scope.delete_media_embeddings(mode="local", media_id=42)
+
+    assert status["has_embeddings"] is True
+    assert generated["status"] == "completed"
+    assert deleted["deleted_count"] == 2
+    assert local.calls == [
+        ("get_media_embeddings_status", 42),
+        ("generate_media_embeddings", 42, {"embedding_model": "local-embed", "chunk_size": 250}),
+        ("delete_media_embeddings", 42),
+    ]
 
 
 @pytest.mark.asyncio
