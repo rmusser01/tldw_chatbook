@@ -237,6 +237,39 @@ class FakeLocalMediaService:
         self.calls.append(("export_reading_items", kwargs))
         return b'{"id":31}\n'
 
+    def list_unified_items(self, **kwargs):
+        self.calls.append(("list_unified_items", kwargs))
+        return {
+            "items": [
+                {
+                    "id": 31,
+                    "content_item_id": 31,
+                    "media_id": 31,
+                    "origin": "media",
+                    "type": "media",
+                    "media_type": "article",
+                    "title": "Local Article",
+                    "status": "saved",
+                }
+            ],
+            "total": 1,
+            "page": kwargs.get("page", 1),
+            "size": kwargs.get("size", 20),
+        }
+
+    def get_unified_item(self, item_id):
+        self.calls.append(("get_unified_item", item_id))
+        return {
+            "id": item_id,
+            "content_item_id": item_id,
+            "media_id": item_id,
+            "origin": "media",
+            "type": "media",
+            "media_type": "article",
+            "title": "Local Article",
+            "status": "saved",
+        }
+
     def ingest_web_content(self, **kwargs):
         raise ValueError("Local web-content ingest is not available yet.")
 
@@ -1592,16 +1625,41 @@ async def test_scope_service_routes_server_unified_items_with_distinct_policy_ac
         ),
     ]
 
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_unified_item_reads_with_distinct_policy_actions():
+    local = FakeLocalMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    listing = await scope.list_unified_items(mode="local", q="article", origin="media", page=2, size=10)
+    item = await scope.get_unified_item(mode="local", item_id=31)
+
+    assert listing["total"] == 1
+    assert item["id"] == 31
+    assert policy.calls == [
+        "media.unified_items.list.local",
+        "media.unified_items.detail.local",
+    ]
+    assert local.calls[-2:] == [
+        ("list_unified_items", {"q": "article", "origin": "media", "page": 2, "size": 10}),
+        ("get_unified_item", 31),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_keeps_local_unified_item_bulk_update_explicitly_unavailable():
     local_policy = FakePolicyEnforcer()
     local_scope = MediaReadingScopeService(
         local_service=FakeLocalMediaService(),
-        server_service=server,
+        server_service=FakeServerMediaService(),
         policy_enforcer=local_policy,
     )
-    with pytest.raises(ValueError, match="Server unified items require server mode."):
-        await local_scope.list_unified_items(mode="local")
-    with pytest.raises(ValueError, match="Server unified items require server mode."):
-        await local_scope.get_unified_item(mode="local", item_id=42)
+
     with pytest.raises(ValueError, match="Server unified items require server mode."):
         await local_scope.bulk_update_unified_items(
             mode="local",

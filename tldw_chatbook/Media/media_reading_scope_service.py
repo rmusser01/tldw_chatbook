@@ -585,7 +585,6 @@ class MediaReadingScopeService:
         **filters: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_unified_items(normalized_mode)
         self._enforce_policy(self._unified_item_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
@@ -600,7 +599,6 @@ class MediaReadingScopeService:
         item_id: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_unified_items(normalized_mode)
         self._enforce_policy(self._unified_item_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.get_unified_item(item_id))

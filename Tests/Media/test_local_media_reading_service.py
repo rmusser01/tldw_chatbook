@@ -313,3 +313,33 @@ def test_local_service_exports_saved_reading_items_jsonl(memory_db_factory):
     assert rows[0]["content"] == "RAG notes for export"
     assert rows[0]["highlights"][0]["quote"] == "RAG notes"
     assert rows[0]["note_links"][0]["note_id"] == "note-uuid-1"
+
+
+def test_local_service_lists_and_gets_unified_items(memory_db_factory):
+    db = memory_db_factory()
+    kept_id, _, _ = db.add_media_with_keywords(
+        title="Saved Local Article",
+        content="Local unified item",
+        media_type="article",
+        keywords=["ai"],
+        url="https://example.com/local",
+    )
+    db.add_media_with_keywords(title="Unsaved", content="Ignored", media_type="article", keywords=["ai"])
+    db.save_media_to_read_it_later(kept_id)
+    service = LocalMediaReadingService(db)
+
+    listing = service.list_unified_items(status=["saved"], tags=["ai"], page=1, size=10)
+    detail = service.get_unified_item(kept_id)
+
+    assert listing["total"] == 1
+    assert listing["items"][0]["id"] == kept_id
+    assert listing["items"][0]["content_item_id"] == kept_id
+    assert listing["items"][0]["media_id"] == kept_id
+    assert listing["items"][0]["origin"] == "media"
+    assert listing["items"][0]["type"] == "media"
+    assert listing["items"][0]["media_type"] == "article"
+    assert listing["items"][0]["status"] == "saved"
+    assert listing["items"][0]["domain"] == "example.com"
+    assert listing["items"][0]["tags"] == ["ai"]
+    assert detail["id"] == kept_id
+    assert detail["status"] == "saved"

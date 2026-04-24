@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Mapping, Optional
+from urllib.parse import urlparse
 
 
 class LocalMediaReadingService:
@@ -40,6 +41,35 @@ class LocalMediaReadingService:
         if isinstance(value, str):
             return [value]
         return [str(item) for item in value]
+
+    def _domain_from_url(self, url: Any) -> str | None:
+        parsed = urlparse(str(url or ""))
+        return parsed.netloc.lower() or None
+
+    def _unified_status_from_detail(self, detail: Mapping[str, Any]) -> str:
+        return "saved" if detail.get("is_read_it_later") else "local"
+
+    def _unified_item_from_detail(
+        self,
+        detail: Mapping[str, Any],
+        *,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        media_id = self._coerce_media_id(detail["id"])
+        return {
+            "id": media_id,
+            "content_item_id": media_id,
+            "media_id": media_id,
+            "origin": "media",
+            "type": "media",
+            "media_type": detail.get("type"),
+            "title": detail.get("title"),
+            "url": detail.get("url"),
+            "domain": self._domain_from_url(detail.get("url")),
+            "status": self._unified_status_from_detail(detail),
+            "favorite": False,
+            "tags": list(tags or []),
+        }
 
     def _enrich_with_read_it_later_state(self, row: Mapping[str, Any]) -> dict[str, Any]:
         enriched = dict(row)
@@ -294,6 +324,48 @@ class LocalMediaReadingService:
 
         body = "".join(json.dumps(record, default=str, separators=(",", ":")) + "\n" for record in records)
         return body.encode("utf-8")
+
+    def list_unified_items(self, **filters: Any) -> dict[str, Any]:
+        origin = str(filters.get("origin") or "").strip().lower()
+        if origin and origin not in {"media", "reading", "local"}:
+            raise ValueError(f"Unsupported local unified item origin: {origin}")
+
+        status_filters = {value.lower() for value in self._normalize_filter_list(filters.get("status"))}
+        supported_statuses = {"saved", "read_it_later", "read-it-later"}
+        unsupported_statuses = sorted(status_filters - supported_statuses)
+        if unsupported_statuses:
+            raise ValueError(f"Unsupported local unified item status filters: {', '.join(unsupported_statuses)}")
+
+        page = max(1, int(filters.get("page") or 1))
+        size = max(1, int(filters.get("size") or 20))
+        offset = (page - 1) * size
+        tags_filter = self._normalize_filter_list(filters.get("tags"))
+        payload = self.search_media(
+            query=filters.get("q"),
+            limit=size,
+            offset=offset,
+            read_it_later_only=bool(status_filters),
+            must_have_keywords=tags_filter,
+        )
+        raw_items = list(payload.get("items", []))
+        media_ids = [self._coerce_media_id(item["id"]) for item in raw_items]
+        keywords_by_media = self._require_db().fetch_keywords_for_media_batch(media_ids) if media_ids else {}
+        items = [
+            self._unified_item_from_detail(item, tags=keywords_by_media.get(self._coerce_media_id(item["id"]), []))
+            for item in raw_items
+        ]
+        return {
+            "items": items,
+            "total": payload.get("total", len(items)),
+            "page": page,
+            "size": size,
+        }
+
+    def get_unified_item(self, item_id: Any) -> dict[str, Any]:
+        media_id = self._coerce_media_id(item_id)
+        detail = self.get_media_detail(media_id)
+        keywords_by_media = self._require_db().fetch_keywords_for_media_batch([media_id])
+        return self._unified_item_from_detail(detail, tags=keywords_by_media.get(media_id, []))
 
     def list_ingestion_sources(self) -> Any:
         return self._require_db().list_local_ingestion_sources()
