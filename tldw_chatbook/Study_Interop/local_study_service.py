@@ -71,6 +71,9 @@ class LocalStudyService:
         )
         return self._require_db().get_flashcard(card_id)
 
+    def get_flashcard(self, card_id: str) -> Any:
+        return self._require_db().get_flashcard(card_id)
+
     def move_flashcard(
         self,
         card_id: str,

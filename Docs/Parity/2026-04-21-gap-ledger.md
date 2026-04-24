@@ -128,9 +128,9 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Study Core: Flashcards, quizzes, and study guides
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
-- Current state: Study seams are already strong across local and server modes, including quizzes and study-guide generation.
-- Gap: Full mutation parity and workspace-aware remote alignment still need cleanup.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/flashcards.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/quizzes.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/chat_documents.py`; Chatbook: `tldw_chatbook/Study_Interop/local_study_service.py`, `tldw_chatbook/Study_Interop/server_study_service.py`, `tldw_chatbook/UI/Screens/study_screen.py`; Verification: flashcard, quiz, and study-guide contracts are explicit.
+- Current state: Study seams are already strong across local and server modes, including quizzes and study-guide generation. Chatbook now also has typed server flashcard deck update, flashcard detail, scheduling reset, tag get/set, and analytics-summary route coverage through the shared API client, `ServerStudyService`, and `StudyScopeService`.
+- Gap: Remaining flashcard route-family gaps include richer server assets, bulk update/import/export/templates, study-assistant helpers, tag suggestions, mounted affordance depth, and local equivalents for the newly exposed server-only management helpers where required. Workspace-aware remote alignment still needs cleanup.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/flashcards.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/quizzes.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/chat_documents.py`; Chatbook: `tldw_chatbook/tldw_api/flashcards_schemas.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/Study_Interop/local_study_service.py`, `tldw_chatbook/Study_Interop/server_study_service.py`, `tldw_chatbook/Study_Interop/study_scope_service.py`, `tldw_chatbook/UI/Screens/study_screen.py`; Verification: `Tests/tldw_api/test_flashcards_client.py`, `Tests/Study_Interop/test_server_study_service.py`, and `Tests/Study_Interop/test_study_scope_service.py`.
 - Recommended tranche: Tranche 1
 - Notes: Priority 63. Strong existing seams keep this below the most urgent standalone gaps.
 

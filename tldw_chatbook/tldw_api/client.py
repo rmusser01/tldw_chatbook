@@ -252,16 +252,21 @@ from .evaluations_schemas import (
     UpdateEvaluationRequest,
 )
 from .flashcards_schemas import (
+    FlashcardAnalyticsSummaryResponse,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
     FlashcardDeckResponse,
+    FlashcardDeckUpdateRequest,
     FlashcardListResponse,
     FlashcardNextReviewResponse,
+    FlashcardResetSchedulingRequest,
     FlashcardResponse,
     FlashcardReviewRequest,
     FlashcardReviewResponse,
     FlashcardReviewSessionEndRequest,
     FlashcardReviewSessionSummary,
+    FlashcardTagsResponse,
+    FlashcardTagsUpdateRequest,
     FlashcardUpdateRequest,
 )
 from .study_extensions_schemas import (
@@ -2734,6 +2739,18 @@ class TLDWAPIClient:
         )
         return [FlashcardDeckResponse.model_validate(item) for item in list(response or [])]
 
+    async def update_flashcard_deck(
+        self,
+        deck_id: int,
+        request_data: FlashcardDeckUpdateRequest,
+    ) -> FlashcardDeckResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/flashcards/decks/{deck_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+        return FlashcardDeckResponse.model_validate(response)
+
     async def create_flashcard(
         self,
         request_data: FlashcardCreateRequest,
@@ -2743,6 +2760,10 @@ class TLDWAPIClient:
             "/api/v1/flashcards",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
+        return FlashcardResponse.model_validate(response)
+
+    async def get_flashcard(self, card_uuid: str) -> FlashcardResponse:
+        response = await self._request("GET", f"/api/v1/flashcards/id/{card_uuid}")
         return FlashcardResponse.model_validate(response)
 
     async def update_flashcard(
@@ -2756,6 +2777,56 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return FlashcardResponse.model_validate(response)
+
+    async def reset_flashcard_scheduling(
+        self,
+        card_uuid: str,
+        request_data: FlashcardResetSchedulingRequest,
+    ) -> FlashcardResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/flashcards/{card_uuid}/reset-scheduling",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return FlashcardResponse.model_validate(response)
+
+    async def set_flashcard_tags(
+        self,
+        card_uuid: str,
+        request_data: FlashcardTagsUpdateRequest,
+    ) -> FlashcardResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/flashcards/{card_uuid}/tags",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return FlashcardResponse.model_validate(response)
+
+    async def get_flashcard_tags(self, card_uuid: str) -> FlashcardTagsResponse:
+        response = await self._request("GET", f"/api/v1/flashcards/{card_uuid}/tags")
+        return FlashcardTagsResponse.model_validate(response)
+
+    async def get_flashcard_analytics_summary(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: bool = False,
+    ) -> FlashcardAnalyticsSummaryResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/analytics/summary",
+            params={
+                key: value
+                for key, value in {
+                    "deck_id": deck_id,
+                    "workspace_id": workspace_id,
+                    "include_workspace_items": include_workspace_items,
+                }.items()
+                if value is not None
+            },
+        )
+        return FlashcardAnalyticsSummaryResponse.model_validate(response)
 
     async def delete_flashcard(
         self,

@@ -9,7 +9,10 @@ from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_confi
 from ..tldw_api import (
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
+    FlashcardDeckUpdateRequest,
+    FlashcardResetSchedulingRequest,
     FlashcardReviewRequest,
+    FlashcardTagsUpdateRequest,
     FlashcardUpdateRequest,
     StudyPackCreateJobRequest,
     StudyPackSourceSelection,
@@ -68,6 +71,37 @@ class ServerStudyService:
         )
         return self._model_to_dict(response)
 
+    async def update_deck(
+        self,
+        deck_id: int,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        review_prompt_side: Optional[str] = None,
+        scheduler_type: Optional[str] = None,
+        scheduler_settings: Optional[dict[str, Any]] = None,
+        expected_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        payload = {
+            key: value
+            for key, value in {
+                "name": name,
+                "description": description,
+                "workspace_id": workspace_id,
+                "review_prompt_side": review_prompt_side,
+                "scheduler_type": scheduler_type,
+                "scheduler_settings": scheduler_settings,
+                "expected_version": expected_version,
+            }.items()
+            if value is not None
+        }
+        response = await self._require_client().update_flashcard_deck(
+            int(deck_id),
+            FlashcardDeckUpdateRequest(**payload),
+        )
+        return self._model_to_dict(response)
+
     async def list_flashcards(
         self,
         *,
@@ -108,6 +142,10 @@ class ServerStudyService:
         )
         return self._model_to_dict(response)
 
+    async def get_flashcard(self, card_id: str) -> dict[str, Any]:
+        response = await self._require_client().get_flashcard(card_id)
+        return self._model_to_dict(response)
+
     async def move_flashcard(
         self,
         card_id: str,
@@ -139,6 +177,49 @@ class ServerStudyService:
             card_id,
             expected_version=expected_version,
         )
+
+    async def reset_flashcard_scheduling(
+        self,
+        card_id: str,
+        *,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        response = await self._require_client().reset_flashcard_scheduling(
+            card_id,
+            FlashcardResetSchedulingRequest(expected_version=expected_version),
+        )
+        return self._model_to_dict(response)
+
+    async def set_flashcard_tags(
+        self,
+        card_id: str,
+        *,
+        tags: list[str],
+    ) -> dict[str, Any]:
+        response = await self._require_client().set_flashcard_tags(
+            card_id,
+            FlashcardTagsUpdateRequest(tags=tags),
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard_tags(self, card_id: str) -> dict[str, Any]:
+        return self._model_to_dict(await self._require_client().get_flashcard_tags(card_id))
+
+    async def get_flashcard_analytics_summary(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: bool = False,
+    ) -> dict[str, Any]:
+        response = await self._require_client().get_flashcard_analytics_summary(
+            deck_id=deck_id,
+            workspace_id=workspace_id,
+            include_workspace_items=include_workspace_items,
+        )
+        payload = self._model_to_dict(response)
+        payload["source"] = "server"
+        return payload
 
     async def delete_deck(
         self,

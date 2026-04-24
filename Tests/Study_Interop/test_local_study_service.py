@@ -89,6 +89,16 @@ def test_local_study_service_normalizes_blank_search_to_list_query():
     assert db.calls == [("list_flashcards", "deck-local-1", None, 7, 3)]
 
 
+def test_local_study_service_fetches_flashcard_by_id():
+    db = FakeDB()
+    service = LocalStudyService(db=db)
+
+    card = service.get_flashcard("card-local-1")
+
+    assert card["id"] == "card-local-1"
+    assert db.calls == [("get_flashcard", "card-local-1")]
+
+
 def test_local_study_service_creates_flashcards_and_fetches_due_review_card():
     db = FakeDB()
     service = LocalStudyService(db=db)

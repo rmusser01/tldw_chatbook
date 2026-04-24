@@ -5,14 +5,19 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tldw_chatbook.tldw_api import (
+    FlashcardAnalyticsSummaryResponse,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
     FlashcardDeckResponse,
+    FlashcardDeckUpdateRequest,
     FlashcardListResponse,
     FlashcardNextReviewResponse,
+    FlashcardResetSchedulingRequest,
     FlashcardResponse,
     FlashcardReviewRequest,
     FlashcardReviewResponse,
+    FlashcardTagsResponse,
+    FlashcardTagsUpdateRequest,
     FlashcardUpdateRequest,
     TLDWAPIClient,
 )
@@ -258,3 +263,144 @@ async def test_flashcard_update_and_delete_routes_wire_correctly(monkeypatch):
     assert mocked.await_args_list[1].kwargs["params"] == {"expected_version": 4}
     assert isinstance(updated, FlashcardResponse)
     assert deleted == {"deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_flashcard_management_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    card_payload = {
+        "uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+        "deck_id": 7,
+        "front": "What powers the cell?",
+        "back": "ATP",
+        "notes": None,
+        "extra": None,
+        "is_cloze": False,
+        "tags": ["biology"],
+        "ef": 2.5,
+        "interval_days": 0,
+        "repetitions": 0,
+        "lapses": 0,
+        "due_at": None,
+        "last_reviewed_at": None,
+        "queue_state": "new",
+        "created_at": "2026-04-20T00:00:00Z",
+        "last_modified": "2026-04-20T00:01:00Z",
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 2,
+        "model_type": "basic",
+        "reverse": False,
+        "scheduler_type": "fsrs",
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "id": 7,
+                "name": "Biology v2",
+                "description": "Updated cell review",
+                "workspace_id": None,
+                "review_prompt_side": "back",
+                "created_at": "2026-04-20T00:00:00Z",
+                "last_modified": "2026-04-20T00:02:00Z",
+                "deleted": False,
+                "client_id": "server-client",
+                "version": 2,
+                "scheduler_type": "fsrs",
+            },
+            card_payload,
+            {**card_payload, "version": 3, "queue_state": "new"},
+            {**card_payload, "tags": ["biology", "cell"]},
+            {"items": ["biology", "cell"], "count": 2},
+            {
+                "reviewed_today": 3,
+                "retention_rate_today": 0.8,
+                "lapse_rate_today": 0.1,
+                "avg_answer_time_ms_today": 1200.0,
+                "study_streak_days": 4,
+                "generated_at": "2026-04-23T12:00:00Z",
+                "decks": [
+                    {
+                        "deck_id": 7,
+                        "deck_name": "Biology",
+                        "total": 12,
+                        "new": 4,
+                        "learning": 2,
+                        "due": 3,
+                        "mature": 3,
+                    }
+                ],
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    deck = await client.update_flashcard_deck(
+        7,
+        FlashcardDeckUpdateRequest(
+            name="Biology v2",
+            description="Updated cell review",
+            workspace_id=None,
+            review_prompt_side="back",
+            expected_version=1,
+        ),
+    )
+    card = await client.get_flashcard("87ca2b3f-7e3a-47d7-a52f-8debc86c03cb")
+    reset = await client.reset_flashcard_scheduling(
+        "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+        FlashcardResetSchedulingRequest(expected_version=2),
+    )
+    tagged = await client.set_flashcard_tags(
+        "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+        FlashcardTagsUpdateRequest(tags=["biology", "cell"]),
+    )
+    tags = await client.get_flashcard_tags("87ca2b3f-7e3a-47d7-a52f-8debc86c03cb")
+    analytics = await client.get_flashcard_analytics_summary(
+        deck_id=7,
+        workspace_id="ws-1",
+        include_workspace_items=True,
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("PATCH", "/api/v1/flashcards/decks/7")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "name": "Biology v2",
+        "description": "Updated cell review",
+        "workspace_id": None,
+        "review_prompt_side": "back",
+        "expected_version": 1,
+    }
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/flashcards/id/87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/flashcards/87ca2b3f-7e3a-47d7-a52f-8debc86c03cb/reset-scheduling",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "PUT",
+        "/api/v1/flashcards/87ca2b3f-7e3a-47d7-a52f-8debc86c03cb/tags",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "GET",
+        "/api/v1/flashcards/87ca2b3f-7e3a-47d7-a52f-8debc86c03cb/tags",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/flashcards/analytics/summary",
+    )
+    assert mocked.await_args_list[5].kwargs["params"] == {
+        "deck_id": 7,
+        "workspace_id": "ws-1",
+        "include_workspace_items": True,
+    }
+
+    assert isinstance(deck, FlashcardDeckResponse)
+    assert isinstance(card, FlashcardResponse)
+    assert isinstance(reset, FlashcardResponse)
+    assert isinstance(tagged, FlashcardResponse)
+    assert isinstance(tags, FlashcardTagsResponse)
+    assert isinstance(analytics, FlashcardAnalyticsSummaryResponse)
+    assert deck.review_prompt_side == "back"
+    assert tags.items == ["biology", "cell"]
+    assert analytics.decks[0].deck_name == "Biology"

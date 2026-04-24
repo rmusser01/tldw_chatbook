@@ -2,6 +2,7 @@ import pytest
 
 from tldw_chatbook.Study_Interop.server_study_service import ServerStudyService
 from tldw_chatbook.tldw_api import (
+    FlashcardAnalyticsSummaryResponse,
     FlashcardResponse,
     StudyPackJobAcceptedResponse,
     StudyPackJobStatusResponse,
@@ -47,6 +48,75 @@ class FakeClient:
     async def delete_flashcard(self, card_uuid, *, expected_version):
         self.calls.append(("delete_flashcard", card_uuid, expected_version))
         return {"deleted": True}
+
+    async def update_flashcard_deck(self, deck_id, request_data):
+        self.calls.append(("update_flashcard_deck", deck_id, request_data.model_dump(mode="json", exclude_unset=True)))
+        return {
+            "id": deck_id,
+            "name": "Biology v2",
+            "description": "Updated",
+            "workspace_id": None,
+            "review_prompt_side": "back",
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 2,
+            "scheduler_type": "fsrs",
+        }
+
+    async def get_flashcard(self, card_uuid):
+        self.calls.append(("get_flashcard", card_uuid))
+        return FlashcardResponse.model_validate(
+            {
+                "uuid": card_uuid,
+                "deck_id": 9,
+                "front": "Question",
+                "back": "Answer",
+                "tags": ["science"],
+                "ef": 2.5,
+                "interval_days": 0,
+                "repetitions": 0,
+                "lapses": 0,
+                "queue_state": "new",
+                "deleted": False,
+                "client_id": "server-client",
+                "version": 3,
+                "model_type": "basic",
+                "reverse": False,
+            }
+        )
+
+    async def reset_flashcard_scheduling(self, card_uuid, request_data):
+        self.calls.append(("reset_flashcard_scheduling", card_uuid, request_data.model_dump(mode="json")))
+        return await self.get_flashcard(card_uuid)
+
+    async def set_flashcard_tags(self, card_uuid, request_data):
+        self.calls.append(("set_flashcard_tags", card_uuid, request_data.model_dump(mode="json")))
+        return await self.get_flashcard(card_uuid)
+
+    async def get_flashcard_tags(self, card_uuid):
+        self.calls.append(("get_flashcard_tags", card_uuid))
+        return {"items": ["science", "biology"], "count": 2}
+
+    async def get_flashcard_analytics_summary(self, *, deck_id=None, workspace_id=None, include_workspace_items=False):
+        self.calls.append(("get_flashcard_analytics_summary", deck_id, workspace_id, include_workspace_items))
+        return FlashcardAnalyticsSummaryResponse.model_validate(
+            {
+                "reviewed_today": 3,
+                "study_streak_days": 4,
+                "generated_at": "2026-04-23T12:00:00Z",
+                "decks": [
+                    {
+                        "deck_id": 9,
+                        "deck_name": "Biology",
+                        "total": 12,
+                        "new": 4,
+                        "learning": 2,
+                        "due": 3,
+                        "mature": 3,
+                    }
+                ],
+            }
+        )
 
     async def create_study_pack_job(self, request_data):
         self.calls.append(("create_study_pack_job", request_data.model_dump(mode="json", exclude_none=True)))
@@ -223,6 +293,44 @@ async def test_server_deck_delete_is_explicitly_unsupported():
         match="Flashcard deck deletion is not supported by the current server API\\.",
     ):
         await server.delete_deck(deck_id=7, expected_version=2)
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_exposes_flashcard_management_routes():
+    client = FakeClient()
+    service = ServerStudyService(client=client)
+
+    deck = await service.update_deck(
+        7,
+        name="Biology v2",
+        description="Updated",
+        review_prompt_side="back",
+        expected_version=1,
+    )
+    card = await service.get_flashcard(CARD_UUID)
+    reset = await service.reset_flashcard_scheduling(CARD_UUID, expected_version=3)
+    tagged = await service.set_flashcard_tags(CARD_UUID, tags=["science", "biology"])
+    tags = await service.get_flashcard_tags(CARD_UUID)
+    analytics = await service.get_flashcard_analytics_summary(deck_id=9, workspace_id="ws-1", include_workspace_items=True)
+
+    assert deck["review_prompt_side"] == "back"
+    assert card["uuid"] == CARD_UUID
+    assert reset["uuid"] == CARD_UUID
+    assert tagged["uuid"] == CARD_UUID
+    assert tags == {"items": ["science", "biology"], "count": 2}
+    assert analytics["decks"][0]["deck_name"] == "Biology"
+    assert client.calls[:6] == [
+        ("update_flashcard_deck", 7, {"name": "Biology v2", "description": "Updated", "review_prompt_side": "back", "expected_version": 1}),
+        ("get_flashcard", CARD_UUID),
+        ("reset_flashcard_scheduling", CARD_UUID, {"expected_version": 3}),
+        ("get_flashcard", CARD_UUID),
+        ("set_flashcard_tags", CARD_UUID, {"tags": ["science", "biology"]}),
+        ("get_flashcard", CARD_UUID),
+    ]
+    assert client.calls[-2:] == [
+        ("get_flashcard_tags", CARD_UUID),
+        ("get_flashcard_analytics_summary", 9, "ws-1", True),
+    ]
 
 
 @pytest.mark.asyncio

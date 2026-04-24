@@ -184,6 +184,34 @@ class StudyScopeService:
         )
         return normalize_study_deck_record(normalized_mode.value, record)
 
+    async def update_deck(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        deck_id: str | int,
+        name: str | None = None,
+        description: str | None = None,
+        workspace_id: str | None = None,
+        review_prompt_side: str | None = None,
+        scheduler_type: str | None = None,
+        scheduler_settings: dict[str, Any] | None = None,
+        expected_version: int | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard deck update")
+        record = await self._maybe_await(
+            service.update_deck(
+                deck_id,
+                name=name,
+                description=description,
+                workspace_id=workspace_id,
+                review_prompt_side=review_prompt_side,
+                scheduler_type=scheduler_type,
+                scheduler_settings=scheduler_settings,
+                expected_version=expected_version,
+            )
+        )
+        return normalize_study_deck_record("server", record)
+
     async def list_flashcards(
         self,
         *,
@@ -225,6 +253,16 @@ class StudyScopeService:
                 extra=extra,
             )
         )
+        return normalize_study_flashcard_record(normalized_mode.value, record)
+
+    async def get_flashcard(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        card_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        record = await self._maybe_await(self._service_for_mode(normalized_mode).get_flashcard(card_id))
         return normalize_study_flashcard_record(normalized_mode.value, record)
 
     async def move_flashcard(
@@ -271,6 +309,57 @@ class StudyScopeService:
             )
         )
         return self._coerce_delete_result(result)
+
+    async def reset_flashcard_scheduling(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        card_id: str,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard scheduling reset")
+        record = await self._maybe_await(
+            service.reset_flashcard_scheduling(card_id, expected_version=expected_version)
+        )
+        return normalize_study_flashcard_record("server", record)
+
+    async def set_flashcard_tags(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        card_id: str,
+        tags: list[str],
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard tag update")
+        record = await self._maybe_await(service.set_flashcard_tags(card_id, tags=tags))
+        return normalize_study_flashcard_record("server", record)
+
+    async def get_flashcard_tags(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        card_id: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard tag list")
+        return dict(await self._maybe_await(service.get_flashcard_tags(card_id)) or {})
+
+    async def get_flashcard_analytics_summary(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        deck_id: int | None = None,
+        workspace_id: str | None = None,
+        include_workspace_items: bool = False,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard analytics summary")
+        payload = await self._maybe_await(
+            service.get_flashcard_analytics_summary(
+                deck_id=deck_id,
+                workspace_id=workspace_id,
+                include_workspace_items=include_workspace_items,
+            )
+        )
+        return dict(self._with_server_source(payload or {}))
 
     async def delete_deck(
         self,

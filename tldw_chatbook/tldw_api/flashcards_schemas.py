@@ -21,7 +21,21 @@ class FlashcardDeckCreateRequest(BaseModel):
     name: str
     description: Optional[str] = None
     workspace_id: Optional[str] = None
+    review_prompt_side: Optional[Literal["front", "back"]] = None
     scheduler_type: Optional[DeckSchedulerType] = None
+    scheduler_settings: Optional[dict[str, Any]] = None
+
+
+class FlashcardDeckUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    workspace_id: Optional[str] = None
+    review_prompt_side: Optional[Literal["front", "back"]] = None
+    scheduler_type: Optional[DeckSchedulerType] = None
+    scheduler_settings: Optional[dict[str, Any]] = None
+    expected_version: Optional[int] = Field(None, ge=1)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class FlashcardDeckResponse(BaseModel):
@@ -29,6 +43,7 @@ class FlashcardDeckResponse(BaseModel):
     name: str
     description: Optional[str] = None
     workspace_id: Optional[str] = None
+    review_prompt_side: Optional[Literal["front", "back"]] = None
     created_at: Optional[str] = None
     last_modified: Optional[str] = None
     deleted: bool = False
@@ -175,6 +190,41 @@ class FlashcardReviewSessionSummary(BaseModel):
 
 class FlashcardReviewSessionEndRequest(BaseModel):
     review_session_id: int
+
+
+class FlashcardResetSchedulingRequest(BaseModel):
+    expected_version: int = Field(..., ge=1)
+
+
+class FlashcardTagsUpdateRequest(BaseModel):
+    tags: list[str]
+
+
+class FlashcardTagsResponse(BaseModel):
+    items: list[str] = Field(default_factory=list)
+    count: int = 0
+
+
+class FlashcardDeckProgress(BaseModel):
+    deck_id: int
+    deck_name: str
+    total: int
+    new: int
+    learning: int
+    due: int
+    mature: int
+
+
+class FlashcardAnalyticsSummaryResponse(BaseModel):
+    reviewed_today: int
+    retention_rate_today: Optional[float] = None
+    lapse_rate_today: Optional[float] = None
+    avg_answer_time_ms_today: Optional[float] = None
+    study_streak_days: int
+    generated_at: str
+    decks: list[FlashcardDeckProgress] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FlashcardNextReviewResponse(BaseModel):
