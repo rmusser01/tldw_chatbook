@@ -429,6 +429,20 @@ from .chat_conversation_schemas import (
     ValidateDictionaryResponse,
     normalize_conversation_state,
 )
+from .chat_documents_schemas import (
+    AsyncGenerationResponse,
+    BulkGenerateRequest,
+    BulkGenerateResponse,
+    DocumentListResponse as ChatDocumentListResponse,
+    DocumentType as ChatDocumentType,
+    GenerateDocumentRequest,
+    GenerateDocumentResponse,
+    GenerationStatistics,
+    GeneratedDocument,
+    JobStatusResponse,
+    PromptConfigResponse,
+    SavePromptConfigRequest,
+)
 from .chat_loop_schemas import (
     ChatLoopActionResponse,
     ChatLoopApprovalDecisionRequest,
@@ -5451,6 +5465,84 @@ class TLDWAPIClient:
             },
         )
         return ChatAnalyticsResponse.model_validate(response)
+
+    @staticmethod
+    def _parse_chat_document_generation_response(
+        response: Dict[str, Any],
+    ) -> GenerateDocumentResponse | AsyncGenerationResponse:
+        if "job_id" in response:
+            return AsyncGenerationResponse.model_validate(response)
+        return GenerateDocumentResponse.model_validate(response)
+
+    async def generate_chat_document(
+        self,
+        request_data: GenerateDocumentRequest,
+    ) -> GenerateDocumentResponse | AsyncGenerationResponse:
+        if request_data.stream:
+            raise ValueError(
+                "Streaming chat document generation is not supported by the JSON API client; "
+                "use async_generation=True and poll the job status instead."
+            )
+        response = await self._request(
+            "POST",
+            "/api/v1/chat/documents/generate",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return self._parse_chat_document_generation_response(response)
+
+    async def get_chat_document_job_status(self, job_id: str) -> JobStatusResponse:
+        response = await self._request("GET", f"/api/v1/chat/documents/jobs/{job_id}")
+        return JobStatusResponse.model_validate(response)
+
+    async def cancel_chat_document_job(self, job_id: str) -> Dict[str, str]:
+        return await self._request("DELETE", f"/api/v1/chat/documents/jobs/{job_id}")
+
+    async def list_chat_generated_documents(
+        self,
+        *,
+        conversation_id: Optional[str] = None,
+        document_type: ChatDocumentType | str | None = None,
+        limit: int = 50,
+    ) -> ChatDocumentListResponse:
+        params: Dict[str, Any] = {"limit": limit}
+        if conversation_id is not None:
+            params["conversation_id"] = conversation_id
+        if document_type is not None:
+            params["document_type"] = document_type.value if isinstance(document_type, ChatDocumentType) else document_type
+        response = await self._request("GET", "/api/v1/chat/documents", params=params)
+        return ChatDocumentListResponse.model_validate(response)
+
+    async def get_chat_generated_document(self, document_id: int) -> GeneratedDocument:
+        response = await self._request("GET", f"/api/v1/chat/documents/{document_id}")
+        return GeneratedDocument.model_validate(response)
+
+    async def delete_chat_generated_document(self, document_id: int) -> Dict[str, str]:
+        return await self._request("DELETE", f"/api/v1/chat/documents/{document_id}")
+
+    async def save_chat_document_prompt_config(self, request_data: SavePromptConfigRequest) -> PromptConfigResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/chat/documents/prompts",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptConfigResponse.model_validate(response)
+
+    async def get_chat_document_prompt_config(self, document_type: ChatDocumentType | str) -> PromptConfigResponse:
+        document_type_value = document_type.value if isinstance(document_type, ChatDocumentType) else str(document_type)
+        response = await self._request("GET", f"/api/v1/chat/documents/prompts/{document_type_value}")
+        return PromptConfigResponse.model_validate(response)
+
+    async def bulk_generate_chat_documents(self, request_data: BulkGenerateRequest) -> BulkGenerateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/chat/documents/bulk",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return BulkGenerateResponse.model_validate(response)
+
+    async def get_chat_document_generation_statistics(self) -> GenerationStatistics:
+        response = await self._request("GET", "/api/v1/chat/documents/statistics")
+        return GenerationStatistics.model_validate(response)
 
     async def start_chat_loop_run(self, request_data: ChatLoopStartRequest) -> ChatLoopStartResponse:
         response = await self._request(

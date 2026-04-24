@@ -3,6 +3,14 @@ import pytest
 from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
 
 
+class FakePolicyEnforcer:
+    def __init__(self):
+        self.calls = []
+
+    def require_allowed(self, *, action_id):
+        self.calls.append(action_id)
+
+
 class FakeLocalStudyService:
     def __init__(self):
         self.calls = []
@@ -672,6 +680,46 @@ class FakeServerStudyService:
     async def trigger_study_suggestion_action(self, snapshot_id, **payload):
         self.calls.append(("trigger_study_suggestion_action", snapshot_id, payload))
         return {"snapshot_id": int(snapshot_id), "target_service": payload["target_service"], "target_type": payload["target_type"], "target_id": "7"}
+
+    async def generate_study_document(self, payload):
+        self.calls.append(("generate_study_document", payload))
+        return {"document_id": 11, "document_type": payload["document_type"], "source": "server"}
+
+    async def get_study_document_job_status(self, job_id):
+        self.calls.append(("get_study_document_job_status", job_id))
+        return {"job_id": job_id, "status": "completed"}
+
+    async def cancel_study_document_job(self, job_id):
+        self.calls.append(("cancel_study_document_job", job_id))
+        return {"message": f"Job {job_id} cancelled successfully"}
+
+    async def list_study_documents(self, **kwargs):
+        self.calls.append(("list_study_documents", kwargs))
+        return {"documents": [], "total": 0}
+
+    async def get_study_document(self, document_id):
+        self.calls.append(("get_study_document", document_id))
+        return {"id": int(document_id), "document_type": "study_guide"}
+
+    async def delete_study_document(self, document_id):
+        self.calls.append(("delete_study_document", document_id))
+        return {"message": f"Document {document_id} deleted successfully"}
+
+    async def save_study_document_prompt_config(self, payload):
+        self.calls.append(("save_study_document_prompt_config", payload))
+        return {"document_type": payload["document_type"], "is_custom": True}
+
+    async def get_study_document_prompt_config(self, document_type):
+        self.calls.append(("get_study_document_prompt_config", document_type))
+        return {"document_type": document_type, "is_custom": True}
+
+    async def bulk_generate_study_documents(self, payload):
+        self.calls.append(("bulk_generate_study_documents", payload))
+        return {"total_jobs": len(payload["conversation_ids"]) * len(payload["document_types"])}
+
+    async def get_study_document_statistics(self):
+        self.calls.append(("get_study_document_statistics",))
+        return {"total_documents": 1, "by_type": {"study_guide": 1}}
 
 
 class PagedFakeServerStudyService:
@@ -1504,6 +1552,115 @@ async def test_scope_service_routes_server_study_assistant_actions():
 
     with pytest.raises(ValueError, match="server-only"):
         await scope.get_flashcard_study_assistant_context(mode="local", card_id="card-local-1")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_study_document_actions_with_policy():
+    server = FakeServerStudyService()
+    policy = FakePolicyEnforcer()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    generated = await scope.generate_study_document(
+        mode="server",
+        payload={
+            "conversation_id": "conv-1",
+            "document_type": "study_guide",
+            "provider": "openai",
+            "model": "gpt-test",
+        },
+    )
+    status = await scope.get_study_document_job_status(mode="server", job_id="job-1")
+    cancelled = await scope.cancel_study_document_job(mode="server", job_id="job-1")
+    documents = await scope.list_study_documents(mode="server", conversation_id="conv-1", document_type="study_guide", limit=25)
+    document = await scope.get_study_document(mode="server", document_id=11)
+    deleted = await scope.delete_study_document(mode="server", document_id=11)
+    saved_prompt = await scope.save_study_document_prompt_config(
+        mode="server",
+        payload={
+            "document_type": "study_guide",
+            "system_prompt": "System",
+            "user_prompt": "User",
+            "temperature": 0.5,
+            "max_tokens": 2000,
+        },
+    )
+    prompt_config = await scope.get_study_document_prompt_config(mode="server", document_type="study_guide")
+    bulk = await scope.bulk_generate_study_documents(
+        mode="server",
+        payload={
+            "conversation_ids": ["conv-1"],
+            "document_types": ["study_guide", "summary"],
+            "provider": "openai",
+            "model": "gpt-test",
+            "api_key": "ignored-by-client",
+        },
+    )
+    stats = await scope.get_study_document_statistics(mode="server")
+
+    assert generated["source"] == "server"
+    assert status["source"] == "server"
+    assert cancelled["source"] == "server"
+    assert documents["source"] == "server"
+    assert document["source"] == "server"
+    assert deleted["source"] == "server"
+    assert saved_prompt["source"] == "server"
+    assert prompt_config["source"] == "server"
+    assert bulk["source"] == "server"
+    assert stats["source"] == "server"
+    assert server.calls[-10:] == [
+        (
+            "generate_study_document",
+            {
+                "conversation_id": "conv-1",
+                "document_type": "study_guide",
+                "provider": "openai",
+                "model": "gpt-test",
+            },
+        ),
+        ("get_study_document_job_status", "job-1"),
+        ("cancel_study_document_job", "job-1"),
+        ("list_study_documents", {"conversation_id": "conv-1", "document_type": "study_guide", "limit": 25}),
+        ("get_study_document", 11),
+        ("delete_study_document", 11),
+        (
+            "save_study_document_prompt_config",
+            {
+                "document_type": "study_guide",
+                "system_prompt": "System",
+                "user_prompt": "User",
+                "temperature": 0.5,
+                "max_tokens": 2000,
+            },
+        ),
+        ("get_study_document_prompt_config", "study_guide"),
+        (
+            "bulk_generate_study_documents",
+            {
+                "conversation_ids": ["conv-1"],
+                "document_types": ["study_guide", "summary"],
+                "provider": "openai",
+                "model": "gpt-test",
+                "api_key": "ignored-by-client",
+            },
+        ),
+        ("get_study_document_statistics",),
+    ]
+    assert policy.calls == [
+        "study.guides.launch.server",
+        "study.guides.observe.server",
+        "study.guides.launch.server",
+        "study.guides.observe.server",
+        "study.guides.observe.server",
+        "study.guides.launch.server",
+        "study.guides.launch.server",
+        "study.guides.observe.server",
+        "study.guides.launch.server",
+        "study.guides.observe.server",
+    ]
 
 
 @pytest.mark.asyncio

@@ -24,9 +24,10 @@ class StudyScopeService:
 
     _ALLOWED_SCOPE_TYPES = {"global", "workspace"}
 
-    def __init__(self, *, local_service: Any, server_service: Any):
+    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
         self.local_service = local_service
         self.server_service = server_service
+        self.policy_enforcer = policy_enforcer
 
     def _normalize_mode(self, mode: StudyBackend | str | None) -> StudyBackend:
         if mode is None:
@@ -53,13 +54,22 @@ class StudyScopeService:
             raise ValueError(f"{feature_label} are server-only in Chatbook.")
         return self._service_for_mode(normalized_mode)
 
+    def _enforce_policy(self, mode: StudyBackend, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=f"{action_id}.{mode.value}")
+
     @staticmethod
-    def _with_server_source(payload: Any) -> Any:
+    def _with_source(source: str, payload: Any) -> Any:
         if isinstance(payload, Mapping):
             result = dict(payload)
-            result.setdefault("source", "server")
+            result.setdefault("source", source)
             return result
         return payload
+
+    @staticmethod
+    def _with_server_source(payload: Any) -> Any:
+        return StudyScopeService._with_source("server", payload)
 
     @classmethod
     def _with_server_template_record(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -947,3 +957,127 @@ class StudyScopeService:
                 )
             )
         )
+
+    def _study_document_service(self, mode: StudyBackend | str | None, method_name: str) -> tuple[StudyBackend, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
+        if not hasattr(service, method_name):
+            raise ValueError(f"Study document generation is unavailable in {normalized_mode.value} mode.")
+        return normalized_mode, service
+
+    async def generate_study_document(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        normalized_mode, service = self._study_document_service(mode, "generate_study_document")
+        self._enforce_policy(normalized_mode, "study.guides.launch")
+        response = await self._maybe_await(service.generate_study_document(dict(payload)))
+        return self._with_source(normalized_mode.value, response)
+
+    async def get_study_document_job_status(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        job_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode, service = self._study_document_service(mode, "get_study_document_job_status")
+        self._enforce_policy(normalized_mode, "study.guides.observe")
+        response = await self._maybe_await(service.get_study_document_job_status(job_id))
+        return self._with_source(normalized_mode.value, response)
+
+    async def cancel_study_document_job(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        job_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode, service = self._study_document_service(mode, "cancel_study_document_job")
+        self._enforce_policy(normalized_mode, "study.guides.launch")
+        response = await self._maybe_await(service.cancel_study_document_job(job_id))
+        return self._with_source(normalized_mode.value, response)
+
+    async def list_study_documents(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        conversation_id: str | None = None,
+        document_type: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        normalized_mode, service = self._study_document_service(mode, "list_study_documents")
+        self._enforce_policy(normalized_mode, "study.guides.observe")
+        response = await self._maybe_await(
+            service.list_study_documents(
+                conversation_id=conversation_id,
+                document_type=document_type,
+                limit=limit,
+            )
+        )
+        return self._with_source(normalized_mode.value, response)
+
+    async def get_study_document(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        document_id: int,
+    ) -> dict[str, Any]:
+        normalized_mode, service = self._study_document_service(mode, "get_study_document")
+        self._enforce_policy(normalized_mode, "study.guides.observe")
+        response = await self._maybe_await(service.get_study_document(document_id))
+        return self._with_source(normalized_mode.value, response)
+
+    async def delete_study_document(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        document_id: int,
+    ) -> dict[str, Any]:
+        normalized_mode, service = self._study_document_service(mode, "delete_study_document")
+        self._enforce_policy(normalized_mode, "study.guides.launch")
+        response = await self._maybe_await(service.delete_study_document(document_id))
+        return self._with_source(normalized_mode.value, response)
+
+    async def save_study_document_prompt_config(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        normalized_mode, service = self._study_document_service(mode, "save_study_document_prompt_config")
+        self._enforce_policy(normalized_mode, "study.guides.launch")
+        response = await self._maybe_await(service.save_study_document_prompt_config(dict(payload)))
+        return self._with_source(normalized_mode.value, response)
+
+    async def get_study_document_prompt_config(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        document_type: str,
+    ) -> dict[str, Any]:
+        normalized_mode, service = self._study_document_service(mode, "get_study_document_prompt_config")
+        self._enforce_policy(normalized_mode, "study.guides.observe")
+        response = await self._maybe_await(service.get_study_document_prompt_config(document_type))
+        return self._with_source(normalized_mode.value, response)
+
+    async def bulk_generate_study_documents(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        normalized_mode, service = self._study_document_service(mode, "bulk_generate_study_documents")
+        self._enforce_policy(normalized_mode, "study.guides.launch")
+        response = await self._maybe_await(service.bulk_generate_study_documents(dict(payload)))
+        return self._with_source(normalized_mode.value, response)
+
+    async def get_study_document_statistics(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode, service = self._study_document_service(mode, "get_study_document_statistics")
+        self._enforce_policy(normalized_mode, "study.guides.observe")
+        response = await self._maybe_await(service.get_study_document_statistics())
+        return self._with_source(normalized_mode.value, response)

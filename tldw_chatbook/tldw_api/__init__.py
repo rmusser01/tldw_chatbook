@@ -664,6 +664,24 @@ _EXPORT_GROUPS = (
         ),
     ),
     (
+        ".chat_documents_schemas",
+        (
+            "AsyncGenerationResponse",
+            "BulkGenerateRequest",
+            "BulkGenerateResponse",
+            "DocumentListResponse",
+            "DocumentType",
+            "GenerateDocumentRequest",
+            "GenerateDocumentResponse",
+            "GenerationStatistics",
+            "GenerationStatus",
+            "GeneratedDocument",
+            "JobStatusResponse",
+            "PromptConfigResponse",
+            "SavePromptConfigRequest",
+        ),
+    ),
+    (
         ".chat_loop_schemas",
         (
             "ChatLoopActionResponse",

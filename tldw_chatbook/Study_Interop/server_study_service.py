@@ -7,6 +7,8 @@ from typing import Any, Optional
 
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
 from ..tldw_api import (
+    BulkGenerateRequest,
+    DocumentType,
     FlashcardBulkUpdateItemRequest,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
@@ -18,6 +20,8 @@ from ..tldw_api import (
     FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
     FlashcardsImportRequest,
+    GenerateDocumentRequest,
+    SavePromptConfigRequest,
     StudyAssistantRespondRequest,
     StructuredQaImportPreviewRequest,
     StudyPackCreateJobRequest,
@@ -576,4 +580,58 @@ class ServerStudyService:
                 force_regenerate=force_regenerate,
             ),
         )
+        return self._model_to_dict(response)
+
+    async def generate_study_document(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        response = await self._require_client().generate_chat_document(
+            GenerateDocumentRequest.model_validate(dict(payload))
+        )
+        return self._model_to_dict(response)
+
+    async def get_study_document_job_status(self, job_id: str) -> dict[str, Any]:
+        response = await self._require_client().get_chat_document_job_status(str(job_id))
+        return self._model_to_dict(response)
+
+    async def cancel_study_document_job(self, job_id: str) -> dict[str, Any]:
+        return await self._require_client().cancel_chat_document_job(str(job_id))
+
+    async def list_study_documents(
+        self,
+        *,
+        conversation_id: Optional[str] = None,
+        document_type: Optional[str] = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        response = await self._require_client().list_chat_generated_documents(
+            conversation_id=conversation_id,
+            document_type=DocumentType(document_type) if document_type is not None else None,
+            limit=limit,
+        )
+        return self._model_to_dict(response)
+
+    async def get_study_document(self, document_id: int) -> dict[str, Any]:
+        response = await self._require_client().get_chat_generated_document(int(document_id))
+        return self._model_to_dict(response)
+
+    async def delete_study_document(self, document_id: int) -> dict[str, Any]:
+        return await self._require_client().delete_chat_generated_document(int(document_id))
+
+    async def save_study_document_prompt_config(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        response = await self._require_client().save_chat_document_prompt_config(
+            SavePromptConfigRequest.model_validate(dict(payload))
+        )
+        return self._model_to_dict(response)
+
+    async def get_study_document_prompt_config(self, document_type: str) -> dict[str, Any]:
+        response = await self._require_client().get_chat_document_prompt_config(DocumentType(document_type))
+        return self._model_to_dict(response)
+
+    async def bulk_generate_study_documents(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        response = await self._require_client().bulk_generate_chat_documents(
+            BulkGenerateRequest.model_validate(dict(payload))
+        )
+        return self._model_to_dict(response)
+
+    async def get_study_document_statistics(self) -> dict[str, Any]:
+        response = await self._require_client().get_chat_document_generation_statistics()
         return self._model_to_dict(response)

@@ -469,6 +469,111 @@ class FakeClient:
             }
         )
 
+    async def generate_chat_document(self, request_data):
+        payload = request_data.model_dump(mode="json", exclude_none=True)
+        self.calls.append(("generate_chat_document", payload))
+        if payload.get("async_generation"):
+            return {
+                "job_id": "job-1",
+                "status": "pending",
+                "conversation_id": payload["conversation_id"],
+                "document_type": payload["document_type"],
+                "created_at": "2026-04-23T18:00:00Z",
+                "message": "Document generation job created",
+            }
+        return {
+            "document_id": 11,
+            "conversation_id": payload["conversation_id"],
+            "document_type": payload["document_type"],
+            "title": "Study Guide",
+            "content": "Guide content",
+            "provider": payload["provider"],
+            "model": payload["model"],
+            "generation_time_ms": 1234,
+            "created_at": "2026-04-23T18:00:00Z",
+        }
+
+    async def get_chat_document_job_status(self, job_id):
+        self.calls.append(("get_chat_document_job_status", job_id))
+        return {
+            "job_id": job_id,
+            "conversation_id": "conv-1",
+            "document_type": "study_guide",
+            "status": "completed",
+            "provider": "openai",
+            "model": "gpt-test",
+            "created_at": "2026-04-23T18:00:00Z",
+            "progress_percentage": 100,
+        }
+
+    async def cancel_chat_document_job(self, job_id):
+        self.calls.append(("cancel_chat_document_job", job_id))
+        return {"message": f"Job {job_id} cancelled successfully"}
+
+    async def list_chat_generated_documents(self, **kwargs):
+        self.calls.append(("list_chat_generated_documents", kwargs))
+        return {"documents": [], "total": 0, **{k: v for k, v in kwargs.items() if k in {"conversation_id", "document_type"}}}
+
+    async def get_chat_generated_document(self, document_id):
+        self.calls.append(("get_chat_generated_document", document_id))
+        return {
+            "id": document_id,
+            "conversation_id": "conv-1",
+            "document_type": "study_guide",
+            "title": "Study Guide",
+            "content": "Guide content",
+            "provider": "openai",
+            "model": "gpt-test",
+            "generation_time_ms": 1234,
+            "created_at": "2026-04-23T18:00:00Z",
+        }
+
+    async def delete_chat_generated_document(self, document_id):
+        self.calls.append(("delete_chat_generated_document", document_id))
+        return {"message": f"Document {document_id} deleted successfully"}
+
+    async def save_chat_document_prompt_config(self, request_data):
+        payload = request_data.model_dump(mode="json", exclude_none=True)
+        self.calls.append(("save_chat_document_prompt_config", payload))
+        return {
+            "document_type": payload["document_type"],
+            "system_prompt": payload["system_prompt"],
+            "user_prompt": payload["user_prompt"],
+            "temperature": payload["temperature"],
+            "max_tokens": payload["max_tokens"],
+            "is_custom": True,
+        }
+
+    async def get_chat_document_prompt_config(self, document_type):
+        self.calls.append(("get_chat_document_prompt_config", document_type))
+        return {
+            "document_type": document_type,
+            "system_prompt": "System",
+            "user_prompt": "User",
+            "temperature": 0.5,
+            "max_tokens": 2000,
+            "is_custom": True,
+        }
+
+    async def bulk_generate_chat_documents(self, request_data):
+        payload = request_data.model_dump(mode="json", exclude_none=True)
+        self.calls.append(("bulk_generate_chat_documents", payload))
+        return {
+            "total_jobs": 2,
+            "job_ids": ["job-1", "job-2"],
+            "estimated_time_seconds": 20,
+            "message": "Created 2 generation jobs",
+        }
+
+    async def get_chat_document_generation_statistics(self):
+        self.calls.append(("get_chat_document_generation_statistics",))
+        return {
+            "total_documents": 1,
+            "by_type": {"study_guide": 1},
+            "by_provider": {"openai": 1},
+            "average_generation_time_ms": 1234.0,
+        }
+
 
 @pytest.mark.asyncio
 async def test_server_study_service_moves_flashcards_via_update_flashcard():
@@ -876,4 +981,117 @@ async def test_server_study_service_exposes_study_suggestion_routes():
                 "force_regenerate": False,
             },
         ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_exposes_chat_document_generation_routes():
+    client = FakeClient()
+    service = ServerStudyService(client=client)
+
+    generated = await service.generate_study_document(
+        {
+            "conversation_id": "conv-1",
+            "document_type": "study_guide",
+            "provider": "openai",
+            "model": "gpt-test",
+        }
+    )
+    job = await service.generate_study_document(
+        {
+            "conversation_id": "conv-1",
+            "document_type": "summary",
+            "provider": "openai",
+            "model": "gpt-test",
+            "async_generation": True,
+        }
+    )
+    job_status = await service.get_study_document_job_status("job-1")
+    cancel_result = await service.cancel_study_document_job("job-1")
+    documents = await service.list_study_documents(conversation_id="conv-1", document_type="study_guide", limit=25)
+    document = await service.get_study_document(11)
+    delete_result = await service.delete_study_document(11)
+    saved_prompt = await service.save_study_document_prompt_config(
+        {
+            "document_type": "study_guide",
+            "system_prompt": "System",
+            "user_prompt": "User",
+            "temperature": 0.5,
+            "max_tokens": 2000,
+        }
+    )
+    prompt_config = await service.get_study_document_prompt_config("study_guide")
+    bulk = await service.bulk_generate_study_documents(
+        {
+            "conversation_ids": ["conv-1"],
+            "document_types": ["study_guide", "summary"],
+            "provider": "openai",
+            "model": "gpt-test",
+            "api_key": "ignored-by-client",
+        }
+    )
+    stats = await service.get_study_document_statistics()
+
+    assert generated["document_id"] == 11
+    assert job["job_id"] == "job-1"
+    assert job_status["progress_percentage"] == 100
+    assert cancel_result["message"] == "Job job-1 cancelled successfully"
+    assert documents["total"] == 0
+    assert document["id"] == 11
+    assert delete_result["message"] == "Document 11 deleted successfully"
+    assert saved_prompt["is_custom"] is True
+    assert prompt_config["document_type"] == "study_guide"
+    assert bulk["total_jobs"] == 2
+    assert stats["by_type"] == {"study_guide": 1}
+    assert client.calls[-11:] == [
+        (
+            "generate_chat_document",
+            {
+                "conversation_id": "conv-1",
+                "document_type": "study_guide",
+                "provider": "openai",
+                "model": "gpt-test",
+                "stream": False,
+                "async_generation": False,
+            },
+        ),
+        (
+            "generate_chat_document",
+            {
+                "conversation_id": "conv-1",
+                "document_type": "summary",
+                "provider": "openai",
+                "model": "gpt-test",
+                "stream": False,
+                "async_generation": True,
+            },
+        ),
+        ("get_chat_document_job_status", "job-1"),
+        ("cancel_chat_document_job", "job-1"),
+        ("list_chat_generated_documents", {"conversation_id": "conv-1", "document_type": "study_guide", "limit": 25}),
+        ("get_chat_generated_document", 11),
+        ("delete_chat_generated_document", 11),
+        (
+            "save_chat_document_prompt_config",
+            {
+                "document_type": "study_guide",
+                "system_prompt": "System",
+                "user_prompt": "User",
+                "temperature": 0.5,
+                "max_tokens": 2000,
+            },
+        ),
+        ("get_chat_document_prompt_config", "study_guide"),
+        (
+            "bulk_generate_chat_documents",
+            {
+                "conversation_ids": ["conv-1"],
+                "document_types": ["study_guide", "summary"],
+                "provider": "openai",
+                "model": "gpt-test",
+                "api_key": "ignored-by-client",
+                "async_generation": True,
+            },
+        ),
+        ("get_chat_document_generation_statistics",),
     ]
