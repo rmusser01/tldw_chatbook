@@ -20,8 +20,25 @@ class LocalMediaReadingService:
 
     _SUPPORTED_METADATA_FIELDS = {"title", "media_type", "author", "url", "keywords"}
 
-    def __init__(self, media_db: Any):
+    def __init__(
+        self,
+        media_db: Any,
+        *,
+        notification_dispatch_service: Any = None,
+        notification_app: Any = None,
+    ):
         self.media_db = media_db
+        self.notification_dispatch_service = notification_dispatch_service
+        self.notification_app = notification_app
+
+    def configure_notification_dispatch(
+        self,
+        *,
+        notification_dispatch_service: Any = None,
+        notification_app: Any = None,
+    ) -> None:
+        self.notification_dispatch_service = notification_dispatch_service
+        self.notification_app = notification_app
 
     def _require_db(self) -> Any:
         if self.media_db is None:
@@ -914,6 +931,38 @@ class LocalMediaReadingService:
         content = path.read_text(encoding="utf-8", errors="replace")
         return path.resolve().as_uri(), content
 
+    def _dispatch_local_notification(
+        self,
+        *,
+        category: str,
+        title: str,
+        message: str,
+        severity: str = "info",
+        source_entity_id: str | None = None,
+        source_entity_kind: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        dispatcher = getattr(self, "notification_dispatch_service", None)
+        if dispatcher is None:
+            return None
+        dispatch = getattr(dispatcher, "dispatch", None)
+        if not callable(dispatch):
+            return None
+        try:
+            return dispatch(
+                app=getattr(self, "notification_app", None),
+                category=category,
+                title=title,
+                message=message,
+                severity=severity,
+                source_backend="local",
+                source_entity_id=source_entity_id,
+                source_entity_kind=source_entity_kind,
+                payload=payload,
+            )
+        except Exception:
+            return None
+
     def _complete_local_ingest_job(
         self,
         *,
@@ -1023,6 +1072,28 @@ class LocalMediaReadingService:
                         "error": completed.get("error_message"),
                     }
                 )
+        completed_count = sum(1 for job in jobs if job.get("status") == "completed")
+        failed_count = sum(1 for job in jobs if job.get("status") == "failed")
+        severity = "error" if failed_count and completed_count == 0 else "warning" if failed_count else "info"
+        message = (
+            f"Local media ingest completed with {completed_count} completed"
+            f" and {failed_count} failed job(s)."
+        )
+        self._dispatch_local_notification(
+            category="media",
+            title="Local media ingest completed",
+            message=message,
+            severity=severity,
+            source_entity_id=batch_id,
+            source_entity_kind="media_ingest_batch",
+            payload={
+                "batch_id": batch_id,
+                "requested": len(sources),
+                "completed": completed_count,
+                "failed": failed_count,
+                "job_ids": [job.get("job_id") for job in jobs],
+            },
+        )
         return {"batch_id": batch_id, "jobs": jobs, "errors": errors}
 
     def get_media_ingest_job(self, job_id: Any) -> Any:

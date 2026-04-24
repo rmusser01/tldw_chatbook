@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
+from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 from tldw_chatbook.tldw_api.media_reading_schemas import ItemsBulkRequest, ReadingSaveRequest
 
 
@@ -658,6 +660,28 @@ async def test_local_service_streams_media_ingest_job_snapshot(memory_db_factory
     assert events[0]["data"]["jobs"][0]["job_id"] == submitted["jobs"][0]["job_id"]
     assert events[1]["event"] == "job"
     assert events[1]["data"]["event_type"] == "job.completed"
+
+
+def test_local_service_dispatches_media_ingest_job_notifications(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    notifications = ClientNotificationsDB(tmp_path / "notifications.db")
+    dispatcher = NotificationDispatchService(store=notifications)
+    service = LocalMediaReadingService(db, notification_dispatch_service=dispatcher)
+
+    result = service.submit_media_ingest_jobs(
+        media_type="article",
+        urls=["https://example.com/ok"],
+        file_paths=[str(tmp_path / "missing.txt")],
+    )
+
+    rows = notifications.list_notifications(limit=10, category="media")
+    assert len(rows) == 1
+    assert rows[0]["source_backend"] == "local"
+    assert rows[0]["source_entity_kind"] == "media_ingest_batch"
+    assert rows[0]["source_entity_id"] == result["batch_id"]
+    assert rows[0]["severity"] == "warning"
+    assert rows[0]["payload"]["completed"] == 1
+    assert rows[0]["payload"]["failed"] == 1
 
 
 def test_local_service_provides_document_workspace_helpers(memory_db_factory):

@@ -101,6 +101,8 @@ def test_app_initializes_watchlists_and_notifications_services(app):
     assert app.watchlist_scope_service.policy_enforcer is app.service_policy_enforcer
     assert isinstance(app.client_notifications_db, ClientNotificationsDB)
     assert app.notification_dispatch_service.store is app.client_notifications_db
+    assert app.local_media_reading_service.notification_dispatch_service is app.notification_dispatch_service
+    assert app.local_media_reading_service.notification_app is app
 
 
 def test_app_initializes_server_sharing_services(app):

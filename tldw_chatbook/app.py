@@ -1338,6 +1338,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.notification_dispatch_service = NotificationDispatchService(
             store=self.client_notifications_db
         )
+        self.local_media_reading_service.configure_notification_dispatch(
+            notification_dispatch_service=self.notification_dispatch_service,
+            notification_app=self,
+        )
         try:
             self.server_notifications_service = ServerNotificationsService.from_config(self.app_config)
         except ValueError:
