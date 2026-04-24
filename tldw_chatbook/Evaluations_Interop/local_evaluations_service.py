@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from .evaluation_normalizers import RESERVED_LOCAL_METADATA_KEY
+from .evaluation_normalizers import RESERVED_LOCAL_DATASET_SAMPLES_KEY, RESERVED_LOCAL_METADATA_KEY
 
 
 class LocalEvaluationsService:
@@ -65,6 +65,28 @@ class LocalEvaluationsService:
             else:
                 flattened[key] = value
         return flattened
+
+    def _normalize_inline_samples(self, samples: Any) -> list[dict[str, Any]]:
+        samples = self._model_dump(samples)
+        if samples is None:
+            return []
+        if not isinstance(samples, list):
+            raise ValueError("Local evaluation dataset samples must be a list.")
+        return [self._as_mapping(sample) for sample in samples]
+
+    def _enrich_dataset(self, dataset_record: Mapping[str, Any]) -> dict[str, Any]:
+        record = dict(dataset_record)
+        metadata = self._as_mapping(record.get("metadata"))
+        samples = metadata.pop(RESERVED_LOCAL_DATASET_SAMPLES_KEY, None)
+        sample_count = metadata.pop("sample_count", None)
+        metadata.pop("inline_samples", None)
+        record["metadata"] = metadata
+        if isinstance(samples, list):
+            record["samples"] = [self._as_mapping(sample) for sample in samples]
+            record["sample_count"] = len(record["samples"])
+        elif sample_count is not None:
+            record["sample_count"] = sample_count
+        return record
 
     def _target_model_string(self, model_record: Mapping[str, Any]) -> str:
         provider = model_record.get("provider")
@@ -148,8 +170,15 @@ class LocalEvaluationsService:
         eval_spec: Any,
         description: str | None = None,
         dataset_id: str | None = None,
+        dataset: Any = None,
         metadata: Any = None,
     ) -> str:
+        if dataset is not None and not dataset_id:
+            dataset_id = self.create_dataset(
+                name=f"{name}_dataset",
+                samples=dataset,
+                description=f"Inline dataset for {name}",
+            )
         return self._require_db().create_task(
             name=name,
             description=description,
@@ -196,13 +225,48 @@ class LocalEvaluationsService:
             raise ValueError(f"Local evaluation '{eval_id}' could not be deleted.")
 
     def list_datasets(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
-        return list(self._require_db().list_datasets(limit=limit, offset=offset) or [])
+        return [
+            self._enrich_dataset(record)
+            for record in list(self._require_db().list_datasets(limit=limit, offset=offset) or [])
+        ]
 
     def get_dataset(self, dataset_id: str) -> dict[str, Any]:
         record = self._require_db().get_dataset(dataset_id)
         if not record:
             raise ValueError(f"Local evaluation dataset '{dataset_id}' was not found.")
-        return dict(record)
+        return self._enrich_dataset(record)
+
+    def create_dataset(
+        self,
+        *,
+        name: str,
+        samples: list[dict[str, Any]] | None = None,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        format: str | None = None,
+        source_path: str | None = None,
+    ) -> str:
+        metadata_payload = self._as_mapping(metadata)
+        normalized_samples = self._normalize_inline_samples(samples)
+        if normalized_samples:
+            metadata_payload[RESERVED_LOCAL_DATASET_SAMPLES_KEY] = normalized_samples
+            metadata_payload["sample_count"] = len(normalized_samples)
+            metadata_payload["inline_samples"] = True
+            source_path = source_path or f"inline:{name}"
+        if not source_path:
+            raise ValueError("Local evaluation dataset creation requires source_path or inline samples.")
+        return self._require_db().create_dataset(
+            name=name,
+            format=format or "custom",
+            source_path=source_path,
+            description=description,
+            metadata=metadata_payload,
+        )
+
+    def delete_dataset(self, dataset_id: str) -> None:
+        deleted = self._require_db().delete_dataset(dataset_id)
+        if not deleted:
+            raise ValueError(f"Local evaluation dataset '{dataset_id}' could not be deleted.")
 
     def list_targets(
         self,

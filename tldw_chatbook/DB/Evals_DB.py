@@ -712,6 +712,26 @@ class EvalsDB:
             datasets.append(dataset)
         
         return datasets
+
+    def delete_dataset(self, dataset_id: str) -> bool:
+        """Soft delete an evaluation dataset."""
+        conn = self._get_connection()
+        try:
+            with conn:
+                cursor = conn.execute("""
+                    UPDATE eval_datasets
+                    SET deleted_at = datetime('now', 'utc'),
+                        updated_at = datetime('now', 'utc')
+                    WHERE id = ? AND deleted_at IS NULL
+                """, (dataset_id,))
+
+                if cursor.rowcount > 0:
+                    logger.info(f"Deleted eval dataset: {dataset_id}")
+                    return True
+                return False
+
+        except Exception as e:
+            raise EvalsDBError(f"Failed to delete dataset: {e}")
     
     def search_datasets(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Search datasets using FTS5."""

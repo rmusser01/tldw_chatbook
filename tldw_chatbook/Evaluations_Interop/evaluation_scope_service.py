@@ -213,6 +213,51 @@ class EvaluationScopeService:
         record = await self._maybe_await(self._service_for_mode(normalized_mode).get_dataset(dataset_id))
         return normalize_evaluation_dataset_record(normalized_mode.value, record)
 
+    async def create_dataset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+        samples: list[dict[str, Any]],
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        format: str | None = None,
+        source_path: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
+        if normalized_mode == EvaluationBackend.LOCAL:
+            record = await self._maybe_await(
+                service.create_dataset(
+                    name=name,
+                    samples=samples,
+                    description=description,
+                    metadata=metadata,
+                    format=format,
+                    source_path=source_path,
+                )
+            )
+        else:
+            record = await self._maybe_await(
+                service.create_dataset(
+                    name=name,
+                    samples=samples,
+                    description=description,
+                    metadata=metadata,
+                )
+            )
+        resolved = await self._resolve_record(record, service.get_dataset, str(record or name))
+        return normalize_evaluation_dataset_record(normalized_mode.value, resolved)
+
+    async def delete_dataset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        dataset_id: str,
+    ) -> None:
+        service = self._service_for_mode(self._normalize_mode(mode))
+        await self._maybe_await(service.delete_dataset(dataset_id))
+
     async def list_targets(
         self,
         *,

@@ -8,6 +8,7 @@ from typing import Any
 
 
 RESERVED_LOCAL_METADATA_KEY = "__tldw_eval_metadata__"
+RESERVED_LOCAL_DATASET_SAMPLES_KEY = "__tldw_eval_samples__"
 
 
 def _model_dump(value: Any) -> Any:

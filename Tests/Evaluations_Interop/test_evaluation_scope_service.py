@@ -25,6 +25,31 @@ class FakeLocalEvaluationService:
             }
         ]
 
+    def get_dataset(self, dataset_id):
+        self.calls.append(("get_dataset", dataset_id))
+        return {
+            "id": dataset_id,
+            "name": "local_dataset",
+            "description": "Local dataset",
+            "format": "custom",
+            "source_path": "inline:local_dataset",
+            "samples": [{"input": "Q", "expected": "A"}],
+            "sample_count": 1,
+            "metadata": {"project": "offline"},
+            "created_at": "2026-04-20T00:00:00Z",
+            "updated_at": "2026-04-20T00:02:00Z",
+            "version": 1,
+            "client_id": "local_client",
+        }
+
+    def create_dataset(self, *, name, samples, description=None, metadata=None, format=None, source_path=None):
+        self.calls.append(("create_dataset", name, samples, description, metadata, format, source_path))
+        return "dataset_local"
+
+    def delete_dataset(self, dataset_id):
+        self.calls.append(("delete_dataset", dataset_id))
+        return None
+
     def get_evaluation(self, eval_id):
         self.calls.append(("get_evaluation", eval_id))
         return {
@@ -149,6 +174,36 @@ class FakeServerEvaluationService:
                 },
             }
         ]
+
+    async def get_dataset(self, dataset_id):
+        self.calls.append(("get_dataset", dataset_id))
+        return {
+            "id": dataset_id,
+            "object": "dataset",
+            "name": "server_dataset",
+            "description": "Server dataset",
+            "sample_count": 1,
+            "samples": [{"input": "Q", "expected": "A"}],
+            "created": 1713571200,
+            "metadata": {"project": "server"},
+        }
+
+    async def create_dataset(self, *, name, samples, description=None, metadata=None):
+        self.calls.append(("create_dataset", name, samples, description, metadata))
+        return {
+            "id": "dataset_server",
+            "object": "dataset",
+            "name": name,
+            "description": description,
+            "sample_count": len(samples),
+            "samples": samples,
+            "created": 1713571200,
+            "metadata": metadata or {},
+        }
+
+    async def delete_dataset(self, dataset_id):
+        self.calls.append(("delete_dataset", dataset_id))
+        return None
 
     async def create_run(self, eval_id, *, target_model=None, dataset_override=None, config=None, webhook_url=None, run_name=None, target_id=None):
         self.calls.append(("create_run", eval_id, target_model, dataset_override, config, webhook_url, run_name, target_id))
@@ -472,6 +527,53 @@ async def test_scope_service_create_and_update_local_evaluation_resolves_raw_loc
     assert updated["description"] == "Local evaluation"
     assert ("create_evaluation", {"name": "local_eval", "description": None, "eval_type": "question_answer", "eval_spec": {"metrics": ["accuracy"]}, "dataset_id": None, "dataset": None, "metadata": None}) in local.calls
     assert ("get_evaluation", "task_123") in local.calls
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_dataset_create_and_delete_by_backend():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    local_created = await scope.create_dataset(
+        mode="local",
+        name="local_dataset",
+        samples=[{"input": "Q", "expected": "A"}],
+        description="Local dataset",
+        metadata={"project": "offline"},
+    )
+    server_created = await scope.create_dataset(
+        mode="server",
+        name="server_dataset",
+        samples=[{"input": "Q", "expected": "A"}],
+        description="Server dataset",
+        metadata={"project": "server"},
+    )
+    await scope.delete_dataset(mode="local", dataset_id="dataset_local")
+    await scope.delete_dataset(mode="server", dataset_id="dataset_server")
+
+    assert local_created["record_id"] == "local:evaluation_dataset:dataset_local"
+    assert local_created["sample_count"] == 1
+    assert server_created["record_id"] == "server:evaluation_dataset:dataset_server"
+    assert server_created["sample_count"] == 1
+    assert (
+        "create_dataset",
+        "local_dataset",
+        [{"input": "Q", "expected": "A"}],
+        "Local dataset",
+        {"project": "offline"},
+        None,
+        None,
+    ) in local.calls
+    assert ("delete_dataset", "dataset_local") in local.calls
+    assert (
+        "create_dataset",
+        "server_dataset",
+        [{"input": "Q", "expected": "A"}],
+        "Server dataset",
+        {"project": "server"},
+    ) in server.calls
+    assert ("delete_dataset", "dataset_server") in server.calls
 
 
 @pytest.mark.asyncio
