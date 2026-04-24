@@ -98,6 +98,33 @@ async def test_server_notifications_service_normalizes_reminders_and_feed_rows()
 
 
 @pytest.mark.asyncio
+async def test_server_notifications_service_routes_preferences():
+    preferences_payload = {
+        "user_id": "7",
+        "reminder_enabled": True,
+        "job_completed_enabled": True,
+        "job_failed_enabled": False,
+        "updated_at": "2026-04-23T20:00:00Z",
+    }
+    client = AsyncMock()
+    client.get_server_notification_preferences.return_value = preferences_payload
+    client.update_server_notification_preferences.return_value = preferences_payload | {
+        "job_failed_enabled": True
+    }
+    service = ServerNotificationsService(client=client)
+
+    preferences = await service.get_preferences()
+    updated = await service.update_preferences({"job_failed_enabled": True})
+
+    assert preferences["job_failed_enabled"] is False
+    assert updated["job_failed_enabled"] is True
+    client.get_server_notification_preferences.assert_awaited_once()
+    client.update_server_notification_preferences.assert_awaited_once()
+    request = client.update_server_notification_preferences.await_args.args[0]
+    assert request.model_dump(exclude_none=True) == {"job_failed_enabled": True}
+
+
+@pytest.mark.asyncio
 async def test_scope_service_enforces_remote_policy_and_rejects_local_mode():
     server_service = AsyncMock()
     server_service.list_reminders.return_value = {"items": [], "total": 0}
@@ -108,6 +135,8 @@ async def test_scope_service_enforces_remote_policy_and_rejects_local_mode():
     server_service.dismiss_notification.return_value = {"dismissed": True}
     server_service.snooze_notification.return_value = {"task_id": "snooze-1"}
     server_service.cancel_notification_snooze.return_value = {"cancelled": True}
+    server_service.get_preferences.return_value = {"job_failed_enabled": False}
+    server_service.update_preferences.return_value = {"job_failed_enabled": True}
     policy = _PolicyRecorder()
     scope = ServerNotificationsScopeService(server_service=server_service, policy_enforcer=policy)
 
@@ -119,7 +148,14 @@ async def test_scope_service_enforces_remote_policy_and_rejects_local_mode():
     await scope.dismiss_notification(runtime_backend="server", notification_id="server:notification:11")
     await scope.snooze_notification(runtime_backend="server", notification_id="server:notification:11", minutes=30)
     await scope.cancel_notification_snooze(runtime_backend="server", notification_id="server:notification:11")
+    preferences = await scope.get_feed_preferences(runtime_backend="server")
+    updated_preferences = await scope.update_feed_preferences(
+        runtime_backend="server",
+        payload={"job_failed_enabled": True},
+    )
 
+    assert preferences == {"job_failed_enabled": False}
+    assert updated_preferences == {"job_failed_enabled": True}
     assert policy.action_ids == [
         "notifications.reminders.list.server",
         "notifications.reminders.configure.server",
@@ -129,9 +165,12 @@ async def test_scope_service_enforces_remote_policy_and_rejects_local_mode():
         "notifications.feed.observe.server",
         "notifications.reminders.launch.server",
         "notifications.reminders.launch.server",
+        "notifications.feed.list.server",
+        "notifications.feed.configure.server",
     ]
     server_service.delete_reminder.assert_awaited_once_with("task-1")
     server_service.mark_notification_read.assert_awaited_once_with(11)
+    server_service.update_preferences.assert_awaited_once_with({"job_failed_enabled": True})
 
     with pytest.raises(ValueError, match="server mode"):
         await scope.list_feed(runtime_backend="local")

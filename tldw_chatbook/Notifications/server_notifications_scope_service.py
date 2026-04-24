@@ -126,6 +126,25 @@ class ServerNotificationsScopeService:
             )
         )
 
+    async def get_feed_preferences(
+        self,
+        *,
+        runtime_backend: ServerNotificationBackend | str | None = None,
+    ) -> dict[str, Any]:
+        self._require_server(runtime_backend)
+        self._enforce_policy("notifications.feed.list.server")
+        return dict(await self._maybe_await(self.server_service.get_preferences()))
+
+    async def update_feed_preferences(
+        self,
+        *,
+        runtime_backend: ServerNotificationBackend | str | None = None,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        self._require_server(runtime_backend)
+        self._enforce_policy("notifications.feed.configure.server")
+        return dict(await self._maybe_await(self.server_service.update_preferences(dict(payload))))
+
     async def mark_notification_read(
         self,
         *,

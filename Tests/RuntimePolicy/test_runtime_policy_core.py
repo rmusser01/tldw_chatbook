@@ -622,6 +622,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         scheduler.workflows.observe.server
     """),
     "server_reminders_notification_feeds": _action_ids("""
+        notifications.feed.configure.server
         notifications.feed.list.server
         notifications.feed.observe.server
         notifications.reminders.configure.server

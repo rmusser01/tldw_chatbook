@@ -4,7 +4,7 @@ Date: 2026-04-21
 
 Source spec: `Docs/superpowers/specs/2026-04-21-watchlists-notifications-vertical-design.md`
 
-Status: source CRUD, the first server control-plane slice, server reminders/feed, and local notification filtering/preferences are landed, with groups, richer outputs, richer feed UX, and sync still deferred.
+Status: source CRUD, the first server control-plane slice, server reminders/feed preferences, and local notification filtering/preferences are landed, with groups, richer outputs, richer feed UX, and sync still deferred.
 
 ## Landed Scope
 
@@ -19,6 +19,7 @@ Status: source CRUD, the first server control-plane slice, server reminders/feed
 - server watchlist jobs API/client/service/scope/UI routing for list, create/update, delete, restore, and trigger
 - server watchlist runs API/client/service/scope/UI routing for global/per-job list, detail, and cancel
 - server watchlist alert-rule API/client/service/scope/UI routing for list, create/update, and delete
+- server notification-feed preference get/update service and policy scope routing
 - local and server watchlist services plus source-aware scope routing
 - app bootstrap wiring for watchlists and client notifications services
 - backend-aware subscriptions shell behavior in `SubscriptionWindow`
@@ -30,6 +31,7 @@ Status: source CRUD, the first server control-plane slice, server reminders/feed
 - richer structured editors for jobs and alert rules beyond the current JSON payload editor
 - richer run outputs, logs, artifact/audio summaries, and historical/live monitoring UX
 - richer remote reminders and server notification-feed UX beyond the first landed server surface
+- long-running server notification stream worker controls
 - local/server sync or mirror behavior
 
 ## Verification
@@ -54,6 +56,7 @@ Result:
 
 - initial first-slice record: `54 passed in 5.53s`
 - local notification filtering/preferences focused suites: `10 passed, 1 warning in 0.82s`; runtime-policy registry suite: `16 passed in 0.26s`
+- server notification preference scope focused suite: `5 passed in 0.42s`; runtime-policy registry suite: `16 passed in 0.26s`
 - current control-plane focused suites: see the latest branch verification for `Tests/tldw_api/test_watchlists_client.py`, `Tests/Subscriptions/test_server_watchlists_service.py`, `Tests/Subscriptions/test_watchlist_scope_service.py`, and `Tests/UI/test_subscription_window_watchlists.py`
 
 ## Outcome

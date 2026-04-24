@@ -456,7 +456,7 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=REMOTE_ONLY_SOURCES,
         resources=(
             _resource("notifications.reminders", actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS),
-            _resource("notifications.feed", actions=(LIST, OBSERVE)),
+            _resource("notifications.feed", actions=(LIST, CONFIGURE, OBSERVE)),
         ),
     ),
     _capability(
