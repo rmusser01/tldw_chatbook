@@ -363,6 +363,12 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         runtime.policy.observe.server
     """),
     "evaluations": _action_ids("""
+        evaluations.abtest.create.server
+        evaluations.abtest.detail.server
+        evaluations.abtest.launch.server
+        evaluations.benchmark.detail.server
+        evaluations.benchmark.launch.server
+        evaluations.benchmark.list.server
         evaluations.dataset.create.local
         evaluations.dataset.create.server
         evaluations.dataset.delete.local
@@ -372,6 +378,25 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         evaluations.dataset.list.local
         evaluations.dataset.list.server
         evaluations.dataset.update.local
+        evaluations.evaluation.create.local
+        evaluations.evaluation.create.server
+        evaluations.evaluation.delete.local
+        evaluations.evaluation.delete.server
+        evaluations.evaluation.detail.local
+        evaluations.evaluation.detail.server
+        evaluations.evaluation.list.local
+        evaluations.evaluation.list.server
+        evaluations.evaluation.update.local
+        evaluations.evaluation.update.server
+        evaluations.immediate.launch.server
+        evaluations.immediate.list.server
+        evaluations.pipeline_preset.create.server
+        evaluations.pipeline_preset.delete.server
+        evaluations.pipeline_preset.detail.server
+        evaluations.pipeline_preset.list.server
+        evaluations.recipe.detail.server
+        evaluations.recipe.launch.server
+        evaluations.recipe.list.server
         evaluations.run.create.local
         evaluations.run.create.server
         evaluations.run.delete.local
@@ -386,6 +411,15 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         evaluations.run.observe.server
         evaluations.run.update.local
         evaluations.run.update.server
+        evaluations.synthetic.create.server
+        evaluations.synthetic.list.server
+        evaluations.synthetic.update.server
+        evaluations.target.list.local
+        evaluations.target.list.server
+        evaluations.webhook.create.server
+        evaluations.webhook.delete.server
+        evaluations.webhook.launch.server
+        evaluations.webhook.list.server
     """),
     "local_mcp_runtime": _action_ids("""
         mcp.external_profiles.configure.local

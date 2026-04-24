@@ -605,9 +605,22 @@ AUDITED_CAPABILITY_SEEDS = (
         "evaluations",
         sources=SEPARATED_SOURCES,
         resources=(
+            _resource("evaluations.evaluation", actions=CRUD_ACTIONS),
+            _resource("evaluations.target", actions=(LIST,)),
             _resource("evaluations.dataset", actions=CRUD_ACTIONS, sources=LOCAL_ONLY_SOURCES),
             _resource("evaluations.dataset", actions=(LIST, DETAIL, CREATE, DELETE), sources=(SERVER_SOURCE,)),
             _resource("evaluations.run", actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH, OBSERVE))),
+            _resource("evaluations.immediate", actions=(LIST, LAUNCH), sources=(SERVER_SOURCE,)),
+            _resource("evaluations.synthetic", actions=(LIST, CREATE, UPDATE), sources=(SERVER_SOURCE,)),
+            _resource("evaluations.abtest", actions=(DETAIL, CREATE, LAUNCH), sources=(SERVER_SOURCE,)),
+            _resource("evaluations.benchmark", actions=(LIST, DETAIL, LAUNCH), sources=(SERVER_SOURCE,)),
+            _resource("evaluations.recipe", actions=(LIST, DETAIL, LAUNCH), sources=(SERVER_SOURCE,)),
+            _resource(
+                "evaluations.pipeline_preset",
+                actions=(LIST, DETAIL, CREATE, DELETE),
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource("evaluations.webhook", actions=(LIST, CREATE, DELETE, LAUNCH), sources=(SERVER_SOURCE,)),
         ),
     ),
     _capability(

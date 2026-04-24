@@ -53,10 +53,26 @@ class EvaluationScopeService:
             raise ValueError("Server evaluations backend is unavailable.")
         return self.server_service
 
-    def _server_only_service(self, mode: EvaluationBackend | str | None, feature_name: str) -> Any:
+    def _enforce_policy(self, mode: EvaluationBackend, resource: str, action: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(
+            action_id=f"evaluations.{resource}.{action}.{mode.value}"
+        )
+
+    def _server_only_service(
+        self,
+        mode: EvaluationBackend | str | None,
+        feature_name: str,
+        *,
+        resource: str | None = None,
+        action: str | None = None,
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode != EvaluationBackend.SERVER:
             raise ValueError(f"{feature_name} is server-only in this Chatbook parity slice.")
+        if resource is not None and action is not None:
+            self._enforce_policy(normalized_mode, resource, action)
         return self._service_for_mode(normalized_mode)
 
     async def _maybe_await(self, value: Any) -> Any:
@@ -111,6 +127,7 @@ class EvaluationScopeService:
         eval_type: str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "evaluation", "list")
         service = self._service_for_mode(normalized_mode)
         if normalized_mode == EvaluationBackend.LOCAL:
             records = await self._maybe_await(
@@ -132,6 +149,7 @@ class EvaluationScopeService:
         eval_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "evaluation", "detail")
         record = await self._maybe_await(self._service_for_mode(normalized_mode).get_evaluation(eval_id))
         return normalize_evaluation_record(normalized_mode.value, record)
 
@@ -148,6 +166,7 @@ class EvaluationScopeService:
         metadata: Any = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "evaluation", "create")
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.create_evaluation(
@@ -173,6 +192,7 @@ class EvaluationScopeService:
         metadata: Any = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "evaluation", "update")
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.update_evaluation(
@@ -191,7 +211,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         eval_id: str,
     ) -> None:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "evaluation", "delete")
+        service = self._service_for_mode(normalized_mode)
         await self._maybe_await(service.delete_evaluation(eval_id))
 
     async def list_datasets(
@@ -202,6 +224,7 @@ class EvaluationScopeService:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "dataset", "list")
         records = await self._maybe_await(
             self._service_for_mode(normalized_mode).list_datasets(limit=limit, offset=offset)
         )
@@ -217,6 +240,7 @@ class EvaluationScopeService:
         dataset_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "dataset", "detail")
         record = await self._maybe_await(self._service_for_mode(normalized_mode).get_dataset(dataset_id))
         return normalize_evaluation_dataset_record(normalized_mode.value, record)
 
@@ -232,6 +256,7 @@ class EvaluationScopeService:
         source_path: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "dataset", "create")
         service = self._service_for_mode(normalized_mode)
         if normalized_mode == EvaluationBackend.LOCAL:
             record = await self._maybe_await(
@@ -274,6 +299,7 @@ class EvaluationScopeService:
                 "Evaluation dataset update is not available on the current server contract."
             )
 
+        self._enforce_policy(normalized_mode, "dataset", "update")
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.update_dataset(
@@ -295,7 +321,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         dataset_id: str,
     ) -> None:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "dataset", "delete")
+        service = self._service_for_mode(normalized_mode)
         await self._maybe_await(service.delete_dataset(dataset_id))
 
     async def list_targets(
@@ -307,6 +335,7 @@ class EvaluationScopeService:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "target", "list")
         service = self._service_for_mode(normalized_mode)
         if not hasattr(service, "list_targets"):
             return []
@@ -329,6 +358,7 @@ class EvaluationScopeService:
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "run", "list")
         service = self._service_for_mode(normalized_mode)
         if normalized_mode == EvaluationBackend.LOCAL:
             records = await self._maybe_await(
@@ -350,6 +380,7 @@ class EvaluationScopeService:
         run_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "run", "detail")
         record = await self._maybe_await(self._service_for_mode(normalized_mode).get_run(run_id))
         return normalize_evaluation_run_record(normalized_mode.value, record)
 
@@ -366,6 +397,7 @@ class EvaluationScopeService:
         webhook_url: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "run", "launch")
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.create_run(
@@ -402,6 +434,7 @@ class EvaluationScopeService:
         run_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "run", "detail")
         service = self._service_for_mode(normalized_mode)
         if hasattr(service, "get_run_artifacts"):
             payload = await self._maybe_await(service.get_run_artifacts(run_id))
@@ -435,6 +468,7 @@ class EvaluationScopeService:
         run_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "run", "update")
         payload = await self._maybe_await(self._service_for_mode(normalized_mode).cancel_run(run_id))
         result = dict(payload or {})
         result.setdefault("backend", normalized_mode.value)
@@ -447,7 +481,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         **payload: Any,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "G-Eval immediate evaluation")
+        service = self._server_only_service(
+            mode, "G-Eval immediate evaluation", resource="immediate", action="launch"
+        )
         return dict(await self._maybe_await(service.evaluate_geval(**payload)) or {})
 
     async def evaluate_rag(
@@ -456,7 +492,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         **payload: Any,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "RAG immediate evaluation")
+        service = self._server_only_service(
+            mode, "RAG immediate evaluation", resource="immediate", action="launch"
+        )
         return dict(await self._maybe_await(service.evaluate_rag(**payload)) or {})
 
     async def evaluate_response_quality(
@@ -465,7 +503,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         **payload: Any,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Response quality immediate evaluation")
+        service = self._server_only_service(
+            mode, "Response quality immediate evaluation", resource="immediate", action="launch"
+        )
         return dict(await self._maybe_await(service.evaluate_response_quality(**payload)) or {})
 
     async def evaluate_propositions(
@@ -474,7 +514,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         **payload: Any,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Proposition immediate evaluation")
+        service = self._server_only_service(
+            mode, "Proposition immediate evaluation", resource="immediate", action="launch"
+        )
         return dict(await self._maybe_await(service.evaluate_propositions(**payload)) or {})
 
     async def evaluate_batch(
@@ -483,7 +525,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         **payload: Any,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Batch immediate evaluation")
+        service = self._server_only_service(
+            mode, "Batch immediate evaluation", resource="immediate", action="launch"
+        )
         return dict(await self._maybe_await(service.evaluate_batch(**payload)) or {})
 
     async def evaluate_ocr(
@@ -492,7 +536,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         **payload: Any,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "OCR immediate evaluation")
+        service = self._server_only_service(
+            mode, "OCR immediate evaluation", resource="immediate", action="launch"
+        )
         return dict(await self._maybe_await(service.evaluate_ocr(**payload)) or {})
 
     async def evaluate_ocr_pdf(
@@ -501,7 +547,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         **payload: Any,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "OCR PDF immediate evaluation")
+        service = self._server_only_service(
+            mode, "OCR PDF immediate evaluation", resource="immediate", action="launch"
+        )
         return dict(await self._maybe_await(service.evaluate_ocr_pdf(**payload)) or {})
 
     async def get_evaluation_history(
@@ -510,7 +558,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         **payload: Any,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation history")
+        service = self._server_only_service(
+            mode, "Evaluation history", resource="immediate", action="list"
+        )
         return dict(await self._maybe_await(service.get_evaluation_history(**payload)) or {})
 
     async def generate_synthetic_drafts(
@@ -527,7 +577,9 @@ class EvaluationScopeService:
         seed_examples: list[dict[str, Any]] | None = None,
         target_sample_count: int = 0,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Synthetic evaluation draft generation")
+        service = self._server_only_service(
+            mode, "Synthetic evaluation draft generation", resource="synthetic", action="create"
+        )
         return dict(
             await self._maybe_await(
                 service.generate_synthetic_drafts(
@@ -556,7 +608,9 @@ class EvaluationScopeService:
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Synthetic evaluation queue")
+        service = self._server_only_service(
+            mode, "Synthetic evaluation queue", resource="synthetic", action="list"
+        )
         return dict(
             await self._maybe_await(
                 service.list_synthetic_queue(
@@ -582,7 +636,9 @@ class EvaluationScopeService:
         action_payload: dict[str, Any] | None = None,
         resulting_review_state: str | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Synthetic evaluation review")
+        service = self._server_only_service(
+            mode, "Synthetic evaluation review", resource="synthetic", action="update"
+        )
         return dict(
             await self._maybe_await(
                 service.review_synthetic_sample(
@@ -608,7 +664,9 @@ class EvaluationScopeService:
         promoted_by: str | None = None,
         promotion_reason: str | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Synthetic evaluation promotion")
+        service = self._server_only_service(
+            mode, "Synthetic evaluation promotion", resource="synthetic", action="create"
+        )
         return dict(
             await self._maybe_await(
                 service.promote_synthetic_samples(
@@ -632,7 +690,9 @@ class EvaluationScopeService:
         run_immediately: bool | None = False,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Embedding A/B test creation")
+        service = self._server_only_service(
+            mode, "Embedding A/B test creation", resource="abtest", action="create"
+        )
         return dict(
             await self._maybe_await(
                 service.create_embeddings_abtest(
@@ -653,7 +713,9 @@ class EvaluationScopeService:
         config: dict[str, Any],
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Embedding A/B test run")
+        service = self._server_only_service(
+            mode, "Embedding A/B test run", resource="abtest", action="launch"
+        )
         return dict(
             await self._maybe_await(
                 service.run_embeddings_abtest(
@@ -671,7 +733,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         test_id: str,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Embedding A/B test summary")
+        service = self._server_only_service(
+            mode, "Embedding A/B test summary", resource="abtest", action="detail"
+        )
         return dict(
             await self._maybe_await(service.get_embeddings_abtest_summary(test_id))
             or {}
@@ -685,7 +749,9 @@ class EvaluationScopeService:
         page: int = 1,
         page_size: int = 50,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Embedding A/B test results")
+        service = self._server_only_service(
+            mode, "Embedding A/B test results", resource="abtest", action="detail"
+        )
         return dict(
             await self._maybe_await(
                 service.get_embeddings_abtest_results(test_id, page=page, page_size=page_size)
@@ -700,7 +766,9 @@ class EvaluationScopeService:
         test_id: str,
         metric: str = "ndcg",
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Embedding A/B test significance")
+        service = self._server_only_service(
+            mode, "Embedding A/B test significance", resource="abtest", action="detail"
+        )
         return dict(
             await self._maybe_await(
                 service.get_embeddings_abtest_significance(test_id, metric=metric)
@@ -713,7 +781,9 @@ class EvaluationScopeService:
         *,
         mode: EvaluationBackend | str | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation benchmark discovery")
+        service = self._server_only_service(
+            mode, "Evaluation benchmark discovery", resource="benchmark", action="list"
+        )
         return dict(await self._maybe_await(service.list_benchmarks()) or {})
 
     async def get_benchmark(
@@ -722,7 +792,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         benchmark_name: str,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation benchmark detail")
+        service = self._server_only_service(
+            mode, "Evaluation benchmark detail", resource="benchmark", action="detail"
+        )
         return dict(await self._maybe_await(service.get_benchmark(benchmark_name)) or {})
 
     async def list_recipes(
@@ -730,7 +802,9 @@ class EvaluationScopeService:
         *,
         mode: EvaluationBackend | str | None = None,
     ) -> list[dict[str, Any]]:
-        service = self._server_only_service(mode, "Evaluation recipe discovery")
+        service = self._server_only_service(
+            mode, "Evaluation recipe discovery", resource="recipe", action="list"
+        )
         return list(await self._maybe_await(service.list_recipes()) or [])
 
     async def get_recipe(
@@ -739,7 +813,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         recipe_id: str,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation recipe detail")
+        service = self._server_only_service(
+            mode, "Evaluation recipe detail", resource="recipe", action="detail"
+        )
         return dict(await self._maybe_await(service.get_recipe(recipe_id)) or {})
 
     async def get_recipe_launch_readiness(
@@ -748,7 +824,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         recipe_id: str,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation recipe launch readiness")
+        service = self._server_only_service(
+            mode, "Evaluation recipe launch readiness", resource="recipe", action="detail"
+        )
         return dict(
             await self._maybe_await(service.get_recipe_launch_readiness(recipe_id))
             or {}
@@ -763,7 +841,9 @@ class EvaluationScopeService:
         dataset: list[dict[str, Any]] | None = None,
         run_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation recipe dataset validation")
+        service = self._server_only_service(
+            mode, "Evaluation recipe dataset validation", resource="recipe", action="detail"
+        )
         return dict(
             await self._maybe_await(
                 service.validate_recipe_dataset(
@@ -787,7 +867,9 @@ class EvaluationScopeService:
         save_results: bool | None = None,
         filter_categories: list[str] | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation benchmark run")
+        service = self._server_only_service(
+            mode, "Evaluation benchmark run", resource="benchmark", action="launch"
+        )
         kwargs: dict[str, Any] = {}
         if limit is not None:
             kwargs["limit"] = limit
@@ -814,7 +896,9 @@ class EvaluationScopeService:
         run_config: dict[str, Any] | None = None,
         force_rerun: bool = False,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation recipe run launch")
+        service = self._server_only_service(
+            mode, "Evaluation recipe run launch", resource="recipe", action="launch"
+        )
         return dict(
             await self._maybe_await(
                 service.create_recipe_run(
@@ -834,7 +918,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         run_id: str,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation recipe run detail")
+        service = self._server_only_service(
+            mode, "Evaluation recipe run detail", resource="recipe", action="detail"
+        )
         return dict(await self._maybe_await(service.get_recipe_run(run_id)) or {})
 
     async def get_recipe_run_report(
@@ -843,7 +929,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         run_id: str,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation recipe run report")
+        service = self._server_only_service(
+            mode, "Evaluation recipe run report", resource="recipe", action="detail"
+        )
         return dict(await self._maybe_await(service.get_recipe_run_report(run_id)) or {})
 
     async def save_pipeline_preset(
@@ -853,7 +941,9 @@ class EvaluationScopeService:
         name: str,
         config: dict[str, Any],
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation RAG pipeline preset save")
+        service = self._server_only_service(
+            mode, "Evaluation RAG pipeline preset save", resource="pipeline_preset", action="create"
+        )
         return dict(
             await self._maybe_await(service.save_pipeline_preset(name=name, config=config))
             or {}
@@ -866,7 +956,9 @@ class EvaluationScopeService:
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation RAG pipeline preset list")
+        service = self._server_only_service(
+            mode, "Evaluation RAG pipeline preset list", resource="pipeline_preset", action="list"
+        )
         return dict(
             await self._maybe_await(service.list_pipeline_presets(limit=limit, offset=offset))
             or {}
@@ -878,7 +970,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         name: str,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation RAG pipeline preset detail")
+        service = self._server_only_service(
+            mode, "Evaluation RAG pipeline preset detail", resource="pipeline_preset", action="detail"
+        )
         return dict(await self._maybe_await(service.get_pipeline_preset(name)) or {})
 
     async def delete_pipeline_preset(
@@ -887,7 +981,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         name: str,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation RAG pipeline preset delete")
+        service = self._server_only_service(
+            mode, "Evaluation RAG pipeline preset delete", resource="pipeline_preset", action="delete"
+        )
         await self._maybe_await(service.delete_pipeline_preset(name))
         return {"status": "deleted", "name": name}
 
@@ -896,7 +992,9 @@ class EvaluationScopeService:
         *,
         mode: EvaluationBackend | str | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation RAG pipeline cleanup")
+        service = self._server_only_service(
+            mode, "Evaluation RAG pipeline cleanup", resource="pipeline_preset", action="delete"
+        )
         return dict(await self._maybe_await(service.cleanup_pipeline_collections()) or {})
 
     async def register_webhook(
@@ -909,7 +1007,9 @@ class EvaluationScopeService:
         retry_count: int | None = 3,
         timeout_seconds: int | None = 30,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation webhook registration")
+        service = self._server_only_service(
+            mode, "Evaluation webhook registration", resource="webhook", action="create"
+        )
         return dict(
             await self._maybe_await(
                 service.register_webhook(
@@ -928,7 +1028,9 @@ class EvaluationScopeService:
         *,
         mode: EvaluationBackend | str | None = None,
     ) -> list[dict[str, Any]]:
-        service = self._server_only_service(mode, "Evaluation webhook list")
+        service = self._server_only_service(
+            mode, "Evaluation webhook list", resource="webhook", action="list"
+        )
         return list(await self._maybe_await(service.list_webhooks()) or [])
 
     async def unregister_webhook(
@@ -937,7 +1039,9 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         url: str,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation webhook unregister")
+        service = self._server_only_service(
+            mode, "Evaluation webhook unregister", resource="webhook", action="delete"
+        )
         return dict(await self._maybe_await(service.unregister_webhook(url)) or {})
 
     async def test_webhook(
@@ -946,5 +1050,7 @@ class EvaluationScopeService:
         mode: EvaluationBackend | str | None = None,
         url: str,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Evaluation webhook test")
+        service = self._server_only_service(
+            mode, "Evaluation webhook test", resource="webhook", action="launch"
+        )
         return dict(await self._maybe_await(service.test_webhook(url=url)) or {})
