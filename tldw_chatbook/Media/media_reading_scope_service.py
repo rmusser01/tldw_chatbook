@@ -878,7 +878,6 @@ class MediaReadingScopeService:
         parent_id: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_document_workspace(normalized_mode)
         self._enforce_policy(self._document_navigation_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
@@ -902,7 +901,6 @@ class MediaReadingScopeService:
         include_alternates: bool = False,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_document_workspace(normalized_mode)
         self._enforce_policy(self._document_navigation_content_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
@@ -1769,7 +1767,6 @@ class MediaReadingScopeService:
         media_id: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_document_workspace(normalized_mode)
         self._enforce_policy(self._document_outline_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.get_document_outline(media_id))
@@ -1782,7 +1779,6 @@ class MediaReadingScopeService:
         min_size: int = 50,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_document_workspace(normalized_mode)
         self._enforce_policy(self._document_figures_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.get_document_figures(media_id, min_size=min_size))
@@ -1794,7 +1790,6 @@ class MediaReadingScopeService:
         media_id: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_document_workspace(normalized_mode)
         self._enforce_policy(self._document_annotation_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.list_document_annotations(media_id))
@@ -1813,7 +1808,6 @@ class MediaReadingScopeService:
         percentage: float | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_document_workspace(normalized_mode)
         self._enforce_policy(self._document_annotation_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(
@@ -1838,7 +1832,6 @@ class MediaReadingScopeService:
         **changes: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_document_workspace(normalized_mode)
         self._enforce_policy(self._document_annotation_action_id(normalized_mode, "update"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(
@@ -1857,7 +1850,6 @@ class MediaReadingScopeService:
         annotation_id: str,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_document_workspace(normalized_mode)
         self._enforce_policy(self._document_annotation_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.delete_document_annotation(media_id, annotation_id))
@@ -1871,7 +1863,6 @@ class MediaReadingScopeService:
         client_ids: list[str] | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_document_workspace(normalized_mode)
         self._enforce_policy(self._document_annotation_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(
@@ -1893,7 +1884,6 @@ class MediaReadingScopeService:
         force: bool | None = False,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_document_workspace(normalized_mode)
         self._enforce_policy(self._document_insights_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(
@@ -1919,7 +1909,6 @@ class MediaReadingScopeService:
         search: str | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_document_workspace(normalized_mode)
         self._enforce_policy(self._document_references_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(

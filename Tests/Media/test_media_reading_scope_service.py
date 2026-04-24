@@ -463,6 +463,70 @@ class FakeLocalMediaService:
         self.calls.append(("delete_analysis_version", version_uuid))
         return True
 
+    def get_media_navigation(self, media_id, **kwargs):
+        self.calls.append(("get_media_navigation", media_id, kwargs))
+        return {
+            "media_id": media_id,
+            "available": True,
+            "navigation_version": "local-generated",
+            "source_order_used": ["markdown_headings"],
+            "nodes": [{"id": "heading-1", "title": "Intro", "level": 1}],
+            "stats": {"returned_node_count": 1, "node_count": 1, "max_depth": 1, "truncated": False},
+        }
+
+    def get_media_navigation_content(self, media_id, node_id, **kwargs):
+        self.calls.append(("get_media_navigation_content", media_id, node_id, kwargs))
+        return {
+            "media_id": media_id,
+            "node_id": node_id,
+            "title": "Intro",
+            "content_format": kwargs.get("content_format", "markdown"),
+            "available_formats": ["markdown", "plain"],
+            "content": "# Intro\n\nBody",
+            "target": {"target_type": "heading", "target_start": node_id},
+        }
+
+    def get_document_outline(self, media_id):
+        self.calls.append(("get_document_outline", media_id))
+        return {"media_id": media_id, "has_outline": True, "outline": [{"title": "Intro", "level": 1}]}
+
+    def get_document_figures(self, media_id, *, min_size=50):
+        self.calls.append(("get_document_figures", media_id, min_size))
+        return {"media_id": media_id, "has_figures": False, "figures": [], "total_count": 0}
+
+    def list_document_annotations(self, media_id):
+        self.calls.append(("list_document_annotations", media_id))
+        return {"media_id": media_id, "annotations": [], "total_count": 0}
+
+    def create_document_annotation(self, media_id, **kwargs):
+        self.calls.append(("create_document_annotation", media_id, kwargs))
+        return {"id": "local-highlight-1", "media_id": media_id, **kwargs}
+
+    def update_document_annotation(self, media_id, annotation_id, **changes):
+        self.calls.append(("update_document_annotation", media_id, annotation_id, changes))
+        return {"id": annotation_id, "media_id": media_id, **changes}
+
+    def delete_document_annotation(self, media_id, annotation_id):
+        self.calls.append(("delete_document_annotation", media_id, annotation_id))
+        return {"deleted": True}
+
+    def sync_document_annotations(self, media_id, *, annotations, client_ids=None):
+        self.calls.append(("sync_document_annotations", media_id, annotations, client_ids))
+        return {
+            "media_id": media_id,
+            "synced_count": len(annotations),
+            "annotations": [{"id": "local-highlight-2", **dict(annotations[0])}],
+            "id_mapping": {"client-1": "local-highlight-2"} if client_ids else {},
+        }
+
+    def generate_document_insights(self, media_id, **options):
+        self.calls.append(("generate_document_insights", media_id, options))
+        return {"media_id": media_id, "insights": [{"category": "summary", "content": "Body"}]}
+
+    def get_document_references(self, media_id, **params):
+        self.calls.append(("get_document_references", media_id, params))
+        return {"media_id": media_id, "has_references": False, "references": [], "total_count": 0}
+
 
 class FakeServerMediaService:
     def __init__(self):
@@ -2075,20 +2139,50 @@ async def test_scope_service_routes_server_media_navigation_with_policy():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_rejects_local_media_navigation_before_policy():
+async def test_scope_service_routes_local_media_navigation_with_policy():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local document workspace is not available yet."):
-        await scope.get_document_navigation(mode="local", media_id=12)
-    with pytest.raises(ValueError, match="Local document workspace is not available yet."):
-        await scope.get_document_navigation_content(mode="local", media_id=12, node_id="node-1")
+    navigation = await scope.get_document_navigation(mode="local", media_id=12, max_depth=2)
+    content = await scope.get_document_navigation_content(
+        mode="local",
+        media_id=12,
+        node_id="heading-1",
+        content_format="markdown",
+    )
 
-    assert policy.calls == []
+    assert policy.calls == [
+        "media.document_navigation.detail.local",
+        "media.document_navigation_content.detail.local",
+    ]
+    assert navigation["nodes"][0]["title"] == "Intro"
+    assert content["node_id"] == "heading-1"
+    assert local.calls[-2:] == [
+        (
+            "get_media_navigation",
+            12,
+            {
+                "include_generated_fallback": False,
+                "max_depth": 2,
+                "max_nodes": 500,
+                "parent_id": None,
+            },
+        ),
+        (
+            "get_media_navigation_content",
+            12,
+            "heading-1",
+            {
+                "content_format": "markdown",
+                "include_alternates": False,
+            },
+        ),
+    ]
 
 
 @pytest.mark.asyncio
@@ -3401,7 +3495,72 @@ async def test_scope_service_routes_server_document_insights_and_references_with
 
 
 @pytest.mark.asyncio
-async def test_scope_service_rejects_local_document_workspace_before_policy():
+async def test_scope_service_routes_local_document_workspace_helpers_with_policy_actions():
+    local = FakeLocalMediaService()
+    policy = FakePolicyEnforcer()
+    scope_service = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    outline = await scope_service.get_document_outline(mode="local", media_id=99)
+    figures = await scope_service.get_document_figures(mode="local", media_id=99, min_size=75)
+    annotations = await scope_service.list_document_annotations(mode="local", media_id=99)
+    created = await scope_service.create_document_annotation(
+        mode="local",
+        media_id=99,
+        location="heading-1",
+        text="Quote",
+    )
+    updated = await scope_service.update_document_annotation(
+        mode="local",
+        media_id=99,
+        annotation_id="local-highlight-1",
+        text="Updated",
+    )
+    deleted = await scope_service.delete_document_annotation(
+        mode="local",
+        media_id=99,
+        annotation_id="local-highlight-1",
+    )
+    synced = await scope_service.sync_document_annotations(
+        mode="local",
+        media_id=99,
+        annotations=[{"location": "heading-1", "text": "Quote"}],
+        client_ids=["client-1"],
+    )
+    insights = await scope_service.generate_document_insights(
+        mode="local",
+        media_id=99,
+        categories=["summary"],
+    )
+    references = await scope_service.get_document_references(mode="local", media_id=99, limit=10)
+
+    assert outline["has_outline"] is True
+    assert figures["has_figures"] is False
+    assert annotations["total_count"] == 0
+    assert created["id"] == "local-highlight-1"
+    assert updated["text"] == "Updated"
+    assert deleted == {"deleted": True}
+    assert synced["synced_count"] == 1
+    assert insights["insights"][0]["category"] == "summary"
+    assert references["has_references"] is False
+    assert policy.calls == [
+        "media.document_outline.detail.local",
+        "media.document_figures.list.local",
+        "media.document_annotations.list.local",
+        "media.document_annotations.create.local",
+        "media.document_annotations.update.local",
+        "media.document_annotations.delete.local",
+        "media.document_annotations.create.local",
+        "media.document_insights.create.local",
+        "media.document_references.list.local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_enforces_policy_for_local_document_workspace():
     policy = FakePolicyEnforcer.deny("blocked")
     scope_service = MediaReadingScopeService(
         local_service=FakeLocalMediaService(),
@@ -3409,13 +3568,7 @@ async def test_scope_service_rejects_local_document_workspace_before_policy():
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local document workspace is not available yet."):
+    with pytest.raises(PolicyDeniedError):
         await scope_service.get_document_outline(mode="local", media_id=99)
 
-    with pytest.raises(ValueError, match="Local document workspace is not available yet."):
-        await scope_service.list_document_annotations(mode="local", media_id=99)
-
-    with pytest.raises(ValueError, match="Local document workspace is not available yet."):
-        await scope_service.generate_document_insights(mode="local", media_id=99)
-
-    assert policy.calls == []
+    assert policy.calls == ["media.document_outline.detail.local"]

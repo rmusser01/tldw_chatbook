@@ -658,3 +658,62 @@ async def test_local_service_streams_media_ingest_job_snapshot(memory_db_factory
     assert events[0]["data"]["jobs"][0]["job_id"] == submitted["jobs"][0]["job_id"]
     assert events[1]["event"] == "job"
     assert events[1]["data"]["event_type"] == "job.completed"
+
+
+def test_local_service_provides_document_workspace_helpers(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        url="local://document/workspace",
+        title="Workspace Doc",
+        media_type="document",
+        content=(
+            "# Intro\n"
+            "Intro body.\n\n"
+            "## Details\n"
+            "Details body.\n\n"
+            "# References\n"
+            "Doe 2024. DOI:10.1000/example\n"
+        ),
+        keywords=["workspace"],
+        overwrite=True,
+    )
+    service = LocalMediaReadingService(db)
+
+    outline = service.get_document_outline(media_id)
+    figures = service.get_document_figures(media_id)
+    navigation = service.get_media_navigation(media_id, max_depth=2)
+    section = service.get_media_navigation_content(media_id, "heading-1", content_format="markdown")
+    references = service.get_document_references(media_id, search="doi")
+    insights = service.generate_document_insights(media_id, categories=["summary"], max_content_length=40)
+    created = service.create_document_annotation(
+        media_id,
+        location="heading-1",
+        text="Intro body.",
+        color="green",
+        note="Keep this",
+    )
+    listed = service.list_document_annotations(media_id)
+    updated = service.update_document_annotation(media_id, created["id"], text="Updated", color="yellow")
+    synced = service.sync_document_annotations(
+        media_id,
+        annotations=[{"location": "heading-2", "text": "Details body."}],
+        client_ids=["client-1"],
+    )
+    deleted = service.delete_document_annotation(media_id, created["id"])
+
+    assert outline["has_outline"] is True
+    assert [entry["title"] for entry in outline["outline"]] == ["Intro", "Details", "References"]
+    assert figures == {"media_id": media_id, "has_figures": False, "figures": [], "total_count": 0}
+    assert navigation["available"] is True
+    assert navigation["nodes"][0]["id"] == "heading-1"
+    assert section["title"] == "Intro"
+    assert "Intro body." in section["content"]
+    assert references["has_references"] is True
+    assert references["references"][0]["raw_text"] == "Doe 2024. DOI:10.1000/example"
+    assert insights["insights"][0]["category"] == "summary"
+    assert "Intro body." in insights["insights"][0]["content"]
+    assert created["id"].startswith("local-highlight-")
+    assert listed["total_count"] == 1
+    assert updated["text"] == "Updated"
+    assert synced["id_mapping"] == {"client-1": synced["annotations"][0]["id"]}
+    assert deleted == {"deleted": True}

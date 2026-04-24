@@ -438,15 +438,25 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.items.reprocess.launch.server
         media.processing.launch.server
         media.processing_models.list.server
+        media.document_annotations.create.local
         media.document_annotations.create.server
+        media.document_annotations.delete.local
         media.document_annotations.delete.server
+        media.document_annotations.list.local
         media.document_annotations.list.server
+        media.document_annotations.update.local
         media.document_annotations.update.server
+        media.document_figures.list.local
         media.document_figures.list.server
+        media.document_insights.create.local
         media.document_insights.create.server
+        media.document_navigation.detail.local
         media.document_navigation.detail.server
+        media.document_navigation_content.detail.local
         media.document_navigation_content.detail.server
+        media.document_outline.detail.local
         media.document_outline.detail.server
+        media.document_references.list.local
         media.document_references.list.server
         media.items.create.server
         media.items.delete.server

@@ -2533,7 +2533,7 @@ class MediaDatabase:
 
     def update_reading_highlight(self, highlight_id: int, **changes: Any) -> Dict[str, Any]:
         """Update mutable local reading highlight fields."""
-        allowed_fields = {"color", "note", "state"}
+        allowed_fields = {"quote", "color", "note", "state"}
         unsupported = sorted(key for key in changes if key not in allowed_fields)
         if unsupported:
             unsupported_text = ", ".join(unsupported)

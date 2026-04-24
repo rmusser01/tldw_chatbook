@@ -1126,6 +1126,333 @@ class LocalMediaReadingService:
     def ingest_web_content(self, **kwargs: Any) -> Any:
         raise self._unsupported_web_content_ingest()
 
+    def _local_document_detail(self, media_id: Any) -> dict[str, Any]:
+        detail = self.get_media_detail(media_id)
+        if detail is None:
+            raise ValueError(f"Local document media item {media_id} not found.")
+        return dict(detail)
+
+    def _local_document_sections(self, media_id: Any) -> list[dict[str, Any]]:
+        detail = self._local_document_detail(media_id)
+        content = str(detail.get("content") or "")
+        lines = content.splitlines()
+        headings: list[dict[str, Any]] = []
+        for index, line in enumerate(lines):
+            stripped = line.lstrip()
+            marker_count = len(stripped) - len(stripped.lstrip("#"))
+            if marker_count < 1 or marker_count > 6:
+                continue
+            if len(stripped) <= marker_count or stripped[marker_count] != " ":
+                continue
+            headings.append(
+                {
+                    "id": f"heading-{len(headings) + 1}",
+                    "title": stripped[marker_count:].strip() or f"Section {len(headings) + 1}",
+                    "level": marker_count,
+                    "start_line": index,
+                }
+            )
+
+        if not headings:
+            return [
+                {
+                    "id": "document",
+                    "title": detail.get("title") or "Document",
+                    "level": 1,
+                    "start_line": 0,
+                    "end_line": len(lines),
+                    "content": content,
+                }
+            ]
+
+        sections: list[dict[str, Any]] = []
+        for index, heading in enumerate(headings):
+            end_line = headings[index + 1]["start_line"] if index + 1 < len(headings) else len(lines)
+            section_lines = lines[heading["start_line"]:end_line]
+            sections.append({**heading, "end_line": end_line, "content": "\n".join(section_lines).strip()})
+        return sections
+
+    def get_media_navigation(
+        self,
+        media_id: Any,
+        *,
+        include_generated_fallback: bool = False,
+        max_depth: int = 4,
+        max_nodes: int = 500,
+        parent_id: str | None = None,
+    ) -> dict[str, Any]:
+        sections = [
+            section
+            for section in self._local_document_sections(media_id)
+            if int(section.get("level") or 1) <= max(1, int(max_depth))
+        ]
+        if parent_id:
+            sections = [section for section in sections if section.get("id") == parent_id]
+        limited_sections = sections[:max(1, int(max_nodes))]
+        nodes = [
+            {
+                "id": section["id"],
+                "title": section["title"],
+                "level": section["level"],
+                "parent_id": None,
+                "order": index,
+                "target": {
+                    "target_type": "line",
+                    "target_start": int(section["start_line"]) + 1,
+                    "target_end": int(section["end_line"]),
+                },
+                "content_preview": str(section.get("content") or "")[:160],
+            }
+            for index, section in enumerate(limited_sections)
+        ]
+        return {
+            "media_id": self._coerce_media_id(media_id),
+            "available": bool(nodes),
+            "navigation_version": "local-generated-v1",
+            "source_order_used": ["markdown_headings" if nodes and nodes[0]["id"] != "document" else "document_content"],
+            "nodes": nodes,
+            "stats": {
+                "returned_node_count": len(nodes),
+                "node_count": len(sections),
+                "max_depth": max((int(section.get("level") or 1) for section in sections), default=0),
+                "truncated": len(limited_sections) < len(sections),
+            },
+            "generated_fallback": include_generated_fallback,
+        }
+
+    def get_media_navigation_content(
+        self,
+        media_id: Any,
+        node_id: str,
+        *,
+        content_format: str = "auto",
+        include_alternates: bool = False,
+    ) -> dict[str, Any]:
+        sections = self._local_document_sections(media_id)
+        section = next((entry for entry in sections if entry["id"] == node_id), None)
+        if section is None:
+            raise ValueError(f"Local document navigation node {node_id} not found.")
+        normalized_format = "markdown" if content_format in {"auto", "markdown"} else "plain"
+        content = str(section.get("content") or "")
+        if normalized_format == "plain":
+            content = "\n".join(line.lstrip("#").strip() if line.lstrip().startswith("#") else line for line in content.splitlines())
+        return {
+            "media_id": self._coerce_media_id(media_id),
+            "node_id": node_id,
+            "title": section["title"],
+            "content_format": normalized_format,
+            "available_formats": ["markdown", "plain"],
+            "content": content,
+            "target": {
+                "target_type": "line",
+                "target_start": int(section["start_line"]) + 1,
+                "target_end": int(section["end_line"]),
+            },
+            "alternates": {"plain": content} if include_alternates else None,
+        }
+
+    def get_document_outline(self, media_id: Any) -> dict[str, Any]:
+        sections = self._local_document_sections(media_id)
+        outline = [
+            {
+                "id": section["id"],
+                "title": section["title"],
+                "level": section["level"],
+                "line_start": int(section["start_line"]) + 1,
+                "line_end": int(section["end_line"]),
+            }
+            for section in sections
+            if section["id"] != "document"
+        ]
+        return {
+            "media_id": self._coerce_media_id(media_id),
+            "has_outline": bool(outline),
+            "outline": outline,
+            "total_count": len(outline),
+        }
+
+    def get_document_figures(self, media_id: Any, *, min_size: int = 50) -> dict[str, Any]:
+        self._local_document_detail(media_id)
+        return {"media_id": self._coerce_media_id(media_id), "has_figures": False, "figures": [], "total_count": 0}
+
+    @staticmethod
+    def _document_annotation_id(highlight_id: Any) -> str:
+        return f"local-highlight-{int(highlight_id)}"
+
+    @staticmethod
+    def _parse_document_annotation_id(annotation_id: Any) -> int:
+        text = str(annotation_id)
+        if text.startswith("local-highlight-"):
+            text = text.removeprefix("local-highlight-")
+        return int(text)
+
+    def _document_annotation_from_highlight(self, highlight: Mapping[str, Any]) -> dict[str, Any]:
+        anchor_strategy = str(highlight.get("anchor_strategy") or "")
+        location = anchor_strategy.removeprefix("document:") if anchor_strategy.startswith("document:") else None
+        return {
+            "id": self._document_annotation_id(highlight["id"]),
+            "highlight_id": highlight["id"],
+            "media_id": highlight.get("media_id"),
+            "location": location,
+            "text": highlight.get("quote"),
+            "color": highlight.get("color"),
+            "note": highlight.get("note"),
+            "annotation_type": "highlight",
+            "created_at": highlight.get("created_at"),
+            "updated_at": highlight.get("updated_at"),
+        }
+
+    def list_document_annotations(self, media_id: Any) -> dict[str, Any]:
+        highlights = self.list_reading_highlights(media_id)
+        annotations = [self._document_annotation_from_highlight(highlight) for highlight in highlights]
+        return {"media_id": self._coerce_media_id(media_id), "annotations": annotations, "total_count": len(annotations)}
+
+    def create_document_annotation(
+        self,
+        media_id: Any,
+        *,
+        location: str,
+        text: str,
+        color: str = "yellow",
+        note: str | None = None,
+        annotation_type: str = "highlight",
+        chapter_title: str | None = None,
+        percentage: float | None = None,
+    ) -> dict[str, Any]:
+        if annotation_type != "highlight":
+            raise ValueError("Local document annotations currently support highlight annotations only.")
+        highlight = self.create_reading_highlight(
+            media_id,
+            quote=text,
+            color=color,
+            note=note,
+            anchor_strategy=f"document:{location}",
+        )
+        annotation = self._document_annotation_from_highlight(highlight)
+        annotation["chapter_title"] = chapter_title
+        annotation["percentage"] = percentage
+        return annotation
+
+    def update_document_annotation(self, media_id: Any, annotation_id: str, **changes: Any) -> dict[str, Any]:
+        highlight_id = self._parse_document_annotation_id(annotation_id)
+        update_fields: dict[str, Any] = {}
+        if "text" in changes:
+            update_fields["quote"] = changes["text"]
+        if "color" in changes:
+            update_fields["color"] = changes["color"]
+        if "note" in changes:
+            update_fields["note"] = changes["note"]
+        if not update_fields:
+            highlight = self._require_db().get_reading_highlight(highlight_id)
+            if highlight is None:
+                raise ValueError(f"Local document annotation {annotation_id} not found.")
+            return self._document_annotation_from_highlight(highlight)
+        updated = self.update_reading_highlight(highlight_id, **update_fields)
+        if self._coerce_media_id(media_id) != self._coerce_media_id(updated["media_id"]):
+            raise ValueError(f"Local document annotation {annotation_id} does not belong to media {media_id}.")
+        return self._document_annotation_from_highlight(updated)
+
+    def delete_document_annotation(self, media_id: Any, annotation_id: str) -> dict[str, bool]:
+        highlight_id = self._parse_document_annotation_id(annotation_id)
+        highlight = self._require_db().get_reading_highlight(highlight_id)
+        if highlight is None:
+            return {"deleted": False}
+        if self._coerce_media_id(media_id) != self._coerce_media_id(highlight["media_id"]):
+            raise ValueError(f"Local document annotation {annotation_id} does not belong to media {media_id}.")
+        return {"deleted": self.delete_reading_highlight(highlight_id)}
+
+    def sync_document_annotations(
+        self,
+        media_id: Any,
+        *,
+        annotations: list[Mapping[str, Any]],
+        client_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        created_annotations: list[dict[str, Any]] = []
+        id_mapping: dict[str, str] = {}
+        for index, annotation in enumerate(annotations):
+            created = self.create_document_annotation(
+                media_id,
+                location=str(annotation.get("location") or "document"),
+                text=str(annotation.get("text") or annotation.get("quote") or ""),
+                color=str(annotation.get("color") or "yellow"),
+                note=annotation.get("note"),
+                annotation_type=str(annotation.get("annotation_type") or "highlight"),
+                chapter_title=annotation.get("chapter_title"),
+                percentage=annotation.get("percentage"),
+            )
+            created_annotations.append(created)
+            if client_ids and index < len(client_ids):
+                id_mapping[str(client_ids[index])] = created["id"]
+        return {
+            "media_id": self._coerce_media_id(media_id),
+            "synced_count": len(created_annotations),
+            "annotations": created_annotations,
+            "id_mapping": id_mapping,
+        }
+
+    def generate_document_insights(
+        self,
+        media_id: Any,
+        *,
+        categories: list[str] | None = None,
+        model: str | None = None,
+        max_content_length: int | None = 5000,
+        force: bool | None = False,
+    ) -> dict[str, Any]:
+        detail = self._local_document_detail(media_id)
+        content = str(detail.get("content") or "")
+        limit = max(1, int(max_content_length or 5000))
+        snippet = content[:limit]
+        requested_categories = categories or ["summary"]
+        insights = [
+            {
+                "category": category,
+                "title": str(category).replace("_", " ").title(),
+                "content": snippet,
+                "model": model or "local-extractive",
+            }
+            for category in requested_categories
+        ]
+        return {"media_id": self._coerce_media_id(media_id), "insights": insights, "force": bool(force)}
+
+    def get_document_references(
+        self,
+        media_id: Any,
+        *,
+        enrich: bool = False,
+        reference_index: int | None = None,
+        offset: int = 0,
+        limit: int = 20,
+        parse_cap: int | None = None,
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        detail = self._local_document_detail(media_id)
+        lines = [line.strip() for line in str(detail.get("content") or "").splitlines() if line.strip()]
+        reference_lines = [
+            line
+            for line in lines[:parse_cap or len(lines)]
+            if "doi:" in line.lower() or line.lower().startswith("http") or "references" not in line.lower()
+        ]
+        if search:
+            search_text = search.lower()
+            reference_lines = [line for line in reference_lines if search_text in line.lower()]
+        if reference_index is not None:
+            reference_lines = reference_lines[reference_index:reference_index + 1]
+        normalized_offset = max(0, int(offset))
+        normalized_limit = max(1, int(limit))
+        selected = reference_lines[normalized_offset:normalized_offset + normalized_limit]
+        references = [
+            {"index": normalized_offset + index, "raw_text": line, "enriched": bool(enrich)}
+            for index, line in enumerate(selected)
+        ]
+        return {
+            "media_id": self._coerce_media_id(media_id),
+            "has_references": bool(references),
+            "references": references,
+            "total_count": len(reference_lines),
+        }
+
     def list_document_versions(self, media_id: Any, *, include_deleted: bool = False) -> Any:
         return self._require_db().get_all_document_versions(
             self._coerce_media_id(media_id),
