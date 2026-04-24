@@ -291,7 +291,6 @@ AUDITED_CAPABILITY_SEEDS = (
                 "prompts.collections",
                 actions=(LIST, DETAIL, CREATE, UPDATE),
                 domain_id="prompts",
-                sources=(SERVER_SOURCE,),
             ),
             _resource(
                 "chatbooks",

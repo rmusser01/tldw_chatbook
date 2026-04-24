@@ -1,5 +1,6 @@
 import pytest
 
+from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService,
     PromptBackend,
@@ -74,6 +75,44 @@ class FakeLocalPromptService:
     def delete_prompt(self, prompt_identifier):
         self.calls.append(("delete_prompt", prompt_identifier))
         return True
+
+    def create_prompt_collection(self, payload):
+        self.calls.append(("create_prompt_collection", payload))
+        return {"collection_id": 3}
+
+    def list_prompt_collections(self, *, limit=200, offset=0):
+        self.calls.append(("list_prompt_collections", limit, offset))
+        return {
+            "collections": [
+                {
+                    "collection_id": 3,
+                    "name": "Local Collection",
+                    "description": "Offline prompts",
+                    "prompt_ids": [7],
+                }
+            ],
+            "limit": limit,
+            "offset": offset,
+            "total": 1,
+        }
+
+    def get_prompt_collection(self, collection_id):
+        self.calls.append(("get_prompt_collection", collection_id))
+        return {
+            "collection_id": collection_id,
+            "name": "Local Collection",
+            "description": "Offline prompts",
+            "prompt_ids": [7],
+        }
+
+    def update_prompt_collection(self, collection_id, payload):
+        self.calls.append(("update_prompt_collection", collection_id, payload))
+        return {
+            "collection_id": collection_id,
+            "name": payload.get("name") or "Local Collection",
+            "description": payload.get("description"),
+            "prompt_ids": payload.get("prompt_ids") or [],
+        }
 
 
 class FakeServerPromptService:
@@ -398,15 +437,96 @@ async def test_prompt_scope_routes_server_prompt_collections_with_policy():
 
 
 @pytest.mark.asyncio
-async def test_prompt_scope_rejects_local_prompt_collections_before_policy_denial():
-    policy = FakePolicyEnforcer.deny()
+async def test_prompt_scope_routes_local_prompt_collections_with_policy():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
     service = PromptScopeService(
-        local_service=FakeLocalPromptService(),
+        local_service=local,
         server_service=FakeServerPromptService(),
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Prompt collections require server mode"):
-        await service.list_prompt_collections(mode="local")
+    created = await service.create_prompt_collection(
+        mode="local",
+        name="Local Collection",
+        description="Offline prompts",
+        prompt_ids=[7],
+    )
+    listed = await service.list_prompt_collections(mode="local", limit=50, offset=5)
+    fetched = await service.get_prompt_collection(mode="local", collection_id=3)
+    updated = await service.update_prompt_collection(
+        mode="local",
+        collection_id=3,
+        name="Renamed",
+        description="Updated",
+        prompt_ids=[7, 8],
+    )
 
-    assert policy.actions == []
+    assert created == {"id": "local:prompt_collection:3", "backend": "local", "collection_id": 3}
+    assert listed["collections"][0]["id"] == "local:prompt_collection:3"
+    assert fetched["name"] == "Local Collection"
+    assert updated["name"] == "Renamed"
+    assert local.calls[-4:] == [
+        ("create_prompt_collection", {"name": "Local Collection", "description": "Offline prompts", "prompt_ids": [7]}),
+        ("list_prompt_collections", 50, 5),
+        ("get_prompt_collection", 3),
+        ("update_prompt_collection", 3, {"name": "Renamed", "description": "Updated", "prompt_ids": [7, 8]}),
+    ]
+    assert policy.actions[-4:] == [
+        "prompts.collections.create.local",
+        "prompts.collections.list.local",
+        "prompts.collections.detail.local",
+        "prompts.collections.update.local",
+    ]
+
+
+def test_local_prompt_service_persists_prompt_collections(tmp_path):
+    prompt_db = PromptsDatabase(tmp_path / "prompts.db", client_id="test_client")
+    prompt_id, _prompt_uuid, _ = prompt_db.add_prompt(
+        name="Local Prompt",
+        author="Writer",
+        details="Details",
+        system_prompt="System",
+        user_prompt="User",
+        keywords=["draft"],
+        overwrite=False,
+    )
+    second_prompt_id, _second_prompt_uuid, _ = prompt_db.add_prompt(
+        name="Second Local Prompt",
+        author="Writer",
+        details="More details",
+        system_prompt="Second system",
+        user_prompt="Second user",
+        keywords=["draft"],
+        overwrite=False,
+    )
+    service = LocalPromptService(prompt_db)
+
+    created = service.create_prompt_collection(
+        {
+            "name": "Local Collection",
+            "description": "Offline prompts",
+            "prompt_ids": [prompt_id],
+        }
+    )
+    listed = service.list_prompt_collections(limit=10, offset=0)
+    fetched = service.get_prompt_collection(created["collection_id"])
+    updated = service.update_prompt_collection(
+        created["collection_id"],
+        {
+            "name": "Renamed",
+            "description": "Updated",
+            "prompt_ids": [prompt_id],
+        },
+    )
+    membership_updated = service.update_prompt_collection(
+        created["collection_id"],
+        {"prompt_ids": [second_prompt_id]},
+    )
+
+    assert listed["total"] == 1
+    assert fetched["prompt_ids"] == [prompt_id]
+    assert updated["name"] == "Renamed"
+    assert updated["prompt_ids"] == [prompt_id]
+    assert membership_updated["name"] == "Renamed"
+    assert membership_updated["prompt_ids"] == [second_prompt_id]

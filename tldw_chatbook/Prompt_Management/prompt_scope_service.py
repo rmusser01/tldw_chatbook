@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import sqlite3
 from enum import Enum
 from typing import Any, Optional
 
@@ -137,6 +138,108 @@ class LocalPromptService:
     def __init__(self, prompt_db: Any):
         self.prompt_db = prompt_db
 
+    def _require_collection_db(self) -> Any:
+        if self.prompt_db is None or not hasattr(self.prompt_db, "get_connection"):
+            raise ValueError("Local prompt collection backend is unavailable.")
+        self._ensure_collection_schema()
+        return self.prompt_db
+
+    def _ensure_collection_schema(self) -> None:
+        conn = self.prompt_db.get_connection()
+        conn.executescript(
+            """
+            PRAGMA foreign_keys = ON;
+
+            CREATE TABLE IF NOT EXISTS LocalPromptCollections (
+                collection_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                version INTEGER NOT NULL DEFAULT 1,
+                deleted INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS LocalPromptCollectionItems (
+                collection_id INTEGER NOT NULL,
+                prompt_id INTEGER NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (collection_id, prompt_id),
+                FOREIGN KEY (collection_id) REFERENCES LocalPromptCollections(collection_id) ON DELETE CASCADE,
+                FOREIGN KEY (prompt_id) REFERENCES Prompts(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_local_prompt_collections_deleted_name
+            ON LocalPromptCollections(deleted, name COLLATE NOCASE);
+            """
+        )
+        conn.commit()
+
+    @staticmethod
+    def _collection_id(collection_id: int | str) -> int:
+        try:
+            resolved = int(collection_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid prompt collection id.") from exc
+        if resolved < 1:
+            raise ValueError("Invalid prompt collection id.")
+        return resolved
+
+    @staticmethod
+    def _prompt_ids(prompt_ids: Optional[list[int]]) -> list[int]:
+        resolved: list[int] = []
+        for prompt_id in prompt_ids or []:
+            try:
+                value = int(prompt_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Prompt collection prompt_ids must be integers.") from exc
+            if value < 1:
+                raise ValueError("Prompt collection prompt_ids must be positive integers.")
+            resolved.append(value)
+        return resolved
+
+    def _set_collection_prompt_ids(self, conn: sqlite3.Connection, collection_id: int, prompt_ids: list[int]) -> None:
+        conn.execute(
+            "DELETE FROM LocalPromptCollectionItems WHERE collection_id = ?",
+            (collection_id,),
+        )
+        conn.executemany(
+            """
+            INSERT INTO LocalPromptCollectionItems (collection_id, prompt_id, position)
+            VALUES (?, ?, ?)
+            """,
+            [(collection_id, prompt_id, index) for index, prompt_id in enumerate(prompt_ids)],
+        )
+
+    def _collection_record(self, collection_id: int) -> dict[str, Any]:
+        db = self._require_collection_db()
+        conn = db.get_connection()
+        row = conn.execute(
+            """
+            SELECT collection_id, name, description
+            FROM LocalPromptCollections
+            WHERE collection_id = ? AND deleted = 0
+            """,
+            (collection_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Prompt collection '{collection_id}' not found.")
+        prompt_rows = conn.execute(
+            """
+            SELECT prompt_id
+            FROM LocalPromptCollectionItems
+            WHERE collection_id = ?
+            ORDER BY position ASC, prompt_id ASC
+            """,
+            (collection_id,),
+        ).fetchall()
+        return {
+            "collection_id": int(row["collection_id"]),
+            "name": row["name"],
+            "description": row["description"],
+            "prompt_ids": [int(prompt_row["prompt_id"]) for prompt_row in prompt_rows],
+        }
+
     def list_prompts(
         self,
         *,
@@ -203,6 +306,103 @@ class LocalPromptService:
             return self.prompt_db.record_prompt_usage(prompt_identifier)
         return self.get_prompt(prompt_identifier, include_deleted=True)
 
+    def create_prompt_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        db = self._require_collection_db()
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise ValueError("Prompt collection name is required.")
+        description = payload.get("description")
+        prompt_ids = self._prompt_ids(payload.get("prompt_ids"))
+        conn = db.get_connection()
+        try:
+            with conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO LocalPromptCollections (name, description)
+                    VALUES (?, ?)
+                    """,
+                    (name, description),
+                )
+                collection_id = int(cursor.lastrowid)
+                self._set_collection_prompt_ids(conn, collection_id, prompt_ids)
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"Prompt collection '{name}' already exists or references missing prompts.") from exc
+        return {"collection_id": collection_id}
+
+    def list_prompt_collections(self, *, limit: int = 200, offset: int = 0) -> dict[str, Any]:
+        db = self._require_collection_db()
+        conn = db.get_connection()
+        total = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM LocalPromptCollections WHERE deleted = 0"
+            ).fetchone()[0]
+        )
+        rows = conn.execute(
+            """
+            SELECT collection_id
+            FROM LocalPromptCollections
+            WHERE deleted = 0
+            ORDER BY name COLLATE NOCASE ASC, collection_id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (max(1, int(limit)), max(0, int(offset))),
+        ).fetchall()
+        return {
+            "collections": [self._collection_record(int(row["collection_id"])) for row in rows],
+            "limit": int(limit),
+            "offset": int(offset),
+            "total": total,
+        }
+
+    def get_prompt_collection(self, collection_id: int) -> dict[str, Any]:
+        return self._collection_record(self._collection_id(collection_id))
+
+    def update_prompt_collection(self, collection_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        db = self._require_collection_db()
+        resolved_collection_id = self._collection_id(collection_id)
+        updates = {
+            key: payload[key]
+            for key in ("name", "description")
+            if key in payload
+        }
+        if "name" in updates:
+            updates["name"] = str(updates["name"] or "").strip()
+            if not updates["name"]:
+                raise ValueError("Prompt collection name is required.")
+        prompt_ids = self._prompt_ids(payload.get("prompt_ids")) if "prompt_ids" in payload else None
+        conn = db.get_connection()
+        try:
+            with conn:
+                if updates:
+                    set_clause = ", ".join(f"{key} = ?" for key in updates)
+                    params = list(updates.values()) + [resolved_collection_id]
+                    cursor = conn.execute(
+                        f"""
+                        UPDATE LocalPromptCollections
+                        SET {set_clause}, updated_at = CURRENT_TIMESTAMP, version = version + 1
+                        WHERE collection_id = ? AND deleted = 0
+                        """,
+                        params,
+                    )
+                    if cursor.rowcount == 0:
+                        raise ValueError(f"Prompt collection '{collection_id}' not found.")
+                if prompt_ids is not None:
+                    self._set_collection_prompt_ids(conn, resolved_collection_id, prompt_ids)
+                    if not updates:
+                        cursor = conn.execute(
+                            """
+                            UPDATE LocalPromptCollections
+                            SET updated_at = CURRENT_TIMESTAMP, version = version + 1
+                            WHERE collection_id = ? AND deleted = 0
+                            """,
+                            (resolved_collection_id,),
+                        )
+                        if cursor.rowcount == 0:
+                            raise ValueError(f"Prompt collection '{collection_id}' not found.")
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Prompt collection update failed because a name or prompt reference is invalid.") from exc
+        return self._collection_record(resolved_collection_id)
+
 
 class PromptScopeService:
     """Route prompt actions to the active local/server backend and normalize outputs."""
@@ -246,14 +446,8 @@ class PromptScopeService:
         return f"prompts.{action}.{mode.value}"
 
     @staticmethod
-    def _collection_action_id(action: str) -> str:
-        return f"prompts.collections.{action}.server"
-
-    def _require_server_mode_for_collections(self, mode: PromptBackend | str | None) -> PromptBackend:
-        normalized_mode = self._normalize_mode(mode)
-        if normalized_mode != PromptBackend.SERVER:
-            raise ValueError("Prompt collections require server mode.")
-        return normalized_mode
+    def _collection_action_id(mode: PromptBackend, action: str) -> str:
+        return f"prompts.collections.{action}.{mode.value}"
 
     async def list_prompts(
         self,
@@ -393,8 +587,8 @@ class PromptScopeService:
         description: Optional[str] = None,
         prompt_ids: Optional[list[int]] = None,
     ) -> dict[str, Any]:
-        normalized_mode = self._require_server_mode_for_collections(mode)
-        self._enforce_policy(self._collection_action_id("create"))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._collection_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         payload = {
             "name": name,
@@ -417,8 +611,8 @@ class PromptScopeService:
         limit: int = 200,
         offset: int = 0,
     ) -> dict[str, Any]:
-        normalized_mode = self._require_server_mode_for_collections(mode)
-        self._enforce_policy(self._collection_action_id("list"))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._collection_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         response = await self._maybe_await(service.list_prompt_collections(limit=limit, offset=offset))
         return normalize_prompt_collection_list(
@@ -434,8 +628,8 @@ class PromptScopeService:
         mode: PromptBackend | str | None = None,
         collection_id: int,
     ) -> dict[str, Any]:
-        normalized_mode = self._require_server_mode_for_collections(mode)
-        self._enforce_policy(self._collection_action_id("detail"))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._collection_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         response = await self._maybe_await(service.get_prompt_collection(collection_id))
         return normalize_prompt_collection_record(response, backend=normalized_mode.value)
@@ -449,8 +643,8 @@ class PromptScopeService:
         description: Optional[str] = None,
         prompt_ids: Optional[list[int]] = None,
     ) -> dict[str, Any]:
-        normalized_mode = self._require_server_mode_for_collections(mode)
-        self._enforce_policy(self._collection_action_id("update"))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._collection_action_id(normalized_mode, "update"))
         service = self._service_for_mode(normalized_mode)
         payload = {
             key: value

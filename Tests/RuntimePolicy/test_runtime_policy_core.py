@@ -517,9 +517,13 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         chatbooks.list.server
         chatbooks.update.local
         chatbooks.update.server
+        prompts.collections.create.local
         prompts.collections.create.server
+        prompts.collections.detail.local
         prompts.collections.detail.server
+        prompts.collections.list.local
         prompts.collections.list.server
+        prompts.collections.update.local
         prompts.collections.update.server
         prompts.create.local
         prompts.create.server
