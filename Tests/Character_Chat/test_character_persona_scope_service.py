@@ -2,12 +2,16 @@ from unittest.mock import Mock
 
 import pytest
 
+from tldw_chatbook.Character_Chat.local_character_persona_service import (
+    LocalCharacterPersonaService,
+)
 from tldw_chatbook.Character_Chat.character_persona_scope_service import (
     CharacterPersonaScopeService,
 )
 from tldw_chatbook.Character_Chat.server_character_persona_service import (
     ServerCharacterPersonaService,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 class FakeCharacterPersonaClient:
@@ -463,24 +467,87 @@ async def test_scope_service_routes_server_ccp_sessions_messages_and_memory_with
 
 
 @pytest.mark.asyncio
-async def test_scope_service_rejects_local_ccp_server_contract_operations_before_policy():
+async def test_scope_service_routes_local_ccp_sessions_messages_and_memory_with_policy():
     policy = FakePolicyEnforcer()
+    local_service = FakeCharacterPersonaClient()
     scope_service = CharacterPersonaScopeService(
-        local_service=FakeLocalCharacterBackend(),
+        local_service=local_service,
         server_service=FakeCharacterPersonaClient(),
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="requires server mode"):
-        await scope_service.create_character_chat_session({"character_id": 12}, mode="local")
+    await scope_service.create_character_chat_session({"character_id": 12, "title": "Ada"}, mode="local")
+    await scope_service.create_character_chat_message("chat-1", {"role": "user", "content": "Hi"}, mode="local")
+    await scope_service.list_character_memories("12", mode="local")
 
-    with pytest.raises(ValueError, match="requires server mode"):
-        await scope_service.create_character_chat_message("chat-1", {"role": "user", "content": "Hi"}, mode="local")
+    assert policy.actions == [
+        "character.sessions.create.local",
+        "character.messages.create.local",
+        "character.memory.list.local",
+    ]
+    assert local_service.session_calls[0][0] == "create"
+    assert local_service.message_calls[0][0] == "create"
+    assert local_service.memory_calls[0][0] == "list"
 
-    with pytest.raises(ValueError, match="requires server mode"):
-        await scope_service.list_character_memories("12", mode="local")
 
-    assert policy.actions == []
+def test_local_character_persona_service_persists_sessions_messages_settings_and_memory(tmp_path):
+    db = CharactersRAGDB(tmp_path / "ccp.sqlite", "test_client")
+    character_id = db.add_character_card(
+        {
+            "name": "Local Ada",
+            "description": "Offline character",
+            "first_message": "Hello.",
+        }
+    )
+    service = LocalCharacterPersonaService(db)
+
+    session = service.create_character_chat_session(
+        {
+            "character_id": character_id,
+            "title": "Local Ada Chat",
+        }
+    )
+    listed_sessions = service.list_character_chat_sessions(character_id=character_id)
+    updated_settings = service.update_character_chat_settings(
+        session["id"],
+        {"settings": {"temperature": 0.4}},
+    )
+    fetched_settings = service.get_character_chat_settings(session["id"])
+    message = service.create_character_chat_message(
+        session["id"],
+        {"role": "user", "content": "Hello"},
+    )
+    listed_messages = service.list_character_chat_messages(session["id"])
+    updated_message = service.update_character_chat_message(
+        message["id"],
+        {"content": "Updated"},
+        expected_version=message["version"],
+    )
+    memory = service.create_character_memory(str(character_id), {"content": "likes tea"})
+    listed_memories = service.list_character_memories(str(character_id))
+    archived_memory = service.archive_character_memory(
+        str(character_id),
+        memory["id"],
+        {"archived": True},
+    )
+
+    assert session["id"]
+    assert session["character_id"] == character_id
+    assert session["runtime_backend"] == "local"
+    assert session["discovery_owner"] == "ccp_character"
+    assert listed_sessions["total"] == 1
+    assert updated_settings["settings"] == {"temperature": 0.4}
+    assert fetched_settings["settings"] == {"temperature": 0.4}
+    assert message["conversation_id"] == session["id"]
+    assert listed_messages["total"] == 1
+    assert updated_message["content"] == "Updated"
+    assert memory["content"] == "likes tea"
+    assert listed_memories["total"] == 1
+    assert archived_memory["archived"] is True
+
+    assert service.delete_character_memory(str(character_id), memory["id"]) == {"deleted": True}
+    with pytest.raises(ValueError, match="Local character memory extraction is unavailable"):
+        service.extract_character_memories(str(character_id), {"chat_id": session["id"]})
 
 
 @pytest.mark.asyncio
@@ -660,6 +727,7 @@ def test_app_wires_character_persona_services(monkeypatch):
     app_module.TldwCli._wire_character_persona_services(fake_app)
 
     assert fake_app.server_character_persona_service is server_service
-    assert captured["local_service"] is fake_app.chachanotes_db
+    assert isinstance(captured["local_service"], LocalCharacterPersonaService)
+    assert captured["local_service"].db is fake_app.chachanotes_db
     assert captured["server_service"] is server_service
     assert captured["policy_enforcer"] is fake_app.service_policy_enforcer
