@@ -61,6 +61,35 @@ async def test_local_research_service_controls_and_artifacts_are_persisted(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_local_research_service_streams_snapshot_and_bundle_events(tmp_path):
+    db = ResearchDatabase(tmp_path / "research.db", client_id="tester")
+    service = LocalResearchService(db)
+    run = await service.create_run(query="Explain local event observation", source_policy="local_only")
+    await service.save_artifact(
+        run.id,
+        artifact_name="notes.md",
+        content_type="text/markdown",
+        content="# Notes",
+    )
+
+    events = [event async for event in service.stream_run_events(run.id)]
+    events_after_snapshot = [event async for event in service.stream_run_events(run.id, after_id=1)]
+
+    assert events[0]["event"] == "snapshot"
+    assert events[0]["id"] == "1"
+    assert events[0]["data"]["run"]["id"] == run.id
+    assert events[1] == {
+        "event": "bundle",
+        "id": "2",
+        "data": {
+            "artifact_names": ["notes.md"],
+            "bundle": {"notes.md": "# Notes"},
+        },
+    }
+    assert events_after_snapshot == [events[1]]
+
+
+@pytest.mark.asyncio
 async def test_local_research_service_dispatches_lifecycle_notifications(tmp_path):
     db = ResearchDatabase(tmp_path / "research.db", client_id="tester")
     notifications = ClientNotificationsDB(tmp_path / "notifications.db")
@@ -238,12 +267,31 @@ async def test_research_scope_service_streams_server_events_with_policy(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_research_scope_service_rejects_local_live_events(tmp_path):
+async def test_research_scope_service_streams_local_events_with_policy(tmp_path):
+    class RecordingPolicyEnforcer:
+        def __init__(self):
+            self.action_ids = []
+
+        def require_allowed(self, *, action_id):
+            self.action_ids.append(action_id)
+
+    local_service = LocalResearchService(ResearchDatabase(tmp_path / "research.db", client_id="tester"))
+    run = await local_service.create_run(query="Local event stream")
+    await local_service.save_artifact(
+        run.id,
+        artifact_name="notes.md",
+        content_type="text/markdown",
+        content="# Notes",
+    )
+    policy = RecordingPolicyEnforcer()
     scope = ResearchScopeService(
-        local_service=LocalResearchService(ResearchDatabase(tmp_path / "research.db", client_id="tester")),
+        local_service=local_service,
         server_service=Mock(),
+        policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local research live events"):
-        async for _event in scope.stream_run_events("local-run", mode="local"):
-            pass
+    events = [event async for event in scope.stream_run_events(run.id, mode="local")]
+
+    assert events[0]["event"] == "snapshot"
+    assert events[1]["data"]["bundle"] == {"notes.md": "# Notes"}
+    assert policy.action_ids == ["research.runs.observe.local"]

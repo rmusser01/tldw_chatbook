@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 from tldw_chatbook.DB.Research_DB import ResearchDatabase
@@ -178,3 +179,28 @@ class LocalResearchService:
 
     async def get_bundle(self, run_id: str) -> dict[str, Any]:
         return self.db.get_bundle(run_id)
+
+    async def stream_run_events(self, run_id: str, *, after_id: int = 0):
+        try:
+            cursor = int(after_id)
+        except (TypeError, ValueError):
+            cursor = 0
+
+        run = await self.get_run(run_id)
+        if cursor < 1:
+            yield {
+                "event": "snapshot",
+                "id": "1",
+                "data": {"run": asdict(run)},
+            }
+
+        bundle = await self.get_bundle(run_id)
+        if cursor < 2 and bundle:
+            yield {
+                "event": "bundle",
+                "id": "2",
+                "data": {
+                    "artifact_names": sorted(bundle),
+                    "bundle": bundle,
+                },
+            }

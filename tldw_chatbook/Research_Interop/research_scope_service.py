@@ -197,8 +197,6 @@ class ResearchScopeService:
         after_id: int = 0,
     ):
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == ResearchBackend.LOCAL:
-            raise ValueError("Local research live events are not available in this slice.")
         self._enforce_policy(normalized_mode, resource="runs", action="observe")
         method = getattr(self._service_for_mode(normalized_mode), "stream_run_events")
         async for event in method(run_id, after_id=after_id):
