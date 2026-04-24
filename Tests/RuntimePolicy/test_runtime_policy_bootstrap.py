@@ -113,18 +113,21 @@ def test_build_runtime_api_client_supports_explicit_custom_token_overrides():
 def test_build_server_chatbook_service_wraps_authoritative_client_builder():
     from tldw_chatbook.runtime_policy.bootstrap import build_server_chatbook_service
 
+    policy_enforcer = object()
     service = build_server_chatbook_service(
         app_config={
             "tldw_api": {
                 "base_url": "https://example.com/api/",
                 "api_key": "secret-key",
             }
-        }
+        },
+        policy_enforcer=policy_enforcer,
     )
 
     assert service.client is not None
     assert service.client.base_url == "https://example.com/api"
     assert service.client.token == "secret-key"
+    assert service.policy_enforcer is policy_enforcer
 
 
 @pytest.mark.parametrize(

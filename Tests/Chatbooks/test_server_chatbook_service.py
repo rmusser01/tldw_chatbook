@@ -8,6 +8,7 @@ from tldw_chatbook.Chatbooks.chatbook_models import (
 )
 from tldw_chatbook.Chatbooks.server_chatbook_service import (
     ServerChatbookService,
+    build_server_chatbook_service_from_config,
     build_server_import_selections_from_manifest,
     build_server_job_record,
     get_server_import_blockers_from_manifest,
@@ -23,6 +24,14 @@ from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
     ChatbookImportJobResponse,
     ChatbookJobMutationResponse,
 )
+
+
+class FakePolicyEnforcer:
+    def __init__(self):
+        self.calls = []
+
+    def require_allowed(self, *, action_id):
+        self.calls.append(action_id)
 
 
 def test_service_rejects_server_unsupported_import_content_types():
@@ -61,6 +70,23 @@ def test_service_rejects_import_request_with_unsupported_content_types():
                 ContentType.MEDIA: ["2"],
             }
         )
+
+
+def test_build_server_chatbook_service_from_config_threads_policy_enforcer():
+    policy = FakePolicyEnforcer()
+
+    service, client = build_server_chatbook_service_from_config(
+        {
+            "tldw_api": {
+                "base_url": "https://example.com/api/",
+                "api_key": "secret-key",
+            }
+        },
+        policy_enforcer=policy,
+    )
+
+    assert service.client is client
+    assert service.policy_enforcer is policy
 
 
 @pytest.mark.asyncio
@@ -243,6 +269,97 @@ async def test_service_downloads_export_job_to_destination(tmp_path):
 
     assert result == destination
     assert destination.read_bytes() == b"chatbook-zip"
+
+
+@pytest.mark.asyncio
+async def test_service_enforces_action_policy_for_server_chatbook_operations(tmp_path):
+    class FakeClient:
+        async def preview_chatbook(self, chatbook_file_path: str):
+            return {"success": True}
+
+        async def export_chatbook(self, request_data):
+            return {"job_id": "export-job-1"}
+
+        async def continue_chatbook_export(self, request_data):
+            return {"job_id": "continued-job-1"}
+
+        async def import_chatbook(self, chatbook_file_path: str, request_data):
+            return {"job_id": "import-job-1"}
+
+        async def list_chatbook_export_jobs(self, limit: int = 100, offset: int = 0):
+            return {"jobs": [], "total": 0}
+
+        async def get_chatbook_export_job(self, job_id: str):
+            return {"job_id": job_id}
+
+        async def cancel_chatbook_export_job(self, job_id: str):
+            return {"success": True, "job_id": job_id}
+
+        async def remove_chatbook_export_job(self, job_id: str):
+            return {"success": True, "job_id": job_id}
+
+        async def download_chatbook_export(self, job_id: str):
+            return b"chatbook-zip"
+
+        async def cleanup_chatbook_exports(self):
+            return {"deleted_count": 0}
+
+        async def list_chatbook_import_jobs(self, limit: int = 100, offset: int = 0):
+            return {"jobs": [], "total": 0}
+
+        async def get_chatbook_import_job(self, job_id: str):
+            return {"job_id": job_id}
+
+        async def cancel_chatbook_import_job(self, job_id: str):
+            return {"success": True, "job_id": job_id}
+
+        async def remove_chatbook_import_job(self, job_id: str):
+            return {"success": True, "job_id": job_id}
+
+    policy = FakePolicyEnforcer()
+    service = ServerChatbookService(client=FakeClient(), policy_enforcer=policy)
+    export_request = service.build_export_request_payload(
+        name="Pack",
+        description="Desc",
+        selections={"conversation": ["1"]},
+    )
+    import_request = service.build_import_request_payload({"conversation": ["1"]})
+    continue_request = ChatbookContinueExportRequest(
+        export_id="export-job-1",
+        continuations=[{"content_type": "notes", "cursor": "cursor-2"}],
+    )
+
+    await service.preview_chatbook("/tmp/demo.chatbook.zip")
+    await service.export_chatbook(export_request)
+    await service.continue_chatbook_export(continue_request)
+    await service.import_chatbook("/tmp/demo.chatbook.zip", import_request)
+    await service.list_export_jobs()
+    await service.get_export_job("export-job-1")
+    await service.cancel_export_job("export-job-1")
+    await service.remove_export_job("export-job-1")
+    await service.download_export_job("export-job-1", tmp_path / "Pack.chatbook.zip")
+    await service.cleanup_expired_exports()
+    await service.list_import_jobs()
+    await service.get_import_job("import-job-1")
+    await service.cancel_import_job("import-job-1")
+    await service.remove_import_job("import-job-1")
+
+    assert policy.calls == [
+        "chatbooks.detail.server",
+        "chatbooks.export.server",
+        "chatbooks.export.server",
+        "chatbooks.import.server",
+        "chatbooks.export_jobs.list.server",
+        "chatbooks.export_jobs.detail.server",
+        "chatbooks.export_jobs.update.server",
+        "chatbooks.export_jobs.delete.server",
+        "chatbooks.export_jobs.export.server",
+        "chatbooks.export_jobs.delete.server",
+        "chatbooks.import_jobs.list.server",
+        "chatbooks.import_jobs.detail.server",
+        "chatbooks.import_jobs.update.server",
+        "chatbooks.import_jobs.delete.server",
+    ]
 
 
 def test_service_builds_server_import_selections_from_manifest():

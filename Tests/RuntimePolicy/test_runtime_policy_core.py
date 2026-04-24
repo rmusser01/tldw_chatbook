@@ -575,8 +575,17 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         chatbooks.detail.server
         chatbooks.export.local
         chatbooks.export.server
+        chatbooks.export_jobs.delete.server
+        chatbooks.export_jobs.detail.server
+        chatbooks.export_jobs.export.server
+        chatbooks.export_jobs.list.server
+        chatbooks.export_jobs.update.server
         chatbooks.import.local
         chatbooks.import.server
+        chatbooks.import_jobs.delete.server
+        chatbooks.import_jobs.detail.server
+        chatbooks.import_jobs.list.server
+        chatbooks.import_jobs.update.server
         chatbooks.list.local
         chatbooks.list.server
         chatbooks.update.local
@@ -597,8 +606,12 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         prompts.list.server
         prompts.preview.local
         prompts.preview.server
+        prompts.restore_version.server
         prompts.update.local
         prompts.update.server
+        prompts.use.local
+        prompts.use.server
+        prompts.versions.server
     """),
     "rag_embeddings_chunking_admin": _action_ids("""
         rag.admin.configure.local

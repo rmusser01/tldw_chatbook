@@ -35,10 +35,14 @@ def build_tldw_api_client_from_config(config: Mapping[str, Any]) -> TLDWAPIClien
     return TLDWAPIClient(base_url=base_url, token=auth_token)
 
 
-def build_server_chatbook_service_from_config(config: Mapping[str, Any]) -> tuple["ServerChatbookService", TLDWAPIClient]:
+def build_server_chatbook_service_from_config(
+    config: Mapping[str, Any],
+    *,
+    policy_enforcer: Any = None,
+) -> tuple["ServerChatbookService", TLDWAPIClient]:
     """Build a server chatbook service plus its owned API client from application config."""
     client = build_tldw_api_client_from_config(config)
-    return ServerChatbookService(client=client), client
+    return ServerChatbookService(client=client, policy_enforcer=policy_enforcer), client
 
 
 def build_server_import_selections_from_manifest(
@@ -121,8 +125,14 @@ class ServerChatbookService:
         ContentType.CHARACTER.value,
     }
 
-    def __init__(self, client: Optional[TLDWAPIClient]):
+    def __init__(self, client: Optional[TLDWAPIClient], policy_enforcer: Any = None):
         self.client = client
+        self.policy_enforcer = policy_enforcer
+
+    def _enforce_policy(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=action_id)
 
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:
@@ -219,14 +229,17 @@ class ServerChatbookService:
         )
 
     async def preview_chatbook(self, chatbook_file_path: Union[str, Path]) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.detail.server")
         client = self._require_client()
         return await client.preview_chatbook(str(chatbook_file_path))
 
     async def export_chatbook(self, request_data: ChatbookExportRequest) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.export.server")
         client = self._require_client()
         return await client.export_chatbook(request_data)
 
     async def continue_chatbook_export(self, request_data: ChatbookContinueExportRequest) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.export.server")
         client = self._require_client()
         return _to_plain_dict(await client.continue_chatbook_export(request_data))
 
@@ -264,6 +277,7 @@ class ServerChatbookService:
         chatbook_file_path: Union[str, Path],
         request_data: ChatbookImportRequest,
     ) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.import.server")
         client = self._require_client()
         return await client.import_chatbook(str(chatbook_file_path), request_data)
 
@@ -288,6 +302,7 @@ class ServerChatbookService:
         return await self.import_chatbook(chatbook_file_path, request)
 
     async def get_export_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.export_jobs.detail.server")
         client = self._require_client()
         return _to_plain_dict(await client.get_chatbook_export_job(job_id))
 
@@ -295,6 +310,7 @@ class ServerChatbookService:
         return await self.get_export_job(job_id)
 
     async def get_import_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.import_jobs.detail.server")
         client = self._require_client()
         return _to_plain_dict(await client.get_chatbook_import_job(job_id))
 
@@ -302,30 +318,37 @@ class ServerChatbookService:
         return await self.get_import_job(job_id)
 
     async def list_export_jobs(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.export_jobs.list.server")
         client = self._require_client()
         return _to_plain_dict(await client.list_chatbook_export_jobs(limit=limit, offset=offset))
 
     async def list_import_jobs(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.import_jobs.list.server")
         client = self._require_client()
         return _to_plain_dict(await client.list_chatbook_import_jobs(limit=limit, offset=offset))
 
     async def cancel_export_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.export_jobs.update.server")
         client = self._require_client()
         return _to_plain_dict(await client.cancel_chatbook_export_job(job_id))
 
     async def cancel_import_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.import_jobs.update.server")
         client = self._require_client()
         return _to_plain_dict(await client.cancel_chatbook_import_job(job_id))
 
     async def remove_export_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.export_jobs.delete.server")
         client = self._require_client()
         return _to_plain_dict(await client.remove_chatbook_export_job(job_id))
 
     async def cleanup_expired_exports(self) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.export_jobs.delete.server")
         client = self._require_client()
         return _to_plain_dict(await client.cleanup_chatbook_exports())
 
     async def download_export_job(self, job_id: str, destination_path: Union[str, Path]) -> Path:
+        self._enforce_policy("chatbooks.export_jobs.export.server")
         client = self._require_client()
         payload = await client.download_chatbook_export(job_id)
         path = Path(destination_path)
@@ -334,5 +357,6 @@ class ServerChatbookService:
         return path
 
     async def remove_import_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.import_jobs.delete.server")
         client = self._require_client()
         return _to_plain_dict(await client.remove_chatbook_import_job(job_id))

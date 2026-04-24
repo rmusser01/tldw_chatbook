@@ -653,7 +653,10 @@ class ProgressStep(WizardStep):
 
             if execution_mode == "server":
                 api_client = build_tldw_api_client_from_config(config)
-                service = ServerChatbookService(api_client)
+                service = ServerChatbookService(
+                    api_client,
+                    policy_enforcer=getattr(self.wizard.app_instance, "service_policy_enforcer", None),
+                )
                 try:
                     self._update_status("status-validate", "completed", "✓ Prepared server export")
                     self._update_status("status-conversations", "active", "⟳ Sending export request...")

@@ -102,8 +102,12 @@ async def test_management_window_lists_live_remote_server_jobs(monkeypatch):
                 "total": 1,
             }
 
-    def fake_client_factory(config):
+    policy_enforcer = object()
+    observed_policy = []
+
+    def fake_client_factory(config, policy_enforcer=None):
         assert config["tldw_api"]["base_url"] == "http://server.test"
+        observed_policy.append(policy_enforcer)
         client = FakeClient()
         return FakeServerChatbookService(client), client
 
@@ -123,6 +127,7 @@ async def test_management_window_lists_live_remote_server_jobs(monkeypatch):
                 }
             }
             self._chatbook_server_jobs = []
+            self.service_policy_enforcer = policy_enforcer
 
         def compose(self) -> ComposeResult:
             yield ChatbookExportManagementWindow(self)
@@ -138,6 +143,7 @@ async def test_management_window_lists_live_remote_server_jobs(monkeypatch):
         assert table.row_count == 2
         assert ["export", "completed", "100%", "Remote Export", "server"] in rows
         assert ["import", "in_progress", "40%", "remote-import.chatbook.zip", "server"] in rows
+        assert observed_policy == [policy_enforcer]
 
 
 @pytest.mark.asyncio
@@ -203,7 +209,7 @@ async def test_management_window_remote_job_actions_call_server(monkeypatch, tmp
     monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh)
     monkeypatch.setattr(
         "tldw_chatbook.UI.ChatbookExportManagementWindow.build_server_chatbook_service_from_config",
-        lambda config: (FakeServerChatbookService(FakeClient()), FakeClient()),
+        lambda config, policy_enforcer=None: (FakeServerChatbookService(FakeClient()), FakeClient()),
     )
 
     class ManagementApp(App):

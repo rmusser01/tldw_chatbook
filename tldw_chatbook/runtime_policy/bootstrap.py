@@ -39,8 +39,9 @@ class _CompatibilityRuntimeAPIClient:
 
 
 class _CompatibilityServerChatbookService:
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, policy_enforcer: Any = None) -> None:
         self.client = client
+        self.policy_enforcer = policy_enforcer
 
 
 _COMPAT_IMPORT_FAILURES = (AttributeError, ImportError, ModuleNotFoundError, TypeError)
@@ -132,8 +133,15 @@ def build_runtime_api_client_from_config(app_config: Mapping[str, Any] | None) -
     return build_runtime_api_client(app_config=app_config)
 
 
-def build_server_chatbook_service(*, app_config: Mapping[str, Any] | None) -> Any:
-    return _server_chatbook_service_class()(build_runtime_api_client(app_config=app_config))
+def build_server_chatbook_service(
+    *,
+    app_config: Mapping[str, Any] | None,
+    policy_enforcer: Any = None,
+) -> Any:
+    return _server_chatbook_service_class()(
+        build_runtime_api_client(app_config=app_config),
+        policy_enforcer=policy_enforcer,
+    )
 
 
 def load_runtime_policy_for_app(

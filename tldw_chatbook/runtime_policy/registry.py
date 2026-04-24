@@ -148,6 +148,9 @@ CAPTURE = _action("capture", "launch")
 STATUS = _action("status", "detail")
 RESTORE = _action("restore", "update")
 PERMANENT_DELETE = _action("permanent_delete", "delete")
+USE = _action("use", "update")
+VERSIONS = _action("versions", "detail")
+RESTORE_VERSION = _action("restore_version", "update")
 
 CRUD_ACTIONS = (LIST, DETAIL, CREATE, UPDATE, DELETE)
 DISCOVER_TRIGGER_OBSERVE_ACTIONS = (LIST, LAUNCH, OBSERVE)
@@ -316,7 +319,13 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource(
                 "prompts",
-                actions=(LIST, PREVIEW, CREATE, UPDATE, DELETE),
+                actions=(LIST, PREVIEW, CREATE, UPDATE, DELETE, USE),
+                domain_id="prompts",
+            ),
+            _resource(
+                "prompts",
+                actions=(VERSIONS, RESTORE_VERSION),
+                sources=(SERVER_SOURCE,),
                 domain_id="prompts",
             ),
             _resource(
@@ -327,6 +336,18 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource(
                 "chatbooks",
                 actions=_combine_action_sets(CRUD_ACTIONS, (IMPORT, EXPORT)),
+                domain_id="chatbooks",
+            ),
+            _resource(
+                "chatbooks.export_jobs",
+                actions=(LIST, DETAIL, UPDATE, DELETE, EXPORT),
+                sources=(SERVER_SOURCE,),
+                domain_id="chatbooks",
+            ),
+            _resource(
+                "chatbooks.import_jobs",
+                actions=(LIST, DETAIL, UPDATE, DELETE),
+                sources=(SERVER_SOURCE,),
                 domain_id="chatbooks",
             ),
         ),

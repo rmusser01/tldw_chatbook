@@ -483,7 +483,10 @@ class ChatbookExportManagementWindow(ModalScreen):
     async def _fetch_live_server_job_records(self) -> List[Dict[str, Any]]:
         config = getattr(self.app_instance, "config_data", {}) or {}
         try:
-            service, client = build_server_chatbook_service_from_config(config)
+            service, client = build_server_chatbook_service_from_config(
+                config,
+                policy_enforcer=getattr(self.app_instance, "service_policy_enforcer", None),
+            )
         except Exception as exc:
             logger.debug(f"Skipping live server chatbook jobs: {exc}")
             return []
@@ -582,7 +585,10 @@ class ChatbookExportManagementWindow(ModalScreen):
 
     async def _with_server_chatbook_service(self, operation):
         config = getattr(self.app_instance, "config_data", {}) or {}
-        service, client = build_server_chatbook_service_from_config(config)
+        service, client = build_server_chatbook_service_from_config(
+            config,
+            policy_enforcer=getattr(self.app_instance, "service_policy_enforcer", None),
+        )
         try:
             return await operation(service)
         finally:
