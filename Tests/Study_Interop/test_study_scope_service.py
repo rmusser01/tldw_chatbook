@@ -304,6 +304,31 @@ class FakeServerStudyService:
         self.calls.append(("export_flashcards", kwargs))
         return b"Deck\tFront\tBack\nBiology\tQ\tA\n"
 
+    async def upload_flashcard_asset(self, file_path):
+        self.calls.append(("upload_flashcard_asset", str(file_path)))
+        return {
+            "asset_uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+            "reference": "flashcard-asset://87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+            "markdown_snippet": "![cell](flashcard-asset://87ca2b3f-7e3a-47d7-a52f-8debc86c03cb)",
+            "mime_type": "image/png",
+            "byte_size": 8,
+            "width": 1,
+            "height": 1,
+            "original_filename": "cell.png",
+        }
+
+    async def get_flashcard_asset_content(self, asset_uuid):
+        self.calls.append(("get_flashcard_asset_content", asset_uuid))
+        return b"fake-png"
+
+    async def import_flashcards_json_file(self, file_path, *, max_items=None, max_field_length=None):
+        self.calls.append(("import_flashcards_json_file", str(file_path), max_items, max_field_length))
+        return {"imported": 1, "items": [{"uuid": "card-server-1", "deck_id": 7}], "errors": []}
+
+    async def import_flashcards_apkg(self, file_path, *, max_items=None, max_field_length=None):
+        self.calls.append(("import_flashcards_apkg", str(file_path), max_items, max_field_length))
+        return {"imported": 1, "items": [{"uuid": "card-server-1", "deck_id": 7}], "errors": []}
+
     async def create_flashcard_template(
         self,
         *,
@@ -1064,6 +1089,46 @@ async def test_scope_service_routes_server_flashcard_import_export_actions():
 
     with pytest.raises(ValueError, match="server-only"):
         await scope.export_flashcards(mode="local")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_flashcard_asset_and_file_import_actions(tmp_path):
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    image_path = tmp_path / "cell.png"
+    image_path.write_bytes(b"fake-png")
+    json_path = tmp_path / "cards.json"
+    json_path.write_text('[{"front":"Q","back":"A"}]', encoding="utf-8")
+    apkg_path = tmp_path / "cards.apkg"
+    apkg_path.write_bytes(b"fake-apkg")
+
+    asset = await scope.upload_flashcard_asset(mode="server", file_path=image_path)
+    content = await scope.get_flashcard_asset_content(
+        mode="server",
+        asset_uuid="87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+    )
+    json_import = await scope.import_flashcards_json_file(mode="server", file_path=json_path, max_items=25)
+    apkg_import = await scope.import_flashcards_apkg(
+        mode="server",
+        file_path=apkg_path,
+        max_items=10,
+        max_field_length=2048,
+    )
+
+    assert asset["source"] == "server"
+    assert asset["entity_kind"] == "flashcard_asset"
+    assert content == b"fake-png"
+    assert json_import["entity_kind"] == "flashcard_import"
+    assert apkg_import["items"][0]["uuid"] == "card-server-1"
+    assert server.calls == [
+        ("upload_flashcard_asset", str(image_path)),
+        ("get_flashcard_asset_content", "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb"),
+        ("import_flashcards_json_file", str(json_path), 25, None),
+        ("import_flashcards_apkg", str(apkg_path), 10, 2048),
+    ]
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.upload_flashcard_asset(mode="local", file_path=image_path)
 
 
 @pytest.mark.asyncio

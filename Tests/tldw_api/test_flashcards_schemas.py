@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from tldw_chatbook.tldw_api import (
     FlashcardBulkUpdateItemRequest,
     FlashcardBulkUpdateResponse,
+    FlashcardAssetMetadata,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
     FlashcardDeckResponse,
@@ -289,6 +290,24 @@ def test_flashcard_import_preview_and_import_models_round_trip_server_shape():
     assert preview.drafts[0].front == "What powers cells?"
     assert import_request.delimiter == "\t"
     assert imported.items[0].deck_id == 7
+
+
+def test_flashcard_asset_metadata_round_trips_server_shape():
+    payload = FlashcardAssetMetadata.model_validate(
+        {
+            "asset_uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+            "reference": "flashcard-asset://87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+            "markdown_snippet": "![image](flashcard-asset://87ca2b3f-7e3a-47d7-a52f-8debc86c03cb)",
+            "mime_type": "image/png",
+            "byte_size": 128,
+            "width": 64,
+            "height": 64,
+            "original_filename": "cell.png",
+        }
+    )
+
+    assert str(payload.asset_uuid) == "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb"
+    assert payload.mime_type == "image/png"
 
 
 def test_flashcard_create_request_preserves_optional_fields():

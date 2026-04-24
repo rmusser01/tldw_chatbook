@@ -253,6 +253,7 @@ from .evaluations_schemas import (
 )
 from .flashcards_schemas import (
     FlashcardAnalyticsSummaryResponse,
+    FlashcardAssetMetadata,
     FlashcardBulkUpdateItemRequest,
     FlashcardBulkUpdateResponse,
     FlashcardCreateRequest,
@@ -2909,6 +2910,76 @@ class TLDWAPIClient:
             },
         )
         return FlashcardsImportResponse.model_validate(response)
+
+    async def upload_flashcard_asset(self, file_path: Union[str, Path]) -> FlashcardAssetMetadata:
+        httpx_files = prepare_files_for_httpx([file_path], upload_field_name="file")
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/flashcards/assets",
+                files=httpx_files,
+            )
+            return FlashcardAssetMetadata.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def get_flashcard_asset_content(self, asset_uuid: str) -> bytes:
+        return await self._request_bytes(
+            "GET",
+            f"/api/v1/flashcards/assets/{asset_uuid}/content",
+        )
+
+    async def import_flashcards_json_file(
+        self,
+        file_path: Union[str, Path],
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> FlashcardsImportResponse:
+        httpx_files = prepare_files_for_httpx([file_path], upload_field_name="file")
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/flashcards/import/json",
+                files=httpx_files,
+                params={
+                    key: value
+                    for key, value in {
+                        "max_items": max_items,
+                        "max_field_length": max_field_length,
+                    }.items()
+                    if value is not None
+                },
+            )
+            return FlashcardsImportResponse.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def import_flashcards_apkg(
+        self,
+        file_path: Union[str, Path],
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> FlashcardsImportResponse:
+        httpx_files = prepare_files_for_httpx([file_path], upload_field_name="file")
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/flashcards/import/apkg",
+                files=httpx_files,
+                params={
+                    key: value
+                    for key, value in {
+                        "max_items": max_items,
+                        "max_field_length": max_field_length,
+                    }.items()
+                    if value is not None
+                },
+            )
+            return FlashcardsImportResponse.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
 
     async def export_flashcards(
         self,

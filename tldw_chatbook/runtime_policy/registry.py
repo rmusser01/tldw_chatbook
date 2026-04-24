@@ -312,6 +312,12 @@ AUDITED_CAPABILITY_SEEDS = (
                 sources=(SERVER_SOURCE,),
             ),
             _resource(
+                "study.flashcard.assets",
+                actions=(CREATE, DETAIL),
+                domain_id="study",
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
                 "study.flashcard.import",
                 actions=(PREVIEW, IMPORT),
                 domain_id="study",

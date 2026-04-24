@@ -502,6 +502,67 @@ class StudyScopeService:
             )
         )
 
+    async def upload_flashcard_asset(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        file_path: Any,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard assets")
+        payload = await self._maybe_await(service.upload_flashcard_asset(file_path))
+        result = dict(self._with_server_source(payload or {}))
+        result.setdefault("entity_kind", "flashcard_asset")
+        return result
+
+    async def get_flashcard_asset_content(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        asset_uuid: str,
+    ) -> bytes:
+        service = self._server_only_service(mode, "Flashcard assets")
+        return await self._maybe_await(service.get_flashcard_asset_content(asset_uuid))
+
+    async def import_flashcards_json_file(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        file_path: Any,
+        max_items: int | None = None,
+        max_field_length: int | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard import")
+        payload = await self._maybe_await(
+            service.import_flashcards_json_file(
+                file_path,
+                max_items=max_items,
+                max_field_length=max_field_length,
+            )
+        )
+        result = dict(self._with_server_source(payload or {}))
+        result.setdefault("entity_kind", "flashcard_import")
+        return result
+
+    async def import_flashcards_apkg(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        file_path: Any,
+        max_items: int | None = None,
+        max_field_length: int | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard import")
+        payload = await self._maybe_await(
+            service.import_flashcards_apkg(
+                file_path,
+                max_items=max_items,
+                max_field_length=max_field_length,
+            )
+        )
+        result = dict(self._with_server_source(payload or {}))
+        result.setdefault("entity_kind", "flashcard_import")
+        return result
+
     async def get_flashcard_analytics_summary(
         self,
         *,

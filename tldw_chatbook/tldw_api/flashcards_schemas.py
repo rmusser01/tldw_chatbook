@@ -221,6 +221,19 @@ class FlashcardBulkUpdateResponse(BaseModel):
     results: list[FlashcardBulkUpdateResult] = Field(default_factory=list)
 
 
+class FlashcardAssetMetadata(BaseModel):
+    asset_uuid: UUID
+    reference: str
+    markdown_snippet: str
+    mime_type: str
+    byte_size: int
+    width: Optional[int] = None
+    height: Optional[int] = None
+    original_filename: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class FlashcardListResponse(BaseModel):
     items: list[FlashcardResponse]
     count: int

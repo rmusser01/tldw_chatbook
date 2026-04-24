@@ -297,6 +297,41 @@ class ServerStudyService:
             extended_header=extended_header,
         )
 
+    async def upload_flashcard_asset(self, file_path: Any) -> dict[str, Any]:
+        response = await self._require_client().upload_flashcard_asset(file_path)
+        return self._model_to_dict(response)
+
+    async def get_flashcard_asset_content(self, asset_uuid: str) -> bytes:
+        return await self._require_client().get_flashcard_asset_content(asset_uuid)
+
+    async def import_flashcards_json_file(
+        self,
+        file_path: Any,
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().import_flashcards_json_file(
+            file_path,
+            max_items=max_items,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def import_flashcards_apkg(
+        self,
+        file_path: Any,
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().import_flashcards_apkg(
+            file_path,
+            max_items=max_items,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
     async def get_flashcard_analytics_summary(
         self,
         *,

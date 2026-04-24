@@ -384,6 +384,7 @@ _EXPORT_GROUPS = (
         ".flashcards_schemas",
         (
             "FlashcardAnalyticsSummaryResponse",
+            "FlashcardAssetMetadata",
             "FlashcardBulkUpdateError",
             "FlashcardBulkUpdateItemRequest",
             "FlashcardBulkUpdateResponse",

@@ -6,6 +6,7 @@ import pytest
 
 from tldw_chatbook.tldw_api import (
     FlashcardAnalyticsSummaryResponse,
+    FlashcardAssetMetadata,
     FlashcardBulkUpdateItemRequest,
     FlashcardBulkUpdateResponse,
     FlashcardCreateRequest,
@@ -568,6 +569,58 @@ async def test_flashcard_import_preview_and_export_routes_wire(monkeypatch):
     assert isinstance(preview, StructuredQaImportPreviewResponse)
     assert isinstance(imported, FlashcardsImportResponse)
     assert exported.startswith(b"Deck\tFront")
+
+
+@pytest.mark.asyncio
+async def test_flashcard_asset_and_file_import_routes_wire(monkeypatch, tmp_path):
+    client = TLDWAPIClient("http://localhost:8000")
+    image_path = tmp_path / "cell.png"
+    image_path.write_bytes(b"fake-png")
+    json_path = tmp_path / "cards.json"
+    json_path.write_text('[{"front":"Q","back":"A"}]', encoding="utf-8")
+    apkg_path = tmp_path / "cards.apkg"
+    apkg_path.write_bytes(b"fake-apkg")
+    request_mock = AsyncMock(
+        side_effect=[
+            {
+                "asset_uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+                "reference": "flashcard-asset://87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+                "markdown_snippet": "![cell](flashcard-asset://87ca2b3f-7e3a-47d7-a52f-8debc86c03cb)",
+                "mime_type": "image/png",
+                "byte_size": 8,
+                "width": 1,
+                "height": 1,
+                "original_filename": "cell.png",
+            },
+            {"imported": 1, "items": [{"uuid": "card-json-1", "deck_id": 7}], "errors": []},
+            {"imported": 1, "items": [{"uuid": "card-apkg-1", "deck_id": 7}], "errors": []},
+        ]
+    )
+    bytes_mock = AsyncMock(return_value=b"fake-png")
+    monkeypatch.setattr(client, "_request", request_mock)
+    monkeypatch.setattr(client, "_request_bytes", bytes_mock)
+
+    asset = await client.upload_flashcard_asset(image_path)
+    content = await client.get_flashcard_asset_content("87ca2b3f-7e3a-47d7-a52f-8debc86c03cb")
+    json_import = await client.import_flashcards_json_file(json_path, max_items=25)
+    apkg_import = await client.import_flashcards_apkg(apkg_path, max_items=10, max_field_length=2048)
+
+    assert request_mock.await_args_list[0].args[:2] == ("POST", "/api/v1/flashcards/assets")
+    assert request_mock.await_args_list[0].kwargs["files"][0][0] == "file"
+    assert bytes_mock.await_args_list[0].args[:2] == (
+        "GET",
+        "/api/v1/flashcards/assets/87ca2b3f-7e3a-47d7-a52f-8debc86c03cb/content",
+    )
+    assert request_mock.await_args_list[1].args[:2] == ("POST", "/api/v1/flashcards/import/json")
+    assert request_mock.await_args_list[1].kwargs["params"] == {"max_items": 25}
+    assert request_mock.await_args_list[1].kwargs["files"][0][0] == "file"
+    assert request_mock.await_args_list[2].args[:2] == ("POST", "/api/v1/flashcards/import/apkg")
+    assert request_mock.await_args_list[2].kwargs["params"] == {"max_items": 10, "max_field_length": 2048}
+    assert request_mock.await_args_list[2].kwargs["files"][0][0] == "file"
+    assert isinstance(asset, FlashcardAssetMetadata)
+    assert content == b"fake-png"
+    assert json_import.imported == 1
+    assert apkg_import.items[0].uuid == "card-apkg-1"
 
 
 @pytest.mark.asyncio
