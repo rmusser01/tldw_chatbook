@@ -8,6 +8,8 @@ from tldw_chatbook.tldw_api import (
     CancelMediaIngestJobResponse,
     FileCreateOptions,
     FileCreateRequest,
+    ItemsBulkRequest,
+    ItemsBulkResponse,
     IngestionSourceCreateRequest,
     IngestionSourceItemListResponse,
     IngestionSourceItemResponse,
@@ -521,6 +523,42 @@ async def test_reading_item_and_progress_routes_wire_delete_paths(monkeypatch):
     assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/media/42/progress")
     assert mocked.await_args_list[5].args[:2] == ("PUT", "/api/v1/media/42/progress")
     assert mocked.await_args_list[6].args[:2] == ("DELETE", "/api/v1/media/42/progress")
+
+
+@pytest.mark.asyncio
+async def test_reading_bulk_update_routes_to_reading_alias(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "total": 2,
+            "succeeded": 1,
+            "failed": 1,
+            "results": [
+                {"item_id": 31, "success": True},
+                {"item_id": 32, "success": False, "error": "item_not_found"},
+            ],
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    response = await client.bulk_update_reading_items(
+        ItemsBulkRequest(
+            item_ids=[31, 32],
+            action="replace_tags",
+            tags=["ai", "research"],
+        )
+    )
+
+    assert mocked.await_args.args[:2] == ("POST", "/api/v1/reading/items/bulk")
+    assert mocked.await_args.kwargs["json_data"] == {
+        "item_ids": [31, 32],
+        "action": "replace_tags",
+        "tags": ["ai", "research"],
+        "hard": False,
+    }
+    assert isinstance(response, ItemsBulkResponse)
+    assert response.succeeded == 1
+    assert response.results[1].error == "item_not_found"
 
 
 @pytest.mark.asyncio

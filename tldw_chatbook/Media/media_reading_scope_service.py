@@ -22,6 +22,7 @@ from .media_reading_normalizers import (
     normalize_reading_digest_schedule,
     normalize_reading_highlight,
     normalize_reading_import_job,
+    normalize_reading_items_bulk_update,
     normalize_reading_note_link,
     normalize_reading_progress,
     normalize_reading_saved_search,
@@ -213,6 +214,10 @@ class MediaReadingScopeService:
         raise ValueError("Local reading TTS is not available yet.")
 
     @staticmethod
+    def _raise_local_reading_bulk_update_unavailable() -> None:
+        raise ValueError("Bulk reading item mutation requires server mode.")
+
+    @staticmethod
     def _raise_local_reading_digest_schedules_unavailable() -> None:
         raise ValueError("Local reading digest schedules are not available yet.")
 
@@ -402,6 +407,42 @@ class MediaReadingScopeService:
         self._enforce_policy(self._reading_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.delete_media(media_id))
+
+    async def bulk_update_reading_items(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_ids: list[int],
+        action: str,
+        status: str | None = None,
+        favorite: bool | None = None,
+        tags: list[str] | None = None,
+        hard: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_bulk_update_unavailable()
+        action_kind = "delete" if action == "delete" else "update"
+        self._enforce_policy(self._reading_action_id(normalized_mode, action_kind))
+        service = self._service_for_mode(normalized_mode)
+        options = {
+            key: value
+            for key, value in {
+                "status": status,
+                "favorite": favorite,
+                "tags": tags,
+            }.items()
+            if value is not None
+        }
+        payload = await self._maybe_await(
+            service.bulk_update_reading_items(
+                item_ids=item_ids,
+                action=action,
+                hard=hard,
+                **options,
+            )
+        )
+        return normalize_reading_items_bulk_update(payload, backend=normalized_mode.value)
 
     async def undelete_media(self, *, mode: MediaReadingBackend | str | None = None, media_id: Any) -> Any:
         normalized_mode = self._normalize_mode(mode)

@@ -272,6 +272,18 @@ class FakeServerMediaService:
         self.calls.append(("update_media_metadata", media_id, metadata))
         return {"id": media_id, **metadata}
 
+    async def bulk_update_reading_items(self, **kwargs):
+        self.calls.append(("bulk_update_reading_items", kwargs))
+        return {
+            "total": len(kwargs["item_ids"]),
+            "succeeded": len(kwargs["item_ids"]),
+            "failed": 0,
+            "results": [
+                {"item_id": item_id, "success": True}
+                for item_id in kwargs["item_ids"]
+            ],
+        }
+
     async def delete_media(self, media_id):
         self.calls.append(("delete_media", media_id))
         return {"status": "deleted", "item_id": media_id}
@@ -997,6 +1009,47 @@ async def test_scope_service_local_save_and_remove_delegate_to_local_service():
     assert removed["is_read_it_later"] is False
     assert ("save_to_read_it_later", 12) in local.calls
     assert ("remove_from_read_it_later", 12) in local.calls
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_bulk_reading_item_mutations_and_rejects_local_mode():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    result = await scope.bulk_update_reading_items(
+        mode="server",
+        item_ids=[41, 42],
+        action="set_status",
+        status="read",
+    )
+
+    assert result["backend"] == "server"
+    assert result["entity_kind"] == "reading_items_bulk_update"
+    assert result["succeeded"] == 2
+    assert policy.calls == ["media.reading.update.server"]
+    assert server.calls[-1] == (
+        "bulk_update_reading_items",
+        {
+            "item_ids": [41, 42],
+            "action": "set_status",
+            "status": "read",
+            "hard": False,
+        },
+    )
+
+    with pytest.raises(ValueError, match="Bulk reading item mutation requires server mode"):
+        await scope.bulk_update_reading_items(
+            mode="local",
+            item_ids=[12],
+            action="delete",
+            hard=False,
+        )
+    assert policy.calls == ["media.reading.update.server"]
 
 
 @pytest.mark.asyncio

@@ -55,6 +55,8 @@ from .media_reading_schemas import (
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
     IngestionSourceSyncTriggerResponse,
+    ItemsBulkRequest,
+    ItemsBulkResponse,
     MediaIngestJobListResponse,
     MediaIngestJobStatus,
     MediaIngestJobStreamEvent,
@@ -2003,6 +2005,14 @@ class TLDWAPIClient:
             f"/api/v1/reading/items/{item_id}",
             params={"hard": str(hard).lower()},
         )
+
+    async def bulk_update_reading_items(self, request_data: ItemsBulkRequest) -> ItemsBulkResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/reading/items/bulk",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ItemsBulkResponse.model_validate(response)
 
     async def create_reading_saved_search(
         self,

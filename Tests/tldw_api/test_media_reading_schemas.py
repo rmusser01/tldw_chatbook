@@ -3,6 +3,8 @@ import pytest
 from tldw_chatbook.tldw_api import (
     FileCreateOptions,
     FileCreateRequest,
+    ItemsBulkRequest,
+    ItemsBulkResponse,
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
     ReadingDigestOutput,
@@ -29,6 +31,31 @@ def test_reading_update_request_strips_tag_whitespace():
     assert payload.status == "read"
     assert payload.favorite is True
     assert payload.tags == ["ai", "priority"]
+
+
+def test_items_bulk_request_matches_server_contract():
+    request = ItemsBulkRequest(
+        item_ids=[31, 31, 32],
+        action="add_tags",
+        tags=[" ai ", "research"],
+    )
+    response = ItemsBulkResponse(
+        total=2,
+        succeeded=1,
+        failed=1,
+        results=[
+            {"item_id": 31, "success": True},
+            {"item_id": 32, "success": False, "error": "item_not_found"},
+        ],
+    )
+
+    assert request.model_dump(exclude_none=True, mode="json") == {
+        "item_ids": [31, 31, 32],
+        "action": "add_tags",
+        "tags": ["ai", "research"],
+        "hard": False,
+    }
+    assert response.results[1].error == "item_not_found"
 
 
 def test_file_create_request_requires_persist_true():

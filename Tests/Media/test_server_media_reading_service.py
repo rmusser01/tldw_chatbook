@@ -25,6 +25,18 @@ class FakeClient:
         self.calls.append(("delete_reading_item", item_id, hard))
         return {"status": "deleted", "item_id": item_id, "hard": hard}
 
+    async def bulk_update_reading_items(self, request_data):
+        self.calls.append(("bulk_update_reading_items", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "total": 2,
+            "succeeded": 2,
+            "failed": 0,
+            "results": [
+                {"item_id": 41, "success": True},
+                {"item_id": 42, "success": True},
+            ],
+        }
+
     async def get_reading_progress(self, media_id):
         self.calls.append(("get_reading_progress", media_id))
         return {"media_id": media_id, "current_page": 4, "total_pages": 10, "percent_complete": 40.0}
@@ -452,6 +464,31 @@ async def test_server_service_builds_reading_item_update_payload():
                 "tags": ["ai", "ml"],
                 "notes": "Keep this one.",
                 "title": "Renamed",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_bulk_reading_item_updates_with_schema_object():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    result = await service.bulk_update_reading_items(
+        item_ids=[41, 42],
+        action="set_status",
+        status="read",
+    )
+
+    assert result["succeeded"] == 2
+    assert client.calls == [
+        (
+            "bulk_update_reading_items",
+            {
+                "item_ids": [41, 42],
+                "action": "set_status",
+                "status": "read",
+                "hard": False,
             },
         )
     ]

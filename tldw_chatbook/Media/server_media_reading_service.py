@@ -8,6 +8,7 @@ from ..tldw_api import (
     IngestWebContentRequest,
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
+    ItemsBulkRequest,
     MediaSearchRequest,
     MediaIngestJobSubmitRequest,
     ReadingArchiveCreateRequest,
@@ -74,6 +75,26 @@ class ServerMediaReadingService:
         payload = {key: value for key, value in metadata.items() if value is not None}
         request_data = ReadingUpdateRequest(**payload)
         return await self._require_client().update_reading_item(int(media_id), request_data)
+
+    async def bulk_update_reading_items(
+        self,
+        *,
+        item_ids: list[int],
+        action: str,
+        status: str | None = None,
+        favorite: bool | None = None,
+        tags: list[str] | None = None,
+        hard: bool = False,
+    ) -> Any:
+        request_data = ItemsBulkRequest(
+            item_ids=[int(item_id) for item_id in item_ids],
+            action=action,
+            status=status,
+            favorite=favorite,
+            tags=tags,
+            hard=hard,
+        )
+        return await self._require_client().bulk_update_reading_items(request_data)
 
     async def delete_media(self, media_id: Any) -> Any:
         return await self._require_client().delete_reading_item(int(media_id), hard=False)

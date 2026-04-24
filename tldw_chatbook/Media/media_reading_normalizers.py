@@ -386,6 +386,25 @@ def normalize_reading_summary(
     }
 
 
+def normalize_reading_items_bulk_update(
+    payload: Mapping[str, Any] | Any,
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    payload_data = _as_mapping(payload)
+    return {
+        "backend": backend,
+        "entity_kind": "reading_items_bulk_update",
+        "total": int(payload_data.get("total") or 0),
+        "succeeded": int(payload_data.get("succeeded") or 0),
+        "failed": int(payload_data.get("failed") or 0),
+        "results": [
+            _as_mapping(result)
+            for result in list(payload_data.get("results") or [])
+        ],
+    }
+
+
 def normalize_reading_digest_schedule(
     schedule: Mapping[str, Any] | Any,
     *,

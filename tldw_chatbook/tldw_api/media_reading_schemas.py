@@ -36,6 +36,14 @@ ReadingExportFormat = Literal["jsonl", "zip"]
 ReadingDigestFormat = Literal["md", "html"]
 ReadingTTSResponseFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 ReadingTTSTextSource = Literal["text", "summary", "notes"]
+ItemsBulkAction = Literal[
+    "set_status",
+    "set_favorite",
+    "add_tags",
+    "remove_tags",
+    "replace_tags",
+    "delete",
+]
 
 _READING_SAVED_SEARCH_ALLOWED_QUERY_KEYS = {
     "q",
@@ -461,6 +469,37 @@ class ReadingUpdateRequest(BaseModel):
         if isinstance(value, list):
             return [item.strip() if isinstance(item, str) else item for item in value]
         return value
+
+
+class ItemsBulkRequest(BaseModel):
+    item_ids: list[int]
+    action: ItemsBulkAction
+    status: str | None = None
+    favorite: bool | None = None
+    tags: list[str] | None = None
+    hard: bool = False
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _strip_tags(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return [item.strip() if isinstance(item, str) else item for item in value]
+        return value
+
+
+class ItemsBulkResult(BaseModel):
+    item_id: int
+    success: bool
+    error: str | None = None
+
+
+class ItemsBulkResponse(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    results: list[ItemsBulkResult]
 
 
 class ReadingHighlightCreateRequest(BaseModel):
@@ -941,6 +980,10 @@ __all__ = [
     "IngestionSourcePatchRequest",
     "IngestionSourceResponse",
     "IngestionSourceSyncTriggerResponse",
+    "ItemsBulkAction",
+    "ItemsBulkRequest",
+    "ItemsBulkResponse",
+    "ItemsBulkResult",
     "MediaIngestJobItem",
     "MediaIngestJobListResponse",
     "MediaIngestMediaType",
