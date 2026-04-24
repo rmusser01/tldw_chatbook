@@ -33,6 +33,7 @@ ReadingSavedSearchSort = Literal[
     "relevance",
 ]
 ReadingExportFormat = Literal["jsonl", "zip"]
+ReadingDigestFormat = Literal["md", "html"]
 ReadingTTSResponseFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 ReadingTTSTextSource = Literal["text", "summary", "notes"]
 
@@ -684,6 +685,131 @@ class ReadingImportJobsListResponse(BaseModel):
     offset: int | None = None
 
 
+class ReadingDigestSuggestionsConfig(BaseModel):
+    enabled: bool = False
+    limit: int | None = Field(default=None, ge=1, le=200)
+    status: list[Literal["saved", "reading", "read", "archived"]] | None = None
+    exclude_tags: list[str] | None = None
+    max_age_days: int | None = Field(default=None, ge=1, le=3650)
+    include_read: bool = False
+    include_archived: bool = False
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [value]
+        return value
+
+    @field_validator("exclude_tags", mode="before")
+    @classmethod
+    def _coerce_exclude_tags(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [value.strip()]
+        if isinstance(value, list):
+            return [item.strip() if isinstance(item, str) else item for item in value]
+        return value
+
+
+class ReadingDigestScheduleFilters(BaseModel):
+    status: list[Literal["saved", "reading", "read", "archived"]] | None = None
+    tags: list[str] | None = None
+    favorite: bool | None = None
+    domain: str | None = None
+    q: str | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    sort: str | None = None
+    limit: int | None = Field(default=None, ge=1, le=500)
+    suggestions: ReadingDigestSuggestionsConfig | None = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [value.strip()]
+        return value
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _coerce_tags(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [value.strip()]
+        if isinstance(value, list):
+            return [item.strip() if isinstance(item, str) else item for item in value]
+        return value
+
+
+class ReadingDigestScheduleCreateRequest(BaseModel):
+    name: str | None = None
+    cron: str
+    timezone: str | None = None
+    enabled: bool = True
+    require_online: bool = False
+    format: ReadingDigestFormat = "md"
+    template_id: int | None = None
+    template_name: str | None = None
+    retention_days: int | None = Field(default=None, ge=0, le=3650)
+    filters: ReadingDigestScheduleFilters | None = None
+
+
+class ReadingDigestScheduleUpdateRequest(BaseModel):
+    name: str | None = None
+    cron: str | None = None
+    timezone: str | None = None
+    enabled: bool | None = None
+    require_online: bool | None = None
+    format: ReadingDigestFormat | None = None
+    template_id: int | None = None
+    template_name: str | None = None
+    retention_days: int | None = Field(default=None, ge=0, le=3650)
+    filters: ReadingDigestScheduleFilters | None = None
+
+
+class ReadingDigestScheduleResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    name: str | None = None
+    cron: str
+    timezone: str | None = None
+    enabled: bool
+    require_online: bool
+    format: ReadingDigestFormat
+    template_id: int | None = None
+    template_name: str | None = None
+    retention_days: int | None = None
+    filters: ReadingDigestScheduleFilters | None = None
+    last_run_at: str | None = None
+    next_run_at: str | None = None
+    last_status: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ReadingDigestOutput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    output_id: int
+    title: str
+    format: ReadingDigestFormat
+    created_at: str | None = None
+    download_url: str
+    schedule_id: str | None = None
+    schedule_name: str | None = None
+    item_count: int | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ReadingDigestOutputsListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[ReadingDigestOutput] = Field(default_factory=list)
+    total: int
+    limit: int | None = None
+    offset: int | None = None
+
+
 class ReadingArchiveCreateRequest(BaseModel):
     format: Literal["html", "md"] = "html"
     source: Literal["auto", "clean_html", "text"] = "auto"
@@ -834,6 +960,14 @@ __all__ = [
     "ReadingItem",
     "ReadingItemDetail",
     "ReadingItemsListResponse",
+    "ReadingDigestFormat",
+    "ReadingDigestOutput",
+    "ReadingDigestOutputsListResponse",
+    "ReadingDigestScheduleCreateRequest",
+    "ReadingDigestScheduleFilters",
+    "ReadingDigestScheduleResponse",
+    "ReadingDigestScheduleUpdateRequest",
+    "ReadingDigestSuggestionsConfig",
     "ReadingImportJobResponse",
     "ReadingImportJobState",
     "ReadingImportJobStatus",

@@ -11,6 +11,8 @@ from ..tldw_api import (
     MediaSearchRequest,
     MediaIngestJobSubmitRequest,
     ReadingArchiveCreateRequest,
+    ReadingDigestScheduleCreateRequest,
+    ReadingDigestScheduleUpdateRequest,
     ReadingExportRequest,
     ReadingHighlightCreateRequest,
     ReadingHighlightUpdateRequest,
@@ -270,6 +272,62 @@ class ServerMediaReadingService:
             **{key: value for key, value in options.items() if value is not None}
         )
         return await self._require_client().tts_reading_item(int(item_id), request_data)
+
+    async def create_reading_digest_schedule(
+        self,
+        *,
+        cron: str,
+        name: str | None = None,
+        timezone: str | None = None,
+        enabled: bool = True,
+        require_online: bool = False,
+        format: str = "md",
+        template_id: int | None = None,
+        template_name: str | None = None,
+        retention_days: int | None = None,
+        filters: Mapping[str, Any] | None = None,
+    ) -> Any:
+        request_data = ReadingDigestScheduleCreateRequest(
+            name=name,
+            cron=cron,
+            timezone=timezone,
+            enabled=enabled,
+            require_online=require_online,
+            format=format,
+            template_id=template_id,
+            template_name=template_name,
+            retention_days=retention_days,
+            filters=filters,
+        )
+        return await self._require_client().create_reading_digest_schedule(request_data)
+
+    async def list_reading_digest_schedules(self, *, limit: int = 50, offset: int = 0) -> Any:
+        return await self._require_client().list_reading_digest_schedules(limit=limit, offset=offset)
+
+    async def get_reading_digest_schedule(self, schedule_id: str) -> Any:
+        return await self._require_client().get_reading_digest_schedule(str(schedule_id))
+
+    async def update_reading_digest_schedule(self, schedule_id: str, **changes: Any) -> Any:
+        request_data = ReadingDigestScheduleUpdateRequest(
+            **{key: value for key, value in changes.items() if value is not None}
+        )
+        return await self._require_client().update_reading_digest_schedule(str(schedule_id), request_data)
+
+    async def delete_reading_digest_schedule(self, schedule_id: str) -> Any:
+        return await self._require_client().delete_reading_digest_schedule(str(schedule_id))
+
+    async def list_reading_digest_outputs(
+        self,
+        *,
+        schedule_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Any:
+        return await self._require_client().list_reading_digest_outputs(
+            schedule_id=schedule_id,
+            limit=limit,
+            offset=offset,
+        )
 
     async def submit_media_ingest_jobs(
         self,

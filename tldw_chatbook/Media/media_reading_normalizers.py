@@ -386,6 +386,61 @@ def normalize_reading_summary(
     }
 
 
+def normalize_reading_digest_schedule(
+    schedule: Mapping[str, Any] | Any,
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    schedule_data = _as_mapping(schedule)
+    source_id = str(schedule_data.get("id"))
+    return {
+        "id": build_canonical_media_id(backend, "reading_digest_schedule", source_id),
+        "backend": backend,
+        "entity_kind": "reading_digest_schedule",
+        "source_id": source_id,
+        "name": schedule_data.get("name"),
+        "cron": schedule_data.get("cron"),
+        "timezone": schedule_data.get("timezone"),
+        "enabled": bool(schedule_data.get("enabled", False)),
+        "require_online": bool(schedule_data.get("require_online", False)),
+        "format": schedule_data.get("format"),
+        "template_id": schedule_data.get("template_id"),
+        "template_name": schedule_data.get("template_name"),
+        "retention_days": schedule_data.get("retention_days"),
+        "filters": _as_mapping(schedule_data.get("filters")) if schedule_data.get("filters") is not None else None,
+        "last_run_at": _clean_timestamp(schedule_data.get("last_run_at")),
+        "next_run_at": _clean_timestamp(schedule_data.get("next_run_at")),
+        "last_status": schedule_data.get("last_status"),
+        "created_at": _clean_timestamp(schedule_data.get("created_at")),
+        "updated_at": _clean_timestamp(schedule_data.get("updated_at")),
+    }
+
+
+def normalize_reading_digest_output(
+    output: Mapping[str, Any] | Any,
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    output_data = _as_mapping(output)
+    source_id = str(output_data.get("output_id", output_data.get("id")))
+    schedule_id = output_data.get("schedule_id")
+    return {
+        "id": build_canonical_media_id(backend, "reading_digest_output", source_id),
+        "backend": backend,
+        "entity_kind": "reading_digest_output",
+        "source_id": source_id,
+        "output_id": output_data.get("output_id", output_data.get("id")),
+        "title": output_data.get("title"),
+        "format": output_data.get("format"),
+        "download_url": output_data.get("download_url"),
+        "schedule_id": str(schedule_id) if schedule_id is not None else None,
+        "schedule_name": output_data.get("schedule_name"),
+        "item_count": output_data.get("item_count"),
+        "metadata": _as_mapping(output_data.get("metadata")) if output_data.get("metadata") is not None else None,
+        "created_at": _clean_timestamp(output_data.get("created_at")),
+    }
+
+
 def normalize_media_ingest_job(
     job: Mapping[str, Any],
     *,

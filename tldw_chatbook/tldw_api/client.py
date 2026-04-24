@@ -61,6 +61,10 @@ from .media_reading_schemas import (
     MediaIngestJobSubmitRequest,
     ReadingArchiveCreateRequest,
     ReadingArchiveResponse,
+    ReadingDigestOutputsListResponse,
+    ReadingDigestScheduleCreateRequest,
+    ReadingDigestScheduleResponse,
+    ReadingDigestScheduleUpdateRequest,
     ReadingExportRequest,
     ReadingHighlight,
     ReadingHighlightCreateRequest,
@@ -2088,6 +2092,70 @@ class TLDWAPIClient:
             f"/api/v1/reading/items/{item_id}/tts",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
+
+    async def create_reading_digest_schedule(
+        self,
+        request_data: ReadingDigestScheduleCreateRequest,
+    ) -> Dict[str, str]:
+        return await self._request(
+            "POST",
+            "/api/v1/reading/digests/schedules",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def list_reading_digest_schedules(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[ReadingDigestScheduleResponse]:
+        response = await self._request(
+            "GET",
+            "/api/v1/reading/digests/schedules",
+            params={"limit": limit, "offset": offset},
+        )
+        return [ReadingDigestScheduleResponse.model_validate(item) for item in response]
+
+    async def get_reading_digest_schedule(self, schedule_id: str) -> ReadingDigestScheduleResponse:
+        response = await self._request("GET", f"/api/v1/reading/digests/schedules/{schedule_id}")
+        return ReadingDigestScheduleResponse.model_validate(response)
+
+    async def update_reading_digest_schedule(
+        self,
+        schedule_id: str,
+        request_data: ReadingDigestScheduleUpdateRequest,
+    ) -> ReadingDigestScheduleResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/reading/digests/schedules/{schedule_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReadingDigestScheduleResponse.model_validate(response)
+
+    async def delete_reading_digest_schedule(self, schedule_id: str) -> Dict[str, bool]:
+        return await self._request("DELETE", f"/api/v1/reading/digests/schedules/{schedule_id}")
+
+    async def list_reading_digest_outputs(
+        self,
+        *,
+        schedule_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> ReadingDigestOutputsListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/reading/digests/outputs",
+            params={
+                key: value
+                for key, value in {
+                    "schedule_id": schedule_id,
+                    "limit": limit,
+                    "offset": offset,
+                }.items()
+                if value is not None
+            },
+        )
+        return ReadingDigestOutputsListResponse.model_validate(response)
 
     async def get_reading_progress(self, media_id: int) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/media/{media_id}/progress")

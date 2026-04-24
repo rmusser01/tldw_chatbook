@@ -520,6 +520,73 @@ class FakeServerMediaService:
         self.calls.append(("tts_reading_item", item_id, kwargs))
         return b"audio-bytes"
 
+    async def create_reading_digest_schedule(self, **kwargs):
+        self.calls.append(("create_reading_digest_schedule", kwargs))
+        return {"id": "sched-1"}
+
+    async def list_reading_digest_schedules(self, *, limit=50, offset=0):
+        self.calls.append(("list_reading_digest_schedules", limit, offset))
+        return [
+            {
+                "id": "sched-1",
+                "name": "Morning Digest",
+                "cron": "0 8 * * *",
+                "timezone": "UTC",
+                "enabled": True,
+                "require_online": False,
+                "format": "md",
+                "filters": {"status": ["saved"]},
+            }
+        ]
+
+    async def get_reading_digest_schedule(self, schedule_id):
+        self.calls.append(("get_reading_digest_schedule", schedule_id))
+        return {
+            "id": schedule_id,
+            "name": "Morning Digest",
+            "cron": "0 8 * * *",
+            "timezone": "UTC",
+            "enabled": True,
+            "require_online": False,
+            "format": "md",
+        }
+
+    async def update_reading_digest_schedule(self, schedule_id, **changes):
+        self.calls.append(("update_reading_digest_schedule", schedule_id, changes))
+        return {
+            "id": schedule_id,
+            "name": "Morning Digest",
+            "cron": "0 8 * * *",
+            "timezone": "UTC",
+            "enabled": changes.get("enabled", True),
+            "require_online": False,
+            "format": "md",
+        }
+
+    async def delete_reading_digest_schedule(self, schedule_id):
+        self.calls.append(("delete_reading_digest_schedule", schedule_id))
+        return {"ok": True}
+
+    async def list_reading_digest_outputs(self, *, schedule_id=None, limit=50, offset=0):
+        self.calls.append(("list_reading_digest_outputs", schedule_id, limit, offset))
+        return {
+            "items": [
+                {
+                    "output_id": 77,
+                    "title": "Morning Digest",
+                    "format": "md",
+                    "created_at": "2026-04-23T12:00:00Z",
+                    "download_url": "/api/v1/outputs/77/download",
+                    "schedule_id": schedule_id,
+                    "schedule_name": "Morning Digest",
+                    "item_count": 3,
+                }
+            ],
+            "total": 1,
+            "limit": limit,
+            "offset": offset,
+        }
+
     async def submit_media_ingest_jobs(self, **kwargs):
         self.calls.append(("submit_media_ingest_jobs", kwargs))
         return {
@@ -1378,6 +1445,63 @@ async def test_scope_service_routes_server_reading_export_summary_and_tts_with_p
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_server_reading_digest_schedules_and_outputs_with_policy():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(local_service=None, server_service=server, policy_enforcer=policy)
+
+    created = await scope.create_reading_digest_schedule(
+        mode="server",
+        name="Morning Digest",
+        cron="0 8 * * *",
+        timezone="UTC",
+        filters={"status": "saved"},
+    )
+    schedules = await scope.list_reading_digest_schedules(mode="server", limit=25, offset=5)
+    schedule = await scope.get_reading_digest_schedule(mode="server", schedule_id="sched-1")
+    updated = await scope.update_reading_digest_schedule(mode="server", schedule_id="sched-1", enabled=False)
+    deleted = await scope.delete_reading_digest_schedule(mode="server", schedule_id="sched-1")
+    outputs = await scope.list_reading_digest_outputs(
+        mode="server",
+        schedule_id="sched-1",
+        limit=25,
+        offset=5,
+    )
+
+    assert created == {"id": "sched-1"}
+    assert schedules[0]["id"] == "server:reading_digest_schedule:sched-1"
+    assert schedule["entity_kind"] == "reading_digest_schedule"
+    assert updated["enabled"] is False
+    assert deleted == {"ok": True}
+    assert outputs["items"][0]["id"] == "server:reading_digest_output:77"
+    assert outputs["items"][0]["schedule_id"] == "sched-1"
+    assert policy.calls == [
+        "media.reading_digest_schedules.create.server",
+        "media.reading_digest_schedules.list.server",
+        "media.reading_digest_schedules.detail.server",
+        "media.reading_digest_schedules.update.server",
+        "media.reading_digest_schedules.delete.server",
+        "media.reading_digest_outputs.list.server",
+    ]
+    assert server.calls[-6:] == [
+        (
+            "create_reading_digest_schedule",
+            {
+                "name": "Morning Digest",
+                "cron": "0 8 * * *",
+                "timezone": "UTC",
+                "filters": {"status": "saved"},
+            },
+        ),
+        ("list_reading_digest_schedules", 25, 5),
+        ("get_reading_digest_schedule", "sched-1"),
+        ("update_reading_digest_schedule", "sched-1", {"enabled": False}),
+        ("delete_reading_digest_schedule", "sched-1"),
+        ("list_reading_digest_outputs", "sched-1", 25, 5),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_fails_explicitly_for_local_reading_export_summary_and_tts_before_policy():
     policy = FakePolicyEnforcer.deny("blocked")
     scope = MediaReadingScopeService(
@@ -1392,6 +1516,23 @@ async def test_scope_service_fails_explicitly_for_local_reading_export_summary_a
         await scope.summarize_reading_item(mode="local", item_id=31)
     with pytest.raises(ValueError, match="Local reading TTS is not available yet."):
         await scope.tts_reading_item(mode="local", item_id=31, model="kokoro")
+
+    assert policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_fails_explicitly_for_local_reading_digest_operations_before_policy():
+    policy = FakePolicyEnforcer.deny("blocked")
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Local reading digest schedules are not available yet."):
+        await scope.list_reading_digest_schedules(mode="local")
+    with pytest.raises(ValueError, match="Local reading digest outputs are not available yet."):
+        await scope.list_reading_digest_outputs(mode="local")
 
     assert policy.calls == []
 

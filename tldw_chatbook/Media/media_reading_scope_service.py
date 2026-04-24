@@ -18,6 +18,8 @@ from .media_reading_normalizers import (
     normalize_media_ingest_job_submission,
     normalize_media_ingest_job_stream_event,
     normalize_reading_archive,
+    normalize_reading_digest_output,
+    normalize_reading_digest_schedule,
     normalize_reading_highlight,
     normalize_reading_import_job,
     normalize_reading_note_link,
@@ -145,6 +147,14 @@ class MediaReadingScopeService:
         return f"media.reading_tts.{action}.{mode.value}"
 
     @staticmethod
+    def _reading_digest_schedule_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading_digest_schedules.{action}.{mode.value}"
+
+    @staticmethod
+    def _reading_digest_output_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading_digest_outputs.{action}.{mode.value}"
+
+    @staticmethod
     def _ingestion_source_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.ingestion_sources.{action}.{mode.value}"
 
@@ -200,6 +210,14 @@ class MediaReadingScopeService:
     @staticmethod
     def _raise_local_reading_tts_unavailable() -> None:
         raise ValueError("Local reading TTS is not available yet.")
+
+    @staticmethod
+    def _raise_local_reading_digest_schedules_unavailable() -> None:
+        raise ValueError("Local reading digest schedules are not available yet.")
+
+    @staticmethod
+    def _raise_local_reading_digest_outputs_unavailable() -> None:
+        raise ValueError("Local reading digest outputs are not available yet.")
 
     @staticmethod
     def _validate_server_create_source_type(source_type: str) -> str:
@@ -775,6 +793,109 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         payload = {key: value for key, value in options.items() if value is not None}
         return await self._maybe_await(service.tts_reading_item(item_id, **payload))
+
+    async def create_reading_digest_schedule(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        cron: str,
+        **options: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_digest_schedules_unavailable()
+        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        payload = {key: value for key, value in options.items() if value is not None}
+        return await self._maybe_await(service.create_reading_digest_schedule(cron=cron, **payload))
+
+    async def list_reading_digest_schedules(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_digest_schedules_unavailable()
+        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        schedules = await self._maybe_await(service.list_reading_digest_schedules(limit=limit, offset=offset))
+        return [
+            normalize_reading_digest_schedule(schedule, backend=normalized_mode.value)
+            for schedule in list(schedules or [])
+        ]
+
+    async def get_reading_digest_schedule(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        schedule_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_digest_schedules_unavailable()
+        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        schedule = await self._maybe_await(service.get_reading_digest_schedule(schedule_id))
+        return normalize_reading_digest_schedule(schedule, backend=normalized_mode.value)
+
+    async def update_reading_digest_schedule(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        schedule_id: str,
+        **changes: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_digest_schedules_unavailable()
+        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        payload = {key: value for key, value in changes.items() if value is not None}
+        schedule = await self._maybe_await(service.update_reading_digest_schedule(schedule_id, **payload))
+        return normalize_reading_digest_schedule(schedule, backend=normalized_mode.value)
+
+    async def delete_reading_digest_schedule(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        schedule_id: str,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_digest_schedules_unavailable()
+        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "delete"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.delete_reading_digest_schedule(schedule_id))
+
+    async def list_reading_digest_outputs(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        schedule_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_reading_digest_outputs_unavailable()
+        self._enforce_policy(self._reading_digest_output_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.list_reading_digest_outputs(schedule_id=schedule_id, limit=limit, offset=offset)
+        )
+        payload_map = self._as_mapping_payload(payload)
+        return {
+            "items": [
+                normalize_reading_digest_output(output, backend=normalized_mode.value)
+                for output in list(payload_map.get("items") or [])
+            ],
+            "total": payload_map.get("total", 0),
+            "limit": payload_map.get("limit", limit),
+            "offset": payload_map.get("offset", offset),
+        }
 
     async def list_ingestion_sources(self, *, mode: MediaReadingBackend | str | None = None) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)

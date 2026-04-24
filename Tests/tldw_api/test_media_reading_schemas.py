@@ -5,6 +5,12 @@ from tldw_chatbook.tldw_api import (
     FileCreateRequest,
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
+    ReadingDigestOutput,
+    ReadingDigestOutputsListResponse,
+    ReadingDigestScheduleCreateRequest,
+    ReadingDigestScheduleFilters,
+    ReadingDigestScheduleResponse,
+    ReadingDigestScheduleUpdateRequest,
     ReadingProgressUpdate,
     ReadingArchiveCreateRequest,
     ReadingExportRequest,
@@ -182,3 +188,67 @@ def test_reading_tts_request_matches_server_contract():
         "max_chars": 12000,
         "text_source": "text",
     }
+
+
+def test_reading_digest_schedule_contract_matches_server_shapes():
+    request = ReadingDigestScheduleCreateRequest(
+        name="Morning Digest",
+        cron="0 8 * * *",
+        timezone="UTC",
+        filters={
+            "status": "saved",
+            "tags": "ai",
+            "suggestions": {"enabled": True, "limit": 5, "status": "reading"},
+        },
+    )
+    update = ReadingDigestScheduleUpdateRequest(enabled=False)
+    response = ReadingDigestScheduleResponse(
+        id="sched-1",
+        name="Morning Digest",
+        cron="0 8 * * *",
+        timezone="UTC",
+        enabled=True,
+        require_online=False,
+        format="md",
+        filters=ReadingDigestScheduleFilters(status=["saved"], tags=["ai"]),
+    )
+    outputs = ReadingDigestOutputsListResponse(
+        items=[
+            ReadingDigestOutput(
+                output_id=77,
+                title="Morning Digest",
+                format="md",
+                created_at="2026-04-23T12:00:00Z",
+                download_url="/api/v1/outputs/77/download",
+                schedule_id="sched-1",
+                schedule_name="Morning Digest",
+                item_count=3,
+            )
+        ],
+        total=1,
+        limit=25,
+        offset=5,
+    )
+
+    assert request.model_dump(exclude_none=True, mode="json") == {
+        "name": "Morning Digest",
+        "cron": "0 8 * * *",
+        "timezone": "UTC",
+        "enabled": True,
+        "require_online": False,
+        "format": "md",
+        "filters": {
+            "status": ["saved"],
+            "tags": ["ai"],
+            "suggestions": {
+                "enabled": True,
+                "limit": 5,
+                "status": ["reading"],
+                "include_read": False,
+                "include_archived": False,
+            },
+        },
+    }
+    assert update.model_dump(exclude_none=True, mode="json") == {"enabled": False}
+    assert response.filters.status == ["saved"]
+    assert outputs.items[0].download_url == "/api/v1/outputs/77/download"

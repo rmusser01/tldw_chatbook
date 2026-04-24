@@ -232,6 +232,75 @@ class FakeClient:
         self.calls.append(("tts_reading_item", item_id, request_data.model_dump(exclude_none=True, mode="json")))
         return b"audio-bytes"
 
+    async def create_reading_digest_schedule(self, request_data):
+        self.calls.append(("create_reading_digest_schedule", request_data.model_dump(exclude_none=True, mode="json")))
+        return {"id": "sched-1"}
+
+    async def list_reading_digest_schedules(self, *, limit=50, offset=0):
+        self.calls.append(("list_reading_digest_schedules", limit, offset))
+        return [
+            {
+                "id": "sched-1",
+                "name": "Morning Digest",
+                "cron": "0 8 * * *",
+                "timezone": "UTC",
+                "enabled": True,
+                "require_online": False,
+                "format": "md",
+                "filters": {"status": ["saved"]},
+            }
+        ]
+
+    async def get_reading_digest_schedule(self, schedule_id):
+        self.calls.append(("get_reading_digest_schedule", schedule_id))
+        return {
+            "id": schedule_id,
+            "name": "Morning Digest",
+            "cron": "0 8 * * *",
+            "timezone": "UTC",
+            "enabled": True,
+            "require_online": False,
+            "format": "md",
+        }
+
+    async def update_reading_digest_schedule(self, schedule_id, request_data):
+        self.calls.append(
+            ("update_reading_digest_schedule", schedule_id, request_data.model_dump(exclude_none=True, mode="json"))
+        )
+        return {
+            "id": schedule_id,
+            "name": "Morning Digest",
+            "cron": "0 8 * * *",
+            "timezone": "UTC",
+            "enabled": False,
+            "require_online": False,
+            "format": "md",
+        }
+
+    async def delete_reading_digest_schedule(self, schedule_id):
+        self.calls.append(("delete_reading_digest_schedule", schedule_id))
+        return {"ok": True}
+
+    async def list_reading_digest_outputs(self, *, schedule_id=None, limit=50, offset=0):
+        self.calls.append(("list_reading_digest_outputs", schedule_id, limit, offset))
+        return {
+            "items": [
+                {
+                    "output_id": 77,
+                    "title": "Morning Digest",
+                    "format": "md",
+                    "created_at": "2026-04-23T12:00:00Z",
+                    "download_url": "/api/v1/outputs/77/download",
+                    "schedule_id": schedule_id,
+                    "schedule_name": "Morning Digest",
+                    "item_count": 3,
+                }
+            ],
+            "total": 1,
+            "limit": limit,
+            "offset": offset,
+        }
+
     async def submit_media_ingest_jobs(self, request_data, file_paths=None):
         self.calls.append(
             (
@@ -648,6 +717,50 @@ async def test_server_service_routes_reading_export_summary_and_tts_payloads():
                 "text_source": "text",
             },
         ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_reading_digest_schedule_and_output_calls():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    created = await service.create_reading_digest_schedule(
+        name="Morning Digest",
+        cron="0 8 * * *",
+        timezone="UTC",
+        filters={"status": "saved"},
+    )
+    schedules = await service.list_reading_digest_schedules(limit=25, offset=5)
+    schedule = await service.get_reading_digest_schedule("sched-1")
+    updated = await service.update_reading_digest_schedule("sched-1", enabled=False)
+    deleted = await service.delete_reading_digest_schedule("sched-1")
+    outputs = await service.list_reading_digest_outputs(schedule_id="sched-1", limit=25, offset=5)
+
+    assert created == {"id": "sched-1"}
+    assert schedules[0]["id"] == "sched-1"
+    assert schedule["cron"] == "0 8 * * *"
+    assert updated["enabled"] is False
+    assert deleted == {"ok": True}
+    assert outputs["items"][0]["download_url"] == "/api/v1/outputs/77/download"
+    assert client.calls[-6:] == [
+        (
+            "create_reading_digest_schedule",
+            {
+                "name": "Morning Digest",
+                "cron": "0 8 * * *",
+                "timezone": "UTC",
+                "enabled": True,
+                "require_online": False,
+                "format": "md",
+                "filters": {"status": ["saved"]},
+            },
+        ),
+        ("list_reading_digest_schedules", 25, 5),
+        ("get_reading_digest_schedule", "sched-1"),
+        ("update_reading_digest_schedule", "sched-1", {"enabled": False}),
+        ("delete_reading_digest_schedule", "sched-1"),
+        ("list_reading_digest_outputs", "sched-1", 25, 5),
     ]
 
 

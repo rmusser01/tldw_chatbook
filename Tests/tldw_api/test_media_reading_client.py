@@ -17,6 +17,10 @@ from tldw_chatbook.tldw_api import (
     MediaIngestJobStatus,
     MediaIngestJobStreamEvent,
     MediaIngestJobSubmitRequest,
+    ReadingDigestOutputsListResponse,
+    ReadingDigestScheduleCreateRequest,
+    ReadingDigestScheduleResponse,
+    ReadingDigestScheduleUpdateRequest,
     ReadingExportRequest,
     ReadingProgressUpdate,
     ReadingSummarizeRequest,
@@ -161,6 +165,92 @@ async def test_ingestion_source_item_reattach_route_returns_typed_item(monkeypat
     )
     assert isinstance(item, IngestionSourceItemResponse)
     assert item.binding == {"media_id": 99}
+
+
+@pytest.mark.asyncio
+async def test_reading_digest_schedule_and_output_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    schedule_payload = {
+        "id": "sched-1",
+        "name": "Morning Digest",
+        "cron": "0 8 * * *",
+        "timezone": "UTC",
+        "enabled": True,
+        "require_online": False,
+        "format": "md",
+        "filters": {"status": ["saved"], "tags": ["ai"]},
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            {"id": "sched-1"},
+            [schedule_payload],
+            schedule_payload,
+            {**schedule_payload, "enabled": False},
+            {"ok": True},
+            {
+                "items": [
+                    {
+                        "output_id": 77,
+                        "title": "Morning Digest",
+                        "format": "md",
+                        "created_at": "2026-04-23T12:00:00Z",
+                        "download_url": "/api/v1/outputs/77/download",
+                        "schedule_id": "sched-1",
+                        "schedule_name": "Morning Digest",
+                        "item_count": 3,
+                    }
+                ],
+                "total": 1,
+                "limit": 25,
+                "offset": 5,
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    created = await client.create_reading_digest_schedule(
+        ReadingDigestScheduleCreateRequest(
+            name="Morning Digest",
+            cron="0 8 * * *",
+            timezone="UTC",
+            filters={"status": "saved", "tags": "ai"},
+        )
+    )
+    listed = await client.list_reading_digest_schedules(limit=25, offset=5)
+    got = await client.get_reading_digest_schedule("sched-1")
+    updated = await client.update_reading_digest_schedule(
+        "sched-1",
+        ReadingDigestScheduleUpdateRequest(enabled=False),
+    )
+    deleted = await client.delete_reading_digest_schedule("sched-1")
+    outputs = await client.list_reading_digest_outputs(schedule_id="sched-1", limit=25, offset=5)
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/digests/schedules")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "name": "Morning Digest",
+        "cron": "0 8 * * *",
+        "timezone": "UTC",
+        "enabled": True,
+        "require_online": False,
+        "format": "md",
+        "filters": {"status": ["saved"], "tags": ["ai"]},
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/digests/schedules")
+    assert mocked.await_args_list[1].kwargs["params"] == {"limit": 25, "offset": 5}
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/reading/digests/schedules/sched-1")
+    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/reading/digests/schedules/sched-1")
+    assert mocked.await_args_list[3].kwargs["json_data"] == {"enabled": False}
+    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/reading/digests/schedules/sched-1")
+    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/reading/digests/outputs")
+    assert mocked.await_args_list[5].kwargs["params"] == {"schedule_id": "sched-1", "limit": 25, "offset": 5}
+
+    assert created == {"id": "sched-1"}
+    assert isinstance(listed[0], ReadingDigestScheduleResponse)
+    assert isinstance(got, ReadingDigestScheduleResponse)
+    assert updated.enabled is False
+    assert deleted == {"ok": True}
+    assert isinstance(outputs, ReadingDigestOutputsListResponse)
+    assert outputs.items[0].output_id == 77
 
 
 @pytest.mark.asyncio
