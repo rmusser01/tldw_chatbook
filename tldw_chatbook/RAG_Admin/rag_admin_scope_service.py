@@ -333,7 +333,7 @@ class RAGAdminScopeService:
         embedding_provider: str | None = None,
         filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        service = self._server_service_for_mode(mode)
+        service = self._service_for_mode(self._normalize_mode(mode))
         return await self._maybe_await(
             service.search_media_embeddings(
                 query=query,

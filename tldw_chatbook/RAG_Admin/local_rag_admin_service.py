@@ -280,3 +280,46 @@ class LocalRAGAdminService:
             "collection": collection_name,
             "backend": "local",
         }
+
+    def search_media_embeddings(
+        self,
+        *,
+        query: str,
+        top_k: int = 5,
+        collection: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+        embedding_provider: Optional[str] = None,
+        filters: Optional[Mapping[str, Any]] = None,
+    ) -> dict[str, Any]:
+        normalized_query = str(query or "").strip()
+        if not normalized_query:
+            raise ValueError("Local media embedding search requires a query.")
+
+        collection_name = self._default_collection_name(collection)
+        raw_results = self._build_chroma_manager().vector_search(
+            query=normalized_query,
+            collection_name=collection_name,
+            k=max(1, int(top_k)),
+            embedding_model_id_override=embedding_model,
+            where_filter=dict(filters) if filters is not None else None,
+            include_fields=["documents", "metadatas", "distances"],
+        )
+        results: list[dict[str, Any]] = []
+        for result in list(raw_results or []):
+            item = dict(result or {})
+            results.append(
+                {
+                    "id": item.get("id"),
+                    "document": item.get("document", item.get("content")),
+                    "metadata": dict(item.get("metadata") or {}),
+                    "distance": item.get("distance"),
+                }
+            )
+        return {
+            "results": results,
+            "count": len(results),
+            "collection": collection_name,
+            "embedding_model": embedding_model,
+            "embedding_provider": embedding_provider,
+            "backend": "local",
+        }

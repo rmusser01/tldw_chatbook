@@ -29,6 +29,10 @@ class FakeLocalService:
         self.calls.append(("delete_media_embeddings", media_id))
         return {"media_id": media_id, "status": "success", "deleted_count": 2}
 
+    def search_media_embeddings(self, **kwargs):
+        self.calls.append(("search_media_embeddings", kwargs))
+        return {"results": [{"id": "42_chunk_0", "document": "Alpha"}], "count": 1, "backend": "local"}
+
 
 class FakeServerService:
     def __init__(self, templates=None, collection_detail=None):
@@ -51,6 +55,10 @@ class FakeServerService:
     async def list_media_embedding_jobs(self, **kwargs):
         self.calls.append(("list_media_embedding_jobs", kwargs))
         return {"data": [{"uuid": "job-1", "status": "completed"}], "pagination": {"count": 1}}
+
+    async def search_media_embeddings(self, **kwargs):
+        self.calls.append(("search_media_embeddings", kwargs))
+        return {"results": [{"id": "42_chunk_0", "document": "Alpha"}], "count": 1, "backend": "server"}
 
     async def reprocess_media(self, media_id, **kwargs):
         self.calls.append(("reprocess_media", media_id, kwargs))
@@ -177,6 +185,37 @@ async def test_scope_service_routes_local_media_embedding_lifecycle_to_local_bac
         ("get_media_embeddings_status", 42),
         ("generate_media_embeddings", 42, {"embedding_model": "local-embed", "chunk_size": 250}),
         ("delete_media_embeddings", 42),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_media_embedding_search_to_local_backend():
+    local = FakeLocalService()
+    scope = RAGAdminScopeService(local_service=local, server_service=FakeServerService())
+
+    result = await scope.search_media_embeddings(
+        mode="local",
+        query="alpha",
+        top_k=2,
+        collection="local_media_embeddings",
+        embedding_model="local-embed",
+        filters={"media_id": "42"},
+    )
+
+    assert result["backend"] == "local"
+    assert result["count"] == 1
+    assert local.calls == [
+        (
+            "search_media_embeddings",
+            {
+                "query": "alpha",
+                "top_k": 2,
+                "collection": "local_media_embeddings",
+                "embedding_model": "local-embed",
+                "embedding_provider": None,
+                "filters": {"media_id": "42"},
+            },
+        )
     ]
 
 

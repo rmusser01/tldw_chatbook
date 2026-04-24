@@ -53,6 +53,17 @@ class FakeChromaManager:
         self.calls.append(("process_and_store_content", kwargs))
         self.collection.ids = ["42_chunk_0", "42_chunk_1"]
 
+    def vector_search(self, **kwargs):
+        self.calls.append(("vector_search", kwargs))
+        return [
+            {
+                "id": "42_chunk_0",
+                "content": "Alpha beta gamma.",
+                "metadata": {"media_id": "42", "chunk_index": 0},
+                "distance": 0.12,
+            }
+        ]
+
     def delete_from_collection(self, ids, collection_name=None):
         self.calls.append(("delete_from_collection", list(ids), collection_name))
         self.collection.ids = [existing for existing in self.collection.ids if existing not in set(ids)]
@@ -84,3 +95,39 @@ def test_local_rag_admin_generates_status_and_deletes_media_embeddings():
     assert chroma.calls[1][1]["content"] == "Alpha beta gamma."
     assert chroma.calls[1][1]["embedding_model_id_override"] == "local-embed"
     assert chroma.calls[1][1]["chunk_options"] == {"chunk_size": 250, "chunk_overlap": 50}
+
+
+def test_local_rag_admin_searches_media_embeddings_with_chroma():
+    chroma = FakeChromaManager()
+    service = LocalRAGAdminService(media_db=FakeMediaDB(), chroma_manager=chroma)
+
+    result = service.search_media_embeddings(
+        query="alpha",
+        top_k=2,
+        collection="local_media_embeddings",
+        embedding_model="local-embed",
+        filters={"media_id": "42"},
+    )
+
+    assert result["backend"] == "local"
+    assert result["collection"] == "local_media_embeddings"
+    assert result["count"] == 1
+    assert result["results"][0] == {
+        "id": "42_chunk_0",
+        "document": "Alpha beta gamma.",
+        "metadata": {"media_id": "42", "chunk_index": 0},
+        "distance": 0.12,
+    }
+    assert chroma.calls == [
+        (
+            "vector_search",
+            {
+                "query": "alpha",
+                "collection_name": "local_media_embeddings",
+                "k": 2,
+                "embedding_model_id_override": "local-embed",
+                "where_filter": {"media_id": "42"},
+                "include_fields": ["documents", "metadatas", "distances"],
+            },
+        )
+    ]
