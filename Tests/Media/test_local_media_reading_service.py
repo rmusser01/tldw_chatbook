@@ -819,6 +819,41 @@ def test_local_service_ingests_web_content_without_server(memory_db_factory, mon
     assert db.fetch_keywords_for_media_batch([media["id"]]) == {media["id"]: ["local", "web"]}
 
 
+def test_local_service_dispatches_web_content_ingest_notifications(memory_db_factory, tmp_path, monkeypatch):
+    db = memory_db_factory()
+    notifications = ClientNotificationsDB(tmp_path / "notifications.db")
+    dispatcher = NotificationDispatchService(store=notifications)
+    service = LocalMediaReadingService(db, notification_dispatch_service=dispatcher)
+
+    def fake_fetch(url, *, timeout=15, user_agent=None):
+        if url.endswith("/bad"):
+            raise RuntimeError("fetch failed")
+        return {
+            "url": url,
+            "title": "Fetched Article",
+            "content": "Fetched body text",
+            "metadata": {},
+            "extraction_successful": True,
+        }
+
+    monkeypatch.setattr(service, "_fetch_web_content_url", fake_fetch, raising=False)
+
+    result = service.ingest_web_content(
+        urls=["https://example.com/good", "https://example.com/bad"],
+        keywords=["web"],
+    )
+
+    rows = notifications.list_notifications(limit=10, category="media")
+    assert result["count"] == 1
+    assert len(rows) == 1
+    assert rows[0]["source_backend"] == "local"
+    assert rows[0]["source_entity_kind"] == "web_content_ingest"
+    assert rows[0]["severity"] == "warning"
+    assert rows[0]["payload"]["requested"] == 2
+    assert rows[0]["payload"]["completed"] == 1
+    assert rows[0]["payload"]["failed"] == 1
+
+
 def test_local_service_processes_legacy_web_scraping_request(memory_db_factory, monkeypatch):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)

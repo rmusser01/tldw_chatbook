@@ -1414,6 +1414,24 @@ class LocalMediaReadingService:
                 )
 
         success_count = len(media_ids)
+        failed_count = len(results) - success_count
+        severity = "error" if failed_count and success_count == 0 else "warning" if failed_count else "info"
+        self._dispatch_local_notification(
+            category="media",
+            title="Local web content ingest completed",
+            message=(
+                f"Local web content ingest completed with {success_count} completed"
+                f" and {failed_count} failed URL(s)."
+            ),
+            severity=severity,
+            source_entity_kind="web_content_ingest",
+            payload={
+                "requested": len(normalized_urls),
+                "completed": success_count,
+                "failed": failed_count,
+                "media_ids": media_ids,
+            },
+        )
         return {
             "status": "success" if success_count else "failed",
             "message": f"Ingested {success_count} of {len(normalized_urls)} local web content URL(s).",
