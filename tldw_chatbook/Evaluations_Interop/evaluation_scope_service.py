@@ -455,6 +455,15 @@ class EvaluationScopeService:
         service = self._server_only_service(mode, "OCR immediate evaluation")
         return dict(await self._maybe_await(service.evaluate_ocr(**payload)) or {})
 
+    async def evaluate_ocr_pdf(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "OCR PDF immediate evaluation")
+        return dict(await self._maybe_await(service.evaluate_ocr_pdf(**payload)) or {})
+
     async def get_evaluation_history(
         self,
         *,

@@ -2653,6 +2653,57 @@ class TLDWAPIClient:
         )
         return OCREvaluationResponse.model_validate(response)
 
+    async def evaluate_ocr_pdf(
+        self,
+        file_paths: list[str],
+        *,
+        ground_truths: list[str] | None = None,
+        metrics: list[str] | None = None,
+        ground_truths_pages: list[list[str]] | None = None,
+        thresholds: dict[str, float] | None = None,
+        enable_ocr: bool = True,
+        ocr_backend: str | None = None,
+        ocr_lang: str = "eng",
+        ocr_dpi: int = 300,
+        ocr_mode: str = "fallback",
+        ocr_min_page_text_chars: int = 40,
+        ocr_output_format: str | None = None,
+        ocr_prompt_preset: str | None = None,
+    ) -> OCREvaluationResponse:
+        httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
+        data: dict[str, Any] = {
+            "enable_ocr": str(bool(enable_ocr)).lower(),
+            "ocr_lang": ocr_lang,
+            "ocr_dpi": str(int(ocr_dpi)),
+            "ocr_mode": ocr_mode,
+            "ocr_min_page_text_chars": str(int(ocr_min_page_text_chars)),
+        }
+        if ground_truths is not None:
+            data["ground_truths_json"] = json.dumps(ground_truths)
+        if metrics is not None:
+            data["metrics"] = metrics
+        if ground_truths_pages is not None:
+            data["ground_truths_pages_json"] = json.dumps(ground_truths_pages)
+        if thresholds is not None:
+            data["thresholds_json"] = json.dumps(thresholds)
+        if ocr_backend is not None:
+            data["ocr_backend"] = ocr_backend
+        if ocr_output_format is not None:
+            data["ocr_output_format"] = ocr_output_format
+        if ocr_prompt_preset is not None:
+            data["ocr_prompt_preset"] = ocr_prompt_preset
+
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/evaluations/ocr-pdf",
+                data=data,
+                files=httpx_files,
+            )
+            return OCREvaluationResponse.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
+
     async def get_evaluation_history(
         self,
         request_data: EvaluationHistoryRequest,

@@ -328,6 +328,41 @@ class ServerEvaluationsService:
         )
         return self._dump_model(await self._require_client().evaluate_ocr(request))
 
+    async def evaluate_ocr_pdf(
+        self,
+        *,
+        file_paths: list[str],
+        ground_truths: list[str] | None = None,
+        metrics: list[str] | None = None,
+        ground_truths_pages: list[list[str]] | None = None,
+        thresholds: dict[str, float] | None = None,
+        enable_ocr: bool = True,
+        ocr_backend: str | None = None,
+        ocr_lang: str = "eng",
+        ocr_dpi: int = 300,
+        ocr_mode: str = "fallback",
+        ocr_min_page_text_chars: int = 40,
+        ocr_output_format: str | None = None,
+        ocr_prompt_preset: str | None = None,
+    ) -> dict[str, Any]:
+        return self._dump_model(
+            await self._require_client().evaluate_ocr_pdf(
+                file_paths,
+                ground_truths=ground_truths,
+                metrics=metrics,
+                ground_truths_pages=ground_truths_pages,
+                thresholds=thresholds,
+                enable_ocr=enable_ocr,
+                ocr_backend=ocr_backend,
+                ocr_lang=ocr_lang,
+                ocr_dpi=ocr_dpi,
+                ocr_mode=ocr_mode,
+                ocr_min_page_text_chars=ocr_min_page_text_chars,
+                ocr_output_format=ocr_output_format,
+                ocr_prompt_preset=ocr_prompt_preset,
+            )
+        )
+
     async def get_evaluation_history(
         self,
         *,

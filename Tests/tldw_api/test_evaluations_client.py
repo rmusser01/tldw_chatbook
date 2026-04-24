@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -503,6 +504,51 @@ async def test_unified_immediate_evaluation_routes_wire_and_return_typed_models(
     assert batch.aggregate_metrics == {"average_score": 0.9}
     assert ocr.results["items"][0]["cer"] == 0.02
     assert history.aggregations == {"geval": 1}
+
+
+@pytest.mark.asyncio
+async def test_unified_ocr_pdf_evaluation_route_uses_multipart_form(monkeypatch, tmp_path):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "evaluation_id": "ocr_pdf_1",
+            "results": {"items": [{"id": "doc.pdf", "cer": 0.02}]},
+            "evaluation_time": 1.5,
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+    pdf_path = tmp_path / "doc.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    result = await client.evaluate_ocr_pdf(
+        [str(pdf_path)],
+        ground_truths=["hello world"],
+        metrics=["cer"],
+        thresholds={"max_cer": 0.1},
+        enable_ocr=False,
+        ocr_backend="tesseract",
+        ocr_lang="eng",
+        ocr_dpi=200,
+        ocr_mode="always",
+        ocr_min_page_text_chars=10,
+        ocr_output_format="text",
+        ocr_prompt_preset="doc",
+    )
+
+    assert mocked.await_args.args[:2] == ("POST", "/api/v1/evaluations/ocr-pdf")
+    data = mocked.await_args.kwargs["data"]
+    files = mocked.await_args.kwargs["files"]
+    assert data["ground_truths_json"] == json.dumps(["hello world"])
+    assert data["metrics"] == ["cer"]
+    assert data["thresholds_json"] == json.dumps({"max_cer": 0.1})
+    assert data["enable_ocr"] == "false"
+    assert data["ocr_backend"] == "tesseract"
+    assert data["ocr_dpi"] == "200"
+    assert files[0][0] == "files"
+    assert files[0][1][0] == "doc.pdf"
+    assert files[0][1][1].closed is True
+    assert isinstance(result, OCREvaluationResponse)
+    assert result.evaluation_id == "ocr_pdf_1"
 
 
 @pytest.mark.asyncio

@@ -69,6 +69,14 @@ class FakeEvaluationClient:
             "evaluation_time": 0.5,
         }
 
+    async def evaluate_ocr_pdf(self, file_paths, **kwargs):
+        self.calls.append(("evaluate_ocr_pdf", file_paths, kwargs))
+        return {
+            "evaluation_id": "ocr_pdf_1",
+            "results": {"items": [{"id": "doc.pdf", "cer": 0.02}]},
+            "evaluation_time": 1.5,
+        }
+
     async def get_evaluation_history(self, request_data):
         self.calls.append(("get_evaluation_history", request_data))
         return {
@@ -168,6 +176,12 @@ async def test_server_evaluations_service_wraps_unified_immediate_routes():
             }
         ]
     )
+    ocr_pdf = await service.evaluate_ocr_pdf(
+        file_paths=["/tmp/doc.pdf"],
+        ground_truths=["hello world"],
+        metrics=["cer"],
+        thresholds={"max_cer": 0.1},
+    )
     history = await service.get_evaluation_history(evaluation_type="geval", limit=10)
 
     assert geval["average_score"] == 0.91
@@ -176,6 +190,7 @@ async def test_server_evaluations_service_wraps_unified_immediate_routes():
     assert propositions["f1"] == 0.77
     assert batch["aggregate_metrics"] == {"average_score": 0.9}
     assert ocr["results"]["items"][0]["cer"] == 0.02
+    assert ocr_pdf["evaluation_id"] == "ocr_pdf_1"
     assert history["aggregations"] == {"geval": 1}
     assert client.calls[0][0] == "evaluate_geval"
     assert client.calls[0][1].model_dump(mode="json")["metrics"] == [
@@ -192,7 +207,25 @@ async def test_server_evaluations_service_wraps_unified_immediate_routes():
     }
     assert client.calls[4][1].model_dump(mode="json")["evaluation_type"] == "geval"
     assert client.calls[5][1].model_dump(mode="json")["items"][0]["id"] == "doc_1"
-    assert client.calls[6][1].model_dump(exclude_none=True, mode="json") == {
+    assert client.calls[6] == (
+        "evaluate_ocr_pdf",
+        ["/tmp/doc.pdf"],
+        {
+            "ground_truths": ["hello world"],
+            "metrics": ["cer"],
+            "ground_truths_pages": None,
+            "thresholds": {"max_cer": 0.1},
+            "enable_ocr": True,
+            "ocr_backend": None,
+            "ocr_lang": "eng",
+            "ocr_dpi": 300,
+            "ocr_mode": "fallback",
+            "ocr_min_page_text_chars": 40,
+            "ocr_output_format": None,
+            "ocr_prompt_preset": None,
+        },
+    )
+    assert client.calls[7][1].model_dump(exclude_none=True, mode="json") == {
         "evaluation_type": "geval",
         "limit": 10,
         "offset": 0,

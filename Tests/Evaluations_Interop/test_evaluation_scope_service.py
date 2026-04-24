@@ -300,6 +300,14 @@ class FakeServerEvaluationService:
             "evaluation_time": 0.5,
         }
 
+    async def evaluate_ocr_pdf(self, **kwargs):
+        self.calls.append(("evaluate_ocr_pdf", kwargs))
+        return {
+            "evaluation_id": "ocr_pdf_1",
+            "results": {"items": [{"id": "doc.pdf", "cer": 0.02}]},
+            "evaluation_time": 1.5,
+        }
+
     async def get_evaluation_history(self, **kwargs):
         self.calls.append(("get_evaluation_history", kwargs))
         return {
@@ -720,6 +728,12 @@ async def test_scope_service_routes_unified_immediate_evaluations_to_server_only
             }
         ],
     )
+    ocr_pdf = await scope.evaluate_ocr_pdf(
+        mode="server",
+        file_paths=["/tmp/doc.pdf"],
+        ground_truths=["hello world"],
+        metrics=["cer"],
+    )
     history = await scope.get_evaluation_history(mode="server", evaluation_type="geval", limit=10)
 
     assert geval["average_score"] == 0.91
@@ -728,14 +742,19 @@ async def test_scope_service_routes_unified_immediate_evaluations_to_server_only
     assert propositions["f1"] == 0.77
     assert batch["aggregate_metrics"] == {"average_score": 0.9}
     assert ocr["results"]["items"][0]["cer"] == 0.02
+    assert ocr_pdf["evaluation_id"] == "ocr_pdf_1"
     assert history["aggregations"] == {"geval": 1}
-    assert server.calls[-7] == (
+    assert server.calls[-8] == (
         "evaluate_geval",
         {"source_text": "Original text long enough", "summary": "Summary text long enough"},
     )
-    assert server.calls[-4] == (
+    assert server.calls[-5] == (
         "evaluate_propositions",
         {"extracted": ["Claim A"], "reference": ["Claim A"]},
+    )
+    assert server.calls[-2] == (
+        "evaluate_ocr_pdf",
+        {"file_paths": ["/tmp/doc.pdf"], "ground_truths": ["hello world"], "metrics": ["cer"]},
     )
     assert server.calls[-1] == (
         "get_evaluation_history",
