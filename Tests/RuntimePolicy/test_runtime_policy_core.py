@@ -304,6 +304,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
     """),
     "client_notifications": _action_ids("""
         notifications.dispatch.launch.local
+        notifications.preferences.configure.local
+        notifications.preferences.list.local
         notifications.queue.list.local
         notifications.queue.update.local
         notifications.queue.observe.local

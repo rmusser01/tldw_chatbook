@@ -34,8 +34,27 @@ class NotificationDispatchService:
             source_entity_kind=source_entity_kind,
             payload=payload,
         )
-        self._try_toast_or_notify(app=app, message=message, severity=severity)
+        if self._should_deliver(category=category, severity=severity):
+            self._try_toast_or_notify(app=app, message=message, severity=severity)
         return row
+
+    def _should_deliver(self, *, category: str, severity: str) -> bool:
+        get_preferences = getattr(self.store, "get_preferences", None)
+        if not callable(get_preferences):
+            return True
+        preferences = get_preferences()
+        if not preferences.get("delivery_enabled", True):
+            return False
+        muted_categories = {str(value).strip().lower() for value in preferences.get("muted_categories", [])}
+        muted_severities = {str(value).strip().lower() for value in preferences.get("muted_severities", [])}
+        category_key = str(category).strip().lower()
+        severity_key = str(severity).strip().lower()
+        normalized_severity_key = self._normalize_severity(severity_key).strip().lower()
+        return (
+            category_key not in muted_categories
+            and severity_key not in muted_severities
+            and normalized_severity_key not in muted_severities
+        )
 
     def _try_toast_or_notify(self, *, app: Any, message: str, severity: str) -> None:
         notify_severity = self._normalize_severity(severity)

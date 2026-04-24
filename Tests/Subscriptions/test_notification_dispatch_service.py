@@ -94,3 +94,26 @@ def test_notification_dispatch_service_survives_notify_failure_and_missing_hooks
         source_backend="server",
     )
     assert row["category"] == "watchlists"
+
+
+def test_notification_dispatch_service_respects_local_delivery_preferences(tmp_path):
+    store = ClientNotificationsDB(tmp_path / "notifications.db")
+    store.update_preferences(muted_categories=["watchlists"])
+    service = NotificationDispatchService(store=store)
+    app = MagicMock()
+    app.show_toast = MagicMock()
+
+    row = service.dispatch(
+        app=app,
+        category="watchlists",
+        title="Muted watchlist alert",
+        message="This should stay queued without immediate delivery.",
+        severity="warning",
+        source_backend="local",
+        source_entity_kind="watchlist_source",
+    )
+
+    assert row["title"] == "Muted watchlist alert"
+    assert store.list_notifications(limit=10)[0]["title"] == "Muted watchlist alert"
+    app.show_toast.assert_not_called()
+    app.notify.assert_not_called()

@@ -445,6 +445,7 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource("notifications.queue", actions=(LIST, OBSERVE)),
             _resource("notifications.queue", actions=(UPDATE,)),
+            _resource("notifications.preferences", actions=(LIST, CONFIGURE)),
             _resource("notifications.dispatch", actions=(LAUNCH,)),
         ),
     ),
