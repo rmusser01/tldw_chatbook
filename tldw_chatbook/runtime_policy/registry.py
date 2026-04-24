@@ -447,7 +447,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "research_search_provider_surfaces",
         "Research Search / Provider Surfaces",
         "research_search",
-        sources=SEPARATED_SOURCES,
+        sources=REMOTE_ONLY_SOURCES,
         resources=(
             _resource(
                 "research.search.providers",

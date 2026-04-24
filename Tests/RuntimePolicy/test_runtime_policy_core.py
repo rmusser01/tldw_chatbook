@@ -154,7 +154,6 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "research_search_provider_surfaces": {
         "expected_domain_ids": {"research_search"},
         "expected_action_kinds_by_source": {
-            "local": DISCOVER_CONFIGURE_TRIGGER_OBSERVE,
             "server": DISCOVER_CONFIGURE_TRIGGER_OBSERVE,
         },
     },
@@ -644,13 +643,9 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         mcp.tools.trigger.server
     """),
     "research_search_provider_surfaces": _action_ids("""
-        research.search.providers.configure.local
         research.search.providers.configure.server
-        research.search.providers.launch.local
         research.search.providers.launch.server
-        research.search.providers.list.local
         research.search.providers.list.server
-        research.search.providers.observe.local
         research.search.providers.observe.server
     """),
     "research_sessions_runs": _action_ids("""
