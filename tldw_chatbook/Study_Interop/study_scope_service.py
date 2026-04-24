@@ -554,7 +554,8 @@ class StudyScopeService:
         max_items: int | None = None,
         max_field_length: int | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard import")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
             service.import_flashcards_json_file(
                 file_path,
@@ -562,7 +563,8 @@ class StudyScopeService:
                 max_field_length=max_field_length,
             )
         )
-        result = dict(self._with_server_source(payload or {}))
+        result = dict(payload or {})
+        result.setdefault("source", normalized_mode.value)
         result.setdefault("entity_kind", "flashcard_import")
         return result
 

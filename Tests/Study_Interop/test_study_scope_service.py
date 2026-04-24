@@ -167,6 +167,10 @@ class FakeLocalStudyService:
         self.calls.append(("import_flashcards_tsv", content, delimiter, has_header, max_lines, max_line_length, max_field_length))
         return {"imported": 1, "items": [{"uuid": "card-local-1", "deck_id": "deck-local-1"}], "errors": []}
 
+    def import_flashcards_json_file(self, file_path, *, max_items=None, max_field_length=None):
+        self.calls.append(("import_flashcards_json_file", str(file_path), max_items, max_field_length))
+        return {"imported": 1, "items": [{"uuid": "card-local-1", "deck_id": "deck-local-1"}], "errors": []}
+
     def export_flashcards(self, **kwargs):
         self.calls.append(("export_flashcards", kwargs))
         return b"Deck\tFront\tBack\nBiology\tQuestion\tAnswer\n"
@@ -1361,10 +1365,6 @@ async def test_scope_service_routes_server_flashcard_import_export_actions():
         ),
     ]
 
-    with pytest.raises(ValueError, match="server-only"):
-        await scope.import_flashcards_json_file(mode="local", file_path="cards.json")
-
-
 @pytest.mark.asyncio
 async def test_scope_service_routes_local_flashcard_import_export_actions():
     local = FakeLocalStudyService()
@@ -1380,12 +1380,21 @@ async def test_scope_service_routes_local_flashcard_import_export_actions():
         content="Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
         has_header=True,
     )
+    json_import = await scope.import_flashcards_json_file(
+        mode="local",
+        file_path="cards.json",
+        max_items=25,
+        max_field_length=2048,
+    )
     exported = await scope.export_flashcards(mode="local", deck_id="deck-local-1", include_header=True)
 
     assert preview["source"] == "local"
     assert preview["entity_kind"] == "flashcard_import_preview"
     assert imported["source"] == "local"
     assert imported["items"][0]["uuid"] == "card-local-1"
+    assert json_import["source"] == "local"
+    assert json_import["entity_kind"] == "flashcard_import"
+    assert json_import["items"][0]["uuid"] == "card-local-1"
     assert exported.startswith(b"Deck\tFront")
     assert local.calls == [
         ("preview_structured_qa_import", "Q: What powers cells?\nA: ATP", 25, None, None),
@@ -1398,6 +1407,7 @@ async def test_scope_service_routes_local_flashcard_import_export_actions():
             None,
             None,
         ),
+        ("import_flashcards_json_file", "cards.json", 25, 2048),
         (
             "export_flashcards",
             {
@@ -1454,6 +1464,8 @@ async def test_scope_service_routes_server_flashcard_asset_and_file_import_actio
 
     with pytest.raises(ValueError, match="server-only"):
         await scope.upload_flashcard_asset(mode="local", file_path=image_path)
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.import_flashcards_apkg(mode="local", file_path=apkg_path)
 
 
 @pytest.mark.asyncio

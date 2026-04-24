@@ -271,6 +271,44 @@ def test_local_study_service_previews_imports_and_exports_flashcard_tsv():
     assert exported.decode("utf-8").splitlines()[0] == "Deck\tFront\tBack\tTags\tNotes\tExtra"
 
 
+def test_local_study_service_imports_flashcards_from_json_file(tmp_path):
+    db = FakeDB()
+    service = LocalStudyService(db=db)
+    json_path = tmp_path / "cards.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "cards": [
+                    {
+                        "deck": "Biology",
+                        "question": "What powers cells?",
+                        "answer": "ATP",
+                        "tags": ["biology", "cell"],
+                        "notes": "energy",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    imported = service.import_flashcards_json_file(json_path, max_items=10, max_field_length=100)
+
+    assert imported == {
+        "imported": 1,
+        "items": [{"uuid": "card-local-1", "deck_id": "deck-local-1"}],
+        "errors": [],
+    }
+    assert ("create_flashcard", {
+        "deck_id": "deck-local-1",
+        "front": "What powers cells?",
+        "back": "ATP",
+        "tags": "biology cell",
+        "type": "basic",
+        "metadata": {"notes": "energy"},
+    }) in db.calls
+
+
 def test_local_study_service_persists_management_helpers_against_chachanotes_db(tmp_path):
     db = CharactersRAGDB(tmp_path / "study.db", client_id="test_client")
     service = LocalStudyService(db=db)
@@ -332,6 +370,33 @@ def test_local_study_service_imports_and_exports_against_chachanotes_db(tmp_path
     assert imported["errors"] == []
     assert "Deck\tFront\tBack\tTags\tNotes\tExtra" in exported_text
     assert "Biology\tWhat powers cells?\tATP\tbio cell\tenergy" in exported_text
+
+
+def test_local_study_service_imports_json_against_chachanotes_db(tmp_path):
+    db = CharactersRAGDB(tmp_path / "study.db", client_id="test_client")
+    service = LocalStudyService(db=db)
+    json_path = tmp_path / "cards.json"
+    json_path.write_text(
+        json.dumps(
+            [
+                {
+                    "deck_name": "Biology",
+                    "front": "What powers cells?",
+                    "back": "ATP",
+                    "tags": "bio,cell",
+                    "extra": "mitochondria",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    imported = service.import_flashcards_json_file(json_path)
+    exported = service.export_flashcards(deck_id=imported["items"][0]["deck_id"], include_header=True)
+
+    assert imported["imported"] == 1
+    assert imported["errors"] == []
+    assert "Biology\tWhat powers cells?\tATP\tbio cell\t\tmitochondria" in exported.decode("utf-8")
 
 
 def test_local_study_service_updates_review_and_returns_refetched_card():

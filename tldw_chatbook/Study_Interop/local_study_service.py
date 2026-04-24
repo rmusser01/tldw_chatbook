@@ -369,6 +369,82 @@ class LocalStudyService:
 
         return {"imported": len(items), "items": items, "errors": errors}
 
+    @staticmethod
+    def _json_flashcard_records(payload: Any) -> list[Mapping[str, Any]]:
+        if isinstance(payload, list):
+            records = payload
+        elif isinstance(payload, Mapping):
+            records = payload["cards"] if "cards" in payload else payload.get("items")
+        else:
+            records = None
+        if not isinstance(records, list):
+            raise ValueError("JSON flashcard import must be a list or an object with cards/items.")
+        if not all(isinstance(record, Mapping) for record in records):
+            raise ValueError("JSON flashcard import items must be objects.")
+        return list(records)
+
+    @staticmethod
+    def _optional_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            return text or None
+        if isinstance(value, (int, float, bool)):
+            text = str(value).strip()
+            return text or None
+        return json.dumps(value, ensure_ascii=False)
+
+    def import_flashcards_json_file(
+        self,
+        file_path: Any,
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        with open(file_path, "r", encoding="utf-8") as handle:
+            records = self._json_flashcard_records(json.load(handle))
+
+        items: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+
+        if max_items is not None and len(records) > max_items:
+            errors.append({"index": max_items + 1, "error": "Content exceeds max_items."})
+            records = records[:max_items]
+
+        for index, record in enumerate(records, start=1):
+            try:
+                deck_ref = record.get("deck_id") or record.get("deck") or record.get("deck_name")
+                front = self._optional_text(record.get("front") or record.get("question"))
+                back = self._optional_text(record.get("back") or record.get("answer"))
+                tags = self._split_tags(record.get("tags"))
+                notes = self._optional_text(record.get("notes"))
+                extra = self._optional_text(record.get("extra"))
+                if not front or not back:
+                    raise ValueError("Item must contain front and back fields.")
+                fields = [front, back]
+                if notes:
+                    fields.append(notes)
+                if extra:
+                    fields.append(extra)
+                if max_field_length is not None and any(len(field) > max_field_length for field in fields):
+                    raise ValueError("Field exceeds max_field_length.")
+                deck_id = self._resolve_or_create_deck_id(deck_ref)
+                card = self.create_flashcard(
+                    deck_id=deck_id,
+                    front=front,
+                    back=back,
+                    tags=tags,
+                    notes=notes,
+                    extra=extra,
+                )
+                card_id = str(card.get("uuid") or card.get("id"))
+                items.append({"uuid": card_id, "deck_id": deck_id})
+            except Exception as exc:
+                errors.append({"index": index, "error": str(exc)})
+
+        return {"imported": len(items), "items": items, "errors": errors}
+
     def export_flashcards(
         self,
         *,
