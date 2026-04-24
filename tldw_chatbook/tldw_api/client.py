@@ -4346,7 +4346,7 @@ class TLDWAPIClient:
 
         try:
             async for item_dict in self._stream_request(
-                "POST", "/api/v1/mediawiki/process-dump", data=form_data, files=httpx_files
+                "POST", "/api/v1/media/mediawiki/process-dump", data=form_data, files=httpx_files
             ):
                 # Assuming each yielded item from the stream is a dict that can be parsed
                 # into ProcessedMediaWikiPage or an error/progress event.
@@ -4354,6 +4354,10 @@ class TLDWAPIClient:
                 if item_dict.get("type") == "item_result" and "data" in item_dict:
                     page_data = item_dict["data"]
                     page_data["input_ref"] = Path(dump_file_path).name # Add input_ref for client tracking
+                    yield ProcessedMediaWikiPage(**page_data)
+                elif "title" in item_dict and "content" in item_dict:
+                    page_data = dict(item_dict)
+                    page_data["input_ref"] = Path(dump_file_path).name
                     yield ProcessedMediaWikiPage(**page_data)
                 elif item_dict.get("type") == "validation_error":
                     # Yield a ProcessedMediaWikiPage with error status for validation errors
@@ -4374,6 +4378,22 @@ class TLDWAPIClient:
                     )
                 # Can add handling for "progress_total" and "summary" if needed by UI
                 # For now, only yield processed pages or page-level errors
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def ingest_mediawiki_dump(
+        self,
+        request_data: ProcessMediaWikiRequest,
+        dump_file_path: str,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        form_data = model_to_form_data(request_data)
+        httpx_files = prepare_files_for_httpx([dump_file_path], upload_field_name="dump_file")
+
+        try:
+            async for item_dict in self._stream_request(
+                "POST", "/api/v1/media/mediawiki/ingest-dump", data=form_data, files=httpx_files
+            ):
+                yield item_dict
         finally:
             cleanup_file_objects(httpx_files)
 

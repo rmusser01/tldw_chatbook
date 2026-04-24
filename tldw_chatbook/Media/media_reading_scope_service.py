@@ -265,6 +265,10 @@ class MediaReadingScopeService:
         raise ValueError("Local web-content ingest is not available yet.")
 
     @staticmethod
+    def _raise_local_mediawiki_dump_unavailable() -> None:
+        raise ValueError("Local MediaWiki dump processing is not available yet.")
+
+    @staticmethod
     def _raise_local_saved_searches_unavailable() -> None:
         raise ValueError("Local reading saved searches are not available yet.")
 
@@ -676,6 +680,36 @@ class MediaReadingScopeService:
             request_data=request_data,
             file_paths=file_paths,
         )
+
+    async def process_mediawiki_dump(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+        dump_file_path: str,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_mediawiki_dump_unavailable()
+        self._enforce_policy(self._media_processing_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        async for page in service.process_mediawiki_dump(request_data, dump_file_path):
+            yield page
+
+    async def ingest_mediawiki_dump(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+        dump_file_path: str,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_mediawiki_dump_unavailable()
+        self._enforce_policy(self._media_processing_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        async for event in service.ingest_mediawiki_dump(request_data, dump_file_path):
+            yield event
 
     async def get_backing_media_item(
         self,

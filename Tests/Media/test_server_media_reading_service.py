@@ -9,6 +9,7 @@ from tldw_chatbook.tldw_api import (
     ProcessDocumentRequest,
     ProcessEbookRequest,
     ProcessEmailRequest,
+    ProcessMediaWikiRequest,
     ProcessPDFRequest,
     ProcessVideoRequest,
     ReprocessMediaRequest,
@@ -747,6 +748,15 @@ class FakeClient:
                 }
             ],
         }
+
+    async def process_mediawiki_dump(self, request_data, dump_file_path):
+        self.calls.append(("process_mediawiki_dump", request_data.model_dump(exclude_none=True, mode="json"), dump_file_path))
+        yield {"title": "Page One", "content": "Body", "status": "Success", "input_ref": "example.xml"}
+
+    async def ingest_mediawiki_dump(self, request_data, dump_file_path):
+        self.calls.append(("ingest_mediawiki_dump", request_data.model_dump(exclude_none=True, mode="json"), dump_file_path))
+        yield {"type": "progress", "processed": 1}
+        yield {"type": "item_result", "data": {"title": "Stored Page", "media_id": 42}}
 
 
 @pytest.mark.asyncio
@@ -1497,6 +1507,34 @@ async def test_server_service_routes_legacy_web_scraping_process_contract():
                 "mode": "ephemeral",
             },
         )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_mediawiki_process_and_ingest_streams():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+    request = ProcessMediaWikiRequest(wiki_name="Example Wiki")
+
+    pages = [page async for page in service.process_mediawiki_dump(request, "/tmp/example.xml")]
+    events = [event async for event in service.ingest_mediawiki_dump(request, "/tmp/example.xml")]
+
+    assert pages == [{"title": "Page One", "content": "Body", "status": "Success", "input_ref": "example.xml"}]
+    assert events == [
+        {"type": "progress", "processed": 1},
+        {"type": "item_result", "data": {"title": "Stored Page", "media_id": 42}},
+    ]
+    assert client.calls == [
+        (
+            "process_mediawiki_dump",
+            {"wiki_name": "Example Wiki", "skip_redirects": True, "chunk_max_size": 1000},
+            "/tmp/example.xml",
+        ),
+        (
+            "ingest_mediawiki_dump",
+            {"wiki_name": "Example Wiki", "skip_redirects": True, "chunk_max_size": 1000},
+            "/tmp/example.xml",
+        ),
     ]
 
 

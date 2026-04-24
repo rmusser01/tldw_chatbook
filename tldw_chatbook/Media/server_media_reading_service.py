@@ -26,6 +26,7 @@ from ..tldw_api import (
     ProcessDocumentRequest,
     ProcessEbookRequest,
     ProcessEmailRequest,
+    ProcessMediaWikiRequest,
     ProcessPDFRequest,
     ProcessVideoRequest,
     ReadingArchiveCreateRequest,
@@ -167,6 +168,14 @@ class ServerMediaReadingService:
 
     async def process_email(self, request_data: ProcessEmailRequest, file_paths: list[str] | None = None) -> Any:
         return await self._require_client().process_email(request_data, file_paths=file_paths)
+
+    async def process_mediawiki_dump(self, request_data: ProcessMediaWikiRequest, dump_file_path: str) -> Any:
+        async for page in self._require_client().process_mediawiki_dump(request_data, dump_file_path):
+            yield page.model_dump(exclude_none=True, mode="json") if hasattr(page, "model_dump") else page
+
+    async def ingest_mediawiki_dump(self, request_data: ProcessMediaWikiRequest, dump_file_path: str) -> Any:
+        async for event in self._require_client().ingest_mediawiki_dump(request_data, dump_file_path):
+            yield event.model_dump(exclude_none=True, mode="json") if hasattr(event, "model_dump") else event
 
     async def get_media_detail(self, media_id: Any) -> Any:
         return await self._require_client().get_reading_item(int(media_id))

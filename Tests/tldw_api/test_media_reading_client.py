@@ -49,6 +49,7 @@ from tldw_chatbook.tldw_api import (
     MediaUpdateRequest,
     ProcessCodeRequest,
     ProcessEmailRequest,
+    ProcessMediaWikiRequest,
     ReadingDigestOutputsListResponse,
     ReadingDigestScheduleCreateRequest,
     ReadingDigestScheduleResponse,
@@ -1199,6 +1200,91 @@ async def test_process_web_scraping_route_wires_legacy_json_payload(monkeypatch)
     }
     assert isinstance(result, api.WebProcessResponse)
     assert result.results[0].title == "Article"
+
+
+@pytest.mark.asyncio
+async def test_process_mediawiki_dump_uses_media_route_and_plain_page_stream(monkeypatch, tmp_path):
+    dump = tmp_path / "example.xml"
+    dump.write_text("<mediawiki />", encoding="utf-8")
+    client = TLDWAPIClient("http://localhost:8000")
+    calls = []
+
+    async def fake_stream(method, endpoint, data=None, files=None):
+        calls.append(
+            (
+                method,
+                endpoint,
+                dict(data or {}),
+                [(field, file_info[0], file_info[2]) for field, file_info in (files or [])],
+            )
+        )
+        yield {"title": "Page One", "content": "Body", "namespace": 0, "page_id": 5, "status": "Success"}
+        yield {"type": "validation_error", "title": "Broken Page", "detail": [{"msg": "bad"}]}
+
+    monkeypatch.setattr(client, "_stream_request", fake_stream)
+
+    pages = [
+        page
+        async for page in client.process_mediawiki_dump(
+            ProcessMediaWikiRequest(wiki_name="Example Wiki", namespaces_str="0,1"),
+            str(dump),
+        )
+    ]
+
+    assert calls == [
+        (
+            "POST",
+            "/api/v1/media/mediawiki/process-dump",
+            {
+                "wiki_name": "Example Wiki",
+                "namespaces_str": "0,1",
+                "skip_redirects": "true",
+                "chunk_max_size": "1000",
+            },
+            [("dump_file", "example.xml", "application/xml")],
+        )
+    ]
+    assert pages[0].title == "Page One"
+    assert pages[0].status == "Success"
+    assert pages[0].input_ref == "example.xml"
+    assert pages[1].title == "Broken Page"
+    assert pages[1].status == "Error"
+
+
+@pytest.mark.asyncio
+async def test_ingest_mediawiki_dump_uses_media_route_and_streams_raw_events(monkeypatch, tmp_path):
+    dump = tmp_path / "example.xml"
+    dump.write_text("<mediawiki />", encoding="utf-8")
+    client = TLDWAPIClient("http://localhost:8000")
+    calls = []
+
+    async def fake_stream(method, endpoint, data=None, files=None):
+        calls.append((method, endpoint, dict(data or {}), [(field, file_info[0]) for field, file_info in (files or [])]))
+        yield {"type": "progress", "processed": 1}
+        yield {"type": "item_result", "data": {"title": "Stored Page", "media_id": 42}}
+
+    monkeypatch.setattr(client, "_stream_request", fake_stream)
+
+    events = [
+        event
+        async for event in client.ingest_mediawiki_dump(
+            ProcessMediaWikiRequest(wiki_name="Example Wiki"),
+            str(dump),
+        )
+    ]
+
+    assert calls == [
+        (
+            "POST",
+            "/api/v1/media/mediawiki/ingest-dump",
+            {"wiki_name": "Example Wiki", "skip_redirects": "true", "chunk_max_size": "1000"},
+            [("dump_file", "example.xml")],
+        )
+    ]
+    assert events == [
+        {"type": "progress", "processed": 1},
+        {"type": "item_result", "data": {"title": "Stored Page", "media_id": 42}},
+    ]
 
 
 @pytest.mark.asyncio

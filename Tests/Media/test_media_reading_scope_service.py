@@ -14,6 +14,7 @@ from tldw_chatbook.tldw_api import (
     ProcessDocumentRequest,
     ProcessEbookRequest,
     ProcessEmailRequest,
+    ProcessMediaWikiRequest,
     ProcessPDFRequest,
     ProcessVideoRequest,
     WebScrapingRequest,
@@ -901,6 +902,15 @@ class FakeServerMediaService:
                 }
             ],
         }
+
+    async def process_mediawiki_dump(self, request_data, dump_file_path):
+        self.calls.append(("process_mediawiki_dump", request_data.model_dump(exclude_none=True, mode="json"), dump_file_path))
+        yield {"title": "Page One", "content": "Body", "status": "Success", "input_ref": "example.xml"}
+
+    async def ingest_mediawiki_dump(self, request_data, dump_file_path):
+        self.calls.append(("ingest_mediawiki_dump", request_data.model_dump(exclude_none=True, mode="json"), dump_file_path))
+        yield {"type": "progress", "processed": 1}
+        yield {"type": "item_result", "data": {"title": "Stored Page", "media_id": 42}}
 
     async def list_document_versions(self, media_id, include_deleted=False):
         self.calls.append(("list_document_versions", media_id, include_deleted))
@@ -1922,6 +1932,71 @@ async def test_scope_service_routes_legacy_web_scraping_process_contract():
                 url_input="https://example.com/a",
             ),
         )
+    assert denied_policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_mediawiki_process_and_ingest_streams():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+    request = ProcessMediaWikiRequest(wiki_name="Example Wiki")
+
+    pages = [
+        page
+        async for page in scope.process_mediawiki_dump(
+            mode="server",
+            request_data=request,
+            dump_file_path="/tmp/example.xml",
+        )
+    ]
+    events = [
+        event
+        async for event in scope.ingest_mediawiki_dump(
+            mode="server",
+            request_data=request,
+            dump_file_path="/tmp/example.xml",
+        )
+    ]
+
+    assert policy.calls == ["media.processing.launch.server", "media.processing.launch.server"]
+    assert pages == [{"title": "Page One", "content": "Body", "status": "Success", "input_ref": "example.xml"}]
+    assert events == [
+        {"type": "progress", "processed": 1},
+        {"type": "item_result", "data": {"title": "Stored Page", "media_id": 42}},
+    ]
+    assert server.calls == [
+        (
+            "process_mediawiki_dump",
+            {"wiki_name": "Example Wiki", "skip_redirects": True, "chunk_max_size": 1000},
+            "/tmp/example.xml",
+        ),
+        (
+            "ingest_mediawiki_dump",
+            {"wiki_name": "Example Wiki", "skip_redirects": True, "chunk_max_size": 1000},
+            "/tmp/example.xml",
+        ),
+    ]
+
+    denied_policy = FakePolicyEnforcer.deny("blocked")
+    denied_scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=denied_policy,
+    )
+    with pytest.raises(ValueError, match="Local MediaWiki dump processing is not available yet."):
+        _ = [
+            page
+            async for page in denied_scope.process_mediawiki_dump(
+                mode="local",
+                request_data=request,
+                dump_file_path="/tmp/example.xml",
+            )
+        ]
     assert denied_policy.calls == []
 
 
