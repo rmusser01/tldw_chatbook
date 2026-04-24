@@ -17,9 +17,10 @@ class RAGAdminBackend(str, Enum):
 class RAGAdminScopeService:
     """Route retrieval-admin actions to local or server backends and normalize outputs."""
 
-    def __init__(self, *, local_service: Any, server_service: Any):
+    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
         self.local_service = local_service
         self.server_service = server_service
+        self.policy_enforcer = policy_enforcer
 
     def _normalize_mode(self, mode: RAGAdminBackend | str | None) -> RAGAdminBackend:
         if mode is None:
@@ -46,6 +47,11 @@ class RAGAdminScopeService:
             raise ValueError("Server retrieval-admin backend is required for this RAG admin operation.")
         return self._service_for_mode(normalized_mode)
 
+    def _enforce_policy(self, mode: RAGAdminBackend, resource: str, action: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=f"rag.{resource}.{action}.{mode.value}")
+
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
             return await value
@@ -61,6 +67,7 @@ class RAGAdminScopeService:
         user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "template", "list")
         service = self._service_for_mode(normalized_mode)
         records = await self._maybe_await(
             service.list_templates(
@@ -82,6 +89,7 @@ class RAGAdminScopeService:
         template_name: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "template", "detail")
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(service.get_template(template_name))
         return normalize_template_record(normalized_mode.value, record)
@@ -97,6 +105,7 @@ class RAGAdminScopeService:
         user_id: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "template", "create")
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.create_template(
@@ -119,6 +128,7 @@ class RAGAdminScopeService:
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "template", "update")
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.update_template(
@@ -137,7 +147,9 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
         hard_delete: bool = False,
     ) -> None:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "template", "delete")
+        service = self._service_for_mode(normalized_mode)
         await self._maybe_await(service.delete_template(template_name, hard_delete=hard_delete))
 
     async def get_template_diagnostics(
@@ -146,6 +158,7 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "observe")
         service = self._service_for_mode(normalized_mode)
         diagnostics = await self._maybe_await(service.get_template_diagnostics())
         payload = dict(diagnostics or {})
@@ -162,6 +175,7 @@ class RAGAdminScopeService:
         include_metadata: bool = False,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "launch")
         service = self._service_for_mode(normalized_mode)
         method = getattr(service, "apply_template", None)
         if not callable(method):
@@ -181,7 +195,11 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
         template_config: dict[str, Any],
     ) -> dict[str, Any]:
-        service = self._server_service_for_mode(mode)
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != RAGAdminBackend.SERVER:
+            raise ValueError("Server retrieval-admin backend is required for this RAG admin operation.")
+        self._enforce_policy(normalized_mode, "admin", "configure")
+        service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.validate_template_config(template_config))
 
     async def match_templates(
@@ -193,7 +211,11 @@ class RAGAdminScopeService:
         url: str | None = None,
         filename: str | None = None,
     ) -> dict[str, Any]:
-        service = self._server_service_for_mode(mode)
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != RAGAdminBackend.SERVER:
+            raise ValueError("Server retrieval-admin backend is required for this RAG admin operation.")
+        self._enforce_policy(normalized_mode, "admin", "list")
+        service = self._service_for_mode(normalized_mode)
         kwargs: dict[str, Any] = {}
         if media_type is not None:
             kwargs["media_type"] = media_type
@@ -215,7 +237,11 @@ class RAGAdminScopeService:
         save: bool = False,
         classifier: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        service = self._server_service_for_mode(mode)
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != RAGAdminBackend.SERVER:
+            raise ValueError("Server retrieval-admin backend is required for this RAG admin operation.")
+        self._enforce_policy(normalized_mode, "admin", "configure")
+        service = self._service_for_mode(normalized_mode)
         kwargs: dict[str, Any] = {"name": name}
         if example_text is not None:
             kwargs["example_text"] = example_text
@@ -233,6 +259,7 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "list")
         service = self._service_for_mode(normalized_mode)
         records = await self._maybe_await(service.list_collections())
         return [
@@ -247,6 +274,7 @@ class RAGAdminScopeService:
         collection_name: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "observe")
         service = self._service_for_mode(normalized_mode)
         detail = await self._maybe_await(service.get_collection_detail(collection_name))
         return normalize_collection_record(normalized_mode.value, detail)
@@ -257,7 +285,9 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
         collection_name: str,
     ) -> None:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "configure")
+        service = self._service_for_mode(normalized_mode)
         await self._maybe_await(service.delete_collection(collection_name))
 
     async def get_media_embeddings_status(
@@ -266,7 +296,9 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
         media_id: int,
     ) -> dict[str, Any]:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "observe")
+        service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.get_media_embeddings_status(media_id))
 
     async def generate_media_embeddings(
@@ -281,7 +313,9 @@ class RAGAdminScopeService:
         force_regenerate: bool = False,
         priority: int = 50,
     ) -> dict[str, Any]:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "launch")
+        service = self._service_for_mode(normalized_mode)
         kwargs: dict[str, Any] = {}
         if embedding_model is not None:
             kwargs["embedding_model"] = embedding_model
@@ -309,7 +343,11 @@ class RAGAdminScopeService:
         force_regenerate: bool = False,
         priority: int = 50,
     ) -> dict[str, Any]:
-        service = self._server_service_for_mode(mode)
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != RAGAdminBackend.SERVER:
+            raise ValueError("Server retrieval-admin backend is required for this RAG admin operation.")
+        self._enforce_policy(normalized_mode, "admin", "launch")
+        service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(
             service.generate_media_embeddings_batch(
                 media_ids=media_ids,
@@ -333,7 +371,9 @@ class RAGAdminScopeService:
         embedding_provider: str | None = None,
         filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "list")
+        service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(
             service.search_media_embeddings(
                 query=query,
@@ -351,7 +391,9 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
         media_id: int,
     ) -> dict[str, Any]:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "configure")
+        service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.delete_media_embeddings(media_id))
 
     async def get_media_embedding_job(
@@ -360,7 +402,9 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
         job_id: str,
     ) -> dict[str, Any]:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "observe")
+        service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.get_media_embedding_job(job_id))
 
     async def list_media_embedding_jobs(
@@ -371,7 +415,9 @@ class RAGAdminScopeService:
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "observe")
+        service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(
             service.list_media_embedding_jobs(
                 status=status,
@@ -397,7 +443,9 @@ class RAGAdminScopeService:
         force_regenerate_embeddings: bool = False,
         **extra_options: Any,
     ) -> dict[str, Any]:
-        service = self._service_for_mode(self._normalize_mode(mode))
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "admin", "launch")
+        service = self._service_for_mode(normalized_mode)
         kwargs: dict[str, Any] = dict(extra_options)
         kwargs["perform_chunking"] = perform_chunking
         if generate_embeddings:

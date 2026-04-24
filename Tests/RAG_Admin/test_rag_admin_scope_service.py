@@ -3,6 +3,14 @@ import pytest
 from tldw_chatbook.RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
 
 
+class FakePolicyEnforcer:
+    def __init__(self):
+        self.actions = []
+
+    def require_allowed(self, *, action_id):
+        self.actions.append(action_id)
+
+
 class FakeLocalService:
     def __init__(self, templates=None, collection_detail=None):
         self.templates = templates or []
@@ -339,3 +347,62 @@ async def test_scope_service_routes_template_helpers_to_server_only():
 
     with pytest.raises(ValueError, match="Server retrieval-admin backend is required"):
         await scope.validate_template_config(mode="local", template_config=template_config)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_enforces_policy_for_template_and_admin_operations():
+    policy = FakePolicyEnforcer()
+    scope = RAGAdminScopeService(
+        local_service=FakeLocalService(
+            templates=[
+                {
+                    "id": 7,
+                    "name": "local-demo",
+                    "description": "Local demo",
+                    "template_json": "{}",
+                    "is_system": 0,
+                }
+            ],
+            collection_detail={
+                "demo": {
+                    "name": "demo",
+                    "count": 3,
+                    "embedding_dimension": 1536,
+                    "metadata": {},
+                }
+            },
+        ),
+        server_service=FakeServerService(
+            collection_detail={
+                "demo": {
+                    "name": "demo",
+                    "count": 3,
+                    "embedding_dimension": 1536,
+                    "metadata": {},
+                }
+            },
+        ),
+        policy_enforcer=policy,
+    )
+
+    await scope.list_templates(mode="local")
+    await scope.get_collection_detail(mode="server", collection_name="demo")
+    await scope.generate_media_embeddings(mode="server", media_id=42)
+    await scope.list_media_embedding_jobs(mode="local", status="completed")
+    await scope.search_media_embeddings(mode="local", query="alpha")
+    await scope.reprocess_media(mode="server", media_id=42)
+    await scope.validate_template_config(mode="server", template_config={"chunking": {"method": "sentences"}})
+    await scope.match_templates(mode="server", media_type="article")
+    await scope.learn_template(mode="server", name="learned", save=True)
+
+    assert policy.actions == [
+        "rag.template.list.local",
+        "rag.admin.observe.server",
+        "rag.admin.launch.server",
+        "rag.admin.observe.local",
+        "rag.admin.list.local",
+        "rag.admin.launch.server",
+        "rag.admin.configure.server",
+        "rag.admin.list.server",
+        "rag.admin.configure.server",
+    ]
