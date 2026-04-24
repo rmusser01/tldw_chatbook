@@ -33,6 +33,10 @@ class FakeLocalService:
         self.calls.append(("search_media_embeddings", kwargs))
         return {"results": [{"id": "42_chunk_0", "document": "Alpha"}], "count": 1, "backend": "local"}
 
+    def reprocess_media(self, media_id, **kwargs):
+        self.calls.append(("reprocess_media", media_id, kwargs))
+        return {"media_id": media_id, "status": "completed", "backend": "local"}
+
 
 class FakeServerService:
     def __init__(self, templates=None, collection_detail=None):
@@ -220,7 +224,39 @@ async def test_scope_service_routes_local_media_embedding_search_to_local_backen
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_media_reprocess_to_server_only():
+async def test_scope_service_routes_local_media_reprocess_to_local_backend():
+    local = FakeLocalService()
+    scope = RAGAdminScopeService(local_service=local, server_service=FakeServerService())
+
+    result = await scope.reprocess_media(
+        mode="local",
+        media_id=42,
+        perform_chunking=True,
+        generate_embeddings=True,
+        chunk_method="words",
+        chunk_size=250,
+        force_regenerate_embeddings=True,
+    )
+
+    assert result["backend"] == "local"
+    assert result["status"] == "completed"
+    assert local.calls == [
+        (
+            "reprocess_media",
+            42,
+            {
+                "perform_chunking": True,
+                "generate_embeddings": True,
+                "chunk_method": "words",
+                "chunk_size": 250,
+                "force_regenerate_embeddings": True,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_media_reprocess_to_server_backend():
     server = FakeServerService()
     scope = RAGAdminScopeService(local_service=FakeLocalService(), server_service=server)
 
@@ -244,9 +280,6 @@ async def test_scope_service_routes_media_reprocess_to_server_only():
             },
         )
     ]
-
-    with pytest.raises(ValueError, match="Server retrieval-admin backend is required"):
-        await scope.reprocess_media(mode="local", media_id=42)
 
 
 @pytest.mark.asyncio

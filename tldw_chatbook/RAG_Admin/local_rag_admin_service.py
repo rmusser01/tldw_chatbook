@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Optional
 
@@ -77,6 +78,30 @@ class LocalRAGAdminService:
                 return dict(row)
 
         raise ValueError(f"Local media item {media_id} was not found or has no embeddable content.")
+
+    @staticmethod
+    def _word_chunks_for_reprocess(content: str, *, chunk_size: int, chunk_overlap: int) -> list[dict[str, Any]]:
+        words = [(match.group(0), match.start(), match.end()) for match in re.finditer(r"\S+", content)]
+        if not words:
+            return []
+        size = max(1, int(chunk_size))
+        overlap = min(max(0, int(chunk_overlap)), size - 1)
+        step = max(1, size - overlap)
+        chunks: list[dict[str, Any]] = []
+        for start in range(0, len(words), step):
+            bucket = words[start:start + size]
+            if not bucket:
+                continue
+            chunks.append(
+                {
+                    "text": " ".join(word for word, _start, _end in bucket),
+                    "start_index": bucket[0][1],
+                    "end_index": bucket[-1][2],
+                }
+            )
+            if start + size >= len(words):
+                break
+        return chunks
 
     def _embedding_ids_for_media(self, media_id: int, *, collection_name: Optional[str] = None) -> list[str]:
         collection_name = self._default_collection_name(collection_name)
@@ -278,6 +303,75 @@ class LocalRAGAdminService:
             "status": "success",
             "deleted_count": len(ids),
             "collection": collection_name,
+            "backend": "local",
+        }
+
+    def reprocess_media(
+        self,
+        media_id: int,
+        *,
+        perform_chunking: bool = True,
+        generate_embeddings: bool = False,
+        chunk_method: Optional[str] = None,
+        chunk_size: int = 500,
+        chunk_overlap: int = 200,
+        auto_apply_template: bool = False,
+        chunking_template_name: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+        embedding_provider: Optional[str] = None,
+        force_regenerate_embeddings: bool = False,
+        **extra_options: Any,
+    ) -> dict[str, Any]:
+        normalized_media_id = int(media_id)
+        if auto_apply_template or chunking_template_name:
+            raise ValueError("Local media reprocess does not support template-driven chunking yet.")
+        if extra_options:
+            raise ValueError(
+                "Unsupported local media reprocess options: "
+                + ", ".join(sorted(str(option) for option in extra_options))
+            )
+        row = self._get_media_for_embedding(normalized_media_id)
+        content = str(row.get("content") or "").strip()
+        if not content:
+            raise ValueError(f"Local media item {normalized_media_id} has no reprocessable content.")
+
+        chunks_created = 0
+        if perform_chunking:
+            normalized_method = str(chunk_method or "words").lower()
+            if normalized_method != "words":
+                raise ValueError("Local media reprocess currently supports word chunking only.")
+            chunks = self._word_chunks_for_reprocess(
+                content,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+            chunk_persister = getattr(self.media_db, "process_chunks", None)
+            if not callable(chunk_persister):
+                raise ValueError("Local media DB cannot persist reprocessed chunks.")
+            chunk_persister(normalized_media_id, chunks)
+            chunks_created = len(chunks)
+
+        embedding_result: dict[str, Any] | None = None
+        if generate_embeddings:
+            embedding_result = self.generate_media_embeddings(
+                normalized_media_id,
+                embedding_model=embedding_model,
+                embedding_provider=embedding_provider,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                force_regenerate=force_regenerate_embeddings,
+            )
+
+        return {
+            "media_id": normalized_media_id,
+            "status": "completed",
+            "message": "Reprocessed local media item.",
+            "chunks_created": chunks_created,
+            "embeddings_started": bool(generate_embeddings),
+            "embedding_count": (embedding_result or {}).get("embedding_count"),
+            "chunk_method": chunk_method or "words",
+            "chunking_template_name": chunking_template_name,
+            "auto_apply_template": auto_apply_template,
             "backend": "local",
         }
 

@@ -1,3 +1,5 @@
+import pytest
+
 from tldw_chatbook.RAG_Admin.local_rag_admin_service import LocalRAGAdminService
 
 
@@ -11,9 +13,13 @@ class FakeMediaDB:
                 "content": "Alpha beta gamma.",
             }
         }
+        self.processed_chunks = []
 
     def get_media_by_ids_for_embedding(self, media_ids):
         return [self.rows[media_id] for media_id in media_ids if media_id in self.rows]
+
+    def process_chunks(self, media_id, chunks):
+        self.processed_chunks.append((media_id, chunks))
 
 
 class FakeCollection:
@@ -131,3 +137,49 @@ def test_local_rag_admin_searches_media_embeddings_with_chroma():
             },
         )
     ]
+
+
+def test_local_rag_admin_reprocesses_media_chunks_and_embeddings():
+    media_db = FakeMediaDB()
+    chroma = FakeChromaManager()
+    service = LocalRAGAdminService(media_db=media_db, chroma_manager=chroma)
+
+    result = service.reprocess_media(
+        42,
+        perform_chunking=True,
+        generate_embeddings=True,
+        chunk_method="words",
+        chunk_size=2,
+        chunk_overlap=0,
+        embedding_model="local-embed",
+        force_regenerate_embeddings=True,
+    )
+
+    assert result["backend"] == "local"
+    assert result["media_id"] == 42
+    assert result["status"] == "completed"
+    assert result["chunks_created"] == 2
+    assert result["embeddings_started"] is True
+    assert result["embedding_count"] == 2
+    assert media_db.processed_chunks == [
+        (
+            42,
+            [
+                {"text": "Alpha beta", "start_index": 0, "end_index": 10},
+                {"text": "gamma.", "start_index": 11, "end_index": 17},
+            ],
+        )
+    ]
+    assert chroma.calls[0] == ("delete_from_collection", [], "local_media_embeddings")
+    assert chroma.calls[1][0] == "process_and_store_content"
+
+
+def test_local_rag_admin_reprocess_rejects_template_only_options():
+    service = LocalRAGAdminService(media_db=FakeMediaDB(), chroma_manager=FakeChromaManager())
+
+    with pytest.raises(ValueError, match="template-driven chunking"):
+        service.reprocess_media(
+            42,
+            perform_chunking=True,
+            chunking_template_name="article-template",
+        )

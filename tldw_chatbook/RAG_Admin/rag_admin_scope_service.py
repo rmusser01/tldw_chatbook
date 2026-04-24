@@ -397,7 +397,7 @@ class RAGAdminScopeService:
         force_regenerate_embeddings: bool = False,
         **extra_options: Any,
     ) -> dict[str, Any]:
-        service = self._server_service_for_mode(mode)
+        service = self._service_for_mode(self._normalize_mode(mode))
         kwargs: dict[str, Any] = dict(extra_options)
         kwargs["perform_chunking"] = perform_chunking
         if generate_embeddings:
