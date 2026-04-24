@@ -275,6 +275,8 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("media.reading_digest_outputs", actions=(LIST,), sources=(SERVER_SOURCE,)),
             _resource("media.document_outline", actions=(DETAIL,), sources=(SERVER_SOURCE,)),
             _resource("media.document_figures", actions=(LIST,), sources=(SERVER_SOURCE,)),
+            _resource("media.document_insights", actions=(CREATE,), sources=(SERVER_SOURCE,)),
+            _resource("media.document_references", actions=(LIST,), sources=(SERVER_SOURCE,)),
             _resource(
                 "media.document_annotations",
                 actions=(LIST, CREATE, UPDATE, DELETE),

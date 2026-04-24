@@ -7,7 +7,10 @@ from tldw_chatbook.tldw_api import (
     DocumentAnnotationSyncResponse,
     DocumentAnnotationUpdateRequest,
     DocumentFiguresResponse,
+    DocumentInsightsRequest,
+    DocumentInsightsResponse,
     DocumentOutlineResponse,
+    DocumentReferencesResponse,
     DocumentVersionCreateRequest,
     DocumentVersionDetailResponse,
     FileCreateOptions,
@@ -33,6 +36,56 @@ from tldw_chatbook.tldw_api import (
     ReadingTTSRequest,
     ReadingUpdateRequest,
 )
+
+
+def test_document_insights_and_references_models_match_server_contracts():
+    insights_request = DocumentInsightsRequest(
+        categories=["summary", "key_findings"],
+        model="gpt-4o-mini",
+        max_content_length=2000,
+        force=True,
+    )
+    insights_response = DocumentInsightsResponse(
+        media_id=99,
+        insights=[
+            {
+                "category": "summary",
+                "title": "Short summary",
+                "content": "The document discusses testing.",
+                "confidence": 0.9,
+            }
+        ],
+        model_used="gpt-4o-mini",
+        cached=False,
+    )
+    references_response = DocumentReferencesResponse(
+        media_id=99,
+        has_references=True,
+        references=[
+            {
+                "raw_text": "Doe, J. 2024. Testing systems.",
+                "title": "Testing systems",
+                "authors": "Doe, J.",
+                "year": 2024,
+            }
+        ],
+        enrichment_source="semantic_scholar",
+        enriched_count=1,
+        total_detected=1,
+        limit=20,
+        returned_count=1,
+        total_available=1,
+    )
+
+    assert insights_request.model_dump(exclude_none=True, mode="json") == {
+        "categories": ["summary", "key_findings"],
+        "model": "gpt-4o-mini",
+        "max_content_length": 2000,
+        "force": True,
+    }
+    assert insights_response.insights[0].category == "summary"
+    assert references_response.references[0].title == "Testing systems"
+    assert references_response.has_more is False
 
 
 def test_document_workspace_read_models_match_server_contracts():

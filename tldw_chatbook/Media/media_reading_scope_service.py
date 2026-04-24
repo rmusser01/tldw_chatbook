@@ -177,6 +177,14 @@ class MediaReadingScopeService:
         return f"media.document_figures.{action}.{mode.value}"
 
     @staticmethod
+    def _document_insights_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.document_insights.{action}.{mode.value}"
+
+    @staticmethod
+    def _document_references_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.document_references.{action}.{mode.value}"
+
+    @staticmethod
     def _document_annotation_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.document_annotations.{action}.{mode.value}"
 
@@ -1337,6 +1345,58 @@ class MediaReadingScopeService:
                 media_id,
                 annotations=annotations,
                 client_ids=client_ids,
+            )
+        )
+
+    async def generate_document_insights(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        categories: list[str] | None = None,
+        model: str | None = None,
+        max_content_length: int | None = 5000,
+        force: bool | None = False,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_document_workspace(normalized_mode)
+        self._enforce_policy(self._document_insights_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.generate_document_insights(
+                media_id,
+                categories=categories,
+                model=model,
+                max_content_length=max_content_length,
+                force=force,
+            )
+        )
+
+    async def get_document_references(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        enrich: bool = False,
+        reference_index: int | None = None,
+        offset: int = 0,
+        limit: int = 20,
+        parse_cap: int | None = None,
+        search: str | None = None,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_document_workspace(normalized_mode)
+        self._enforce_policy(self._document_references_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.get_document_references(
+                media_id,
+                enrich=enrich,
+                reference_index=reference_index,
+                offset=offset,
+                limit=limit,
+                parse_cap=parse_cap,
+                search=search,
             )
         )
 

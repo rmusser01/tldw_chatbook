@@ -765,6 +765,26 @@ class FakeServerMediaService:
         self.calls.append(("sync_document_annotations", media_id, annotations, client_ids))
         return {"media_id": media_id, "synced_count": len(annotations), "annotations": [], "id_mapping": {"client-1": "ann_1"}}
 
+    async def generate_document_insights(self, media_id, **options):
+        self.calls.append(("generate_document_insights", media_id, options))
+        return {
+            "media_id": media_id,
+            "insights": [{"category": "summary", "title": "Summary", "content": "Short"}],
+            "model_used": "gpt-4o-mini",
+            "cached": False,
+        }
+
+    async def get_document_references(self, media_id, **params):
+        self.calls.append(("get_document_references", media_id, params))
+        return {
+            "media_id": media_id,
+            "has_references": True,
+            "references": [{"raw_text": "Doe 2024"}],
+            "limit": params.get("limit", 20),
+            "returned_count": 1,
+            "total_available": 1,
+        }
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
@@ -1831,6 +1851,37 @@ async def test_scope_service_routes_server_document_workspace_helpers_with_polic
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_server_document_insights_and_references_with_policy_actions():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    insights = await scope_service.generate_document_insights(
+        mode="server",
+        media_id=99,
+        categories=["summary"],
+        force=True,
+    )
+    references = await scope_service.get_document_references(
+        mode="server",
+        media_id=99,
+        enrich=True,
+        limit=10,
+    )
+
+    assert insights["insights"][0]["category"] == "summary"
+    assert references["has_references"] is True
+    assert policy.calls == [
+        "media.document_insights.create.server",
+        "media.document_references.list.server",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_rejects_local_document_workspace_before_policy():
     policy = FakePolicyEnforcer.deny("blocked")
     scope_service = MediaReadingScopeService(
@@ -1844,5 +1895,8 @@ async def test_scope_service_rejects_local_document_workspace_before_policy():
 
     with pytest.raises(ValueError, match="Local document workspace is not available yet."):
         await scope_service.list_document_annotations(mode="local", media_id=99)
+
+    with pytest.raises(ValueError, match="Local document workspace is not available yet."):
+        await scope_service.generate_document_insights(mode="local", media_id=99)
 
     assert policy.calls == []

@@ -13,7 +13,10 @@ from tldw_chatbook.tldw_api import (
     DocumentAnnotationSyncResponse,
     DocumentAnnotationUpdateRequest,
     DocumentFiguresResponse,
+    DocumentInsightsRequest,
+    DocumentInsightsResponse,
     DocumentOutlineResponse,
+    DocumentReferencesResponse,
     DocumentVersionCreateRequest,
     DocumentVersionDetailResponse,
     FileCreateOptions,
@@ -42,6 +45,68 @@ from tldw_chatbook.tldw_api import (
     SubmitMediaIngestJobsResponse,
     TLDWAPIClient,
 )
+
+
+@pytest.mark.asyncio
+async def test_document_insights_and_references_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "media_id": 99,
+                "insights": [
+                    {
+                        "category": "summary",
+                        "title": "Summary",
+                        "content": "Short summary",
+                    }
+                ],
+                "model_used": "gpt-4o-mini",
+                "cached": False,
+            },
+            {
+                "media_id": 99,
+                "has_references": True,
+                "references": [{"raw_text": "Doe 2024", "title": "Testing"}],
+                "limit": 10,
+                "returned_count": 1,
+                "total_available": 1,
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    insights = await client.generate_document_insights(
+        99,
+        DocumentInsightsRequest(categories=["summary"], force=True),
+    )
+    references = await client.get_document_references(
+        99,
+        enrich=True,
+        reference_index=0,
+        offset=5,
+        limit=10,
+        parse_cap=100,
+        search="testing",
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/media/99/insights")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "categories": ["summary"],
+        "max_content_length": 5000,
+        "force": True,
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/99/references")
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "enrich": "true",
+        "reference_index": 0,
+        "offset": 5,
+        "limit": 10,
+        "parse_cap": 100,
+        "search": "testing",
+    }
+    assert isinstance(insights, DocumentInsightsResponse)
+    assert isinstance(references, DocumentReferencesResponse)
 
 
 @pytest.mark.asyncio

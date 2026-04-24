@@ -53,7 +53,10 @@ from .media_reading_schemas import (
     DocumentAnnotationSyncResponse,
     DocumentAnnotationUpdateRequest,
     DocumentFiguresResponse,
+    DocumentInsightsRequest,
+    DocumentInsightsResponse,
     DocumentOutlineResponse,
+    DocumentReferencesResponse,
     DocumentVersionCreateRequest,
     DocumentVersionDetailResponse,
     FileCreateRequest,
@@ -2029,6 +2032,48 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return DocumentAnnotationSyncResponse.model_validate(response)
+
+    async def generate_document_insights(
+        self,
+        media_id: int,
+        request_data: DocumentInsightsRequest | None = None,
+    ) -> DocumentInsightsResponse:
+        payload = (request_data or DocumentInsightsRequest()).model_dump(
+            exclude_none=True,
+            mode="json",
+        )
+        response = await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/insights",
+            json_data=payload,
+        )
+        return DocumentInsightsResponse.model_validate(response)
+
+    async def get_document_references(
+        self,
+        media_id: int,
+        *,
+        enrich: bool = False,
+        reference_index: int | None = None,
+        offset: int = 0,
+        limit: int = 20,
+        parse_cap: int | None = None,
+        search: str | None = None,
+    ) -> DocumentReferencesResponse:
+        params = {
+            "enrich": str(enrich).lower(),
+            "reference_index": reference_index,
+            "offset": offset,
+            "limit": limit,
+            "parse_cap": parse_cap,
+            "search": search,
+        }
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/references",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return DocumentReferencesResponse.model_validate(response)
 
     async def list_media_document_versions(
         self,

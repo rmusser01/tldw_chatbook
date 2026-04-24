@@ -8,6 +8,7 @@ from ..tldw_api import (
     DocumentAnnotationCreateRequest,
     DocumentAnnotationSyncRequest,
     DocumentAnnotationUpdateRequest,
+    DocumentInsightsRequest,
     DocumentVersionCreateRequest,
     IngestWebContentRequest,
     IngestionSourceCreateRequest,
@@ -481,6 +482,46 @@ class ServerMediaReadingService:
             client_ids=client_ids,
         )
         response = await self._require_client().sync_document_annotations(int(media_id), request_data)
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
+
+    async def generate_document_insights(
+        self,
+        media_id: Any,
+        *,
+        categories: list[str] | None = None,
+        model: str | None = None,
+        max_content_length: int | None = 5000,
+        force: bool | None = False,
+    ) -> Any:
+        request_data = DocumentInsightsRequest(
+            categories=categories,
+            model=model,
+            max_content_length=max_content_length,
+            force=force,
+        )
+        response = await self._require_client().generate_document_insights(int(media_id), request_data)
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
+
+    async def get_document_references(
+        self,
+        media_id: Any,
+        *,
+        enrich: bool = False,
+        reference_index: int | None = None,
+        offset: int = 0,
+        limit: int = 20,
+        parse_cap: int | None = None,
+        search: str | None = None,
+    ) -> Any:
+        response = await self._require_client().get_document_references(
+            int(media_id),
+            enrich=enrich,
+            reference_index=reference_index,
+            offset=offset,
+            limit=limit,
+            parse_cap=parse_cap,
+            search=search,
+        )
         return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
 
     async def list_document_versions(self, media_id: Any, *, include_deleted: bool = False) -> Any:

@@ -38,6 +38,16 @@ ReadingTTSResponseFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 ReadingTTSTextSource = Literal["text", "summary", "notes"]
 DocumentAnnotationColor = Literal["yellow", "green", "blue", "pink"]
 DocumentAnnotationType = Literal["highlight", "page_note"]
+DocumentInsightCategory = Literal[
+    "research_gap",
+    "research_question",
+    "motivation",
+    "methods",
+    "key_findings",
+    "limitations",
+    "future_work",
+    "summary",
+]
 ItemsBulkAction = Literal[
     "set_status",
     "set_favorite",
@@ -532,6 +542,58 @@ class DocumentAnnotationSyncResponse(BaseModel):
     synced_count: int = Field(..., ge=0)
     annotations: list[DocumentAnnotationResponse] = Field(default_factory=list)
     id_mapping: dict[str, str] | None = None
+
+
+class DocumentInsightsRequest(BaseModel):
+    categories: list[DocumentInsightCategory] | None = None
+    model: str | None = None
+    max_content_length: int | None = Field(default=5000, ge=500, le=50_000)
+    force: bool | None = False
+
+
+class DocumentInsightItem(BaseModel):
+    category: DocumentInsightCategory
+    title: str
+    content: str
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class DocumentInsightsResponse(BaseModel):
+    media_id: int
+    insights: list[DocumentInsightItem] = Field(default_factory=list)
+    model_used: str
+    cached: bool = False
+
+
+class DocumentReferenceEntry(BaseModel):
+    raw_text: str
+    title: str | None = None
+    authors: str | None = None
+    year: int | None = Field(default=None, ge=1000, le=2100)
+    venue: str | None = None
+    doi: str | None = None
+    arxiv_id: str | None = None
+    url: str | None = None
+    citation_count: int | None = Field(default=None, ge=0)
+    semantic_scholar_id: str | None = None
+    open_access_pdf: str | None = None
+
+
+class DocumentReferencesResponse(BaseModel):
+    media_id: int
+    has_references: bool
+    references: list[DocumentReferenceEntry] = Field(default_factory=list)
+    enrichment_source: str | None = None
+    enriched_count: int = Field(default=0, ge=0)
+    enrichment_limited: bool = False
+    total_detected: int = Field(default=0, ge=0)
+    truncated: bool = False
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=0, ge=0)
+    returned_count: int = Field(default=0, ge=0)
+    total_available: int = Field(default=0, ge=0)
+    has_more: bool = False
+    next_offset: int | None = Field(default=None, ge=0)
 
 
 class DocumentVersionCreateRequest(BaseModel):

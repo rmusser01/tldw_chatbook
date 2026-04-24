@@ -103,6 +103,26 @@ class FakeClient:
         self.calls.append(("sync_document_annotations", media_id, request_data.model_dump(exclude_none=True, mode="json")))
         return {"media_id": media_id, "synced_count": 1, "annotations": [], "id_mapping": {"client-1": "ann_1"}}
 
+    async def generate_document_insights(self, media_id, request_data):
+        self.calls.append(("generate_document_insights", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "media_id": media_id,
+            "insights": [{"category": "summary", "title": "Summary", "content": "Short"}],
+            "model_used": "gpt-4o-mini",
+            "cached": False,
+        }
+
+    async def get_document_references(self, media_id, **params):
+        self.calls.append(("get_document_references", media_id, params))
+        return {
+            "media_id": media_id,
+            "has_references": True,
+            "references": [{"raw_text": "Doe 2024"}],
+            "limit": params.get("limit", 20),
+            "returned_count": 1,
+            "total_available": 1,
+        }
+
     async def get_reading_progress(self, media_id):
         self.calls.append(("get_reading_progress", media_id))
         return {"media_id": media_id, "current_page": 4, "total_pages": 10, "percent_complete": 40.0}
@@ -1114,6 +1134,49 @@ async def test_server_service_document_workspace_helpers_route_to_server_contrac
         ("update_document_annotation", 99, "ann_1", {"text": "Updated", "color": "green"}),
         ("delete_document_annotation", 99, "ann_1"),
         ("sync_document_annotations", 99, {"annotations": [{"location": "page:1", "text": "Quote", "color": "yellow", "annotation_type": "highlight"}], "client_ids": ["client-1"]}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_document_insights_and_references_route_to_server_contract():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    insights = await service.generate_document_insights(
+        99,
+        categories=["summary"],
+        force=True,
+    )
+    references = await service.get_document_references(
+        99,
+        enrich=True,
+        reference_index=0,
+        offset=5,
+        limit=10,
+        parse_cap=100,
+        search="testing",
+    )
+
+    assert insights["insights"][0]["category"] == "summary"
+    assert references["has_references"] is True
+    assert client.calls[-2:] == [
+        (
+            "generate_document_insights",
+            99,
+            {"categories": ["summary"], "max_content_length": 5000, "force": True},
+        ),
+        (
+            "get_document_references",
+            99,
+            {
+                "enrich": True,
+                "reference_index": 0,
+                "offset": 5,
+                "limit": 10,
+                "parse_cap": 100,
+                "search": "testing",
+            },
+        ),
     ]
 
 
