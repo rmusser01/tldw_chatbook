@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from tldw_chatbook.DB.Research_DB import ResearchDatabase
+from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 from tldw_chatbook.Research_Interop import (
     LocalResearchService,
     ResearchScopeService,
@@ -56,6 +58,27 @@ async def test_local_research_service_controls_and_artifacts_are_persisted(tmp_p
     assert cancelled.status == "cancelled"
     assert artifact.artifact_version == 1
     assert await service.get_bundle(run.id) == {"notes.md": "# Notes"}
+
+
+@pytest.mark.asyncio
+async def test_local_research_service_dispatches_lifecycle_notifications(tmp_path):
+    db = ResearchDatabase(tmp_path / "research.db", client_id="tester")
+    notifications = ClientNotificationsDB(tmp_path / "notifications.db")
+    dispatcher = NotificationDispatchService(store=notifications)
+    service = LocalResearchService(db, notification_dispatch_service=dispatcher)
+
+    run = await service.create_run(query="Explain local research notifications", source_policy="local_only")
+    await service.cancel_run(run.id)
+
+    rows = notifications.list_notifications(limit=10, category="research")
+    assert [row["title"] for row in rows] == [
+        "Local research session cancelled",
+        "Local research session created",
+    ]
+    assert rows[0]["source_backend"] == "local"
+    assert rows[0]["source_entity_kind"] == "research_run"
+    assert rows[0]["source_entity_id"] == run.id
+    assert rows[0]["severity"] == "warning"
 
 
 @pytest.mark.asyncio

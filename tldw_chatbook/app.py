@@ -1596,7 +1596,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _wire_research_services(self) -> None:
         try:
             self.research_db = ResearchDatabase(get_research_db_path(), client_id=self.client_id)
-            self.local_research_service = LocalResearchService(self.research_db)
+            self.local_research_service = LocalResearchService(
+                self.research_db,
+                notification_dispatch_service=self.notification_dispatch_service,
+                notification_app=self,
+            )
         except Exception:
             logger.warning("Local research service unavailable during app wiring", exc_info=True)
             self.research_db = None

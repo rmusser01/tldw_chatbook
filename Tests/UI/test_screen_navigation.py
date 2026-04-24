@@ -183,6 +183,8 @@ def test_app_initializes_research_services(app):
     assert isinstance(app.server_research_service, ServerResearchService)
     assert isinstance(app.research_scope_service, ResearchScopeService)
     assert app.local_research_service.db is app.research_db
+    assert app.local_research_service.notification_dispatch_service is app.notification_dispatch_service
+    assert app.local_research_service.notification_app is app
     assert app.research_scope_service.local_service is app.local_research_service
     assert app.research_scope_service.server_service is app.server_research_service
     assert app.research_scope_service.policy_enforcer is app.service_policy_enforcer

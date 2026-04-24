@@ -13,8 +13,59 @@ from .research_normalizers import normalize_research_artifact, normalize_researc
 class LocalResearchService:
     """Local-first research session lifecycle without server execution."""
 
-    def __init__(self, db: ResearchDatabase):
+    def __init__(
+        self,
+        db: ResearchDatabase,
+        *,
+        notification_dispatch_service: Any = None,
+        notification_app: Any = None,
+    ):
         self.db = db
+        self.notification_dispatch_service = notification_dispatch_service
+        self.notification_app = notification_app
+
+    def configure_notification_dispatch(
+        self,
+        *,
+        notification_dispatch_service: Any = None,
+        notification_app: Any = None,
+    ) -> None:
+        self.notification_dispatch_service = notification_dispatch_service
+        self.notification_app = notification_app
+
+    def _dispatch_local_notification(
+        self,
+        *,
+        title: str,
+        message: str,
+        severity: str = "info",
+        run: ResearchRun,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        dispatcher = getattr(self, "notification_dispatch_service", None)
+        dispatch = getattr(dispatcher, "dispatch", None)
+        if not callable(dispatch):
+            return None
+        try:
+            return dispatch(
+                app=getattr(self, "notification_app", None),
+                category="research",
+                title=title,
+                message=message,
+                severity=severity,
+                source_backend="local",
+                source_entity_id=run.id,
+                source_entity_kind="research_run",
+                payload={
+                    "run_id": run.id,
+                    "query": run.query,
+                    "status": run.status,
+                    "phase": run.phase,
+                    **(payload or {}),
+                },
+            )
+        except Exception:
+            return None
 
     async def create_run(
         self,
@@ -28,7 +79,7 @@ class LocalResearchService:
         follow_up: dict[str, Any] | None = None,
         **_: Any,
     ) -> ResearchRun:
-        return normalize_research_run(
+        run = normalize_research_run(
             "local",
             self.db.create_run(
                 query=query,
@@ -40,6 +91,13 @@ class LocalResearchService:
                 follow_up=follow_up,
             ),
         )
+        self._dispatch_local_notification(
+            title="Local research session created",
+            message=f"Local research session created: {run.query}",
+            run=run,
+            payload={"action": "created"},
+        )
+        return run
 
     async def list_runs(self, *, limit: int = 25, **_: Any) -> list[ResearchRun]:
         return [
@@ -72,7 +130,7 @@ class LocalResearchService:
         )
 
     async def cancel_run(self, run_id: str) -> ResearchRun:
-        return normalize_research_run(
+        run = normalize_research_run(
             "local",
             self.db.update_run_state(
                 run_id,
@@ -81,6 +139,14 @@ class LocalResearchService:
                 progress_message="Local research session cancelled.",
             ),
         )
+        self._dispatch_local_notification(
+            title="Local research session cancelled",
+            message=f"Local research session cancelled: {run.query}",
+            severity="warning",
+            run=run,
+            payload={"action": "cancelled"},
+        )
+        return run
 
     async def save_artifact(
         self,
