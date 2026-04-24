@@ -8,8 +8,10 @@ from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..tldw_api import (
     ConversationShareLinkCreateRequest,
     ConversationUpdateRequest,
+    KnowledgeSaveRequest,
     RagContextPersistRequest,
     TLDWAPIClient,
+    ValidateDictionaryRequest,
 )
 
 
@@ -197,4 +199,42 @@ class ServerChatConversationService:
 
     async def get_conversation_citations(self, conversation_id: str) -> dict[str, Any]:
         response = await self._require_client().get_chat_conversation_citations(conversation_id)
+        return self._as_dict(response)
+
+    async def list_commands(self) -> dict[str, Any]:
+        response = await self._require_client().list_chat_commands()
+        return self._as_dict(response)
+
+    async def validate_dictionary(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        response = await self._require_client().validate_chat_dictionary(ValidateDictionaryRequest(**dict(payload)))
+        return self._as_dict(response)
+
+    async def get_queue_status(self) -> dict[str, Any]:
+        response = await self._require_client().get_chat_queue_status()
+        return self._as_dict(response)
+
+    async def get_queue_activity(self, *, limit: int = 50) -> dict[str, Any]:
+        response = await self._require_client().get_chat_queue_activity(limit=limit)
+        return self._as_dict(response)
+
+    async def save_knowledge(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        response = await self._require_client().save_chat_knowledge(KnowledgeSaveRequest(**dict(payload)))
+        return self._as_dict(response)
+
+    async def get_analytics(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        bucket_granularity: str = "day",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        response = await self._require_client().get_chat_analytics(
+            start_date=start_date,
+            end_date=end_date,
+            bucket_granularity=bucket_granularity,
+            limit=limit,
+            offset=offset,
+        )
         return self._as_dict(response)

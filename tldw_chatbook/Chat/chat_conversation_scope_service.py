@@ -357,3 +357,79 @@ class ChatConversationScopeService:
         self._enforce_policy(normalized_mode, "detail")
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.get_conversation_citations(conversation_id))
+
+    async def list_commands(
+        self,
+        *,
+        mode: ChatConversationBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "list")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.list_commands())
+
+    async def validate_dictionary(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        mode: ChatConversationBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "detail")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.validate_dictionary(dict(payload)))
+
+    async def get_queue_status(
+        self,
+        *,
+        mode: ChatConversationBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "detail")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.get_queue_status())
+
+    async def get_queue_activity(
+        self,
+        *,
+        mode: ChatConversationBackend | str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "detail")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.get_queue_activity(limit=limit))
+
+    async def save_knowledge(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        mode: ChatConversationBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "update")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.save_knowledge(dict(payload)))
+
+    async def get_analytics(
+        self,
+        *,
+        mode: ChatConversationBackend | str | None = None,
+        start_date: str,
+        end_date: str,
+        bucket_granularity: str = "day",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_mode(mode)
+        self._enforce_policy(normalized_mode, "detail")
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.get_analytics(
+                start_date=start_date,
+                end_date=end_date,
+                bucket_granularity=bucket_granularity,
+                limit=limit,
+                offset=offset,
+            )
+        )

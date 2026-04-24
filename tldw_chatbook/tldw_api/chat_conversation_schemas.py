@@ -262,6 +262,151 @@ class ConversationTreeResponse(BaseModel):
     depth_cap: int = Field(..., description="Applied depth cap")
 
 
+class ChatCommandInfo(BaseModel):
+    """A slash command exposed by the server chat command registry."""
+
+    name: str = Field(..., description="Command name without the leading slash")
+    description: str = Field(..., description="Brief description of what the command does")
+    required_permission: str | None = Field(None, description="Permission required to invoke this command")
+    usage: str | None = Field(None, description="Usage string shown to users")
+    args: list[str] = Field(default_factory=list, description="Ordered argument names expected by this command")
+    requires_api_key: bool | None = Field(None, description="Whether API key-backed access is required")
+    rate_limit: str | None = Field(None, description="Human-readable rate-limit summary")
+    rbac_required: bool | None = Field(None, description="Whether RBAC guards the command")
+
+
+class ChatCommandsListResponse(BaseModel):
+    """Container for available server chat commands."""
+
+    commands: list[ChatCommandInfo] = Field(..., description="List of available commands")
+
+
+class ValidationIssue(BaseModel):
+    """A single dictionary validation issue."""
+
+    code: str
+    field: str
+    message: str
+
+
+class ValidateDictionaryRequest(BaseModel):
+    """Request body for server-side chat dictionary validation."""
+
+    data: dict[str, Any] = Field(..., description="Dictionary JSON data including entries")
+    schema_version: int = Field(1, description="Schema version for validation")
+    strict: bool = Field(False, description="If true, fail import policy while still returning a report")
+
+
+class ValidateDictionaryResponse(BaseModel):
+    """Structured dictionary validation result."""
+
+    ok: bool
+    schema_version: int
+    errors: list[ValidationIssue] = Field(default_factory=list)
+    warnings: list[ValidationIssue] = Field(default_factory=list)
+    entry_stats: dict[str, int] = Field(default_factory=dict)
+    suggested_fixes: list[str] = Field(default_factory=list)
+    partial: bool = False
+    partial_reason: str | None = None
+
+
+class ChatQueueStatusResponse(BaseModel):
+    """Flexible server chat queue diagnostics payload."""
+
+    enabled: bool
+
+    model_config = {"extra": "allow"}
+
+
+class ChatQueueActivityResponse(BaseModel):
+    """Flexible recent server chat queue activity payload."""
+
+    enabled: bool
+    limit: int | None = None
+    activity: list[dict[str, Any]] = Field(default_factory=list)
+
+    model_config = {"extra": "allow"}
+
+
+class KnowledgeSaveRequest(BaseModel):
+    """Persist a server conversation snippet into server notes and optional flashcards."""
+
+    conversation_id: str = Field(..., description="Conversation to backlink")
+    message_id: str | None = Field(None, description="Optional message ID to backlink")
+    scope_type: Literal["global", "workspace"] = Field("global", description="Conversation scope type")
+    workspace_id: str | None = Field(None, description="Workspace ID when scope_type='workspace'")
+    snippet: str = Field(..., min_length=1, description="Snippet content to save")
+    tags: list[str] | None = Field(None, description="Optional tags to attach as keywords")
+    make_flashcard: bool = Field(False, description="If true, also create a flashcard from the snippet")
+    export_to: Literal["none", "notion", "wiki"] = Field("none", description="Optional export target")
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _normalize_tags(cls, value: Any) -> list[str] | None:
+        if value is None:
+            return None
+
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if item is None:
+                continue
+            normalized = str(item).strip()
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(normalized)
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def _validate_scope(self) -> "KnowledgeSaveRequest":
+        if self.scope_type == "workspace" and not self.workspace_id:
+            raise ValueError("workspace_id is required when scope_type='workspace'")
+        if self.scope_type == "global":
+            self.workspace_id = None
+        return self
+
+
+class KnowledgeSaveResponse(BaseModel):
+    """Server response for persisted chat knowledge snippets."""
+
+    note_id: str
+    flashcard_id: str | None = None
+    conversation_id: str
+    message_id: str | None = None
+    export_status: Literal["not_requested", "skipped_disabled", "queued", "completed"] = "not_requested"
+    export_job_id: str | None = None
+
+
+class ChatAnalyticsBucket(BaseModel):
+    """One server conversation analytics histogram bucket."""
+
+    bucket_start: datetime = Field(..., description="Bucket start date (UTC)")
+    topic_label: str | None = Field(None, description="Topic label for the bucket")
+    state: str = Field(..., description="Conversation state for the bucket")
+    count: int = Field(..., description="Conversations in bucket")
+
+
+class ChatAnalyticsPagination(BaseModel):
+    """Pagination metadata for server conversation analytics buckets."""
+
+    limit: int
+    offset: int
+    total: int
+    has_more: bool
+
+
+class ChatAnalyticsResponse(BaseModel):
+    """Server conversation analytics histogram response."""
+
+    buckets: list[ChatAnalyticsBucket]
+    pagination: ChatAnalyticsPagination
+    bucket_granularity: Literal["day", "week"]
+
+
 class ConversationShareLinkCreateRequest(BaseModel):
     """Request payload for creating a server conversation share link."""
 

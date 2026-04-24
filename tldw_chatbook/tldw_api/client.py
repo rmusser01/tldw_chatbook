@@ -409,16 +409,24 @@ from .writing_manuscript_schemas import (
     ReorderRequest,
 )
 from .chat_conversation_schemas import (
+    ChatAnalyticsResponse,
+    ChatCommandsListResponse,
+    ChatQueueActivityResponse,
+    ChatQueueStatusResponse,
     ConversationCitationsResponse,
     ConversationShareLinkCreateRequest,
     ConversationShareLinkResponse,
     ConversationShareLinkRevokeResponse,
     ConversationShareLinksResponse,
     ConversationScopeParams,
+    KnowledgeSaveRequest,
+    KnowledgeSaveResponse,
     RagContextPersistRequest,
     RagContextPersistResponse,
     SharedConversationResolveResponse,
     ConversationUpdateRequest,
+    ValidateDictionaryRequest,
+    ValidateDictionaryResponse,
     normalize_conversation_state,
 )
 from .chat_loop_schemas import (
@@ -5386,6 +5394,63 @@ class TLDWAPIClient:
     async def get_chat_conversation_citations(self, conversation_id: str) -> ConversationCitationsResponse:
         response = await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/citations")
         return ConversationCitationsResponse.model_validate(response)
+
+    async def list_chat_commands(self) -> ChatCommandsListResponse:
+        response = await self._request("GET", "/api/v1/chat/commands")
+        return ChatCommandsListResponse.model_validate(response)
+
+    async def validate_chat_dictionary(
+        self,
+        request_data: ValidateDictionaryRequest,
+    ) -> ValidateDictionaryResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/chat/dictionaries/validate",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ValidateDictionaryResponse.model_validate(response)
+
+    async def get_chat_queue_status(self) -> ChatQueueStatusResponse:
+        response = await self._request("GET", "/api/v1/chat/queue/status")
+        return ChatQueueStatusResponse.model_validate(response)
+
+    async def get_chat_queue_activity(self, limit: int = 50) -> ChatQueueActivityResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/chat/queue/activity",
+            params={"limit": limit},
+        )
+        return ChatQueueActivityResponse.model_validate(response)
+
+    async def save_chat_knowledge(self, request_data: KnowledgeSaveRequest) -> KnowledgeSaveResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/chat/knowledge/save",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return KnowledgeSaveResponse.model_validate(response)
+
+    async def get_chat_analytics(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        bucket_granularity: Literal["day", "week"] = "day",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> ChatAnalyticsResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/chat/analytics",
+            params={
+                "start_date": start_date,
+                "end_date": end_date,
+                "bucket_granularity": bucket_granularity,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        return ChatAnalyticsResponse.model_validate(response)
 
     async def start_chat_loop_run(self, request_data: ChatLoopStartRequest) -> ChatLoopStartResponse:
         response = await self._request(

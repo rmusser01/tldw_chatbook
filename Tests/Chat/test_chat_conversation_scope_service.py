@@ -137,6 +137,39 @@ class FakeServerConversationService:
         self.calls.append(("get_conversation_citations", (conversation_id,), {}))
         return {"conversation_id": conversation_id, "citations": [], "total_count": 0}
 
+    async def list_commands(self) -> dict[str, Any]:
+        self.calls.append(("list_commands", (), {}))
+        return {"commands": [{"name": "search", "description": "Search"}]}
+
+    async def validate_dictionary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append(("validate_dictionary", (payload,), {}))
+        return {"ok": True, "schema_version": payload.get("schema_version", 1), "errors": [], "warnings": []}
+
+    async def get_queue_status(self) -> dict[str, Any]:
+        self.calls.append(("get_queue_status", (), {}))
+        return {"enabled": True, "queued": 0}
+
+    async def get_queue_activity(self, *, limit: int = 50) -> dict[str, Any]:
+        self.calls.append(("get_queue_activity", (), {"limit": limit}))
+        return {"enabled": True, "limit": limit, "activity": []}
+
+    async def save_knowledge(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append(("save_knowledge", (payload,), {}))
+        return {
+            "note_id": "note-1",
+            "conversation_id": payload["conversation_id"],
+            "message_id": payload.get("message_id"),
+            "export_status": "not_requested",
+        }
+
+    async def get_analytics(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("get_analytics", (), kwargs))
+        return {
+            "buckets": [],
+            "pagination": {"limit": kwargs["limit"], "offset": kwargs["offset"], "total": 0, "has_more": False},
+            "bucket_granularity": kwargs["bucket_granularity"],
+        }
+
 
 @pytest.mark.asyncio
 async def test_scope_service_defaults_to_local_list_and_enforces_policy() -> None:
@@ -368,6 +401,76 @@ async def test_scope_service_rejects_local_conversation_adjuncts_before_policy()
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_server_chat_administration_adjuncts_with_policy() -> None:
+    server = FakeServerConversationService()
+    policy = FakePolicyEnforcer()
+    service = ChatConversationScopeService(local_service=None, server_service=server, policy_enforcer=policy)
+
+    await service.list_commands(mode="server")
+    await service.validate_dictionary(
+        {"data": {"entries": []}, "schema_version": 1, "strict": True},
+        mode="server",
+    )
+    await service.get_queue_status(mode="server")
+    await service.get_queue_activity(mode="server", limit=5)
+    await service.save_knowledge(
+        {
+            "conversation_id": "conv-1",
+            "message_id": "msg-1",
+            "snippet": "Durable note",
+            "tags": ["sync"],
+        },
+        mode="server",
+    )
+    await service.get_analytics(
+        mode="server",
+        start_date="2026-04-01T00:00:00Z",
+        end_date="2026-04-23T00:00:00Z",
+        bucket_granularity="day",
+        limit=10,
+        offset=0,
+    )
+
+    assert server.calls == [
+        ("list_commands", (), {}),
+        ("validate_dictionary", ({"data": {"entries": []}, "schema_version": 1, "strict": True},), {}),
+        ("get_queue_status", (), {}),
+        ("get_queue_activity", (), {"limit": 5}),
+        (
+            "save_knowledge",
+            (
+                {
+                    "conversation_id": "conv-1",
+                    "message_id": "msg-1",
+                    "snippet": "Durable note",
+                    "tags": ["sync"],
+                },
+            ),
+            {},
+        ),
+        (
+            "get_analytics",
+            (),
+            {
+                "start_date": "2026-04-01T00:00:00Z",
+                "end_date": "2026-04-23T00:00:00Z",
+                "bucket_granularity": "day",
+                "limit": 10,
+                "offset": 0,
+            },
+        ),
+    ]
+    assert policy.calls == [
+        "chat.list.server",
+        "chat.detail.server",
+        "chat.detail.server",
+        "chat.detail.server",
+        "chat.update.server",
+        "chat.detail.server",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_tree_uses_detail_policy_and_pagination_mapping() -> None:
     local = FakeLocalConversationService()
     policy = FakePolicyEnforcer()
@@ -410,6 +513,34 @@ async def test_server_service_adapts_client_methods_and_update_request() -> None
             self.calls.append(("get_chat_conversation_tree", (conversation_id,), kwargs))
             return {"conversation": {"id": conversation_id}, "root_threads": [], "pagination": {}}
 
+        async def list_chat_commands(self) -> dict[str, Any]:
+            self.calls.append(("list_chat_commands", (), {}))
+            return {"commands": []}
+
+        async def validate_chat_dictionary(self, request_data: Any) -> dict[str, Any]:
+            self.calls.append(("validate_chat_dictionary", (request_data,), {}))
+            return {"ok": True, "schema_version": request_data.schema_version}
+
+        async def get_chat_queue_status(self) -> dict[str, Any]:
+            self.calls.append(("get_chat_queue_status", (), {}))
+            return {"enabled": True}
+
+        async def get_chat_queue_activity(self, *, limit: int = 50) -> dict[str, Any]:
+            self.calls.append(("get_chat_queue_activity", (), {"limit": limit}))
+            return {"enabled": True, "limit": limit, "activity": []}
+
+        async def save_chat_knowledge(self, request_data: Any) -> dict[str, Any]:
+            self.calls.append(("save_chat_knowledge", (request_data,), {}))
+            return {"note_id": "note-1", "conversation_id": request_data.conversation_id}
+
+        async def get_chat_analytics(self, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("get_chat_analytics", (), kwargs))
+            return {
+                "buckets": [],
+                "pagination": {"limit": kwargs["limit"], "offset": kwargs["offset"], "total": 0, "has_more": False},
+                "bucket_granularity": kwargs["bucket_granularity"],
+            }
+
     client = FakeClient()
     service = ServerChatConversationService(client=client)
 
@@ -423,6 +554,18 @@ async def test_server_service_adapts_client_methods_and_update_request() -> None
         workspace_id="ws-1",
     )
     await service.get_conversation_tree("conv-1", root_limit=2, root_offset=1, depth_cap=3)
+    await service.list_commands()
+    await service.validate_dictionary({"data": {"entries": []}, "schema_version": 1, "strict": True})
+    await service.get_queue_status()
+    await service.get_queue_activity(limit=5)
+    await service.save_knowledge({"conversation_id": "conv-1", "snippet": "Durable note", "tags": ["sync"]})
+    await service.get_analytics(
+        start_date="2026-04-01T00:00:00Z",
+        end_date="2026-04-23T00:00:00Z",
+        bucket_granularity="day",
+        limit=10,
+        offset=0,
+    )
 
     assert update == {"id": "conv-1", "state": "resolved", "version": 5}
     assert client.calls[0] == (
@@ -448,4 +591,41 @@ async def test_server_service_adapts_client_methods_and_update_request() -> None
         "get_chat_conversation_tree",
         ("conv-1",),
         {"limit": 2, "offset": 1, "max_depth": 3},
+    )
+    assert client.calls[4] == ("list_chat_commands", (), {})
+
+    method, args, kwargs = client.calls[5]
+    assert method == "validate_chat_dictionary"
+    assert args[0].model_dump(exclude_none=True, mode="json") == {
+        "data": {"entries": []},
+        "schema_version": 1,
+        "strict": True,
+    }
+    assert kwargs == {}
+
+    assert client.calls[6] == ("get_chat_queue_status", (), {})
+    assert client.calls[7] == ("get_chat_queue_activity", (), {"limit": 5})
+
+    method, args, kwargs = client.calls[8]
+    assert method == "save_chat_knowledge"
+    assert args[0].model_dump(exclude_none=True, mode="json") == {
+        "conversation_id": "conv-1",
+        "scope_type": "global",
+        "snippet": "Durable note",
+        "tags": ["sync"],
+        "make_flashcard": False,
+        "export_to": "none",
+    }
+    assert kwargs == {}
+
+    assert client.calls[9] == (
+        "get_chat_analytics",
+        (),
+        {
+            "start_date": "2026-04-01T00:00:00Z",
+            "end_date": "2026-04-23T00:00:00Z",
+            "bucket_granularity": "day",
+            "limit": 10,
+            "offset": 0,
+        },
     )

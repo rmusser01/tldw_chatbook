@@ -8,10 +8,18 @@ import pytest
 
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api.chat_conversation_schemas import (
+    ChatAnalyticsResponse,
+    ChatCommandsListResponse,
+    ChatQueueActivityResponse,
+    ChatQueueStatusResponse,
     ConversationShareLinkCreateRequest,
     ConversationUpdateRequest,
+    KnowledgeSaveRequest,
+    KnowledgeSaveResponse,
     RagContext,
     RagContextPersistRequest,
+    ValidateDictionaryRequest,
+    ValidateDictionaryResponse,
 )
 
 
@@ -277,4 +285,95 @@ class TestChatConversationClient:
             "include_rag_context": False,
             "scope_type": "workspace",
             "workspace_id": "ws-1",
+        }
+
+    async def test_chat_server_adjunct_methods_route_current_contract(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(
+            side_effect=[
+                {"commands": [{"name": "search", "description": "Search", "args": ["query"]}]},
+                {
+                    "ok": False,
+                    "schema_version": 1,
+                    "errors": [{"code": "missing", "field": "entries", "message": "Missing entries"}],
+                    "warnings": [],
+                    "entry_stats": {"entries": 0},
+                    "suggested_fixes": ["Add entries"],
+                    "partial": False,
+                },
+                {"enabled": True, "queued": 2},
+                {"enabled": True, "limit": 5, "activity": [{"run_id": "run-1"}]},
+                {
+                    "note_id": "note-1",
+                    "flashcard_id": "card-1",
+                    "conversation_id": "conv-1",
+                    "message_id": "msg-1",
+                    "export_status": "not_requested",
+                },
+                {
+                    "buckets": [
+                        {
+                            "bucket_start": "2026-04-23T00:00:00Z",
+                            "topic_label": "sync",
+                            "state": "in-progress",
+                            "count": 3,
+                        }
+                    ],
+                    "pagination": {"limit": 10, "offset": 0, "total": 1, "has_more": False},
+                    "bucket_granularity": "day",
+                },
+            ]
+        )
+        monkeypatch.setattr(client, "_request", mocked)
+
+        commands = await client.list_chat_commands()
+        validation = await client.validate_chat_dictionary(
+            ValidateDictionaryRequest(data={"entries": []}, schema_version=1, strict=True)
+        )
+        queue_status = await client.get_chat_queue_status()
+        queue_activity = await client.get_chat_queue_activity(limit=5)
+        knowledge = await client.save_chat_knowledge(
+            KnowledgeSaveRequest(
+                conversation_id="conv-1",
+                message_id="msg-1",
+                snippet="Durable note",
+                tags=["sync"],
+                make_flashcard=True,
+            )
+        )
+        analytics = await client.get_chat_analytics(
+            start_date="2026-04-01T00:00:00Z",
+            end_date="2026-04-23T00:00:00Z",
+            bucket_granularity="day",
+            limit=10,
+            offset=0,
+        )
+
+        assert isinstance(commands, ChatCommandsListResponse)
+        assert isinstance(validation, ValidateDictionaryResponse)
+        assert isinstance(queue_status, ChatQueueStatusResponse)
+        assert isinstance(queue_activity, ChatQueueActivityResponse)
+        assert isinstance(knowledge, KnowledgeSaveResponse)
+        assert isinstance(analytics, ChatAnalyticsResponse)
+        assert [call.args[:2] for call in mocked.await_args_list] == [
+            ("GET", "/api/v1/chat/commands"),
+            ("POST", "/api/v1/chat/dictionaries/validate"),
+            ("GET", "/api/v1/chat/queue/status"),
+            ("GET", "/api/v1/chat/queue/activity"),
+            ("POST", "/api/v1/chat/knowledge/save"),
+            ("GET", "/api/v1/chat/analytics"),
+        ]
+        assert mocked.await_args_list[1].kwargs["json_data"] == {
+            "data": {"entries": []},
+            "schema_version": 1,
+            "strict": True,
+        }
+        assert mocked.await_args_list[3].kwargs["params"] == {"limit": 5}
+        assert mocked.await_args_list[4].kwargs["json_data"]["tags"] == ["sync"]
+        assert mocked.await_args_list[5].kwargs["params"] == {
+            "start_date": "2026-04-01T00:00:00Z",
+            "end_date": "2026-04-23T00:00:00Z",
+            "bucket_granularity": "day",
+            "limit": 10,
+            "offset": 0,
         }
