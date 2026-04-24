@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import csv
 import hashlib
-from html import escape
+from html import escape, unescape
 import io
 import json
+import re
 from pathlib import Path
 from typing import Any, Mapping, Optional
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 
@@ -1123,8 +1125,137 @@ class LocalMediaReadingService:
             "message": "Local media ingest batch cancel processed.",
         }
 
-    def ingest_web_content(self, **kwargs: Any) -> Any:
-        raise self._unsupported_web_content_ingest()
+    @staticmethod
+    def _split_web_text_list(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [entry.strip() for entry in value.replace(",", "\n").splitlines() if entry.strip()]
+        return [str(entry).strip() for entry in value if str(entry).strip()]
+
+    def _normalize_web_keywords(self, value: Any) -> list[str]:
+        keywords = self._normalize_import_tags(value)
+        ignored = {"default", "no_keyword_set"}
+        return [keyword for keyword in keywords if keyword not in ignored]
+
+    @staticmethod
+    def _plain_text_from_html(html: str) -> str:
+        without_scripts = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", html)
+        with_breaks = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</h[1-6]>", "\n", without_scripts)
+        without_tags = re.sub(r"(?s)<[^>]+>", " ", with_breaks)
+        text = unescape(without_tags)
+        lines = [" ".join(line.split()) for line in text.splitlines()]
+        return "\n".join(line for line in lines if line).strip()
+
+    def _fetch_web_content_url(
+        self,
+        url: str,
+        *,
+        timeout: int = 15,
+        user_agent: str | None = None,
+    ) -> dict[str, Any]:
+        request = Request(
+            url,
+            headers={"User-Agent": user_agent or "tldw-chatbook-local-ingest/1.0"},
+        )
+        with urlopen(request, timeout=timeout) as response:
+            raw_body = response.read()
+            content_type = response.headers.get("Content-Type", "")
+            charset_match = re.search(r"charset=([^;\s]+)", content_type, flags=re.IGNORECASE)
+            charset = charset_match.group(1) if charset_match else "utf-8"
+            html_body = raw_body.decode(charset, errors="replace")
+            title_match = re.search(r"(?is)<title[^>]*>(.*?)</title>", html_body)
+            title = self._plain_text_from_html(title_match.group(1)) if title_match else url
+            return {
+                "url": url,
+                "title": title or url,
+                "content": self._plain_text_from_html(html_body) or html_body,
+                "metadata": {
+                    "content_type": content_type,
+                    "status_code": getattr(response, "status", None),
+                },
+                "extraction_successful": True,
+            }
+
+    def ingest_web_content(self, *, urls: list[str], **kwargs: Any) -> Any:
+        db = self._require_db()
+        normalized_urls = [str(url).strip() for url in urls or [] if str(url).strip()]
+        if not normalized_urls:
+            raise ValueError("At least one URL is required for local web-content ingest.")
+
+        titles = self._split_web_text_list(kwargs.get("titles"))
+        authors = self._split_web_text_list(kwargs.get("authors"))
+        keywords = self._normalize_web_keywords(kwargs.get("keywords"))
+        timeout = int(kwargs.get("timeout") or 15)
+        user_agent = kwargs.get("user_agent")
+        overwrite_existing = bool(kwargs.get("overwrite_existing", False))
+
+        results: list[dict[str, Any]] = []
+        media_ids: list[int] = []
+        for index, url in enumerate(normalized_urls):
+            try:
+                fetched = self._fetch_web_content_url(url, timeout=timeout, user_agent=user_agent)
+                title = titles[index] if index < len(titles) else str(fetched.get("title") or url)
+                author = authors[index] if index < len(authors) else fetched.get("author")
+                content = str(fetched.get("content") or "")
+                media_id, _, _ = db.add_media_with_keywords(
+                    url=url,
+                    title=title,
+                    media_type="web",
+                    content=content,
+                    author=str(author) if author else None,
+                    keywords=keywords,
+                    overwrite=overwrite_existing,
+                )
+                if media_id is None:
+                    raise ValueError(f"Local web-content ingest did not return a media ID for {url}.")
+                media_ids.append(media_id)
+                results.append(
+                    {
+                        "url": url,
+                        "title": title,
+                        "author": author,
+                        "content": content,
+                        "keywords": keywords,
+                        "media_id": media_id,
+                        "metadata": dict(fetched.get("metadata") or {}),
+                        "extraction_successful": bool(fetched.get("extraction_successful", True)),
+                    }
+                )
+            except Exception as exc:
+                results.append(
+                    {
+                        "url": url,
+                        "title": titles[index] if index < len(titles) else None,
+                        "content": None,
+                        "keywords": keywords,
+                        "metadata": {},
+                        "extraction_successful": False,
+                        "error": str(exc),
+                    }
+                )
+
+        success_count = len(media_ids)
+        return {
+            "status": "success" if success_count else "failed",
+            "message": f"Ingested {success_count} of {len(normalized_urls)} local web content URL(s).",
+            "count": success_count,
+            "results": results,
+            "media_ids": media_ids,
+        }
+
+    def process_web_scraping(self, request_data: Any) -> Any:
+        payload = self._request_to_mapping(request_data)
+        urls = self._split_web_text_list(payload.get("url_input"))
+        keywords = self._normalize_web_keywords(payload.get("keywords"))
+        titles = self._split_web_text_list(payload.get("custom_titles"))
+        return self.ingest_web_content(
+            urls=urls,
+            titles=titles,
+            keywords=keywords,
+            user_agent=payload.get("user_agent"),
+            overwrite_existing=payload.get("mode") == "persist",
+        )
 
     def _local_document_detail(self, media_id: Any) -> dict[str, Any]:
         detail = self.get_media_detail(media_id)

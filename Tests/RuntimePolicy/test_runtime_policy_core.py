@@ -524,6 +524,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.reading_saved_searches.update.server
         media.reading_summaries.create.server
         media.reading_tts.launch.server
+        media.web_content_ingest.launch.local
         media.web_content_ingest.launch.server
     """),
     "notes_workspaces": _action_ids("""

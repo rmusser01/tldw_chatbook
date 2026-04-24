@@ -300,7 +300,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("media.processing_models", actions=(LIST,), sources=(SERVER_SOURCE,)),
             _resource("media.ingestion_sources", actions=CRUD_ACTIONS),
             _resource("media.ingestion_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE)),
-            _resource("media.web_content_ingest", actions=(LAUNCH,), sources=(SERVER_SOURCE,)),
+            _resource("media.web_content_ingest", actions=(LAUNCH,)),
         ),
     ),
     _capability(

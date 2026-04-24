@@ -1736,8 +1736,6 @@ class MediaReadingScopeService:
         **options: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_web_content_ingest_unavailable()
         self._enforce_policy(self._web_content_ingest_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(
@@ -1754,8 +1752,6 @@ class MediaReadingScopeService:
         request_data: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_web_content_ingest_unavailable()
         self._enforce_policy(self._web_content_ingest_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.process_web_scraping(request_data))

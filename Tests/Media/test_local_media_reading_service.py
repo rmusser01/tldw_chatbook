@@ -717,3 +717,73 @@ def test_local_service_provides_document_workspace_helpers(memory_db_factory):
     assert updated["text"] == "Updated"
     assert synced["id_mapping"] == {"client-1": synced["annotations"][0]["id"]}
     assert deleted == {"deleted": True}
+
+
+def test_local_service_ingests_web_content_without_server(memory_db_factory, monkeypatch):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    def fake_fetch(url, *, timeout=15, user_agent=None):
+        return {
+            "url": url,
+            "title": "Fetched Article",
+            "content": "Fetched body text",
+            "author": "Ada",
+            "metadata": {"content_type": "text/html"},
+            "extraction_successful": True,
+        }
+
+    monkeypatch.setattr(service, "_fetch_web_content_url", fake_fetch, raising=False)
+
+    result = service.ingest_web_content(
+        urls=["https://example.com/article"],
+        titles=["Override Title"],
+        authors=["Grace"],
+        keywords=["web", "local"],
+        perform_analysis=False,
+        perform_chunking=False,
+    )
+    media = db.get_media_by_id(result["media_ids"][0])
+
+    assert result["status"] == "success"
+    assert result["count"] == 1
+    assert result["results"][0]["title"] == "Override Title"
+    assert result["results"][0]["author"] == "Grace"
+    assert result["results"][0]["extraction_successful"] is True
+    assert media["url"] == "https://example.com/article"
+    assert media["title"] == "Override Title"
+    assert media["content"] == "Fetched body text"
+    assert db.fetch_keywords_for_media_batch([media["id"]]) == {media["id"]: ["local", "web"]}
+
+
+def test_local_service_processes_legacy_web_scraping_request(memory_db_factory, monkeypatch):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    monkeypatch.setattr(
+        service,
+        "_fetch_web_content_url",
+        lambda url, **kwargs: {
+            "url": url,
+            "title": "Legacy Article",
+            "content": "Legacy body",
+            "metadata": {},
+            "extraction_successful": True,
+        },
+        raising=False,
+    )
+
+    result = service.process_web_scraping(
+        {
+            "url_input": "https://example.com/legacy",
+            "custom_titles": "Legacy Override",
+            "keywords": "legacy,local",
+            "mode": "persist",
+        }
+    )
+
+    media = db.get_media_by_id(result["media_ids"][0])
+    assert result["status"] == "success"
+    assert result["results"][0]["title"] == "Legacy Override"
+    assert media["url"] == "https://example.com/legacy"
+    assert db.fetch_keywords_for_media_batch([media["id"]]) == {media["id"]: ["legacy", "local"]}

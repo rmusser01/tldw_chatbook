@@ -301,7 +301,22 @@ class FakeLocalMediaService:
         }
 
     def ingest_web_content(self, **kwargs):
-        raise ValueError("Local web-content ingest is not available yet.")
+        self.calls.append(("ingest_web_content", kwargs))
+        return {
+            "status": "success",
+            "count": len(kwargs["urls"]),
+            "results": [{"url": kwargs["urls"][0], "title": "Local Article", "content": "Body"}],
+            "media_ids": [31],
+        }
+
+    def process_web_scraping(self, request_data):
+        self.calls.append(("process_web_scraping", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "status": "success",
+            "count": 1,
+            "results": [{"url": "https://example.com/a", "title": "Local Scraped Article", "content": "Body"}],
+            "media_ids": [31],
+        }
 
     def list_ingestion_sources(self):
         self.calls.append(("list_ingestion_sources",))
@@ -2550,16 +2565,17 @@ async def test_scope_service_enforces_policy_for_local_media_ingest_jobs():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_server_web_content_ingest_and_denies_local_before_policy():
+async def test_scope_service_routes_server_web_content_ingest_and_local_with_policy():
     server = FakeServerMediaService()
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=server,
         policy_enforcer=policy,
     )
 
-    result = await scope.ingest_web_content(
+    server_result = await scope.ingest_web_content(
         mode="server",
         urls=["https://example.com/a"],
         scrape_method="url_level",
@@ -2567,10 +2583,21 @@ async def test_scope_service_routes_server_web_content_ingest_and_denies_local_b
         perform_analysis=False,
         perform_chunking=False,
     )
+    local_result = await scope.ingest_web_content(
+        mode="local",
+        urls=["https://example.com/local"],
+        perform_analysis=False,
+        perform_chunking=False,
+    )
 
-    assert policy.calls == ["media.web_content_ingest.launch.server"]
-    assert result["status"] == "success"
-    assert result["results"][0]["title"] == "Article"
+    assert policy.calls == [
+        "media.web_content_ingest.launch.server",
+        "media.web_content_ingest.launch.local",
+    ]
+    assert server_result["status"] == "success"
+    assert server_result["results"][0]["title"] == "Article"
+    assert local_result["status"] == "success"
+    assert local_result["results"][0]["title"] == "Local Article"
     assert ("ingest_web_content", {
         "urls": ["https://example.com/a"],
         "scrape_method": "url_level",
@@ -2578,19 +2605,24 @@ async def test_scope_service_routes_server_web_content_ingest_and_denies_local_b
         "perform_analysis": False,
         "perform_chunking": False,
     }) in server.calls
+    assert ("ingest_web_content", {
+        "urls": ["https://example.com/local"],
+        "perform_analysis": False,
+        "perform_chunking": False,
+    }) in local.calls
 
     denied_policy = FakePolicyEnforcer.deny("blocked")
     denied_scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=server,
         policy_enforcer=denied_policy,
     )
-    with pytest.raises(ValueError, match="Local web-content ingest is not available yet."):
+    with pytest.raises(PolicyDeniedError):
         await denied_scope.ingest_web_content(
             mode="local",
             urls=["https://example.com/a"],
         )
-    assert denied_policy.calls == []
+    assert denied_policy.calls == ["media.web_content_ingest.launch.local"]
 
 
 @pytest.mark.asyncio
@@ -2639,7 +2671,25 @@ async def test_scope_service_routes_legacy_web_scraping_process_contract():
         server_service=server,
         policy_enforcer=denied_policy,
     )
-    with pytest.raises(ValueError, match="Local web-content ingest is not available yet."):
+    local_policy = FakePolicyEnforcer()
+    local_service = FakeLocalMediaService()
+    local_scope = MediaReadingScopeService(
+        local_service=local_service,
+        server_service=server,
+        policy_enforcer=local_policy,
+    )
+    local_result = await local_scope.process_web_scraping(
+        mode="local",
+        request_data=WebScrapingRequest(
+            scrape_method="individual",
+            url_input="https://example.com/a",
+        ),
+    )
+
+    assert local_policy.calls == ["media.web_content_ingest.launch.local"]
+    assert local_result["results"][0]["title"] == "Local Scraped Article"
+
+    with pytest.raises(PolicyDeniedError):
         await denied_scope.process_web_scraping(
             mode="local",
             request_data=WebScrapingRequest(
@@ -2647,7 +2697,7 @@ async def test_scope_service_routes_legacy_web_scraping_process_contract():
                 url_input="https://example.com/a",
             ),
         )
-    assert denied_policy.calls == []
+    assert denied_policy.calls == ["media.web_content_ingest.launch.local"]
 
 
 @pytest.mark.asyncio
