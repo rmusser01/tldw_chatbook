@@ -24,6 +24,12 @@ from tldw_chatbook.tldw_api import (
     EvaluationRecipeLaunchReadiness,
     EvaluationRecipeManifest,
     EvaluationResponse,
+    EvaluationWebhookRegistrationRequest,
+    EvaluationWebhookRegistrationResponse,
+    EvaluationWebhookStatusResponse,
+    EvaluationWebhookTestRequest,
+    EvaluationWebhookTestResponse,
+    WebhookEventType,
     PipelineCleanupResponse,
     PipelinePresetCreate,
     PipelinePresetListResponse,
@@ -762,3 +768,64 @@ async def test_evaluation_rag_pipeline_preset_and_cleanup_routes_wire(monkeypatc
     assert isinstance(cleanup, PipelineCleanupResponse)
     assert listed.items[0].name == "baseline"
     assert cleanup.errors == ["collection_b: locked"]
+
+
+@pytest.mark.asyncio
+async def test_evaluation_webhook_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "webhook_id": 7,
+                "url": "https://example.com/evals",
+                "events": ["evaluation.completed"],
+                "secret": "x" * 32,
+                "created_at": "2026-04-23T12:00:00Z",
+                "status": "active",
+                "retry_count": 3,
+                "timeout_seconds": 30,
+            },
+            [
+                {
+                    "webhook_id": 7,
+                    "url": "https://example.com/evals",
+                    "events": ["evaluation.completed"],
+                    "status": "active",
+                    "retry_count": 3,
+                    "timeout_seconds": 30,
+                    "created_at": "2026-04-23T12:00:00Z",
+                    "failure_count": 1,
+                }
+            ],
+            {"status": "unregistered", "url": "https://example.com/evals"},
+            {"success": True, "status_code": 200, "response_time_ms": 12.5},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    registered = await client.register_evaluation_webhook(
+        EvaluationWebhookRegistrationRequest(
+            url="https://example.com/evals",
+            events=[WebhookEventType.EVALUATION_COMPLETED],
+            secret="x" * 32,
+        )
+    )
+    webhooks = await client.list_evaluation_webhooks()
+    unregistered = await client.unregister_evaluation_webhook("https://example.com/evals")
+    tested = await client.test_evaluation_webhook(
+        EvaluationWebhookTestRequest(url="https://example.com/evals")
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/evaluations/webhooks")
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/webhooks")
+    assert mocked.await_args_list[2].args[:2] == ("DELETE", "/api/v1/evaluations/webhooks")
+    assert mocked.await_args_list[2].kwargs["params"] == {"url": "https://example.com/evals"}
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/evaluations/webhooks/test")
+
+    assert isinstance(registered, EvaluationWebhookRegistrationResponse)
+    assert isinstance(webhooks[0], EvaluationWebhookStatusResponse)
+    assert isinstance(tested, EvaluationWebhookTestResponse)
+    assert registered.webhook_id == 7
+    assert webhooks[0].failure_count == 1
+    assert unregistered == {"status": "unregistered", "url": "https://example.com/evals"}
+    assert tested.success is True

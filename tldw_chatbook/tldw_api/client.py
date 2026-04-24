@@ -229,10 +229,16 @@ from .evaluations_schemas import (
     EvaluationRecipeLaunchReadiness,
     EvaluationRecipeManifest,
     EvaluationResponse,
+    EvaluationWebhookRegistrationRequest,
+    EvaluationWebhookRegistrationResponse,
+    EvaluationWebhookStatusResponse,
+    EvaluationWebhookTestRequest,
+    EvaluationWebhookTestResponse,
     PipelineCleanupResponse,
     PipelinePresetCreate,
     PipelinePresetListResponse,
     PipelinePresetResponse,
+    WebhookEventType,
     EvaluationRunCreateRequest,
     EvaluationRunListResponse,
     EvaluationRunResponse,
@@ -2670,6 +2676,39 @@ class TLDWAPIClient:
     async def cleanup_evaluation_pipeline_collections(self) -> PipelineCleanupResponse:
         response = await self._request("POST", "/api/v1/evaluations/rag/pipeline/cleanup")
         return PipelineCleanupResponse.model_validate(response)
+
+    async def register_evaluation_webhook(
+        self,
+        request_data: EvaluationWebhookRegistrationRequest,
+    ) -> EvaluationWebhookRegistrationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/webhooks",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return EvaluationWebhookRegistrationResponse.model_validate(response)
+
+    async def list_evaluation_webhooks(self) -> list[EvaluationWebhookStatusResponse]:
+        response = await self._request("GET", "/api/v1/evaluations/webhooks")
+        return [EvaluationWebhookStatusResponse.model_validate(item) for item in list(response or [])]
+
+    async def unregister_evaluation_webhook(self, url: str) -> dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            "/api/v1/evaluations/webhooks",
+            params={"url": url},
+        )
+
+    async def test_evaluation_webhook(
+        self,
+        request_data: EvaluationWebhookTestRequest,
+    ) -> EvaluationWebhookTestResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/webhooks/test",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return EvaluationWebhookTestResponse.model_validate(response)
 
     async def create_flashcard_deck(
         self,

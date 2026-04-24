@@ -341,6 +341,22 @@ class FakeServerEvaluationService:
         self.calls.append(("cleanup_pipeline_collections",))
         return {"expired_count": 2, "deleted_count": 1, "errors": ["collection_b: locked"]}
 
+    async def register_webhook(self, *, url, events, secret=None, retry_count=3, timeout_seconds=30):
+        self.calls.append(("register_webhook", url, events, secret, retry_count, timeout_seconds))
+        return {"webhook_id": 7, "url": url, "events": events, "secret": secret or "x" * 32}
+
+    async def list_webhooks(self):
+        self.calls.append(("list_webhooks",))
+        return [{"webhook_id": 7, "url": "https://example.com/evals", "events": ["evaluation.completed"]}]
+
+    async def unregister_webhook(self, url):
+        self.calls.append(("unregister_webhook", url))
+        return {"status": "unregistered", "url": url}
+
+    async def test_webhook(self, *, url):
+        self.calls.append(("test_webhook", url))
+        return {"success": True, "status_code": 200}
+
 
 @pytest.mark.asyncio
 async def test_scope_service_routes_evaluation_list_by_backend():
@@ -634,3 +650,36 @@ async def test_scope_service_routes_rag_pipeline_preset_actions_to_server_only()
 
     with pytest.raises(ValueError, match="server-only"):
         await scope.save_pipeline_preset(mode="local", name="baseline", config={})
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_evaluation_webhook_actions_to_server_only():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    registered = await scope.register_webhook(
+        mode="server",
+        url="https://example.com/evals",
+        events=["evaluation.completed"],
+        secret="x" * 32,
+    )
+    webhooks = await scope.list_webhooks(mode="server")
+    unregistered = await scope.unregister_webhook(mode="server", url="https://example.com/evals")
+    tested = await scope.test_webhook(mode="server", url="https://example.com/evals")
+
+    assert registered["webhook_id"] == 7
+    assert webhooks[0]["webhook_id"] == 7
+    assert unregistered["status"] == "unregistered"
+    assert tested["success"] is True
+    assert server.calls[-4] == (
+        "register_webhook",
+        "https://example.com/evals",
+        ["evaluation.completed"],
+        "x" * 32,
+        3,
+        30,
+    )
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.list_webhooks(mode="local")

@@ -671,3 +671,53 @@ class EvaluationScopeService:
     ) -> dict[str, Any]:
         service = self._server_only_service(mode, "Evaluation RAG pipeline cleanup")
         return dict(await self._maybe_await(service.cleanup_pipeline_collections()) or {})
+
+    async def register_webhook(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        url: str,
+        events: list[str],
+        secret: str | None = None,
+        retry_count: int | None = 3,
+        timeout_seconds: int | None = 30,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation webhook registration")
+        return dict(
+            await self._maybe_await(
+                service.register_webhook(
+                    url=url,
+                    events=events,
+                    secret=secret,
+                    retry_count=retry_count,
+                    timeout_seconds=timeout_seconds,
+                )
+            )
+            or {}
+        )
+
+    async def list_webhooks(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        service = self._server_only_service(mode, "Evaluation webhook list")
+        return list(await self._maybe_await(service.list_webhooks()) or [])
+
+    async def unregister_webhook(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        url: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation webhook unregister")
+        return dict(await self._maybe_await(service.unregister_webhook(url)) or {})
+
+    async def test_webhook(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        url: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation webhook test")
+        return dict(await self._maybe_await(service.test_webhook(url=url)) or {})

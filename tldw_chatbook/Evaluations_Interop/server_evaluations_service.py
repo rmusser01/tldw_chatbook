@@ -14,6 +14,8 @@ from ..tldw_api import (
     EvaluationDatasetCreateRequest,
     EvaluationRecipeDatasetValidationRequest,
     EvaluationRunCreateRequest,
+    EvaluationWebhookRegistrationRequest,
+    EvaluationWebhookTestRequest,
     PipelinePresetCreate,
     SyntheticEvalGenerationRequest,
     SyntheticEvalPromotionRequest,
@@ -439,3 +441,34 @@ class ServerEvaluationsService:
 
     async def cleanup_pipeline_collections(self) -> dict[str, Any]:
         return self._dump_model(await self._require_client().cleanup_evaluation_pipeline_collections())
+
+    async def register_webhook(
+        self,
+        *,
+        url: str,
+        events: list[str],
+        secret: str | None = None,
+        retry_count: int | None = 3,
+        timeout_seconds: int | None = 30,
+    ) -> dict[str, Any]:
+        request = EvaluationWebhookRegistrationRequest(
+            url=url,
+            events=events,
+            secret=secret,
+            retry_count=retry_count,
+            timeout_seconds=timeout_seconds,
+        )
+        return self._dump_model(await self._require_client().register_evaluation_webhook(request))
+
+    async def list_webhooks(self) -> list[dict[str, Any]]:
+        return [
+            self._dump_model(item)
+            for item in await self._require_client().list_evaluation_webhooks()
+        ]
+
+    async def unregister_webhook(self, url: str) -> dict[str, Any]:
+        return self._dump_model(await self._require_client().unregister_evaluation_webhook(url))
+
+    async def test_webhook(self, *, url: str) -> dict[str, Any]:
+        request = EvaluationWebhookTestRequest(url=url)
+        return self._dump_model(await self._require_client().test_evaluation_webhook(request))

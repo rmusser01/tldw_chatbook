@@ -474,3 +474,62 @@ class PipelineCleanupResponse(BaseModel):
     errors: list[str] | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class WebhookEventType(str, Enum):
+    EVALUATION_STARTED = "evaluation.started"
+    EVALUATION_PROGRESS = "evaluation.progress"
+    EVALUATION_COMPLETED = "evaluation.completed"
+    EVALUATION_FAILED = "evaluation.failed"
+    EVALUATION_CANCELLED = "evaluation.cancelled"
+    BATCH_STARTED = "batch.started"
+    BATCH_COMPLETED = "batch.completed"
+    BATCH_FAILED = "batch.failed"
+
+
+class EvaluationWebhookRegistrationRequest(BaseModel):
+    url: str
+    events: list[WebhookEventType] = Field(min_length=1)
+    secret: str | None = Field(default=None, min_length=32)
+    retry_count: int | None = Field(default=3, ge=0, le=10)
+    timeout_seconds: int | None = Field(default=30, ge=1, le=300)
+
+
+class EvaluationWebhookRegistrationResponse(BaseModel):
+    webhook_id: int
+    url: str
+    events: list[str]
+    secret: str
+    created_at: datetime | None = None
+    status: str = "active"
+    retry_count: int = Field(default=3, ge=0, le=10)
+    timeout_seconds: int = Field(default=30, ge=1, le=300)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvaluationWebhookStatusResponse(BaseModel):
+    webhook_id: int
+    url: str
+    events: list[str]
+    status: str = "active"
+    retry_count: int | None = None
+    timeout_seconds: int | None = None
+    created_at: datetime | None = None
+    last_triggered: datetime | None = None
+    failure_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvaluationWebhookTestRequest(BaseModel):
+    url: str
+
+
+class EvaluationWebhookTestResponse(BaseModel):
+    success: bool
+    status_code: int | None = None
+    response_time_ms: float | None = None
+    error: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
