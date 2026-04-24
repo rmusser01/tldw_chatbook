@@ -23,6 +23,7 @@ from tldw_chatbook.Media import (
 from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
 from tldw_chatbook.Outputs import ServerOutputsScopeService, ServerOutputsService
 from tldw_chatbook.Sharing import ServerSharingScopeService, ServerSharingService
+from tldw_chatbook.Study_Interop import LocalStudyService
 from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.server_watchlists_service import ServerWatchlistsService
 from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistScopeService
@@ -190,6 +191,23 @@ def test_app_initializes_research_services(app):
     assert app.research_scope_service.local_service is app.local_research_service
     assert app.research_scope_service.server_service is app.server_research_service
     assert app.research_scope_service.policy_enforcer is app.service_policy_enforcer
+
+
+def test_app_wires_local_study_notifications():
+    app = TldwCli.__new__(TldwCli)
+    app.chachanotes_db = MagicMock()
+    app.app_config = {"tldw_api": {"base_url": "http://localhost:8000"}}
+    app.service_policy_enforcer = MagicMock()
+    app.notification_dispatch_service = MagicMock()
+
+    with patch("tldw_chatbook.app.ServerStudyService.from_config", return_value=MagicMock()):
+        with patch("tldw_chatbook.app.ServerQuizService.from_config", return_value=MagicMock()):
+            TldwCli._wire_study_services(app)
+
+    assert isinstance(app.local_study_service, LocalStudyService)
+    assert app.local_study_service.notification_dispatch_service is app.notification_dispatch_service
+    assert app.local_study_service.notification_app is app
+    assert app.study_scope_service.local_service is app.local_study_service
 
 
 def test_media_screen_uses_shared_runtime_state():

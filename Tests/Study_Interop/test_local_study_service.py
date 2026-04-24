@@ -1,6 +1,9 @@
 import json
+from types import SimpleNamespace
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 
 
@@ -397,6 +400,31 @@ def test_local_study_service_imports_json_against_chachanotes_db(tmp_path):
     assert imported["imported"] == 1
     assert imported["errors"] == []
     assert "Biology\tWhat powers cells?\tATP\tbio cell\t\tmitochondria" in exported.decode("utf-8")
+
+
+def test_local_study_service_dispatches_study_lifecycle_notifications(tmp_path):
+    db = CharactersRAGDB(tmp_path / "study.db", client_id="test_client")
+    notifications_db = ClientNotificationsDB(tmp_path / "notifications.db")
+    dispatcher = NotificationDispatchService(notifications_db)
+    service = LocalStudyService(
+        db=db,
+        notification_dispatch_service=dispatcher,
+        notification_app=SimpleNamespace(),
+    )
+
+    deck = service.create_deck(name="Biology", description="Cell review")
+    imported = service.import_flashcards_tsv(
+        "Deck\tFront\tBack\nBiology\tWhat powers cells?\tATP",
+        has_header=True,
+    )
+    exported = service.export_flashcards(deck_id=deck["id"], include_header=True)
+
+    rows = notifications_db.list_notifications(limit=10, category="study")
+    actions = {row["payload"]["action"] for row in rows}
+    assert imported["imported"] == 1
+    assert exported.startswith(b"Deck\tFront\tBack")
+    assert {"deck_created", "flashcards_imported", "flashcards_exported"}.issubset(actions)
+    assert all(row["source_backend"] == "local" for row in rows)
 
 
 def test_local_study_service_updates_review_and_returns_refetched_card():

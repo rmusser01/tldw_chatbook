@@ -11,13 +11,59 @@ from typing import Any, Mapping, Optional
 class LocalStudyService:
     """Thin sync wrapper around local study helpers."""
 
-    def __init__(self, db: Any):
+    def __init__(
+        self,
+        db: Any,
+        *,
+        notification_dispatch_service: Any = None,
+        notification_app: Any = None,
+    ):
         self.db = db
+        self.notification_dispatch_service = notification_dispatch_service
+        self.notification_app = notification_app
+
+    def configure_notification_dispatch(
+        self,
+        *,
+        notification_dispatch_service: Any = None,
+        notification_app: Any = None,
+    ) -> None:
+        self.notification_dispatch_service = notification_dispatch_service
+        self.notification_app = notification_app
 
     def _require_db(self) -> Any:
         if self.db is None:
             raise ValueError("Local study backend is unavailable.")
         return self.db
+
+    def _dispatch_local_notification(
+        self,
+        *,
+        title: str,
+        message: str,
+        source_entity_id: str | None,
+        source_entity_kind: str,
+        severity: str = "info",
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        dispatcher = getattr(self, "notification_dispatch_service", None)
+        dispatch = getattr(dispatcher, "dispatch", None)
+        if not callable(dispatch):
+            return None
+        try:
+            return dispatch(
+                app=getattr(self, "notification_app", None),
+                category="study",
+                title=title,
+                message=message,
+                severity=severity,
+                source_backend="local",
+                source_entity_id=source_entity_id,
+                source_entity_kind=source_entity_kind,
+                payload=payload or {},
+            )
+        except Exception:
+            return None
 
     def list_decks(self, *, limit: int = 100, offset: int = 0) -> Any:
         return self._require_db().list_decks(limit=limit, offset=offset)
@@ -34,7 +80,15 @@ class LocalStudyService:
         scheduler_type: Optional[str] = None,
     ) -> Any:
         deck_id = self._require_db().create_deck(name, description)
-        return self._require_db().get_deck(deck_id)
+        deck = self._require_db().get_deck(deck_id)
+        self._dispatch_local_notification(
+            title="Local study deck created",
+            message=f"Local study deck created: {deck.get('name') or name}",
+            source_entity_id=str(deck.get("id") or deck_id),
+            source_entity_kind="study_deck",
+            payload={"action": "deck_created", "deck_id": str(deck.get("id") or deck_id)},
+        )
+        return deck
 
     def update_deck(
         self,
@@ -106,7 +160,15 @@ class LocalStudyService:
 
     def create_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
         created_cards = [self.create_flashcard(**dict(card)) for card in cards]
-        return {"items": created_cards, "count": len(created_cards)}
+        result = {"items": created_cards, "count": len(created_cards)}
+        self._dispatch_local_notification(
+            title="Local flashcards created",
+            message=f"Created {len(created_cards)} local flashcard(s).",
+            source_entity_id=None,
+            source_entity_kind="flashcard_bulk_create",
+            payload={"action": "flashcards_created", "count": len(created_cards)},
+        )
+        return result
 
     def get_flashcard(self, card_id: str) -> Any:
         return self._require_db().get_flashcard(card_id)
@@ -367,7 +429,16 @@ class LocalStudyService:
             except Exception as exc:
                 errors.append({"line": index, "error": str(exc)})
 
-        return {"imported": len(items), "items": items, "errors": errors}
+        result = {"imported": len(items), "items": items, "errors": errors}
+        self._dispatch_local_notification(
+            title="Local flashcards imported",
+            message=f"Imported {len(items)} local flashcard(s) from TSV.",
+            source_entity_id=None,
+            source_entity_kind="flashcard_import",
+            severity="warning" if errors else "info",
+            payload={"action": "flashcards_imported", "format": "tsv", "imported": len(items), "errors": len(errors)},
+        )
+        return result
 
     @staticmethod
     def _json_flashcard_records(payload: Any) -> list[Mapping[str, Any]]:
@@ -443,7 +514,16 @@ class LocalStudyService:
             except Exception as exc:
                 errors.append({"index": index, "error": str(exc)})
 
-        return {"imported": len(items), "items": items, "errors": errors}
+        result = {"imported": len(items), "items": items, "errors": errors}
+        self._dispatch_local_notification(
+            title="Local flashcards imported",
+            message=f"Imported {len(items)} local flashcard(s) from JSON.",
+            source_entity_id=None,
+            source_entity_kind="flashcard_import",
+            severity="warning" if errors else "info",
+            payload={"action": "flashcards_imported", "format": "json", "imported": len(items), "errors": len(errors)},
+        )
+        return result
 
     def export_flashcards(
         self,
@@ -492,7 +572,20 @@ class LocalStudyService:
             writer.writerow(row)
             if include_reverse:
                 writer.writerow([row[0], row[2], row[1], row[3], row[4], row[5]])
-        return output.getvalue().encode("utf-8")
+        data = output.getvalue().encode("utf-8")
+        self._dispatch_local_notification(
+            title="Local flashcards exported",
+            message=f"Exported {len(records)} local flashcard(s).",
+            source_entity_id=str(deck_id) if deck_id is not None else None,
+            source_entity_kind="flashcard_export",
+            payload={
+                "action": "flashcards_exported",
+                "count": len(records),
+                "format": export_format,
+                "deck_id": str(deck_id) if deck_id is not None else None,
+            },
+        )
+        return data
 
     def delete_flashcard(
         self,

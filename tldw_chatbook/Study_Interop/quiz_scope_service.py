@@ -24,9 +24,16 @@ class QuizScopeService:
 
     _ALLOWED_SCOPE_TYPES = {"global", "workspace"}
 
-    def __init__(self, *, local_service: Any = None, server_service: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any = None,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
+        self.policy_enforcer = policy_enforcer
 
     def _resolve_backend(self, mode: Optional[str]) -> QuizBackend:
         normalized_mode = str(mode or "local").strip().lower()

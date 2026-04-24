@@ -1552,7 +1552,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
 
     def _wire_study_services(self) -> None:
-        self.local_study_service = LocalStudyService(self.chachanotes_db) if self.chachanotes_db is not None else None
+        self.local_study_service = (
+            LocalStudyService(
+                self.chachanotes_db,
+                notification_dispatch_service=self.notification_dispatch_service,
+                notification_app=self,
+            )
+            if self.chachanotes_db is not None
+            else None
+        )
         self.local_quiz_service = LocalQuizService(self.chachanotes_db) if self.chachanotes_db is not None else None
         try:
             self.server_study_service = ServerStudyService.from_config(self.app_config)
