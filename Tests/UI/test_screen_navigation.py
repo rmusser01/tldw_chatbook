@@ -23,7 +23,7 @@ from tldw_chatbook.Media import (
 from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
 from tldw_chatbook.Outputs import ServerOutputsScopeService, ServerOutputsService
 from tldw_chatbook.Sharing import ServerSharingScopeService, ServerSharingService
-from tldw_chatbook.Study_Interop import LocalStudyService
+from tldw_chatbook.Study_Interop import LocalQuizService, LocalStudyService
 from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
 from tldw_chatbook.Subscriptions.server_watchlists_service import ServerWatchlistsService
 from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistScopeService
@@ -207,6 +207,9 @@ def test_app_wires_local_study_notifications():
     assert isinstance(app.local_study_service, LocalStudyService)
     assert app.local_study_service.notification_dispatch_service is app.notification_dispatch_service
     assert app.local_study_service.notification_app is app
+    assert isinstance(app.local_quiz_service, LocalQuizService)
+    assert app.local_quiz_service.notification_dispatch_service is app.notification_dispatch_service
+    assert app.local_quiz_service.notification_app is app
     assert app.study_scope_service.local_service is app.local_study_service
 
 
