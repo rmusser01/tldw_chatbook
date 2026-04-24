@@ -509,3 +509,91 @@ def test_local_service_creates_reading_archive_as_local_media(memory_db_factory)
     assert archived_media["type"] == "reading_archive"
     assert "# Readable Archive" in archived_media["content"]
     assert "Article body" in archived_media["content"]
+
+
+def test_local_service_imports_pocket_reading_items(memory_db_factory, tmp_path):
+    import_file = tmp_path / "pocket.json"
+    import_file.write_text(
+        json.dumps(
+            {
+                "list": {
+                    "1": {
+                        "resolved_url": "https://example.com/one",
+                        "resolved_title": "One",
+                        "tags": {"ai": {}, "reading": {}},
+                        "status": "0",
+                    },
+                    "2": {
+                        "given_url": "https://example.com/two",
+                        "given_title": "Two",
+                        "tags": [{"tag": "archive"}],
+                        "status": "1",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    job = service.import_reading_items(str(import_file), source="pocket", merge_tags=True)
+    listed = service.list_reading_import_jobs()
+    fetched = service.get_reading_import_job(job["job_id"])
+    reloaded_service = LocalMediaReadingService(db)
+    reloaded = reloaded_service.get_reading_import_job(job["job_id"])
+    saved = db.get_media_by_url("https://example.com/one")
+    archived = db.get_media_by_url("https://example.com/two")
+
+    assert job["status"] == "completed"
+    assert job["result"] == {
+        "source": "pocket",
+        "imported": 2,
+        "updated": 0,
+        "skipped": 0,
+        "errors": [],
+    }
+    assert listed["total"] == 1
+    assert fetched["job_id"] == job["job_id"]
+    assert reloaded["result"] == job["result"]
+    assert saved["title"] == "One"
+    assert archived["title"] == "Two"
+    assert service.get_media_detail(saved["id"])["is_read_it_later"] is True
+    assert service.get_media_detail(archived["id"]).get("is_read_it_later") is not True
+    assert db.fetch_keywords_for_media_batch([saved["id"], archived["id"]]) == {
+        saved["id"]: ["ai", "reading"],
+        archived["id"]: ["archive"],
+    }
+
+
+def test_local_service_imports_instapaper_reading_items(memory_db_factory, tmp_path):
+    import_file = tmp_path / "instapaper.csv"
+    import_file.write_text(
+        "URL,Title,Folder,Tags,Notes\n"
+        "https://example.com/current,Current,Unread,\"ai,notes\",Read later\n"
+        "https://example.com/archive,Archived,Archive,archive,Already read\n",
+        encoding="utf-8",
+    )
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    job = service.import_reading_items(str(import_file), source="auto")
+    current = db.get_media_by_url("https://example.com/current")
+    archived = db.get_media_by_url("https://example.com/archive")
+
+    assert job["status"] == "completed"
+    assert job["result"] == {
+        "source": "instapaper",
+        "imported": 2,
+        "updated": 0,
+        "skipped": 0,
+        "errors": [],
+    }
+    assert current["title"] == "Current"
+    assert archived["title"] == "Archived"
+    assert service.get_media_detail(current["id"])["is_read_it_later"] is True
+    assert service.get_media_detail(archived["id"]).get("is_read_it_later") is not True
+    assert db.fetch_keywords_for_media_batch([current["id"], archived["id"]]) == {
+        current["id"]: ["ai", "notes"],
+        archived["id"]: ["archive"],
+    }

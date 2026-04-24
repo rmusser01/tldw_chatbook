@@ -98,7 +98,7 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 8  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 9  # Define the version this code supports
     
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
@@ -141,6 +141,11 @@ class MediaDatabase:
             'to_version': 8,
             'function': '_apply_migration_v7_to_v8',
             'description': 'Add local reading note links'
+        },
+        8: {
+            'to_version': 9,
+            'function': '_apply_migration_v8_to_v9',
+            'description': 'Add local reading import jobs'
         },
         # Future migrations: just add new entries here
         # 5: {
@@ -559,6 +564,28 @@ class MediaDatabase:
         ON LocalReadingNoteLinks(media_id, deleted);
     CREATE INDEX IF NOT EXISTS idx_local_reading_note_links_note_deleted
         ON LocalReadingNoteLinks(note_id, deleted);
+    """
+
+    _LOCAL_READING_IMPORT_JOBS_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS LocalReadingImportJobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_uuid TEXT,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at DATETIME NOT NULL,
+        started_at DATETIME,
+        completed_at DATETIME,
+        progress_percent REAL,
+        progress_message TEXT,
+        error_message TEXT,
+        result_json TEXT NOT NULL DEFAULT '{}',
+        deleted BOOLEAN NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_local_reading_import_jobs_status
+        ON LocalReadingImportJobs(status, deleted);
+    CREATE INDEX IF NOT EXISTS idx_local_reading_import_jobs_created
+        ON LocalReadingImportJobs(created_at, id);
     """
 
     def __init__(self, db_path: Union[str, Path], client_id: str, 
@@ -1219,6 +1246,26 @@ class MediaDatabase:
             logging.error(f"[Migration v7->v8] Unexpected error during migration: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during migration v7->v8: {e}") from e
 
+    def _apply_migration_v8_to_v9(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 8 to version 9 (adds local reading import jobs)."""
+        logging.info(f"Applying migration from version 8 to 9 (local reading import jobs) to DB: {self.db_path_str}...")
+        try:
+            migration_sql = f"""
+            {self._LOCAL_READING_IMPORT_JOBS_TABLE_SQL}
+            UPDATE schema_version SET version = 9;
+            """
+
+            with self.transaction():
+                logging.debug("[Migration v8->v9] Creating LocalReadingImportJobs table...")
+                conn.executescript(migration_sql)
+                logging.info("[Migration v8->v9] LocalReadingImportJobs migration applied successfully.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v8->v9] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v8->v9 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v8->v9] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v8->v9: {e}") from e
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -1236,7 +1283,8 @@ class MediaDatabase:
                         f"{self._FTS_TABLES_SQL}\n{self._LOCAL_ONLY_TABLES_SQL}\n"
                         f"{self._READING_HIGHLIGHTS_TABLE_SQL}\n{self._LOCAL_INGESTION_SOURCES_TABLE_SQL}\n"
                         f"{self._LOCAL_READING_SAVED_SEARCHES_TABLE_SQL}\n"
-                        f"{self._LOCAL_READING_NOTE_LINKS_TABLE_SQL}"
+                        f"{self._LOCAL_READING_NOTE_LINKS_TABLE_SQL}\n"
+                        f"{self._LOCAL_READING_IMPORT_JOBS_TABLE_SQL}"
                     )
                     conn.commit()
                     logging.debug("Verified FTS and local-only media tables exist.")
@@ -2752,6 +2800,183 @@ class MediaDatabase:
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error unlinking local reading item media_id={media_id} from note_id={normalized_note_id}: {e}")
             raise DatabaseError(f"Failed to unlink local reading item {media_id} from note {normalized_note_id}") from e
+
+    @staticmethod
+    def _local_reading_import_job_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "job_id": row["id"],
+            "job_uuid": row["job_uuid"],
+            "source": row["source"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "started_at": row["started_at"],
+            "completed_at": row["completed_at"],
+            "progress_percent": row["progress_percent"],
+            "progress_message": row["progress_message"],
+            "error_message": row["error_message"],
+            "result": MediaDatabase._json_object_from_db(row["result_json"]),
+            "deleted": bool(row["deleted"]),
+        }
+
+    def create_local_reading_import_job(
+        self,
+        *,
+        source: str,
+        status: str = "processing",
+        progress_percent: float | None = 0.0,
+        progress_message: str | None = None,
+        result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create a persisted local reading import job record."""
+        normalized_source = str(source or "auto").strip().lower() or "auto"
+        normalized_status = str(status or "processing").strip().lower()
+        current_time = self._get_current_utc_timestamp_str()
+        result_json = json.dumps(result or {}, separators=(',', ':'), cls=DateTimeEncoder)
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO LocalReadingImportJobs (
+                        job_uuid, source, status, created_at, started_at,
+                        progress_percent, progress_message, result_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        self._generate_uuid(),
+                        normalized_source,
+                        normalized_status,
+                        current_time,
+                        current_time,
+                        progress_percent,
+                        progress_message,
+                        result_json,
+                    ),
+                )
+                job_id = int(cursor.lastrowid)
+            created = self.get_local_reading_import_job(job_id)
+            if created is None:
+                raise DatabaseError(f"Failed to fetch newly created local reading import job {job_id}")
+            return created
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error creating local reading import job in DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to create local reading import job") from e
+
+    def update_local_reading_import_job(self, job_id: int, **changes: Any) -> Dict[str, Any]:
+        """Update mutable local reading import job fields."""
+        allowed_fields = {
+            "source",
+            "status",
+            "started_at",
+            "completed_at",
+            "progress_percent",
+            "progress_message",
+            "error_message",
+            "result",
+        }
+        unsupported = sorted(key for key in changes if key not in allowed_fields)
+        if unsupported:
+            unsupported_text = ", ".join(unsupported)
+            raise InputError(f"Unsupported local reading import job update fields: {unsupported_text}")
+
+        current = self.get_local_reading_import_job(job_id)
+        if current is None:
+            raise InputError(f"Local reading import job {job_id} not found.")
+        if not changes:
+            return current
+
+        assignments: list[str] = []
+        values: list[Any] = []
+        for field, value in changes.items():
+            if field == "result":
+                assignments.append("result_json = ?")
+                values.append(json.dumps(value or {}, separators=(',', ':'), cls=DateTimeEncoder))
+            else:
+                assignments.append(f"{field} = ?")
+                if field in {"source", "status"} and value is not None:
+                    values.append(str(value).strip().lower())
+                else:
+                    values.append(value)
+        values.append(job_id)
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    f"UPDATE LocalReadingImportJobs SET {', '.join(assignments)} WHERE id = ? AND deleted = 0",
+                    tuple(values),
+                )
+            updated = self.get_local_reading_import_job(job_id)
+            if updated is None:
+                raise DatabaseError(f"Failed to fetch updated local reading import job {job_id}")
+            return updated
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error updating local reading import job id={job_id} in DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to update local reading import job {job_id}") from e
+
+    def get_local_reading_import_job(self, job_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a non-deleted local reading import job by ID."""
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT
+                    id, job_uuid, source, status, created_at, started_at, completed_at,
+                    progress_percent, progress_message, error_message, result_json, deleted
+                FROM LocalReadingImportJobs
+                WHERE id = ? AND deleted = 0
+                """,
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            return self._local_reading_import_job_row_to_dict(row) if row else None
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching local reading import job id={job_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to fetch local reading import job {job_id}") from e
+
+    def list_local_reading_import_jobs(
+        self,
+        *,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """List non-deleted local reading import jobs."""
+        normalized_limit = max(1, int(limit))
+        normalized_offset = max(0, int(offset))
+        normalized_status = str(status).strip().lower() if status else None
+        where_clauses = ["deleted = 0"]
+        params: list[Any] = []
+        if normalized_status:
+            where_clauses.append("status = ?")
+            params.append(normalized_status)
+        where_sql = " AND ".join(where_clauses)
+        try:
+            count_cursor = self.execute_query(
+                f"SELECT COUNT(*) FROM LocalReadingImportJobs WHERE {where_sql}",
+                tuple(params),
+            )
+            total_row = count_cursor.fetchone()
+            total = int(total_row[0]) if total_row else 0
+            cursor = self.execute_query(
+                f"""
+                SELECT
+                    id, job_uuid, source, status, created_at, started_at, completed_at,
+                    progress_percent, progress_message, error_message, result_json, deleted
+                FROM LocalReadingImportJobs
+                WHERE {where_sql}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ? OFFSET ?
+                """,
+                tuple(params + [normalized_limit, normalized_offset]),
+            )
+            return {
+                "jobs": [self._local_reading_import_job_row_to_dict(row) for row in cursor.fetchall()],
+                "total": total,
+                "limit": normalized_limit,
+                "offset": normalized_offset,
+            }
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error listing local reading import jobs from DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to list local reading import jobs") from e
 
     @staticmethod
     def _local_ingestion_source_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:

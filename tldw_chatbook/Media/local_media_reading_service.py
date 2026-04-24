@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 from html import escape
+import io
 import json
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -88,6 +90,109 @@ class LocalMediaReadingService:
         if isinstance(request_data, Mapping):
             return dict(request_data)
         raise ValueError("request_data must be a mapping or pydantic model.")
+
+    def _normalize_import_tags(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        if isinstance(value, Mapping):
+            return sorted({str(tag).strip().lower() for tag in value if str(tag).strip()})
+        if isinstance(value, str):
+            parts = [part.strip() for part in value.replace(";", ",").split(",")]
+            return sorted({part.lower() for part in parts if part})
+        tags: list[str] = []
+        for entry in value:
+            if isinstance(entry, Mapping):
+                tag = entry.get("tag") or entry.get("name")
+                if tag:
+                    tags.append(str(tag))
+            elif entry:
+                tags.append(str(entry))
+        return sorted({tag.strip().lower() for tag in tags if tag.strip()})
+
+    def _detect_reading_import_source(self, path: Path, raw_bytes: bytes) -> str:
+        lowered_name = path.name.lower()
+        if lowered_name.endswith(".json"):
+            return "pocket"
+        if lowered_name.endswith(".csv"):
+            return "instapaper"
+        try:
+            json.loads(raw_bytes.decode("utf-8"))
+            return "pocket"
+        except Exception:
+            return "instapaper"
+
+    def _parse_pocket_reading_import(self, raw_bytes: bytes) -> list[dict[str, Any]]:
+        payload = json.loads(raw_bytes.decode("utf-8", errors="replace"))
+        items_obj = payload.get("list") if isinstance(payload, Mapping) else None
+        if isinstance(items_obj, Mapping):
+            raw_items = list(items_obj.values())
+        elif isinstance(items_obj, list):
+            raw_items = items_obj
+        else:
+            raw_items = []
+
+        parsed: list[dict[str, Any]] = []
+        for entry in raw_items:
+            if not isinstance(entry, Mapping):
+                continue
+            url = entry.get("resolved_url") or entry.get("given_url") or entry.get("url")
+            if not url:
+                continue
+            status = str(entry.get("status") or "0")
+            if status == "2":
+                continue
+            parsed.append(
+                {
+                    "url": str(url).strip(),
+                    "title": entry.get("resolved_title") or entry.get("given_title") or entry.get("title"),
+                    "tags": self._normalize_import_tags(entry.get("tags")),
+                    "status": "archived" if status == "1" else "saved",
+                    "notes": entry.get("excerpt") or entry.get("note"),
+                }
+            )
+        return parsed
+
+    def _parse_instapaper_reading_import(self, raw_bytes: bytes) -> list[dict[str, Any]]:
+        text = raw_bytes.decode("utf-8-sig", errors="replace")
+        reader = csv.DictReader(io.StringIO(text))
+        parsed: list[dict[str, Any]] = []
+        for row in reader:
+            normalized = {
+                str(key).strip().lower(): value.strip() if isinstance(value, str) else value
+                for key, value in (row or {}).items()
+                if key
+            }
+            url = normalized.get("url") or normalized.get("link")
+            if not url:
+                continue
+            folder = str(normalized.get("folder") or normalized.get("state") or "").lower()
+            parsed.append(
+                {
+                    "url": str(url).strip(),
+                    "title": normalized.get("title"),
+                    "tags": self._normalize_import_tags(normalized.get("tags")),
+                    "status": "archived" if "archive" in folder else "saved",
+                    "notes": normalized.get("notes") or normalized.get("selection"),
+                }
+            )
+        return parsed
+
+    def _parse_reading_import_file(self, file_path: str, source: str) -> tuple[str, list[dict[str, Any]]]:
+        path = Path(file_path).expanduser()
+        if not path.is_file():
+            raise ValueError(f"Local reading import file does not exist: {file_path}")
+        raw_bytes = path.read_bytes()
+        if not raw_bytes:
+            raise ValueError("Local reading import file is empty.")
+
+        normalized_source = str(source or "auto").strip().lower()
+        if normalized_source == "auto":
+            normalized_source = self._detect_reading_import_source(path, raw_bytes)
+        if normalized_source == "pocket":
+            return normalized_source, self._parse_pocket_reading_import(raw_bytes)
+        if normalized_source == "instapaper":
+            return normalized_source, self._parse_instapaper_reading_import(raw_bytes)
+        raise ValueError(f"Unsupported local reading import source: {normalized_source}")
 
     def _enrich_with_read_it_later_state(self, row: Mapping[str, Any]) -> dict[str, Any]:
         enriched = dict(row)
@@ -627,6 +732,100 @@ class LocalMediaReadingService:
             "job_id": None,
             "item": item,
         }
+
+    def import_reading_items(
+        self,
+        file_path: str,
+        *,
+        source: str = "auto",
+        merge_tags: bool = True,
+    ) -> Any:
+        db = self._require_db()
+        requested_source = str(source or "auto").strip().lower()
+        job = db.create_local_reading_import_job(
+            source=requested_source,
+            status="processing",
+            progress_percent=0.0,
+            progress_message="Importing local reading items.",
+        )
+        job_id = int(job["job_id"])
+
+        imported = 0
+        updated = 0
+        skipped = 0
+        errors: list[str] = []
+        try:
+            normalized_source, items = self._parse_reading_import_file(file_path, source)
+            for item in items:
+                url = str(item.get("url") or "").strip()
+                if not url:
+                    skipped += 1
+                    continue
+                existing = db.get_media_by_url(url)
+                existing_tags = []
+                if existing:
+                    existing_tags = db.fetch_keywords_for_media_batch([existing["id"]]).get(existing["id"], [])
+                import_tags = [tag.strip() for tag in self._normalize_import_tags(item.get("tags")) if tag.strip()]
+                tags = sorted(set(existing_tags) | set(import_tags)) if merge_tags else import_tags
+                title = str(item.get("title") or url).strip()
+                content = item.get("notes") or f"Imported reading item: {url}"
+                media_id, _, _ = db.add_media_with_keywords(
+                    url=url,
+                    title=title,
+                    media_type="reading",
+                    content=str(content),
+                    keywords=tags,
+                    overwrite=True,
+                )
+                if media_id is None:
+                    raise ValueError(f"Local reading import did not return a media ID for {url}.")
+                status = str(item.get("status") or "saved").strip().lower()
+                if status in {"saved", "reading"}:
+                    self.save_to_read_it_later(media_id)
+                else:
+                    self.remove_from_read_it_later(media_id)
+                if existing:
+                    updated += 1
+                else:
+                    imported += 1
+        except Exception as exc:
+            errors.append(str(exc))
+            normalized_source = str(source or "auto").strip().lower()
+
+        completed_at = db._get_current_utc_timestamp_str()
+        result = {
+            "source": normalized_source,
+            "imported": imported,
+            "updated": updated,
+            "skipped": skipped,
+            "errors": errors,
+        }
+        return db.update_local_reading_import_job(
+            job_id,
+            source=normalized_source,
+            status="failed" if errors and not (imported or updated) else "completed",
+            completed_at=completed_at,
+            progress_percent=100.0,
+            progress_message=f"Imported {imported} and updated {updated} local reading items.",
+            error_message="; ".join(errors) if errors else None,
+            result=result,
+        )
+
+    def list_reading_import_jobs(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Any:
+        return self._require_db().list_local_reading_import_jobs(status=status, limit=limit, offset=offset)
+
+    def get_reading_import_job(self, job_id: Any) -> Any:
+        normalized_job_id = int(job_id)
+        job = self._require_db().get_local_reading_import_job(normalized_job_id)
+        if job is None:
+            raise ValueError(f"Local reading import job {job_id} not found.")
+        return job
 
     def create_reading_archive(
         self,

@@ -1291,8 +1291,6 @@ class MediaReadingScopeService:
         merge_tags: bool = True,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_import_unavailable()
         self._enforce_policy(self._reading_import_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         job = await self._maybe_await(
@@ -1309,8 +1307,6 @@ class MediaReadingScopeService:
         offset: int = 0,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_import_unavailable()
         self._enforce_policy(self._reading_import_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
@@ -1335,8 +1331,6 @@ class MediaReadingScopeService:
         job_id: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_import_unavailable()
         self._enforce_policy(self._reading_import_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         job = await self._maybe_await(service.get_reading_import_job(job_id))

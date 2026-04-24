@@ -495,8 +495,11 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.reading_digest_schedules.list.server
         media.reading_digest_schedules.update.server
         media.reading_export.export.server
+        media.reading_import.detail.local
         media.reading_import.detail.server
+        media.reading_import.launch.local
         media.reading_import.launch.server
+        media.reading_import.list.local
         media.reading_import.list.server
         media.reading_note_links.create.server
         media.reading_note_links.delete.server
