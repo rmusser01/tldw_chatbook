@@ -15,6 +15,8 @@ from tldw_chatbook.tldw_api import (
     EmbeddingsABTestStatusResponse,
     EmbeddingsABTestResultSummary,
     EvaluationBenchmarkListResponse,
+    EvaluationBenchmarkRunRequest,
+    EvaluationBenchmarkRunResponse,
     EvaluationDatasetCreateRequest,
     EvaluationDatasetListResponse,
     EvaluationDatasetResponse,
@@ -23,6 +25,9 @@ from tldw_chatbook.tldw_api import (
     EvaluationRecipeDatasetValidationResponse,
     EvaluationRecipeLaunchReadiness,
     EvaluationRecipeManifest,
+    EvaluationRecipeRunCreateRequest,
+    EvaluationRecipeRunRecord,
+    EvaluationRecipeRunReport,
     EvaluationResponse,
     EvaluationWebhookRegistrationRequest,
     EvaluationWebhookRegistrationResponse,
@@ -693,6 +698,116 @@ async def test_evaluation_recipe_and_benchmark_discovery_routes_wire(monkeypatch
     assert isinstance(validation, EvaluationRecipeDatasetValidationResponse)
     assert benchmark["name"] == "truthfulqa"
     assert validation.model_extra["coverage"] == {"questions": 2}
+
+
+@pytest.mark.asyncio
+async def test_evaluation_benchmark_and_recipe_run_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    recipe_run_record = {
+        "run_id": "recipe_run_1",
+        "recipe_id": "rag_answer_quality",
+        "recipe_version": "1.0.0",
+        "status": "pending",
+        "review_state": "not_required",
+        "child_run_ids": [],
+        "created_at": "2026-04-23T12:00:00Z",
+        "metadata": {"job_id": "job-1"},
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "benchmark": "truthfulqa",
+                "total_samples": 2,
+                "results_summary": {
+                    "total_evaluated": 2,
+                    "successful": 2,
+                    "failed": 0,
+                    "average_score": 0.75,
+                },
+                "evaluation_id": "eval_bench_1",
+            },
+            recipe_run_record,
+            {**recipe_run_record, "status": "running"},
+            {
+                "run": {**recipe_run_record, "status": "completed"},
+                "confidence_summary": {
+                    "kind": "aggregate",
+                    "confidence": 0.82,
+                    "sample_count": 2,
+                },
+                "recommendation_slots": {
+                    "winner": {
+                        "candidate_run_id": "run-a",
+                        "reason_code": "higher_score",
+                        "explanation": "Run A had stronger answer quality.",
+                        "confidence": 0.82,
+                        "metadata": {"metric": "quality"},
+                    }
+                },
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    benchmark_run = await client.run_evaluation_benchmark(
+        "truthfulqa",
+        EvaluationBenchmarkRunRequest(
+            limit=2,
+            api_name="openai",
+            parallel=2,
+            save_results=True,
+            filter_categories=["truthful"],
+        ),
+    )
+    created_run = await client.create_evaluation_recipe_run(
+        "rag_answer_quality",
+        EvaluationRecipeRunCreateRequest(
+            dataset_id="dataset_1",
+            run_config={"evaluation_mode": "fixed_context"},
+            force_rerun=True,
+        ),
+    )
+    fetched_run = await client.get_evaluation_recipe_run("recipe_run_1")
+    report = await client.get_evaluation_recipe_run_report("recipe_run_1")
+
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/benchmarks/truthfulqa/run",
+    )
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "limit": 2,
+        "api_name": "openai",
+        "parallel": 2,
+        "save_results": True,
+        "filter_categories": ["truthful"],
+    }
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/recipes/rag_answer_quality/runs",
+    )
+    assert mocked.await_args_list[1].kwargs["json_data"] == {
+        "dataset_id": "dataset_1",
+        "run_config": {"evaluation_mode": "fixed_context"},
+        "force_rerun": True,
+    }
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/recipe-runs/recipe_run_1",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/recipe-runs/recipe_run_1/report",
+    )
+
+    assert isinstance(benchmark_run, EvaluationBenchmarkRunResponse)
+    assert isinstance(created_run, EvaluationRecipeRunRecord)
+    assert isinstance(fetched_run, EvaluationRecipeRunRecord)
+    assert isinstance(report, EvaluationRecipeRunReport)
+    assert benchmark_run.evaluation_id == "eval_bench_1"
+    assert created_run.metadata == {"job_id": "job-1"}
+    assert fetched_run.status == "running"
+    assert report.confidence_summary.confidence == 0.82
+    assert report.recommendation_slots["winner"].reason_code == "higher_score"
 
 
 @pytest.mark.asyncio

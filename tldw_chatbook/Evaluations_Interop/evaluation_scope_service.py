@@ -619,6 +619,76 @@ class EvaluationScopeService:
             or {}
         )
 
+    async def run_benchmark(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        benchmark_name: str,
+        limit: int | None = None,
+        api_name: str | None = None,
+        parallel: int | None = None,
+        save_results: bool | None = None,
+        filter_categories: list[str] | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation benchmark run")
+        kwargs: dict[str, Any] = {}
+        if limit is not None:
+            kwargs["limit"] = limit
+        if api_name is not None:
+            kwargs["api_name"] = api_name
+        if parallel is not None:
+            kwargs["parallel"] = parallel
+        if save_results is not None:
+            kwargs["save_results"] = save_results
+        if filter_categories is not None:
+            kwargs["filter_categories"] = filter_categories
+        return dict(
+            await self._maybe_await(service.run_benchmark(benchmark_name, **kwargs))
+            or {}
+        )
+
+    async def create_recipe_run(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_id: str,
+        dataset_id: str | None = None,
+        dataset: list[dict[str, Any]] | None = None,
+        run_config: dict[str, Any] | None = None,
+        force_rerun: bool = False,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation recipe run launch")
+        return dict(
+            await self._maybe_await(
+                service.create_recipe_run(
+                    recipe_id,
+                    dataset_id=dataset_id,
+                    dataset=dataset,
+                    run_config=run_config,
+                    force_rerun=force_rerun,
+                )
+            )
+            or {}
+        )
+
+    async def get_recipe_run(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        run_id: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation recipe run detail")
+        return dict(await self._maybe_await(service.get_recipe_run(run_id)) or {})
+
+    async def get_recipe_run_report(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        run_id: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Evaluation recipe run report")
+        return dict(await self._maybe_await(service.get_recipe_run_report(run_id)) or {})
+
     async def save_pipeline_preset(
         self,
         *,

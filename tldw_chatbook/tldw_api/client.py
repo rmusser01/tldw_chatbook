@@ -223,15 +223,20 @@ from .evaluations_schemas import (
     EmbeddingsABTestResultsResponse,
     EmbeddingsABTestRunRequest,
     EmbeddingsABTestStatusResponse,
+    EvaluationBenchmarkListResponse,
+    EvaluationBenchmarkRunRequest,
+    EvaluationBenchmarkRunResponse,
     EvaluationDatasetCreateRequest,
     EvaluationDatasetListResponse,
     EvaluationDatasetResponse,
-    EvaluationBenchmarkListResponse,
     EvaluationListResponse,
     EvaluationRecipeDatasetValidationRequest,
     EvaluationRecipeDatasetValidationResponse,
     EvaluationRecipeLaunchReadiness,
     EvaluationRecipeManifest,
+    EvaluationRecipeRunCreateRequest,
+    EvaluationRecipeRunRecord,
+    EvaluationRecipeRunReport,
     EvaluationResponse,
     EvaluationWebhookRegistrationRequest,
     EvaluationWebhookRegistrationResponse,
@@ -2694,6 +2699,18 @@ class TLDWAPIClient:
             f"/api/v1/evaluations/benchmarks/{benchmark_name}",
         )
 
+    async def run_evaluation_benchmark(
+        self,
+        benchmark_name: str,
+        request_data: EvaluationBenchmarkRunRequest,
+    ) -> EvaluationBenchmarkRunResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/evaluations/benchmarks/{benchmark_name}/run",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return EvaluationBenchmarkRunResponse.model_validate(response)
+
     async def list_evaluation_recipes(self) -> list[EvaluationRecipeManifest]:
         response = await self._request("GET", "/api/v1/evaluations/recipes")
         return [EvaluationRecipeManifest.model_validate(item) for item in list(response or [])]
@@ -2723,6 +2740,35 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return EvaluationRecipeDatasetValidationResponse.model_validate(response)
+
+    async def create_evaluation_recipe_run(
+        self,
+        recipe_id: str,
+        request_data: EvaluationRecipeRunCreateRequest,
+    ) -> EvaluationRecipeRunRecord:
+        response = await self._request(
+            "POST",
+            f"/api/v1/evaluations/recipes/{recipe_id}/runs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return EvaluationRecipeRunRecord.model_validate(response)
+
+    async def get_evaluation_recipe_run(self, run_id: str) -> EvaluationRecipeRunRecord:
+        response = await self._request(
+            "GET",
+            f"/api/v1/evaluations/recipe-runs/{run_id}",
+        )
+        return EvaluationRecipeRunRecord.model_validate(response)
+
+    async def get_evaluation_recipe_run_report(
+        self,
+        run_id: str,
+    ) -> EvaluationRecipeRunReport:
+        response = await self._request(
+            "GET",
+            f"/api/v1/evaluations/recipe-runs/{run_id}/report",
+        )
+        return EvaluationRecipeRunReport.model_validate(response)
 
     async def save_evaluation_pipeline_preset(
         self,

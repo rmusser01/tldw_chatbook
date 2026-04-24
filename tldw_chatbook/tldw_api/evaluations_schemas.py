@@ -405,6 +405,23 @@ class EvaluationBenchmarkListResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class EvaluationBenchmarkRunRequest(BaseModel):
+    limit: int | None = Field(default=None, ge=1)
+    api_name: str = "openai"
+    parallel: int = Field(default=4, ge=1, le=16)
+    save_results: bool = True
+    filter_categories: list[str] | None = None
+
+
+class EvaluationBenchmarkRunResponse(BaseModel):
+    benchmark: str
+    total_samples: int
+    results_summary: dict[str, Any] = Field(default_factory=dict)
+    evaluation_id: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class EvaluationRecipeManifest(BaseModel):
     recipe_id: str
     recipe_version: str
@@ -445,6 +462,69 @@ class EvaluationRecipeDatasetValidationResponse(BaseModel):
     dataset_content_hash: str | None = None
 
     model_config = ConfigDict(extra="allow", from_attributes=True)
+
+
+class EvaluationRecipeReviewState(str, Enum):
+    NOT_REQUIRED = "not_required"
+    NEEDS_REVIEW = "needs_review"
+    IN_REVIEW = "in_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class EvaluationRecipeConfidenceSummary(BaseModel):
+    kind: Literal["aggregate", "bootstrap", "judge", "heuristic"] = "aggregate"
+    confidence: float | None = None
+    sample_count: int = 0
+    spread: float | None = None
+    margin: float | None = None
+    judge_agreement: float | None = None
+    notes: str | None = None
+
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+
+
+class EvaluationRecipeRecommendationSlot(BaseModel):
+    candidate_run_id: str | None = None
+    reason_code: str | None = None
+    explanation: str | None = None
+    confidence: float | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+
+
+class EvaluationRecipeRunCreateRequest(BaseModel):
+    dataset_id: str | None = None
+    dataset: list[dict[str, Any]] | None = None
+    run_config: dict[str, Any] = Field(default_factory=dict)
+    force_rerun: bool = False
+
+
+class EvaluationRecipeRunRecord(BaseModel):
+    run_id: str
+    recipe_id: str | None = None
+    recipe_version: str | None = None
+    status: str
+    review_state: EvaluationRecipeReviewState | str = EvaluationRecipeReviewState.NOT_REQUIRED
+    dataset_snapshot_ref: str | None = None
+    dataset_content_hash: str | None = None
+    confidence_summary: EvaluationRecipeConfidenceSummary | None = None
+    recommendation_slots: dict[str, EvaluationRecipeRecommendationSlot] = Field(default_factory=dict)
+    child_run_ids: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+
+
+class EvaluationRecipeRunReport(BaseModel):
+    run: EvaluationRecipeRunRecord
+    confidence_summary: EvaluationRecipeConfidenceSummary | None = None
+    recommendation_slots: dict[str, EvaluationRecipeRecommendationSlot] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
 
 
 class PipelinePresetCreate(BaseModel):

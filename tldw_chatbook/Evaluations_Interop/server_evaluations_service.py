@@ -11,8 +11,10 @@ from ..tldw_api import (
     EmbeddingsABTestConfig,
     EmbeddingsABTestCreateRequest,
     EmbeddingsABTestRunRequest,
+    EvaluationBenchmarkRunRequest,
     EvaluationDatasetCreateRequest,
     EvaluationRecipeDatasetValidationRequest,
+    EvaluationRecipeRunCreateRequest,
     EvaluationRunCreateRequest,
     EvaluationWebhookRegistrationRequest,
     EvaluationWebhookTestRequest,
@@ -378,6 +380,27 @@ class ServerEvaluationsService:
     async def get_benchmark(self, benchmark_name: str) -> dict[str, Any]:
         return self._dump_model(await self._require_client().get_evaluation_benchmark(benchmark_name))
 
+    async def run_benchmark(
+        self,
+        benchmark_name: str,
+        *,
+        limit: int | None = None,
+        api_name: str = "openai",
+        parallel: int = 4,
+        save_results: bool = True,
+        filter_categories: list[str] | None = None,
+    ) -> dict[str, Any]:
+        request = EvaluationBenchmarkRunRequest(
+            limit=limit,
+            api_name=api_name,
+            parallel=parallel,
+            save_results=save_results,
+            filter_categories=filter_categories,
+        )
+        return self._dump_model(
+            await self._require_client().run_evaluation_benchmark(benchmark_name, request)
+        )
+
     async def list_recipes(self) -> list[dict[str, Any]]:
         return [
             self._dump_model(item)
@@ -407,6 +430,33 @@ class ServerEvaluationsService:
         )
         return self._dump_model(
             await self._require_client().validate_evaluation_recipe_dataset(recipe_id, request)
+        )
+
+    async def create_recipe_run(
+        self,
+        recipe_id: str,
+        *,
+        dataset_id: str | None = None,
+        dataset: list[dict[str, Any]] | None = None,
+        run_config: dict[str, Any] | None = None,
+        force_rerun: bool = False,
+    ) -> dict[str, Any]:
+        request = EvaluationRecipeRunCreateRequest(
+            dataset_id=dataset_id,
+            dataset=dataset,
+            run_config=run_config or {},
+            force_rerun=force_rerun,
+        )
+        return self._dump_model(
+            await self._require_client().create_evaluation_recipe_run(recipe_id, request)
+        )
+
+    async def get_recipe_run(self, run_id: str) -> dict[str, Any]:
+        return self._dump_model(await self._require_client().get_evaluation_recipe_run(run_id))
+
+    async def get_recipe_run_report(self, run_id: str) -> dict[str, Any]:
+        return self._dump_model(
+            await self._require_client().get_evaluation_recipe_run_report(run_id)
         )
 
     async def save_pipeline_preset(

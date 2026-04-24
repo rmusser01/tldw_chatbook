@@ -322,6 +322,40 @@ class FakeServerEvaluationService:
         self.calls.append(("validate_recipe_dataset", recipe_id, dataset_id, dataset, run_config))
         return {"valid": True, "errors": [], "dataset_id": dataset_id, "sample_count": 2}
 
+    async def run_benchmark(self, benchmark_name, **kwargs):
+        self.calls.append(("run_benchmark", benchmark_name, kwargs))
+        return {
+            "benchmark": benchmark_name,
+            "total_samples": kwargs.get("limit") or 2,
+            "results_summary": {"average_score": 0.75},
+            "evaluation_id": "eval_bench_1",
+        }
+
+    async def create_recipe_run(self, recipe_id, **kwargs):
+        self.calls.append(("create_recipe_run", recipe_id, kwargs))
+        return {
+            "run_id": "recipe_run_1",
+            "recipe_id": recipe_id,
+            "recipe_version": "1.0.0",
+            "status": "pending",
+            "review_state": "not_required",
+            "child_run_ids": [],
+            "created_at": "2026-04-23T12:00:00Z",
+            "metadata": {"job_id": "job-1"},
+        }
+
+    async def get_recipe_run(self, run_id):
+        self.calls.append(("get_recipe_run", run_id))
+        return {"run_id": run_id, "status": "running"}
+
+    async def get_recipe_run_report(self, run_id):
+        self.calls.append(("get_recipe_run_report", run_id))
+        return {
+            "run": {"run_id": run_id, "status": "completed"},
+            "confidence_summary": {"confidence": 0.82},
+            "recommendation_slots": {},
+        }
+
     async def save_pipeline_preset(self, *, name, config):
         self.calls.append(("save_pipeline_preset", name, config))
         return {"name": name, "config": config, "created_at": 1, "updated_at": 2}
@@ -622,6 +656,68 @@ async def test_scope_service_routes_evaluation_catalog_actions_to_server_only():
 
     with pytest.raises(ValueError, match="server-only"):
         await scope.list_benchmarks(mode="local")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_evaluation_run_launch_actions_to_server_only():
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=server,
+    )
+
+    benchmark_run = await scope.run_benchmark(
+        mode="server",
+        benchmark_name="truthfulqa",
+        limit=2,
+        parallel=2,
+        filter_categories=["truthful"],
+    )
+    recipe_run = await scope.create_recipe_run(
+        mode="server",
+        recipe_id="rag_answer_quality",
+        dataset_id="dataset_1",
+        run_config={"evaluation_mode": "fixed_context"},
+        force_rerun=True,
+    )
+    fetched_recipe_run = await scope.get_recipe_run(
+        mode="server",
+        run_id="recipe_run_1",
+    )
+    report = await scope.get_recipe_run_report(
+        mode="server",
+        run_id="recipe_run_1",
+    )
+
+    assert benchmark_run["evaluation_id"] == "eval_bench_1"
+    assert recipe_run["metadata"] == {"job_id": "job-1"}
+    assert fetched_recipe_run["status"] == "running"
+    assert report["confidence_summary"]["confidence"] == 0.82
+    assert server.calls[-4] == (
+        "run_benchmark",
+        "truthfulqa",
+        {"limit": 2, "parallel": 2, "filter_categories": ["truthful"]},
+    )
+    assert server.calls[-3] == (
+        "create_recipe_run",
+        "rag_answer_quality",
+        {
+            "dataset_id": "dataset_1",
+            "dataset": None,
+            "run_config": {"evaluation_mode": "fixed_context"},
+            "force_rerun": True,
+        },
+    )
+    assert server.calls[-2] == ("get_recipe_run", "recipe_run_1")
+    assert server.calls[-1] == ("get_recipe_run_report", "recipe_run_1")
+
+    with pytest.raises(ValueError) as benchmark_exc:
+        await scope.run_benchmark(mode="local", benchmark_name="truthfulqa")
+    with pytest.raises(ValueError) as recipe_exc:
+        await scope.create_recipe_run(mode="local", recipe_id="rag_answer_quality")
+
+    assert "Evaluation benchmark run is server-only" in str(benchmark_exc.value)
+    assert "Evaluation recipe run launch is server-only" in str(recipe_exc.value)
 
 
 @pytest.mark.asyncio
