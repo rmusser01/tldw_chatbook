@@ -282,6 +282,16 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         character.sessions.list.server
         character.sessions.update.local
         character.sessions.update.server
+        character.world_book_entries.create.local
+        character.world_book_entries.delete.local
+        character.world_book_entries.detail.local
+        character.world_book_entries.list.local
+        character.world_book_entries.update.local
+        character.world_books.create.local
+        character.world_books.delete.local
+        character.world_books.detail.local
+        character.world_books.list.local
+        character.world_books.update.local
     """),
     "chat": _action_ids("""
         chat.create.local

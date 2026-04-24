@@ -220,6 +220,8 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("character.sessions", actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH,))),
             _resource("character.messages", actions=CRUD_ACTIONS),
             _resource("character.memory", actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH,))),
+            _resource("character.world_books", actions=CRUD_ACTIONS, sources=LOCAL_ONLY_SOURCES),
+            _resource("character.world_book_entries", actions=CRUD_ACTIONS, sources=LOCAL_ONLY_SOURCES),
         ),
     ),
     _capability(

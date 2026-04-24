@@ -27,6 +27,16 @@ class CharacterPersonaScopeService:
         "memory_update": "character.memory.update",
         "memory_delete": "character.memory.delete",
         "memory_launch": "character.memory.launch",
+        "world_book_create": "character.world_books.create",
+        "world_book_list": "character.world_books.list",
+        "world_book_detail": "character.world_books.detail",
+        "world_book_update": "character.world_books.update",
+        "world_book_delete": "character.world_books.delete",
+        "world_book_entry_create": "character.world_book_entries.create",
+        "world_book_entry_list": "character.world_book_entries.list",
+        "world_book_entry_detail": "character.world_book_entries.detail",
+        "world_book_entry_update": "character.world_book_entries.update",
+        "world_book_entry_delete": "character.world_book_entries.delete",
     }
 
     def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
@@ -545,4 +555,210 @@ class CharacterPersonaScopeService:
             character_id,
             request_data,
             missing_message="Character/persona backend does not provide extract_character_memories().",
+        )
+
+    async def list_character_world_books(self, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_list")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("list_character_world_books",),
+            missing_message="Character/persona backend does not provide list_character_world_books().",
+            **kwargs,
+        )
+
+    async def create_character_world_book(self, request_data: Any, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_create")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("create_character_world_book",),
+            request_data,
+            missing_message="Character/persona backend does not provide create_character_world_book().",
+        )
+
+    async def get_character_world_book(self, world_book_id: int | str, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_detail")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("get_character_world_book",),
+            world_book_id,
+            missing_message="Character/persona backend does not provide get_character_world_book().",
+        )
+
+    async def update_character_world_book(
+        self,
+        world_book_id: int | str,
+        request_data: Any,
+        *,
+        expected_version: int | None = None,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_update")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("update_character_world_book",),
+            world_book_id,
+            request_data,
+            expected_version=expected_version,
+            missing_message="Character/persona backend does not provide update_character_world_book().",
+        )
+
+    async def delete_character_world_book(
+        self,
+        world_book_id: int | str,
+        *,
+        expected_version: int | None = None,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_delete")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("delete_character_world_book",),
+            world_book_id,
+            expected_version=expected_version,
+            missing_message="Character/persona backend does not provide delete_character_world_book().",
+        )
+
+    async def list_character_world_book_entries(
+        self,
+        world_book_id: int | str,
+        mode: str = "local",
+        **kwargs: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_entry_list")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("list_character_world_book_entries",),
+            world_book_id,
+            missing_message="Character/persona backend does not provide list_character_world_book_entries().",
+            **kwargs,
+        )
+
+    async def create_character_world_book_entry(
+        self,
+        world_book_id: int | str,
+        request_data: Any,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_entry_create")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("create_character_world_book_entry",),
+            world_book_id,
+            request_data,
+            missing_message="Character/persona backend does not provide create_character_world_book_entry().",
+        )
+
+    async def get_character_world_book_entry(self, entry_id: int | str, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_entry_detail")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("get_character_world_book_entry",),
+            entry_id,
+            missing_message="Character/persona backend does not provide get_character_world_book_entry().",
+        )
+
+    async def update_character_world_book_entry(
+        self,
+        entry_id: int | str,
+        request_data: Any,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_entry_update")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("update_character_world_book_entry",),
+            entry_id,
+            request_data,
+            missing_message="Character/persona backend does not provide update_character_world_book_entry().",
+        )
+
+    async def delete_character_world_book_entry(self, entry_id: int | str, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_entry_delete")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("delete_character_world_book_entry",),
+            entry_id,
+            missing_message="Character/persona backend does not provide delete_character_world_book_entry().",
+        )
+
+    async def attach_character_world_book_to_session(
+        self,
+        chat_id: str,
+        world_book_id: int | str,
+        request_data: Any | None = None,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_update")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("attach_character_world_book_to_session",),
+            chat_id,
+            world_book_id,
+            request_data,
+            missing_message="Character/persona backend does not provide attach_character_world_book_to_session().",
+        )
+
+    async def detach_character_world_book_from_session(
+        self,
+        chat_id: str,
+        world_book_id: int | str,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_update")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("detach_character_world_book_from_session",),
+            chat_id,
+            world_book_id,
+            missing_message="Character/persona backend does not provide detach_character_world_book_from_session().",
+        )
+
+    async def list_session_world_books(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_list")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("list_session_world_books",),
+            chat_id,
+            missing_message="Character/persona backend does not provide list_session_world_books().",
+            **kwargs,
+        )
+
+    async def export_character_world_book(self, world_book_id: int | str, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_detail")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("export_character_world_book",),
+            world_book_id,
+            missing_message="Character/persona backend does not provide export_character_world_book().",
+        )
+
+    async def import_character_world_book(
+        self,
+        request_data: Any,
+        *,
+        name_override: str | None = None,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "world_book_create")
+        return await self._invoke_backend_method(
+            self._backend(normalized_mode),
+            ("import_character_world_book",),
+            request_data,
+            name_override=name_override,
+            missing_message="Character/persona backend does not provide import_character_world_book().",
         )

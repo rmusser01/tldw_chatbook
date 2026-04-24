@@ -551,6 +551,139 @@ def test_local_character_persona_service_persists_sessions_messages_settings_and
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_local_world_book_crud_with_policy(tmp_path):
+    db = CharactersRAGDB(tmp_path / "ccp-world-books.sqlite", "test_client")
+    policy = FakePolicyEnforcer()
+    scope_service = CharacterPersonaScopeService(
+        local_service=LocalCharacterPersonaService(db),
+        server_service=FakeCharacterPersonaClient(),
+        policy_enforcer=policy,
+    )
+
+    created = await scope_service.create_character_world_book(
+        {
+            "name": "Shared Lore",
+            "description": "Reusable context",
+            "scan_depth": 4,
+            "token_budget": 900,
+            "recursive_scanning": True,
+        },
+        mode="local",
+    )
+    listed = await scope_service.list_character_world_books(mode="local", include_disabled=True)
+    fetched = await scope_service.get_character_world_book(created["id"], mode="local")
+    updated = await scope_service.update_character_world_book(
+        created["id"],
+        {"description": "Updated context", "enabled": False},
+        expected_version=created["version"],
+        mode="local",
+    )
+    deleted = await scope_service.delete_character_world_book(
+        created["id"],
+        expected_version=updated["version"],
+        mode="local",
+    )
+
+    assert created["name"] == "Shared Lore"
+    assert created["recursive_scanning"] is True
+    assert listed["world_books"][0]["id"] == created["id"]
+    assert fetched["description"] == "Reusable context"
+    assert updated["description"] == "Updated context"
+    assert updated["enabled"] is False
+    assert deleted == {"deleted": True, "id": str(created["id"])}
+    assert policy.actions == [
+        "character.world_books.create.local",
+        "character.world_books.list.local",
+        "character.world_books.detail.local",
+        "character.world_books.update.local",
+        "character.world_books.delete.local",
+    ]
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_world_book_entries_with_policy(tmp_path):
+    db = CharactersRAGDB(tmp_path / "ccp-world-book-entries.sqlite", "test_client")
+    policy = FakePolicyEnforcer()
+    scope_service = CharacterPersonaScopeService(
+        local_service=LocalCharacterPersonaService(db),
+        server_service=FakeCharacterPersonaClient(),
+        policy_enforcer=policy,
+    )
+    world_book = await scope_service.create_character_world_book({"name": "Entry Lore"}, mode="local")
+    policy.actions.clear()
+
+    entry = await scope_service.create_character_world_book_entry(
+        world_book["id"],
+        {"keys": ["gate"], "content": "The old gate is sealed."},
+        mode="local",
+    )
+    listed = await scope_service.list_character_world_book_entries(world_book["id"], mode="local")
+    fetched = await scope_service.get_character_world_book_entry(entry["id"], mode="local")
+    updated = await scope_service.update_character_world_book_entry(
+        entry["id"],
+        {"content": "The old gate is open."},
+        mode="local",
+    )
+    deleted = await scope_service.delete_character_world_book_entry(entry["id"], mode="local")
+
+    assert listed["entries"][0]["id"] == entry["id"]
+    assert fetched["content"] == "The old gate is sealed."
+    assert updated["content"] == "The old gate is open."
+    assert deleted == {"deleted": True, "id": str(entry["id"])}
+    assert policy.actions == [
+        "character.world_book_entries.create.local",
+        "character.world_book_entries.list.local",
+        "character.world_book_entries.detail.local",
+        "character.world_book_entries.update.local",
+        "character.world_book_entries.delete.local",
+    ]
+    db.close_connection()
+
+
+def test_local_character_persona_service_persists_world_book_entries_links_and_import_export(tmp_path):
+    db = CharactersRAGDB(tmp_path / "ccp-world-book-links.sqlite", "test_client")
+    character_id = db.add_character_card({"name": "Lorekeeper", "first_message": "Ask."})
+    service = LocalCharacterPersonaService(db)
+    session = service.create_character_chat_session({"character_id": character_id, "title": "Lore Chat"})
+
+    world_book = service.create_character_world_book({"name": "City Lore", "description": "Places"})
+    entry = service.create_character_world_book_entry(
+        world_book["id"],
+        {
+            "keys": ["city", "district"],
+            "content": "The city is built in rings.",
+            "position": "before_char",
+            "secondary_keys": ["ring"],
+            "selective": True,
+        },
+    )
+    listed_entries = service.list_character_world_book_entries(world_book["id"])
+    updated_entry = service.update_character_world_book_entry(
+        entry["id"],
+        {"content": "The city is built in seven rings.", "enabled": False},
+    )
+    service.attach_character_world_book_to_session(session["id"], world_book["id"], {"priority": 7})
+    linked = service.list_session_world_books(session["id"], include_disabled=True)
+    exported = service.export_character_world_book(world_book["id"])
+    imported = service.import_character_world_book(exported, name_override="City Lore Copy")
+    service.detach_character_world_book_from_session(session["id"], world_book["id"])
+    after_detach = service.list_session_world_books(session["id"], include_disabled=True)
+    deleted_entry = service.delete_character_world_book_entry(entry["id"])
+
+    assert listed_entries["entries"][0]["keys"] == ["city", "district"]
+    assert updated_entry["content"] == "The city is built in seven rings."
+    assert updated_entry["enabled"] is False
+    assert linked["world_books"][0]["id"] == world_book["id"]
+    assert linked["world_books"][0]["priority"] == 7
+    assert exported["name"] == "City Lore"
+    assert imported["name"] == "City Lore Copy"
+    assert after_detach["world_books"] == []
+    assert deleted_entry == {"deleted": True, "id": str(entry["id"])}
+    db.close_connection()
+
+
+@pytest.mark.asyncio
 async def test_scope_service_raises_when_local_backend_lacks_persona_method():
     class LocalBackend:
         def list_characters(self, limit=100, offset=0):
