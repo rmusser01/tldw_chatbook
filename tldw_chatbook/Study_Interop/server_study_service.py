@@ -18,6 +18,7 @@ from ..tldw_api import (
     FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
     FlashcardsImportRequest,
+    StudyAssistantRespondRequest,
     StructuredQaImportPreviewRequest,
     StudyPackCreateJobRequest,
     StudyPackSourceSelection,
@@ -329,6 +330,34 @@ class ServerStudyService:
             file_path,
             max_items=max_items,
             max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard_study_assistant_context(self, card_id: str) -> dict[str, Any]:
+        response = await self._require_client().get_flashcard_study_assistant_context(card_id)
+        return self._model_to_dict(response)
+
+    async def respond_flashcard_study_assistant(
+        self,
+        card_id: str,
+        *,
+        action: str,
+        message: Optional[str] = None,
+        input_modality: str = "text",
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        expected_thread_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().respond_flashcard_study_assistant(
+            card_id,
+            StudyAssistantRespondRequest(
+                action=action,
+                message=message,
+                input_modality=input_modality,
+                provider=provider,
+                model=model,
+                expected_thread_version=expected_thread_version,
+            ),
         )
         return self._model_to_dict(response)
 

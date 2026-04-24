@@ -246,6 +246,50 @@ class FakeClient:
         self.calls.append(("import_flashcards_apkg", str(file_path), max_items, max_field_length))
         return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 9}], "errors": []}
 
+    async def get_flashcard_study_assistant_context(self, card_uuid):
+        self.calls.append(("get_flashcard_study_assistant_context", card_uuid))
+        thread = {
+            "id": 41,
+            "context_type": "flashcard",
+            "flashcard_uuid": card_uuid,
+            "message_count": 1,
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 2,
+        }
+        return {"thread": thread, "messages": [], "context_snapshot": {}, "available_actions": ["explain"]}
+
+    async def respond_flashcard_study_assistant(self, card_uuid, request_data):
+        payload = request_data.model_dump(mode="json", exclude_none=True)
+        self.calls.append(("respond_flashcard_study_assistant", card_uuid, payload))
+        thread = {
+            "id": 41,
+            "context_type": "flashcard",
+            "flashcard_uuid": card_uuid,
+            "message_count": 2,
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 3,
+        }
+        message = {
+            "id": 101,
+            "thread_id": 41,
+            "role": "assistant",
+            "action_type": payload["action"],
+            "input_modality": "text",
+            "content": "ATP stores energy.",
+            "structured_payload": {},
+            "context_snapshot": {},
+            "client_id": "server-client",
+        }
+        return {
+            "thread": thread,
+            "user_message": {**message, "id": 100, "role": "user", "content": payload.get("message") or ""},
+            "assistant_message": message,
+            "structured_payload": {},
+            "context_snapshot": {},
+        }
+
     async def create_flashcard_template(self, request_data):
         payload = request_data.model_dump(mode="json", exclude_none=True)
         self.calls.append(("create_flashcard_template", payload))
@@ -721,6 +765,40 @@ async def test_server_study_service_exposes_flashcard_asset_and_file_import_rout
         ("get_flashcard_asset_content", "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb"),
         ("import_flashcards_json_file", str(json_path), 25, None),
         ("import_flashcards_apkg", str(apkg_path), 10, 2048),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_exposes_study_assistant_routes():
+    client = FakeClient()
+    service = ServerStudyService(client=client)
+
+    context = await service.get_flashcard_study_assistant_context(CARD_UUID)
+    response = await service.respond_flashcard_study_assistant(
+        CARD_UUID,
+        action="explain",
+        message="Explain this",
+        provider="openai",
+        model="gpt-test",
+        expected_thread_version=2,
+    )
+
+    assert context["available_actions"] == ["explain"]
+    assert response["thread"]["version"] == 3
+    assert client.calls == [
+        ("get_flashcard_study_assistant_context", CARD_UUID),
+        (
+            "respond_flashcard_study_assistant",
+            CARD_UUID,
+            {
+                "action": "explain",
+                "message": "Explain this",
+                "input_modality": "text",
+                "provider": "openai",
+                "model": "gpt-test",
+                "expected_thread_version": 2,
+            },
+        ),
     ]
 
 

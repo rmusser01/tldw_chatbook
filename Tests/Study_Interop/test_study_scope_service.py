@@ -329,6 +329,57 @@ class FakeServerStudyService:
         self.calls.append(("import_flashcards_apkg", str(file_path), max_items, max_field_length))
         return {"imported": 1, "items": [{"uuid": "card-server-1", "deck_id": 7}], "errors": []}
 
+    async def get_flashcard_study_assistant_context(self, card_id):
+        self.calls.append(("get_flashcard_study_assistant_context", card_id))
+        return {
+            "thread": {
+                "id": 41,
+                "context_type": "flashcard",
+                "flashcard_uuid": card_id,
+                "message_count": 1,
+                "deleted": False,
+                "client_id": "server-client",
+                "version": 2,
+            },
+            "messages": [],
+            "context_snapshot": {},
+            "available_actions": ["explain"],
+        }
+
+    async def respond_flashcard_study_assistant(
+        self,
+        card_id,
+        *,
+        action,
+        message=None,
+        input_modality="text",
+        provider=None,
+        model=None,
+        expected_thread_version=None,
+    ):
+        self.calls.append(
+            (
+                "respond_flashcard_study_assistant",
+                card_id,
+                action,
+                message,
+                input_modality,
+                provider,
+                model,
+                expected_thread_version,
+            )
+        )
+        thread = {
+            "id": 41,
+            "context_type": "flashcard",
+            "flashcard_uuid": card_id,
+            "message_count": 2,
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 3,
+        }
+        return {"thread": thread, "structured_payload": {}, "context_snapshot": {}}
+
     async def create_flashcard_template(
         self,
         *,
@@ -1129,6 +1180,44 @@ async def test_scope_service_routes_server_flashcard_asset_and_file_import_actio
 
     with pytest.raises(ValueError, match="server-only"):
         await scope.upload_flashcard_asset(mode="local", file_path=image_path)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_study_assistant_actions():
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+
+    context = await scope.get_flashcard_study_assistant_context(mode="server", card_id="card-server-1")
+    response = await scope.respond_flashcard_study_assistant(
+        mode="server",
+        card_id="card-server-1",
+        action="explain",
+        message="Explain this",
+        provider="openai",
+        model="gpt-test",
+        expected_thread_version=2,
+    )
+
+    assert context["source"] == "server"
+    assert context["entity_kind"] == "flashcard_study_assistant_context"
+    assert response["thread"]["version"] == 3
+    assert response["entity_kind"] == "flashcard_study_assistant_response"
+    assert server.calls == [
+        ("get_flashcard_study_assistant_context", "card-server-1"),
+        (
+            "respond_flashcard_study_assistant",
+            "card-server-1",
+            "explain",
+            "Explain this",
+            "text",
+            "openai",
+            "gpt-test",
+            2,
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.get_flashcard_study_assistant_context(mode="local", card_id="card-local-1")
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,9 @@ from tldw_chatbook.tldw_api import (
     FlashcardUpdateRequest,
     FlashcardsImportRequest,
     FlashcardsImportResponse,
+    StudyAssistantContextResponse,
+    StudyAssistantRespondRequest,
+    StudyAssistantRespondResponse,
     StructuredQaImportPreviewRequest,
     StructuredQaImportPreviewResponse,
     TLDWAPIClient,
@@ -621,6 +624,82 @@ async def test_flashcard_asset_and_file_import_routes_wire(monkeypatch, tmp_path
     assert content == b"fake-png"
     assert json_import.imported == 1
     assert apkg_import.items[0].uuid == "card-apkg-1"
+
+
+@pytest.mark.asyncio
+async def test_flashcard_study_assistant_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    thread = {
+        "id": 41,
+        "context_type": "flashcard",
+        "flashcard_uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+        "message_count": 1,
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 2,
+    }
+    message = {
+        "id": 100,
+        "thread_id": 41,
+        "role": "assistant",
+        "action_type": "explain",
+        "input_modality": "text",
+        "content": "ATP stores energy.",
+        "structured_payload": {"summary": "energy"},
+        "context_snapshot": {"front": "What powers cells?"},
+        "client_id": "server-client",
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "thread": thread,
+                "messages": [message],
+                "context_snapshot": {"front": "What powers cells?"},
+                "available_actions": ["explain", "mnemonic"],
+                "citations": [],
+            },
+            {
+                "thread": {**thread, "version": 3},
+                "user_message": {**message, "id": 101, "role": "user", "content": "Explain this"},
+                "assistant_message": {**message, "id": 102},
+                "structured_payload": {"summary": "energy"},
+                "context_snapshot": {"front": "What powers cells?"},
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    context = await client.get_flashcard_study_assistant_context("87ca2b3f-7e3a-47d7-a52f-8debc86c03cb")
+    response = await client.respond_flashcard_study_assistant(
+        "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+        StudyAssistantRespondRequest(
+            action="explain",
+            message="Explain this",
+            provider="openai",
+            model="gpt-test",
+            expected_thread_version=2,
+        ),
+    )
+
+    assert mocked.await_args_list[0].args[:2] == (
+        "GET",
+        "/api/v1/flashcards/87ca2b3f-7e3a-47d7-a52f-8debc86c03cb/assistant",
+    )
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/flashcards/87ca2b3f-7e3a-47d7-a52f-8debc86c03cb/assistant/respond",
+    )
+    assert mocked.await_args_list[1].kwargs["json_data"] == {
+        "action": "explain",
+        "message": "Explain this",
+        "input_modality": "text",
+        "provider": "openai",
+        "model": "gpt-test",
+        "expected_thread_version": 2,
+    }
+    assert isinstance(context, StudyAssistantContextResponse)
+    assert isinstance(response, StudyAssistantRespondResponse)
+    assert response.thread.version == 3
 
 
 @pytest.mark.asyncio

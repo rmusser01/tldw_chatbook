@@ -21,6 +21,9 @@ from tldw_chatbook.tldw_api import (
     FlashcardUpdateRequest,
     FlashcardsImportRequest,
     FlashcardsImportResponse,
+    StudyAssistantContextResponse,
+    StudyAssistantRespondRequest,
+    StudyAssistantRespondResponse,
     StructuredQaImportPreviewRequest,
     StructuredQaImportPreviewResponse,
 )
@@ -308,6 +311,65 @@ def test_flashcard_asset_metadata_round_trips_server_shape():
 
     assert str(payload.asset_uuid) == "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb"
     assert payload.mime_type == "image/png"
+
+
+def test_study_assistant_models_round_trip_server_shape():
+    thread = {
+        "id": 41,
+        "context_type": "flashcard",
+        "flashcard_uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+        "message_count": 1,
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 2,
+    }
+    message = {
+        "id": 100,
+        "thread_id": 41,
+        "role": "assistant",
+        "action_type": "explain",
+        "input_modality": "text",
+        "content": "ATP stores energy.",
+        "structured_payload": {"summary": "energy"},
+        "context_snapshot": {"front": "What powers cells?"},
+        "client_id": "server-client",
+    }
+    context = StudyAssistantContextResponse.model_validate(
+        {
+            "thread": thread,
+            "messages": [message],
+            "context_snapshot": {"front": "What powers cells?"},
+            "available_actions": ["explain", "mnemonic"],
+            "citations": [{"source": "manual"}],
+        }
+    )
+    request_data = StudyAssistantRespondRequest(
+        action="explain",
+        message="Explain this",
+        provider="openai",
+        model="gpt-test",
+        expected_thread_version=2,
+    )
+    response = StudyAssistantRespondResponse.model_validate(
+        {
+            "thread": {**thread, "version": 3},
+            "user_message": {**message, "id": 101, "role": "user", "content": "Explain this"},
+            "assistant_message": {**message, "id": 102, "content": "ATP stores energy."},
+            "structured_payload": {"summary": "energy"},
+            "context_snapshot": {"front": "What powers cells?"},
+        }
+    )
+
+    assert context.available_actions == ["explain", "mnemonic"]
+    assert request_data.model_dump(mode="json", exclude_none=True) == {
+        "action": "explain",
+        "message": "Explain this",
+        "input_modality": "text",
+        "provider": "openai",
+        "model": "gpt-test",
+        "expected_thread_version": 2,
+    }
+    assert response.thread.version == 3
 
 
 def test_flashcard_create_request_preserves_optional_fields():

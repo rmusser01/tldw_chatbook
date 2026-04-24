@@ -359,6 +359,67 @@ class FlashcardsImportResponse(BaseModel):
     errors: list[FlashcardsImportError] = Field(default_factory=list)
 
 
+StudyAssistantAction = Literal["explain", "mnemonic", "follow_up", "fact_check", "freeform"]
+
+
+class StudyAssistantThreadSummary(BaseModel):
+    id: int
+    context_type: Literal["flashcard", "quiz_attempt_question"]
+    flashcard_uuid: Optional[str] = None
+    quiz_attempt_id: Optional[int] = None
+    question_id: Optional[int] = None
+    last_message_at: Optional[str] = None
+    message_count: int = 0
+    deleted: bool
+    client_id: Optional[str] = None
+    version: int
+    created_at: Optional[str] = None
+    last_modified: Optional[str] = None
+
+
+class StudyAssistantMessage(BaseModel):
+    id: int
+    thread_id: int
+    role: Literal["user", "assistant"]
+    action_type: StudyAssistantAction
+    input_modality: Literal["text", "voice_transcript"]
+    content: str
+    structured_payload: dict[str, Any] = Field(default_factory=dict)
+    context_snapshot: dict[str, Any] = Field(default_factory=dict)
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    created_at: Optional[str] = None
+    client_id: Optional[str] = None
+
+
+class StudyAssistantRespondRequest(BaseModel):
+    action: StudyAssistantAction
+    message: Optional[str] = None
+    input_modality: Literal["text", "voice_transcript"] = "text"
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    expected_thread_version: Optional[int] = Field(None, ge=1)
+
+
+class StudyAssistantContextResponse(BaseModel):
+    thread: StudyAssistantThreadSummary
+    messages: list[StudyAssistantMessage] = Field(default_factory=list)
+    context_snapshot: dict[str, Any] = Field(default_factory=dict)
+    available_actions: list[StudyAssistantAction] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    primary_citation: Optional[dict[str, Any]] = None
+    deep_dive_target: Optional[dict[str, Any]] = None
+    study_pack: Optional[dict[str, Any]] = None
+
+
+class StudyAssistantRespondResponse(BaseModel):
+    thread: StudyAssistantThreadSummary
+    user_message: Optional[StudyAssistantMessage] = None
+    assistant_message: Optional[StudyAssistantMessage] = None
+    structured_payload: dict[str, Any] = Field(default_factory=dict)
+    context_snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
 class FlashcardDeckProgress(BaseModel):
     deck_id: int
     deck_name: str

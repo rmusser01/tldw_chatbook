@@ -563,6 +563,46 @@ class StudyScopeService:
         result.setdefault("entity_kind", "flashcard_import")
         return result
 
+    async def get_flashcard_study_assistant_context(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        card_id: str,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard study assistant")
+        payload = await self._maybe_await(service.get_flashcard_study_assistant_context(card_id))
+        result = dict(self._with_server_source(payload or {}))
+        result.setdefault("entity_kind", "flashcard_study_assistant_context")
+        return result
+
+    async def respond_flashcard_study_assistant(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        card_id: str,
+        action: str,
+        message: str | None = None,
+        input_modality: str = "text",
+        provider: str | None = None,
+        model: str | None = None,
+        expected_thread_version: int | None = None,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard study assistant")
+        payload = await self._maybe_await(
+            service.respond_flashcard_study_assistant(
+                card_id,
+                action=action,
+                message=message,
+                input_modality=input_modality,
+                provider=provider,
+                model=model,
+                expected_thread_version=expected_thread_version,
+            )
+        )
+        result = dict(self._with_server_source(payload or {}))
+        result.setdefault("entity_kind", "flashcard_study_assistant_response")
+        return result
+
     async def get_flashcard_analytics_summary(
         self,
         *,

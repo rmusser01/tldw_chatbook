@@ -278,6 +278,9 @@ from .flashcards_schemas import (
     FlashcardUpdateRequest,
     FlashcardsImportRequest,
     FlashcardsImportResponse,
+    StudyAssistantContextResponse,
+    StudyAssistantRespondRequest,
+    StudyAssistantRespondResponse,
     StructuredQaImportPreviewRequest,
     StructuredQaImportPreviewResponse,
 )
@@ -2980,6 +2983,28 @@ class TLDWAPIClient:
             return FlashcardsImportResponse.model_validate(response)
         finally:
             cleanup_file_objects(httpx_files)
+
+    async def get_flashcard_study_assistant_context(
+        self,
+        card_uuid: str,
+    ) -> StudyAssistantContextResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/flashcards/{card_uuid}/assistant",
+        )
+        return StudyAssistantContextResponse.model_validate(response)
+
+    async def respond_flashcard_study_assistant(
+        self,
+        card_uuid: str,
+        request_data: StudyAssistantRespondRequest,
+    ) -> StudyAssistantRespondResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/flashcards/{card_uuid}/assistant/respond",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return StudyAssistantRespondResponse.model_validate(response)
 
     async def export_flashcards(
         self,
