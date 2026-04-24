@@ -239,6 +239,38 @@ def test_local_study_service_resets_scheduling_and_manages_tags():
     assert suggestions == {"items": [{"tag": "biology", "count": 3}], "count": 1}
 
 
+def test_local_study_service_previews_imports_and_exports_flashcard_tsv():
+    db = FakeDB()
+    service = LocalStudyService(db=db)
+
+    preview = service.preview_structured_qa_import("Q: What powers cells?\nA: ATP")
+    imported = service.import_flashcards_tsv(
+        "Deck\tFront\tBack\tTags\tNotes\nBiology\tWhat powers cells?\tATP\tbiology cell\tenergy",
+        has_header=True,
+    )
+    exported = service.export_flashcards(deck_id="deck-local-1", include_header=True)
+
+    assert preview == {
+        "drafts": [
+            {
+                "front": "What powers cells?",
+                "back": "ATP",
+                "line_start": 1,
+                "line_end": 2,
+                "notes": None,
+                "extra": None,
+                "tags": [],
+            }
+        ],
+        "errors": [],
+        "detected_format": "qa_labels",
+        "skipped_blocks": 0,
+    }
+    assert imported["imported"] == 1
+    assert imported["items"] == [{"uuid": "card-local-1", "deck_id": "deck-local-1"}]
+    assert exported.decode("utf-8").splitlines()[0] == "Deck\tFront\tBack\tTags\tNotes\tExtra"
+
+
 def test_local_study_service_persists_management_helpers_against_chachanotes_db(tmp_path):
     db = CharactersRAGDB(tmp_path / "study.db", client_id="test_client")
     service = LocalStudyService(db=db)
@@ -281,6 +313,25 @@ def test_local_study_service_persists_management_helpers_against_chachanotes_db(
     assert tags == {"items": ["biology", "cell"], "count": 2}
     assert suggestions["items"][0] == {"tag": "biology", "count": 1}
     assert bulk["results"][0]["flashcard"]["front"] == "Question v2"
+
+
+def test_local_study_service_imports_and_exports_against_chachanotes_db(tmp_path):
+    db = CharactersRAGDB(tmp_path / "study.db", client_id="test_client")
+    service = LocalStudyService(db=db)
+
+    preview = service.preview_structured_qa_import("Q: What powers cells?\nA: ATP")
+    imported = service.import_flashcards_tsv(
+        "Deck\tFront\tBack\tTags\tNotes\nBiology\tWhat powers cells?\tATP\tbio cell\tenergy",
+        has_header=True,
+    )
+    exported = service.export_flashcards(deck_id=imported["items"][0]["deck_id"], include_header=True)
+    exported_text = exported.decode("utf-8")
+
+    assert preview["drafts"][0]["front"] == "What powers cells?"
+    assert imported["imported"] == 1
+    assert imported["errors"] == []
+    assert "Deck\tFront\tBack\tTags\tNotes\tExtra" in exported_text
+    assert "Biology\tWhat powers cells?\tATP\tbio cell\tenergy" in exported_text
 
 
 def test_local_study_service_updates_review_and_returns_refetched_card():

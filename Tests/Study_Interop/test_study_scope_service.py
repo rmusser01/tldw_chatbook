@@ -146,6 +146,31 @@ class FakeLocalStudyService:
         self.calls.append(("list_flashcard_tag_suggestions", q, limit))
         return {"items": [{"tag": "biology", "count": 3}], "count": 1}
 
+    def preview_structured_qa_import(self, content, *, max_lines=None, max_line_length=None, max_field_length=None):
+        self.calls.append(("preview_structured_qa_import", content, max_lines, max_line_length, max_field_length))
+        return {
+            "drafts": [
+                {
+                    "front": "What powers cells?",
+                    "back": "ATP",
+                    "line_start": 1,
+                    "line_end": 2,
+                    "tags": [],
+                }
+            ],
+            "errors": [],
+            "detected_format": "qa_labels",
+            "skipped_blocks": 0,
+        }
+
+    def import_flashcards_tsv(self, content, *, delimiter="\t", has_header=False, max_lines=None, max_line_length=None, max_field_length=None):
+        self.calls.append(("import_flashcards_tsv", content, delimiter, has_header, max_lines, max_line_length, max_field_length))
+        return {"imported": 1, "items": [{"uuid": "card-local-1", "deck_id": "deck-local-1"}], "errors": []}
+
+    def export_flashcards(self, **kwargs):
+        self.calls.append(("export_flashcards", kwargs))
+        return b"Deck\tFront\tBack\nBiology\tQuestion\tAnswer\n"
+
     def get_next_review_candidate(self, *, deck_id=None):
         self.calls.append(("get_next_review_candidate", deck_id))
         return {"card": {"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer"}, "selection_reason": "due"}
@@ -1337,7 +1362,58 @@ async def test_scope_service_routes_server_flashcard_import_export_actions():
     ]
 
     with pytest.raises(ValueError, match="server-only"):
-        await scope.export_flashcards(mode="local")
+        await scope.import_flashcards_json_file(mode="local", file_path="cards.json")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_flashcard_import_export_actions():
+    local = FakeLocalStudyService()
+    scope = StudyScopeService(local_service=local, server_service=FakeServerStudyService())
+
+    preview = await scope.preview_structured_qa_import(
+        mode="local",
+        content="Q: What powers cells?\nA: ATP",
+        max_lines=25,
+    )
+    imported = await scope.import_flashcards_tsv(
+        mode="local",
+        content="Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
+        has_header=True,
+    )
+    exported = await scope.export_flashcards(mode="local", deck_id="deck-local-1", include_header=True)
+
+    assert preview["source"] == "local"
+    assert preview["entity_kind"] == "flashcard_import_preview"
+    assert imported["source"] == "local"
+    assert imported["items"][0]["uuid"] == "card-local-1"
+    assert exported.startswith(b"Deck\tFront")
+    assert local.calls == [
+        ("preview_structured_qa_import", "Q: What powers cells?\nA: ATP", 25, None, None),
+        (
+            "import_flashcards_tsv",
+            "Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
+            "\t",
+            True,
+            None,
+            None,
+            None,
+        ),
+        (
+            "export_flashcards",
+            {
+                "deck_id": "deck-local-1",
+                "workspace_id": None,
+                "include_workspace_items": False,
+                "tag": None,
+                "q": None,
+                "export_format": "csv",
+                "include_reverse": False,
+                "delimiter": "\t",
+                "include_header": True,
+                "extended_header": False,
+            },
+        ),
+    ]
 
 
 @pytest.mark.asyncio

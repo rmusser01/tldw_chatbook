@@ -450,7 +450,8 @@ class StudyScopeService:
         max_line_length: int | None = None,
         max_field_length: int | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard import preview")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
             service.preview_structured_qa_import(
                 content,
@@ -459,7 +460,8 @@ class StudyScopeService:
                 max_field_length=max_field_length,
             )
         )
-        result = dict(self._with_server_source(payload or {}))
+        result = dict(payload or {})
+        result.setdefault("source", normalized_mode.value)
         result.setdefault("entity_kind", "flashcard_import_preview")
         return result
 
@@ -474,7 +476,8 @@ class StudyScopeService:
         max_line_length: int | None = None,
         max_field_length: int | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard import")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
             service.import_flashcards_tsv(
                 content,
@@ -485,7 +488,8 @@ class StudyScopeService:
                 max_field_length=max_field_length,
             )
         )
-        result = dict(self._with_server_source(payload or {}))
+        result = dict(payload or {})
+        result.setdefault("source", normalized_mode.value)
         result.setdefault("entity_kind", "flashcard_import")
         return result
 
@@ -504,7 +508,8 @@ class StudyScopeService:
         include_header: bool = False,
         extended_header: bool = False,
     ) -> bytes:
-        service = self._server_only_service(mode, "Flashcard export")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(
             service.export_flashcards(
                 deck_id=deck_id,

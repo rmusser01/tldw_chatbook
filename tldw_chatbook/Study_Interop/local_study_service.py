@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import csv
+import io
+import json
 from typing import Any, Mapping, Optional
 
 
@@ -199,6 +202,221 @@ class LocalStudyService:
         else:
             items = list(payload or [])
         return {"items": items, "count": len(items)}
+
+    @staticmethod
+    def _split_tags(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        text = str(value).replace(",", " ")
+        return [item.strip() for item in text.split() if item.strip()]
+
+    @staticmethod
+    def _metadata(record: Mapping[str, Any]) -> dict[str, Any]:
+        metadata = record.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                decoded = json.loads(metadata)
+                return dict(decoded) if isinstance(decoded, Mapping) else {}
+            except json.JSONDecodeError:
+                return {}
+        if isinstance(metadata, Mapping):
+            return dict(metadata)
+        return {}
+
+    def _resolve_or_create_deck_id(self, deck_ref: Any) -> str:
+        deck_ref_text = str(deck_ref or "").strip()
+        if not deck_ref_text:
+            raise ValueError("Flashcard import row is missing a deck.")
+        for deck in list(self.list_decks(limit=1000, offset=0) or []):
+            if str(deck.get("id")) == deck_ref_text or str(deck.get("name") or "").strip() == deck_ref_text:
+                return str(deck.get("id"))
+        created = self.create_deck(name=deck_ref_text)
+        return str(created.get("id"))
+
+    @staticmethod
+    def _header_map(header: list[str], row: list[str]) -> dict[str, str]:
+        return {
+            str(name).strip().lower().replace(" ", "_"): row[index].strip()
+            for index, name in enumerate(header)
+            if index < len(row)
+        }
+
+    def preview_structured_qa_import(
+        self,
+        content: str,
+        *,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        lines = content.splitlines()
+        drafts: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        skipped_blocks = 0
+
+        if max_lines is not None and len(lines) > max_lines:
+            errors.append({"line": max_lines + 1, "error": "Content exceeds max_lines."})
+            lines = lines[:max_lines]
+
+        block: list[tuple[int, str]] = []
+
+        def flush_block() -> None:
+            nonlocal skipped_blocks
+            if not block:
+                return
+            front: str | None = None
+            back: str | None = None
+            for line_number, line_text in block:
+                stripped = line_text.strip()
+                lowered = stripped.lower()
+                if lowered.startswith(("q:", "question:")):
+                    front = stripped.split(":", 1)[1].strip()
+                elif lowered.startswith(("a:", "answer:")):
+                    back = stripped.split(":", 1)[1].strip()
+                if max_line_length is not None and len(line_text) > max_line_length:
+                    errors.append({"line": line_number, "error": "Line exceeds max_line_length."})
+                    skipped_blocks += 1
+                    return
+            if not front or not back:
+                errors.append({"line": block[0][0], "error": "Block must contain Q:/A: labels."})
+                skipped_blocks += 1
+                return
+            if max_field_length is not None and (len(front) > max_field_length or len(back) > max_field_length):
+                errors.append({"line": block[0][0], "error": "Field exceeds max_field_length."})
+                skipped_blocks += 1
+                return
+            drafts.append(
+                {
+                    "front": front,
+                    "back": back,
+                    "line_start": block[0][0],
+                    "line_end": block[-1][0],
+                    "notes": None,
+                    "extra": None,
+                    "tags": [],
+                }
+            )
+
+        for line_number, line in enumerate(lines, start=1):
+            if line.strip():
+                block.append((line_number, line))
+                continue
+            flush_block()
+            block = []
+        flush_block()
+
+        return {
+            "drafts": drafts,
+            "errors": errors,
+            "detected_format": "qa_labels",
+            "skipped_blocks": skipped_blocks,
+        }
+
+    def import_flashcards_tsv(
+        self,
+        content: str,
+        *,
+        delimiter: str = "\t",
+        has_header: bool = False,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        rows = list(csv.reader(io.StringIO(content), delimiter=delimiter))
+        header = [column.strip() for column in rows[0]] if has_header and rows else []
+        data_rows = rows[1:] if has_header else rows
+        items: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+
+        if max_lines is not None and len(data_rows) > max_lines:
+            errors.append({"line": max_lines + (2 if has_header else 1), "error": "Content exceeds max_lines."})
+            data_rows = data_rows[:max_lines]
+
+        for index, row in enumerate(data_rows, start=2 if has_header else 1):
+            if not row or not any(str(column).strip() for column in row):
+                continue
+            if max_line_length is not None and len(delimiter.join(row)) > max_line_length:
+                errors.append({"line": index, "error": "Line exceeds max_line_length."})
+                continue
+            try:
+                if has_header:
+                    mapped = self._header_map(header, row)
+                    deck_ref = mapped.get("deck_id") or mapped.get("deck") or mapped.get("deck_name")
+                    front = mapped.get("front") or mapped.get("question")
+                    back = mapped.get("back") or mapped.get("answer")
+                    tags = self._split_tags(mapped.get("tags"))
+                    notes = mapped.get("notes") or None
+                    extra = mapped.get("extra") or None
+                else:
+                    if len(row) < 3:
+                        raise ValueError("Row must contain deck, front, and back fields.")
+                    deck_ref, front, back = row[0].strip(), row[1].strip(), row[2].strip()
+                    tags = self._split_tags(row[3] if len(row) > 3 else None)
+                    notes = row[4].strip() if len(row) > 4 and row[4].strip() else None
+                    extra = row[5].strip() if len(row) > 5 and row[5].strip() else None
+                if not front or not back:
+                    raise ValueError("Row must contain front and back fields.")
+                if max_field_length is not None and (len(front) > max_field_length or len(back) > max_field_length):
+                    raise ValueError("Field exceeds max_field_length.")
+                deck_id = self._resolve_or_create_deck_id(deck_ref)
+                card = self.create_flashcard(deck_id=deck_id, front=front, back=back, tags=tags, notes=notes, extra=extra)
+                card_id = str(card.get("uuid") or card.get("id"))
+                items.append({"uuid": card_id, "deck_id": deck_id})
+            except Exception as exc:
+                errors.append({"line": index, "error": str(exc)})
+
+        return {"imported": len(items), "items": items, "errors": errors}
+
+    def export_flashcards(
+        self,
+        *,
+        deck_id: str | int | None = None,
+        workspace_id: str | None = None,
+        include_workspace_items: bool = False,
+        tag: str | None = None,
+        q: str | None = None,
+        export_format: str = "csv",
+        include_reverse: bool = False,
+        delimiter: str = "\t",
+        include_header: bool = False,
+        extended_header: bool = False,
+    ) -> bytes:
+        if workspace_id or include_workspace_items:
+            raise ValueError("Workspace Study is unavailable in local mode")
+        records = list(self.list_flashcards(deck_id=str(deck_id) if deck_id is not None else None, q=q, limit=100000, offset=0) or [])
+        if tag:
+            tag_key = str(tag).strip()
+            records = [record for record in records if tag_key in self._split_tags(record.get("tags"))]
+
+        deck_names: dict[str, str] = {}
+        output = io.StringIO()
+        writer = csv.writer(output, delimiter=delimiter, lineterminator="\n")
+        if include_header or extended_header:
+            writer.writerow(["Deck", "Front", "Back", "Tags", "Notes", "Extra"])
+        for record in records:
+            record_deck_id = str(record.get("deck_id") or deck_id or "")
+            if record_deck_id not in deck_names:
+                try:
+                    deck = self.get_deck(record_deck_id) if record_deck_id else {}
+                    deck_names[record_deck_id] = str(deck.get("name") or record_deck_id)
+                except Exception:
+                    deck_names[record_deck_id] = record_deck_id
+            metadata = self._metadata(record)
+            tags_text = " ".join(self._split_tags(record.get("tags")))
+            row = [
+                deck_names[record_deck_id],
+                str(record.get("front") or ""),
+                str(record.get("back") or ""),
+                tags_text,
+                str(record.get("notes") or metadata.get("notes") or ""),
+                str(record.get("extra") or metadata.get("extra") or ""),
+            ]
+            writer.writerow(row)
+            if include_reverse:
+                writer.writerow([row[0], row[2], row[1], row[3], row[4], row[5]])
+        return output.getvalue().encode("utf-8")
 
     def delete_flashcard(
         self,
