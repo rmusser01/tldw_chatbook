@@ -328,6 +328,23 @@ class FakeLocalStudyService:
         self.calls.append(("delete_flashcard_template", template_id, expected_version))
         return {"deleted": True}
 
+    def upload_flashcard_asset(self, file_path):
+        self.calls.append(("upload_flashcard_asset", str(file_path)))
+        return {
+            "asset_uuid": "asset-local-1",
+            "reference": "flashcard-asset://asset-local-1",
+            "markdown_snippet": "![cell.png](flashcard-asset://asset-local-1)",
+            "mime_type": "image/png",
+            "byte_size": 8,
+            "width": None,
+            "height": None,
+            "original_filename": "cell.png",
+        }
+
+    def get_flashcard_asset_content(self, asset_uuid):
+        self.calls.append(("get_flashcard_asset_content", asset_uuid))
+        return b"fake-png"
+
     def end_review_session(self, review_session_id):
         self.calls.append(("end_review_session", review_session_id))
         return None
@@ -1651,9 +1668,27 @@ async def test_scope_service_routes_server_flashcard_asset_and_file_import_actio
     ]
 
     with pytest.raises(ValueError, match="server-only"):
-        await scope.upload_flashcard_asset(mode="local", file_path=image_path)
-    with pytest.raises(ValueError, match="server-only"):
         await scope.import_flashcards_apkg(mode="local", file_path=apkg_path)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_flashcard_asset_actions(tmp_path):
+    local = FakeLocalStudyService()
+    scope = StudyScopeService(local_service=local, server_service=FakeServerStudyService())
+    image_path = tmp_path / "cell.png"
+    image_path.write_bytes(b"fake-png")
+
+    asset = await scope.upload_flashcard_asset(mode="local", file_path=image_path)
+    content = await scope.get_flashcard_asset_content(mode="local", asset_uuid="asset-local-1")
+
+    assert asset["source"] == "local"
+    assert asset["entity_kind"] == "flashcard_asset"
+    assert asset["reference"] == "flashcard-asset://asset-local-1"
+    assert content == b"fake-png"
+    assert local.calls == [
+        ("upload_flashcard_asset", str(image_path)),
+        ("get_flashcard_asset_content", "asset-local-1"),
+    ]
 
 
 @pytest.mark.asyncio

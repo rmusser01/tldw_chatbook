@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import mimetypes
+from pathlib import Path
 from typing import Any, Mapping, Optional
 
 
@@ -663,6 +665,27 @@ class LocalStudyService:
                 payload={"action": "flashcard_template_deleted", "template_id": str(template_id)},
             )
         return deleted
+
+    def upload_flashcard_asset(self, file_path: Any) -> dict[str, Any]:
+        path = Path(file_path)
+        content = path.read_bytes()
+        mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        asset = self._require_db().create_flashcard_asset(
+            original_filename=path.name,
+            mime_type=mime_type,
+            content=content,
+        )
+        self._dispatch_local_notification(
+            title="Local flashcard asset stored",
+            message=f"Stored local flashcard asset: {asset.get('original_filename') or path.name}",
+            source_entity_id=str(asset.get("asset_uuid") or ""),
+            source_entity_kind="flashcard_asset",
+            payload={"action": "flashcard_asset_uploaded", "asset_uuid": str(asset.get("asset_uuid") or "")},
+        )
+        return asset
+
+    def get_flashcard_asset_content(self, asset_uuid: str) -> bytes | None:
+        return self._require_db().get_flashcard_asset_content(str(asset_uuid))
 
     def delete_flashcard(
         self,

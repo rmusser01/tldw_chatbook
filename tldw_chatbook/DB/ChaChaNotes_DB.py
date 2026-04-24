@@ -133,7 +133,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 16  # Incremented schema version to add local flashcard template parity
+    _CURRENT_SCHEMA_VERSION = 17  # Incremented schema version to add local flashcard asset parity
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2006,6 +2006,31 @@ UPDATE db_schema_version
    AND version = 15;
 """
 
+    _MIGRATE_V16_TO_V17_SQL = """
+-- Migration from V16 to V17: Add local flashcard asset parity
+
+CREATE TABLE IF NOT EXISTS flashcard_assets (
+    asset_uuid TEXT PRIMARY KEY,
+    original_filename TEXT,
+    mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+    byte_size INTEGER NOT NULL DEFAULT 0,
+    content BLOB NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    client_id TEXT NOT NULL DEFAULT 'unknown',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_flashcard_assets_filename ON flashcard_assets(original_filename);
+CREATE INDEX IF NOT EXISTS idx_flashcard_assets_last_modified ON flashcard_assets(last_modified);
+
+UPDATE db_schema_version
+   SET version = 17
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 16;
+"""
+
     def __init__(self, db_path: Union[str, Path], client_id: str, 
                  check_integrity_on_startup: bool = False):
         """
@@ -2815,6 +2840,31 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V15→V16] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V15 to V16 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v16_to_v17(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 16 to version 17.
+
+        This migration adds local flashcard asset storage.
+        """
+        logger.info(f"Migrating schema from V16 to V17 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V16_TO_V17_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V16→V17] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 17:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V16→V17] Migration version check failed. Expected 17, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V16→V17] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V16→V17] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V16 to V17 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V16→V17] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V16 to V17 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 7 to version 8.
@@ -2899,6 +2949,7 @@ UPDATE db_schema_version
                     13: self._migrate_from_v13_to_v14,
                     14: self._migrate_from_v14_to_v15,
                     15: self._migrate_from_v15_to_v16,
+                    16: self._migrate_from_v16_to_v17,
                 }
 
                 if current_db_version == 0:
@@ -7573,6 +7624,59 @@ UPDATE db_schema_version
                 return True
         except sqlite3.Error as e:
             raise CharactersRAGDBError(f"Failed to delete flashcard template: {e}") from e
+
+    def create_flashcard_asset(
+        self,
+        *,
+        original_filename: Optional[str],
+        mime_type: Optional[str],
+        content: bytes,
+    ) -> Dict[str, Any]:
+        """Persist local flashcard asset bytes and return server-shaped metadata."""
+        data = bytes(content or b"")
+        if not data:
+            raise InputError("Flashcard asset content is required")
+        asset_uuid = self._generate_uuid()
+        filename = str(original_filename or "asset").strip() or "asset"
+        normalized_mime = str(mime_type or "application/octet-stream").strip() or "application/octet-stream"
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO flashcard_assets (
+                        asset_uuid, original_filename, mime_type, byte_size, content, client_id
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (asset_uuid, filename, normalized_mime, len(data), sqlite3.Binary(data), self.client_id),
+                )
+            return {
+                "asset_uuid": asset_uuid,
+                "reference": f"flashcard-asset://{asset_uuid}",
+                "markdown_snippet": f"![{filename}](flashcard-asset://{asset_uuid})",
+                "mime_type": normalized_mime,
+                "byte_size": len(data),
+                "width": None,
+                "height": None,
+                "original_filename": filename,
+            }
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(f"Failed to create flashcard asset: {e}") from e
+
+    def get_flashcard_asset_content(self, asset_uuid: str) -> Optional[bytes]:
+        """Return local flashcard asset bytes by UUID."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        row = cursor.execute(
+            """
+            SELECT content
+            FROM flashcard_assets
+            WHERE asset_uuid = ? AND deleted = 0
+            """,
+            (str(asset_uuid),),
+        ).fetchone()
+        if not row:
+            return None
+        return bytes(row["content"])
 
     def list_flashcards(
         self,

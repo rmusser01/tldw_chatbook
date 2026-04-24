@@ -340,7 +340,6 @@ AUDITED_CAPABILITY_SEEDS = (
                 "study.flashcard.assets",
                 actions=(CREATE, DETAIL),
                 domain_id="study",
-                sources=(SERVER_SOURCE,),
             ),
             _resource(
                 "study.flashcard.assistant",

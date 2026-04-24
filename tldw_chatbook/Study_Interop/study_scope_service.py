@@ -549,9 +549,10 @@ class StudyScopeService:
         mode: StudyBackend | str | None = None,
         file_path: Any,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard assets")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.upload_flashcard_asset(file_path))
-        result = dict(self._with_server_source(payload or {}))
+        result = dict(self._with_source(normalized_mode.value, payload or {}))
         result.setdefault("entity_kind", "flashcard_asset")
         return result
 
@@ -561,7 +562,8 @@ class StudyScopeService:
         mode: StudyBackend | str | None = None,
         asset_uuid: str,
     ) -> bytes:
-        service = self._server_only_service(mode, "Flashcard assets")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.get_flashcard_asset_content(asset_uuid))
 
     async def import_flashcards_json_file(

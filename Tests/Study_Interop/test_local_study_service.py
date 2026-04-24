@@ -215,6 +215,23 @@ class FakeDB:
         self.calls.append(("delete_flashcard_template", template_id, expected_version))
         return {"deleted": True}
 
+    def create_flashcard_asset(self, *, original_filename, mime_type, content):
+        self.calls.append(("create_flashcard_asset", original_filename, mime_type, content))
+        return {
+            "asset_uuid": "asset-local-1",
+            "reference": "flashcard-asset://asset-local-1",
+            "markdown_snippet": "![cell](flashcard-asset://asset-local-1)",
+            "mime_type": mime_type,
+            "byte_size": len(content),
+            "width": None,
+            "height": None,
+            "original_filename": original_filename,
+        }
+
+    def get_flashcard_asset_content(self, asset_uuid):
+        self.calls.append(("get_flashcard_asset_content", asset_uuid))
+        return b"fake-png"
+
 
 def test_local_study_service_lists_and_creates_decks():
     db = FakeDB()
@@ -613,3 +630,28 @@ def test_local_study_service_persists_flashcard_templates_against_chachanotes_db
     assert reopened_fetched["notes_template"] == "Updated focus: {{topic}}"
     assert deleted is True
     assert after_delete == {"items": [], "count": 0, "total": 0}
+
+
+def test_local_study_service_persists_flashcard_assets_against_chachanotes_db(tmp_path):
+    db_path = tmp_path / "study.db"
+    image_path = tmp_path / "cell.png"
+    image_path.write_bytes(b"fake-png")
+    db = CharactersRAGDB(db_path, client_id="test_client")
+    service = LocalStudyService(db=db)
+
+    asset = service.upload_flashcard_asset(image_path)
+    content = service.get_flashcard_asset_content(asset["asset_uuid"])
+    db.close()
+
+    reopened = CharactersRAGDB(db_path, client_id="test_client")
+    reopened_service = LocalStudyService(db=reopened)
+    reopened_content = reopened_service.get_flashcard_asset_content(asset["asset_uuid"])
+
+    assert asset["asset_uuid"]
+    assert asset["reference"] == f"flashcard-asset://{asset['asset_uuid']}"
+    assert asset["markdown_snippet"] == f"![cell.png](flashcard-asset://{asset['asset_uuid']})"
+    assert asset["mime_type"] == "image/png"
+    assert asset["byte_size"] == len(b"fake-png")
+    assert asset["original_filename"] == "cell.png"
+    assert content == b"fake-png"
+    assert reopened_content == b"fake-png"
