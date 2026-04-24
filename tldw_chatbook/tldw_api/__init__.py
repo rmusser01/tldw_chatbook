@@ -582,6 +582,12 @@ _EXPORT_GROUPS = (
     (
         ".research_search_schemas",
         (
+            "PaperSearchDetailRequest",
+            "PaperSearchDetailResponse",
+            "PaperSearchIngestRequest",
+            "PaperSearchListResponse",
+            "PaperSearchOperationResponse",
+            "PaperSearchRequest",
             "WebSearchAggregateResponse",
             "WebSearchFinalAnswer",
             "WebSearchRawResponse",

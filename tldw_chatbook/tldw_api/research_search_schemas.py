@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 SUPPORTED_WEBSEARCH_ENGINES = {
@@ -84,3 +84,174 @@ class WebSearchAggregateResponse(BaseModel):
     relevant_results: dict[str, Any] | None = None
     web_search_results_dict: dict[str, Any]
     sub_query_dict: dict[str, Any]
+
+
+PAPER_SEARCH_ENDPOINTS = frozenset(
+    {
+        "arxiv",
+        "biorxiv",
+        "medrxiv",
+        "semantic-scholar",
+        "biorxiv-pubs",
+        "pubmed",
+        "biorxiv/publisher",
+        "biorxiv/pub",
+        "biorxiv/funder",
+        "biorxiv/reports/summary",
+        "biorxiv/reports/usage",
+        "ieee",
+        "springer",
+        "scopus",
+        "acm",
+        "wiley",
+        "chemrxiv/items",
+        "earthrxiv",
+        "osf",
+        "zenodo",
+        "figshare",
+        "hal",
+        "vixra/search",
+    }
+)
+
+PAPER_SEARCH_DETAIL_ENDPOINTS = frozenset(
+    {
+        "arxiv/by-id",
+        "semantic-scholar/by-id",
+        "pubmed/by-id",
+        "biorxiv/by-doi",
+        "medrxiv/by-doi",
+        "biorxiv-pubs/by-doi",
+        "repec/by-handle",
+        "repec/citations",
+        "ieee/by-id",
+        "ieee/by-doi",
+        "springer/by-doi",
+        "scopus/by-doi",
+        "acm/by-doi",
+        "wiley/by-doi",
+        "chemrxiv/items/by-id",
+        "chemrxiv/items/by-doi",
+        "iacr/conf",
+        "earthrxiv/by-id",
+        "earthrxiv/by-doi",
+        "osf/by-id",
+        "osf/by-doi",
+        "zenodo/by-id",
+        "zenodo/by-doi",
+        "figshare/by-id",
+        "figshare/by-doi",
+        "hal/by-id",
+        "vixra/by-id",
+    }
+)
+
+PAPER_SEARCH_INGEST_ENDPOINTS = frozenset(
+    {
+        "pmc-oa/ingest-pdf",
+        "arxiv/ingest",
+        "earthrxiv/ingest",
+        "pubmed/ingest",
+        "semantic-scholar/ingest",
+        "ingest/by-doi",
+        "ingest/batch",
+        "osf/ingest",
+        "zenodo/ingest",
+        "figshare/ingest",
+        "figshare/ingest-by-doi",
+        "hal/ingest",
+        "vixra/ingest",
+    }
+)
+
+
+def _normalize_paper_search_endpoint(value: str, *, allowed: frozenset[str], label: str) -> str:
+    endpoint = str(value or "").strip().strip("/").lower()
+    if endpoint not in allowed:
+        label_prefix = f"{label} " if label else ""
+        raise ValueError(f"Unsupported paper search {label_prefix}endpoint: {value}")
+    return endpoint
+
+
+class PaperSearchRequest(BaseModel):
+    """Allowlisted GET route under `/api/v1/paper-search/*` for provider search."""
+
+    allowed_endpoints: ClassVar[frozenset[str]] = PAPER_SEARCH_ENDPOINTS
+
+    endpoint: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str) -> str:
+        return _normalize_paper_search_endpoint(value, allowed=cls.allowed_endpoints, label="")
+
+
+class PaperSearchDetailRequest(BaseModel):
+    """Allowlisted GET route under `/api/v1/paper-search/*` for provider detail lookups."""
+
+    allowed_endpoints: ClassVar[frozenset[str]] = PAPER_SEARCH_DETAIL_ENDPOINTS
+
+    endpoint: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str) -> str:
+        return _normalize_paper_search_endpoint(value, allowed=cls.allowed_endpoints, label="detail")
+
+
+class PaperSearchIngestRequest(BaseModel):
+    """Allowlisted POST route under `/api/v1/paper-search/*` for server-side paper ingest."""
+
+    allowed_endpoints: ClassVar[frozenset[str]] = PAPER_SEARCH_INGEST_ENDPOINTS
+
+    endpoint: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] | None = None
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str) -> str:
+        return _normalize_paper_search_endpoint(value, allowed=cls.allowed_endpoints, label="ingest")
+
+
+class PaperSearchListResponse(BaseModel):
+    """Source-honest provider search response with flexible provider-specific item fields."""
+
+    model_config = ConfigDict(extra="allow")
+
+    query_echo: dict[str, Any] = Field(default_factory=dict)
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    total_results: int | None = None
+    page: int | None = None
+    results_per_page: int | None = None
+    total_pages: int | None = None
+
+
+class PaperSearchDetailResponse(BaseModel):
+    """Flexible paper/provider detail payload returned by server paper-search endpoints."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str | None = None
+    title: str | None = None
+    doi: str | None = None
+    url: str | None = None
+    pdf_url: str | None = None
+    provider: str | None = None
+
+
+class PaperSearchOperationResponse(BaseModel):
+    """Wrapper for provider ingest responses whose shape varies by endpoint."""
+
+    model_config = ConfigDict(extra="allow")
+
+    data: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def wrap_raw_payload(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "data" not in value:
+            return {"data": value, **value}
+        return value

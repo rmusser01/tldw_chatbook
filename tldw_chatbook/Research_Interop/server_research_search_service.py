@@ -6,7 +6,13 @@ from collections.abc import Mapping
 from typing import Any, Optional
 
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
-from ..tldw_api import TLDWAPIClient, WebSearchRequest
+from ..tldw_api import (
+    PaperSearchDetailRequest,
+    PaperSearchIngestRequest,
+    PaperSearchRequest,
+    TLDWAPIClient,
+    WebSearchRequest,
+)
 
 
 class ServerResearchSearchService:
@@ -33,3 +39,21 @@ class ServerResearchSearchService:
     async def websearch(self, **payload: Any) -> dict[str, Any]:
         request = WebSearchRequest(**payload)
         return dict(self._dump_model(await self._require_client().run_research_websearch(request)))
+
+    async def paper_search(self, *, endpoint: str, **params: Any) -> dict[str, Any]:
+        request = PaperSearchRequest(endpoint=endpoint, params=params)
+        return dict(self._dump_model(await self._require_client().run_paper_search(request)))
+
+    async def paper_detail(self, *, endpoint: str, **params: Any) -> dict[str, Any]:
+        request = PaperSearchDetailRequest(endpoint=endpoint, params=params)
+        return dict(self._dump_model(await self._require_client().get_paper_search_detail(request)))
+
+    async def paper_ingest(
+        self,
+        *,
+        endpoint: str,
+        payload: dict[str, Any] | None = None,
+        **params: Any,
+    ) -> dict[str, Any]:
+        request = PaperSearchIngestRequest(endpoint=endpoint, params=params, payload=payload)
+        return dict(self._dump_model(await self._require_client().run_paper_search_ingest(request)))

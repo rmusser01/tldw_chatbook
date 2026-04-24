@@ -138,7 +138,7 @@ Execution intent for this tranche:
 
 - Keep remote-only workflows, sharing, web clipper, and remote MCP governance behind the core standalone-first roadmap rather than letting them pull priority forward.
 - Treat first-slice server reminders/feed, Sharing, and Web Clipper as landed remote-only foundations; continue them only for richer UX, stream ergonomics, deeper shared-resource rendering, clip browsing/history, browser handoff, or explicitly approved local ingestion/sync semantics.
-- Treat `Study Packs` and `Study Suggestions` as having first-slice remote client/service/scope seams; continue them only for mounted UX, richer job/snapshot presentation, or explicitly approved local materialization/import semantics. Keep `Research Search / Provider Surfaces` contract-maturity-sensitive until clearer evidence exists.
+- Treat `Study Packs`, `Study Suggestions`, and `Research Search / Provider Surfaces` as having first-slice remote client/service/scope seams; continue them only for mounted UX, richer provider/status presentation, or explicitly approved local materialization/import semantics. Keep raw paper-provider passthrough and deprecated research aliases out of Chatbook unless the server promotes them into a stable user-facing contract.
 - Reuse the source-labeling, offline fallback, and discover/trigger/observe patterns proven in earlier tranches instead of creating special-case remote UI rules.
 
 ## Follow-On Vertical Plans

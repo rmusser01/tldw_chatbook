@@ -380,6 +380,12 @@ from .research_runs_schemas import (
     ResearchRunStreamEvent,
 )
 from .research_search_schemas import (
+    PaperSearchDetailRequest,
+    PaperSearchDetailResponse,
+    PaperSearchIngestRequest,
+    PaperSearchListResponse,
+    PaperSearchOperationResponse,
+    PaperSearchRequest,
     WebSearchAggregateResponse,
     WebSearchRawResponse,
     WebSearchRequest,
@@ -2067,6 +2073,37 @@ class TLDWAPIClient:
         if "final_answer" in response or "relevant_results" in response:
             return WebSearchAggregateResponse.model_validate(response)
         return WebSearchRawResponse.model_validate(response)
+
+    async def run_paper_search(self, request_data: PaperSearchRequest) -> PaperSearchListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/paper-search/{request_data.endpoint}",
+            params=request_data.params,
+        )
+        return PaperSearchListResponse.model_validate(response)
+
+    async def get_paper_search_detail(
+        self,
+        request_data: PaperSearchDetailRequest,
+    ) -> PaperSearchDetailResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/paper-search/{request_data.endpoint}",
+            params=request_data.params,
+        )
+        return PaperSearchDetailResponse.model_validate(response)
+
+    async def run_paper_search_ingest(
+        self,
+        request_data: PaperSearchIngestRequest,
+    ) -> PaperSearchOperationResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/paper-search/{request_data.endpoint}",
+            json_data=request_data.payload,
+            params=request_data.params,
+        )
+        return PaperSearchOperationResponse.model_validate(response)
 
     async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
         response = await self._request(
