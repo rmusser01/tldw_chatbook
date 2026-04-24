@@ -308,6 +308,17 @@ class LocalMediaReadingService:
             "results": results,
         }
 
+    def bulk_update_unified_items(self, request_data: Any) -> dict[str, Any]:
+        payload = self._request_to_mapping(request_data)
+        return self.bulk_update_reading_items(
+            item_ids=list(payload.get("item_ids") or []),
+            action=str(payload.get("action") or ""),
+            status=payload.get("status"),
+            favorite=payload.get("favorite"),
+            tags=payload.get("tags"),
+            hard=bool(payload.get("hard", False)),
+        )
+
     def remove_from_read_it_later(self, media_id: Any) -> Any:
         db = self._require_db()
         normalized_media_id = self._coerce_media_id(media_id)

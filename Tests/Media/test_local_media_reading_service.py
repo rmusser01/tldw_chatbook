@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
-from tldw_chatbook.tldw_api.media_reading_schemas import ReadingSaveRequest
+from tldw_chatbook.tldw_api.media_reading_schemas import ItemsBulkRequest, ReadingSaveRequest
 
 
 _MODULE_PATH = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Media" / "local_media_reading_service.py"
@@ -403,3 +403,23 @@ def test_local_service_bulk_updates_reading_items(memory_db_factory):
 
     assert deleted["succeeded"] == 1
     assert db.get_media_by_id(second_id) is None
+
+
+def test_local_service_bulk_updates_unified_items(memory_db_factory):
+    db = memory_db_factory()
+    first_id, _, _ = db.add_media_with_keywords(title="First", content="A", media_type="article", keywords=["old"])
+    second_id, _, _ = db.add_media_with_keywords(title="Second", content="B", media_type="article", keywords=[])
+    service = LocalMediaReadingService(db)
+
+    saved = service.bulk_update_unified_items(
+        ItemsBulkRequest(item_ids=[first_id, second_id], action="set_status", status="saved")
+    )
+    tagged = service.bulk_update_unified_items(
+        ItemsBulkRequest(item_ids=[first_id], action="replace_tags", tags=["new"])
+    )
+
+    assert saved["succeeded"] == 2
+    assert service.get_unified_item(first_id)["status"] == "saved"
+    assert service.get_unified_item(second_id)["status"] == "saved"
+    assert tagged["succeeded"] == 1
+    assert service.get_unified_item(first_id)["tags"] == ["new"]

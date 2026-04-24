@@ -291,6 +291,15 @@ class FakeLocalMediaService:
             "results": [{"item_id": item_id, "success": True} for item_id in kwargs["item_ids"]],
         }
 
+    def bulk_update_unified_items(self, request_data):
+        self.calls.append(("bulk_update_unified_items", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "total": len(request_data.item_ids),
+            "succeeded": len(request_data.item_ids),
+            "failed": 0,
+            "results": [{"item_id": item_id, "success": True} for item_id in request_data.item_ids],
+        }
+
     def ingest_web_content(self, **kwargs):
         raise ValueError("Local web-content ingest is not available yet.")
 
@@ -1697,20 +1706,31 @@ async def test_scope_service_routes_local_unified_item_reads_with_distinct_polic
 
 
 @pytest.mark.asyncio
-async def test_scope_service_keeps_local_unified_item_bulk_update_explicitly_unavailable():
+async def test_scope_service_routes_local_unified_item_bulk_update_with_policy():
     local_policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     local_scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
         policy_enforcer=local_policy,
     )
 
-    with pytest.raises(ValueError, match="Server unified items require server mode."):
-        await local_scope.bulk_update_unified_items(
-            mode="local",
-            request_data=ItemsBulkRequest(item_ids=[42], action="set_status", status="read"),
-        )
-    assert local_policy.calls == []
+    result = await local_scope.bulk_update_unified_items(
+        mode="local",
+        request_data=ItemsBulkRequest(item_ids=[42], action="set_status", status="saved"),
+    )
+
+    assert result["succeeded"] == 1
+    assert local_policy.calls == ["media.unified_items.update.local"]
+    assert local.calls[-1] == (
+        "bulk_update_unified_items",
+        {
+            "item_ids": [42],
+            "action": "set_status",
+            "status": "saved",
+            "hard": False,
+        },
+    )
 
 
 @pytest.mark.asyncio

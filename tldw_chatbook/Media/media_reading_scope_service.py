@@ -247,11 +247,6 @@ class MediaReadingScopeService:
             raise ValueError("Server media item lifecycle requires server mode.")
 
     @staticmethod
-    def _require_server_unified_items(mode: MediaReadingBackend) -> None:
-        if mode == MediaReadingBackend.LOCAL:
-            raise ValueError("Server unified items require server mode.")
-
-    @staticmethod
     def _require_server_media_processing(mode: MediaReadingBackend) -> None:
         if mode == MediaReadingBackend.LOCAL:
             raise ValueError("Server media processing requires server mode.")
@@ -607,7 +602,6 @@ class MediaReadingScopeService:
         request_data: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_unified_items(normalized_mode)
         action = self._as_mapping_payload(request_data).get("action")
         policy_action = "delete" if action == "delete" else "update"
         self._enforce_policy(self._unified_item_action_id(normalized_mode, policy_action))
