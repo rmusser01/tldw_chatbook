@@ -486,6 +486,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.reading.list.server
         media.reading.update.local
         media.reading.update.server
+        media.reading_archives.create.local
         media.reading_archives.create.server
         media.reading_digest_outputs.list.server
         media.reading_digest_schedules.create.server

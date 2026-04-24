@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+from html import escape
 import json
 from pathlib import Path
 from typing import Any, Mapping, Optional
 from urllib.parse import urlparse
+from uuid import uuid4
 
 
 class LocalMediaReadingService:
@@ -624,6 +626,72 @@ class LocalMediaReadingService:
             "source_id": normalized_source_id,
             "job_id": None,
             "item": item,
+        }
+
+    def create_reading_archive(
+        self,
+        item_id: Any,
+        *,
+        format: str = "html",
+        source: str = "auto",
+        title: str | None = None,
+        retention_days: int | None = None,
+        retention_until: str | None = None,
+    ) -> Any:
+        db = self._require_db()
+        archive_format = str(format or "html").lower()
+        if archive_format not in {"html", "md"}:
+            raise ValueError("Local reading archives support html and md formats only.")
+
+        archive_source = str(source or "auto").lower()
+        if archive_source not in {"auto", "clean_html", "text"}:
+            raise ValueError("Local reading archives support auto, clean_html, and text sources only.")
+
+        detail = self.get_media_detail(item_id)
+        if detail is None:
+            raise ValueError(f"Local reading item {item_id} not found.")
+
+        archive_title = title or f"{detail.get('title') or 'Reading Item'} Archive"
+        source_url = detail.get("url")
+        body = str(detail.get("content") or "")
+        archive_token = uuid4().hex
+        if archive_format == "md":
+            archive_content = f"# {archive_title}\n\n"
+            if source_url:
+                archive_content += f"Source: {source_url}\n\n"
+            archive_content += f"Archive ID: {archive_token}\n\n"
+            archive_content += body
+        else:
+            source_line = f'<p><strong>Source:</strong> <a href="{escape(str(source_url), quote=True)}">{escape(str(source_url))}</a></p>' if source_url else ""
+            archive_content = (
+                "<!doctype html>\n"
+                "<html><head><meta charset=\"utf-8\">"
+                f"<title>{escape(archive_title)}</title></head><body>"
+                f"<h1>{escape(archive_title)}</h1>"
+                f"{source_line}"
+                f"<p><strong>Archive ID:</strong> {escape(archive_token)}</p>"
+                f"<pre>{escape(body)}</pre>"
+                "</body></html>"
+            )
+
+        archive_media_id, _, _ = db.add_media_with_keywords(
+            title=archive_title,
+            url=f"local://reading_archive/{archive_token}",
+            media_type="reading_archive",
+            content=archive_content,
+            keywords=["reading_archive"],
+            overwrite=False,
+        )
+        created_at = db._get_current_utc_timestamp_str()
+        return {
+            "output_id": archive_media_id,
+            "title": archive_title,
+            "format": archive_format,
+            "source": archive_source,
+            "storage_path": f"local://media/{archive_media_id}",
+            "created_at": created_at,
+            "retention_days": retention_days,
+            "retention_until": retention_until,
         }
 
     def submit_media_ingest_jobs(

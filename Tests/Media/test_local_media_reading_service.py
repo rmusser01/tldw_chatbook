@@ -482,3 +482,30 @@ def test_local_service_syncs_local_directory_source(memory_db_factory, tmp_path)
     assert items["article.md"]["sync_status"] == "tracked"
     assert items["nested/old.txt"]["present_in_source"] is False
     assert items["nested/old.txt"]["sync_status"] == "missing"
+
+
+def test_local_service_creates_reading_archive_as_local_media(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Readable Article",
+        url="https://example.com/readable",
+        content="Article body",
+        media_type="article",
+        keywords=["source"],
+    )
+    service = LocalMediaReadingService(db)
+
+    archive = service.create_reading_archive(
+        media_id,
+        format="md",
+        source="text",
+        title="Readable Archive",
+    )
+    archived_media = db.get_media_by_id(archive["output_id"])
+
+    assert archive["title"] == "Readable Archive"
+    assert archive["format"] == "md"
+    assert archive["storage_path"] == f"local://media/{archive['output_id']}"
+    assert archived_media["type"] == "reading_archive"
+    assert "# Readable Archive" in archived_media["content"]
+    assert "Article body" in archived_media["content"]

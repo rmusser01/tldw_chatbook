@@ -1354,8 +1354,6 @@ class MediaReadingScopeService:
         retention_until: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_archives_unavailable()
         self._enforce_policy(self._reading_archive_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         archive = await self._maybe_await(

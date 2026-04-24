@@ -269,7 +269,7 @@ AUDITED_CAPABILITY_SEEDS = (
                 actions=(LIST, DETAIL, LAUNCH),
                 sources=(SERVER_SOURCE,),
             ),
-            _resource("media.reading_archives", actions=(CREATE,), sources=(SERVER_SOURCE,)),
+            _resource("media.reading_archives", actions=(CREATE,)),
             _resource("media.reading_export", actions=(EXPORT,), sources=(SERVER_SOURCE,)),
             _resource("media.reading_summaries", actions=(CREATE,), sources=(SERVER_SOURCE,)),
             _resource("media.reading_tts", actions=(LAUNCH,), sources=(SERVER_SOURCE,)),

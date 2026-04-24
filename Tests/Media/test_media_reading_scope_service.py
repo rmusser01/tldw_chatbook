@@ -360,6 +360,16 @@ class FakeLocalMediaService:
             },
         }
 
+    def create_reading_archive(self, item_id, **kwargs):
+        self.calls.append(("create_reading_archive", item_id, kwargs))
+        return {
+            "output_id": 13,
+            "title": kwargs.get("title") or "Local Archive",
+            "format": kwargs.get("format", "md"),
+            "storage_path": "local://media/13",
+            "created_at": "2026-04-21T12:00:00Z",
+        }
+
     def list_document_versions(self, media_id, include_deleted=False):
         self.calls.append(("list_document_versions", media_id, include_deleted))
         return [{"uuid": "version-1", "media_id": media_id, "analysis_content": "analysis"}]
@@ -2813,6 +2823,40 @@ async def test_scope_service_routes_server_reading_import_jobs_and_archive_creat
         "media.reading_import.detail.server",
         "media.reading_archives.create.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_reading_archive_creation_with_policy():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    archive = await scope.create_reading_archive(
+        mode="local",
+        item_id=31,
+        format="md",
+        source="text",
+        title="Local Archive",
+    )
+
+    assert archive["id"] == "local:reading_archive:13"
+    assert archive["storage_path"] == "local://media/13"
+    assert policy.calls == ["media.reading_archives.create.local"]
+    assert local.calls[-1] == (
+        "create_reading_archive",
+        31,
+        {
+            "format": "md",
+            "source": "text",
+            "title": "Local Archive",
+            "retention_days": None,
+            "retention_until": None,
+        },
+    )
 
 
 @pytest.mark.asyncio
