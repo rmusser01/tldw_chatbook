@@ -249,3 +249,35 @@ class ServerOutputsScopeService:
         normalized = self._normalize_simple(result, entity_kind="output_delete")
         normalized["output_id"] = output_id
         return normalized
+
+    async def download_output(
+        self,
+        *,
+        mode: OutputBackend | str | None = None,
+        output_id: int,
+    ) -> bytes:
+        self._require_server_mode(mode)
+        self._enforce_policy("outputs.artifacts.detail.server")
+        return await self._maybe_await(self._require_service().download_output(output_id))
+
+    async def download_output_by_name(
+        self,
+        *,
+        mode: OutputBackend | str | None = None,
+        title: str,
+        format: str | None = None,
+    ) -> bytes:
+        self._require_server_mode(mode)
+        self._enforce_policy("outputs.artifacts.detail.server")
+        return await self._maybe_await(self._require_service().download_output_by_name(title, format=format))
+
+    async def purge_outputs(
+        self,
+        *,
+        mode: OutputBackend | str | None = None,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        self._require_server_mode(mode)
+        self._enforce_policy("outputs.artifacts.delete.server")
+        result = await self._maybe_await(self._require_service().purge_outputs(**payload))
+        return self._normalize_simple(result, entity_kind="output_purge")

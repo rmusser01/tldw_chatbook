@@ -6,6 +6,7 @@ from typing import Any, Mapping, Optional
 
 from ..tldw_api import (
     OutputCreateRequest,
+    OutputsPurgeRequest,
     OutputTemplateCreateRequest,
     OutputTemplatePreviewRequest,
     OutputTemplateUpdateRequest,
@@ -103,3 +104,14 @@ class ServerOutputsService:
                 delete_file=delete_file,
             )
         )
+
+    async def download_output(self, output_id: int) -> bytes:
+        return await self._require_client().download_output(int(output_id))
+
+    async def download_output_by_name(self, title: str, *, format: str | None = None) -> bytes:
+        return await self._require_client().download_output_by_name(str(title), format=format)
+
+    async def purge_outputs(self, **payload: Any) -> dict[str, Any]:
+        request_data = OutputsPurgeRequest(**payload)
+        result = await self._require_client().purge_outputs(request_data)
+        return self._as_dict(result)

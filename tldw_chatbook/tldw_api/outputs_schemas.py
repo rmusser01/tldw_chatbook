@@ -125,3 +125,14 @@ class OutputUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     retention_until: str | None = None
     format: Literal["md", "html"] | None = None
+
+
+class OutputsPurgeRequest(BaseModel):
+    delete_files: bool = False
+    soft_deleted_grace_days: int = Field(default=30, ge=0)
+    include_retention: bool = True
+
+
+class OutputsPurgeResponse(BaseModel):
+    removed: int = 0
+    files_deleted: int = 0

@@ -182,3 +182,36 @@ async def test_client_routes_output_artifact_calls():
     }
     assert client._request.await_args_list[4].kwargs["json_data"] == {"title": "Renamed Briefing"}
     assert client._request.await_args_list[5].kwargs["params"] == {"hard": True, "delete_file": True}
+
+
+@pytest.mark.asyncio
+async def test_client_routes_output_download_and_purge_calls():
+    client = api.TLDWAPIClient("http://example.test", "token")
+    client._request_bytes = AsyncMock(side_effect=[b"# briefing", b"<h1>Briefing</h1>"])
+    client._request = AsyncMock(return_value={"removed": 2, "files_deleted": 1})
+
+    downloaded = await client.download_output(11)
+    by_name = await client.download_output_by_name("Weekly Briefing", format="html")
+    purged = await client.purge_outputs(
+        api.OutputsPurgeRequest(
+            delete_files=True,
+            soft_deleted_grace_days=7,
+            include_retention=False,
+        )
+    )
+
+    assert downloaded == b"# briefing"
+    assert by_name == b"<h1>Briefing</h1>"
+    assert purged == {"removed": 2, "files_deleted": 1}
+    assert client._request_bytes.await_args_list[0].args[:2] == ("GET", "/api/v1/outputs/11/download")
+    assert client._request_bytes.await_args_list[1].args[:2] == ("GET", "/api/v1/outputs/download/by-name")
+    assert client._request_bytes.await_args_list[1].kwargs["params"] == {
+        "title": "Weekly Briefing",
+        "format": "html",
+    }
+    assert client._request.await_args.args[:2] == ("POST", "/api/v1/outputs/purge")
+    assert client._request.await_args.kwargs["json_data"] == {
+        "delete_files": True,
+        "soft_deleted_grace_days": 7,
+        "include_retention": False,
+    }

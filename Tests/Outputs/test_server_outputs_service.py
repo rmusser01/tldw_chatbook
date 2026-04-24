@@ -177,6 +177,19 @@ class FakeClient:
         self.calls.append(("delete_output", output_id, hard, delete_file))
         return {"success": True, "file_deleted": bool(delete_file)}
 
+    async def download_output(self, output_id):
+        self.calls.append(("download_output", output_id))
+        return b"# briefing"
+
+    async def download_output_by_name(self, title, *, format=None):
+        self.calls.append(("download_output_by_name", title, format))
+        return b"<h1>Briefing</h1>"
+
+    async def purge_outputs(self, request_data):
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        self.calls.append(("purge_outputs", payload))
+        return {"removed": 2, "files_deleted": 1}
+
 
 @pytest.mark.asyncio
 async def test_server_outputs_service_routes_typed_client_calls():
@@ -207,6 +220,13 @@ async def test_server_outputs_service_routes_typed_client_calls():
     fetched_output = await service.get_output(11)
     updated_output = await service.update_output(11, title="Renamed Briefing")
     deleted_output = await service.delete_output(11, hard=True, delete_file=True)
+    downloaded_output = await service.download_output(11)
+    downloaded_by_name = await service.download_output_by_name("Weekly Briefing", format="html")
+    purged_outputs = await service.purge_outputs(
+        delete_files=True,
+        soft_deleted_grace_days=7,
+        include_retention=False,
+    )
 
     assert templates["total"] == 1
     assert created_template["id"] == 7
@@ -217,6 +237,9 @@ async def test_server_outputs_service_routes_typed_client_calls():
     assert fetched_output["id"] == 11
     assert updated_output["title"] == "Renamed Briefing"
     assert deleted_output["file_deleted"] is True
+    assert downloaded_output == b"# briefing"
+    assert downloaded_by_name == b"<h1>Briefing</h1>"
+    assert purged_outputs == {"removed": 2, "files_deleted": 1}
     assert client.calls == [
         ("list_output_templates", "brief", 25, 5),
         ("create_output_template", {"name": "Weekly Briefing", "type": "briefing_markdown", "format": "md", "body": "# {{ job.name }}", "description": "Render a weekly markdown briefing", "is_default": True, "metadata": {"category": "briefing"}}),
@@ -227,6 +250,12 @@ async def test_server_outputs_service_routes_typed_client_calls():
         ("get_output", 11),
         ("update_output", 11, {"title": "Renamed Briefing"}),
         ("delete_output", 11, True, True),
+        ("download_output", 11),
+        ("download_output_by_name", "Weekly Briefing", "html"),
+        (
+            "purge_outputs",
+            {"delete_files": True, "soft_deleted_grace_days": 7, "include_retention": False},
+        ),
     ]
 
 
@@ -264,6 +293,14 @@ async def test_outputs_scope_service_enforces_policy_and_normalizes_server_ids()
     fetched_output = await scope.get_output(mode="server", output_id=11)
     updated_output = await scope.update_output(mode="server", output_id=11, title="Renamed Briefing")
     deleted_output = await scope.delete_output(mode="server", output_id=11, hard=True, delete_file=True)
+    downloaded_output = await scope.download_output(mode="server", output_id=11)
+    downloaded_by_name = await scope.download_output_by_name(mode="server", title="Weekly Briefing", format="html")
+    purged_outputs = await scope.purge_outputs(
+        mode="server",
+        delete_files=True,
+        soft_deleted_grace_days=7,
+        include_retention=False,
+    )
 
     assert templates["items"][0]["id"] == "server:output_template:7"
     assert templates["entity_kind"] == "output_template_list"
@@ -276,6 +313,11 @@ async def test_outputs_scope_service_enforces_policy_and_normalizes_server_ids()
     assert fetched_output["id"] == "server:output:11"
     assert updated_output["id"] == "server:output:11"
     assert deleted_output["entity_kind"] == "output_delete"
+    assert downloaded_output == b"# briefing"
+    assert downloaded_by_name == b"<h1>Briefing</h1>"
+    assert purged_outputs["entity_kind"] == "output_purge"
+    assert purged_outputs["removed"] == 2
+    assert purged_outputs["files_deleted"] == 1
     assert policy.calls == [
         "outputs.templates.list.server",
         "outputs.templates.create.server",
@@ -285,6 +327,9 @@ async def test_outputs_scope_service_enforces_policy_and_normalizes_server_ids()
         "outputs.render_jobs.launch.server",
         "outputs.artifacts.detail.server",
         "outputs.artifacts.update.server",
+        "outputs.artifacts.delete.server",
+        "outputs.artifacts.detail.server",
+        "outputs.artifacts.detail.server",
         "outputs.artifacts.delete.server",
     ]
 

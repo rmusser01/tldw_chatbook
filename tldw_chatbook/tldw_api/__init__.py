@@ -227,6 +227,8 @@ _EXPORT_GROUPS = (
             "OutputCreateRequest",
             "OutputFormat",
             "OutputListResponse",
+            "OutputsPurgeRequest",
+            "OutputsPurgeResponse",
             "OutputTemplateCreateRequest",
             "OutputTemplateListResponse",
             "OutputTemplatePreviewRequest",

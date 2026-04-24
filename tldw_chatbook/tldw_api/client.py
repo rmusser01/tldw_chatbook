@@ -138,6 +138,8 @@ from .outputs_schemas import (
     OutputArtifactResponse,
     OutputCreateRequest,
     OutputListResponse,
+    OutputsPurgeRequest,
+    OutputsPurgeResponse,
     OutputTemplateCreateRequest,
     OutputTemplateListResponse,
     OutputTemplatePreviewRequest,
@@ -1308,6 +1310,24 @@ class TLDWAPIClient:
             params={"hard": hard, "delete_file": delete_file},
         )
         return dict(response)
+
+    async def download_output(self, output_id: int) -> bytes:
+        return await self._request_bytes("GET", f"/api/v1/outputs/{output_id}/download")
+
+    async def download_output_by_name(self, title: str, *, format: str | None = None) -> bytes:
+        params = {"title": title}
+        if format is not None:
+            params["format"] = format
+        return await self._request_bytes("GET", "/api/v1/outputs/download/by-name", params=params)
+
+    async def purge_outputs(self, request_data: OutputsPurgeRequest | None = None) -> dict[str, Any]:
+        payload = request_data or OutputsPurgeRequest()
+        response = await self._request(
+            "POST",
+            "/api/v1/outputs/purge",
+            json_data=payload.model_dump(mode="json"),
+        )
+        return OutputsPurgeResponse.model_validate(response).model_dump(mode="json")
 
     async def share_workspace(self, workspace_id: str, request_data: ShareWorkspaceRequest) -> ShareResponse:
         response = await self._request(
