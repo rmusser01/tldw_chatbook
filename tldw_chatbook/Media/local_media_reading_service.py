@@ -572,6 +572,35 @@ class LocalMediaReadingService:
         body = "".join(json.dumps(record, default=str, separators=(",", ":")) + "\n" for record in records)
         return body.encode("utf-8")
 
+    def summarize_reading_item(self, item_id: Any, **_: Any) -> dict[str, Any]:
+        media_id = self._coerce_media_id(item_id)
+        detail = self.get_media_detail(media_id)
+        if not isinstance(detail, Mapping):
+            raise ValueError(f"Local reading item {item_id} not found.")
+
+        text = self._plain_text_for_summary(
+            detail.get("content")
+            or detail.get("transcription")
+            or detail.get("analysis_content")
+            or detail.get("title")
+            or ""
+        )
+        return {
+            "item_id": media_id,
+            "summary": self._extractive_summary(text),
+            "provider": "local",
+            "model": "extractive",
+            "citations": [
+                {
+                    "item_id": media_id,
+                    "url": detail.get("url"),
+                    "title": detail.get("title"),
+                    "source": "local",
+                }
+            ],
+            "generated_at": None,
+        }
+
     def list_unified_items(self, **filters: Any) -> dict[str, Any]:
         origin = str(filters.get("origin") or "").strip().lower()
         if origin and origin not in {"media", "reading", "local"}:
@@ -1217,6 +1246,32 @@ class LocalMediaReadingService:
         text = unescape(without_tags)
         lines = [" ".join(line.split()) for line in text.splitlines()]
         return "\n".join(line for line in lines if line).strip()
+
+    @staticmethod
+    def _plain_text_for_summary(value: Any) -> str:
+        text = str(value or "")
+        text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+        text = re.sub(r"`([^`]+)`", r"\1", text)
+        text = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", text)
+        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"^[#>*\-\s]+", "", text, flags=re.MULTILINE)
+        return unescape(re.sub(r"\s+", " ", text)).strip()
+
+    @staticmethod
+    def _extractive_summary(text: str, *, max_sentences: int = 3, max_chars: int = 900) -> str:
+        if not text:
+            return ""
+        sentences = [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", text)
+            if sentence.strip()
+        ]
+        summary = " ".join(sentences[:max_sentences]) if sentences else text
+        if len(summary) <= max_chars:
+            return summary
+        trimmed = summary[:max_chars].rsplit(" ", 1)[0].strip()
+        return f"{trimmed}..." if trimmed else summary[:max_chars]
 
     @staticmethod
     def _normalize_web_url(url: str) -> str | None:

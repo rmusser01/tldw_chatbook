@@ -513,6 +513,42 @@ def test_local_service_creates_reading_archive_as_local_media(memory_db_factory)
     assert "Article body" in archived_media["content"]
 
 
+def test_local_service_summarizes_reading_item_extractively(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Readable Article",
+        url="https://example.com/readable",
+        content=(
+            "First sentence explains the local article. "
+            "Second sentence adds the important detail. "
+            "Third sentence gives a useful caveat. "
+            "Fourth sentence should be omitted."
+        ),
+        media_type="article",
+        keywords=["source"],
+    )
+    service = LocalMediaReadingService(db)
+
+    summary = service.summarize_reading_item(media_id, provider="remote-ignored", model="ignored")
+
+    assert summary["item_id"] == media_id
+    assert summary["provider"] == "local"
+    assert summary["model"] == "extractive"
+    assert summary["summary"] == (
+        "First sentence explains the local article. "
+        "Second sentence adds the important detail. "
+        "Third sentence gives a useful caveat."
+    )
+    assert summary["citations"] == [
+        {
+            "item_id": media_id,
+            "url": "https://example.com/readable",
+            "title": "Readable Article",
+            "source": "local",
+        }
+    ]
+
+
 def test_local_service_imports_pocket_reading_items(memory_db_factory, tmp_path):
     import_file = tmp_path / "pocket.json"
     import_file.write_text(

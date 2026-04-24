@@ -237,6 +237,16 @@ class FakeLocalMediaService:
         self.calls.append(("export_reading_items", kwargs))
         return b'{"id":31}\n'
 
+    def summarize_reading_item(self, item_id, **kwargs):
+        self.calls.append(("summarize_reading_item", item_id, kwargs))
+        return {
+            "item_id": item_id,
+            "summary": "Local extractive summary",
+            "provider": "local",
+            "model": "extractive",
+            "citations": [{"item_id": item_id, "title": "Local Detail", "source": "reading"}],
+        }
+
     def list_unified_items(self, **kwargs):
         self.calls.append(("list_unified_items", kwargs))
         return {
@@ -3269,7 +3279,36 @@ async def test_scope_service_routes_server_reading_digest_schedules_and_outputs_
 
 
 @pytest.mark.asyncio
-async def test_scope_service_fails_explicitly_for_local_reading_summary_and_tts_before_policy():
+async def test_scope_service_routes_local_reading_summary_with_policy():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    summary = await scope.summarize_reading_item(
+        mode="local",
+        item_id=31,
+        provider="remote-ignored",
+        model="ignored",
+    )
+
+    assert summary["id"] == "local:reading_summary:31"
+    assert summary["provider"] == "local"
+    assert summary["model"] == "extractive"
+    assert summary["citations"][0]["source"] == "reading"
+    assert policy.calls == ["media.reading_summaries.create.local"]
+    assert local.calls[-1] == (
+        "summarize_reading_item",
+        31,
+        {"provider": "remote-ignored", "model": "ignored"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_scope_service_fails_explicitly_for_local_reading_tts_before_policy():
     policy = FakePolicyEnforcer.deny("blocked")
     scope = MediaReadingScopeService(
         local_service=FakeLocalMediaService(),
@@ -3277,8 +3316,6 @@ async def test_scope_service_fails_explicitly_for_local_reading_summary_and_tts_
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local reading summaries are not available yet."):
-        await scope.summarize_reading_item(mode="local", item_id=31)
     with pytest.raises(ValueError, match="Local reading TTS is not available yet."):
         await scope.tts_reading_item(mode="local", item_id=31, model="kokoro")
 
