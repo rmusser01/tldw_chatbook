@@ -51,6 +51,7 @@ from tldw_chatbook.tldw_api import (
     ProcessCodeRequest,
     ProcessEmailRequest,
     ProcessMediaWikiRequest,
+    ReadingSaveRequest,
     ReadingDigestOutputsListResponse,
     ReadingDigestScheduleCreateRequest,
     ReadingDigestScheduleResponse,
@@ -177,6 +178,57 @@ async def test_add_media_route_wires_persistent_ingest_payload(monkeypatch, tmp_
     ]
     assert isinstance(result, api.BatchMediaProcessResponse)
     assert result.results[0].db_id == 42
+
+
+@pytest.mark.asyncio
+async def test_reading_save_route_wires_url_save_payload(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": 77,
+            "media_id": 123,
+            "title": "Saved Article",
+            "url": "https://example.com/article",
+            "canonical_url": "https://example.com/article",
+            "domain": "example.com",
+            "summary": "Short summary",
+            "notes": "Why this matters",
+            "status": "saved",
+            "favorite": True,
+            "tags": ["ai", "reading"],
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.save_reading_item(
+        ReadingSaveRequest(
+            url="https://example.com/article",
+            title="Saved Article",
+            tags=[" ai ", "reading"],
+            status="saved",
+            archive_mode="always",
+            favorite=True,
+            summary="Short summary",
+            notes="Why this matters",
+            content="Inline body",
+        )
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/save")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "url": "https://example.com/article",
+        "title": "Saved Article",
+        "tags": ["ai", "reading"],
+        "status": "saved",
+        "archive_mode": "always",
+        "favorite": True,
+        "summary": "Short summary",
+        "notes": "Why this matters",
+        "content": "Inline body",
+    }
+    assert isinstance(result, api.ReadingItem)
+    assert result.id == 77
+    assert result.tags == ["ai", "reading"]
 
 
 @pytest.mark.asyncio

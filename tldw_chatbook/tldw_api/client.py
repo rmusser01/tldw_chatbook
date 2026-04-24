@@ -104,10 +104,12 @@ from .media_reading_schemas import (
     ReadingImportJobResponse,
     ReadingImportJobStatus,
     ReadingImportJobsListResponse,
+    ReadingItem,
     ReadingNoteLinkCreateRequest,
     ReadingNoteLinkResponse,
     ReadingNoteLinksListResponse,
     ReadingProgressUpdate,
+    ReadingSaveRequest,
     ReadingSavedSearchCreateRequest,
     ReadingSavedSearchListResponse,
     ReadingSavedSearchResponse,
@@ -2432,6 +2434,14 @@ class TLDWAPIClient:
             f"/api/v1/media/{media_id}/versions/advanced",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
+
+    async def save_reading_item(self, request_data: ReadingSaveRequest) -> ReadingItem:
+        response = await self._request(
+            "POST",
+            "/api/v1/reading/save",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReadingItem.model_validate(response)
 
     async def list_reading_items(
         self,

@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 
 class ViewMode(str, Enum):
@@ -33,6 +33,7 @@ ReadingSavedSearchSort = Literal[
     "relevance",
 ]
 ReadingExportFormat = Literal["jsonl", "zip"]
+ReadingSaveArchiveMode = Literal["use_default", "always", "never"]
 ReadingDigestFormat = Literal["md", "html"]
 ReadingTTSResponseFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 ReadingTTSTextSource = Literal["text", "summary", "notes"]
@@ -922,6 +923,27 @@ class ReadingUpdateRequest(BaseModel):
         return value
 
 
+class ReadingSaveRequest(BaseModel):
+    url: HttpUrl
+    title: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    status: str | None = "saved"
+    archive_mode: ReadingSaveArchiveMode = "use_default"
+    favorite: bool = False
+    summary: str | None = None
+    notes: str | None = None
+    content: str | None = None
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _strip_tags(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [item.strip() if isinstance(item, str) else item for item in value]
+        return value
+
+
 class ItemsBulkRequest(BaseModel):
     item_ids: list[int]
     action: ItemsBulkAction
@@ -1477,6 +1499,8 @@ __all__ = [
     "ReadingItem",
     "ReadingItemDetail",
     "ReadingItemsListResponse",
+    "ReadingSaveArchiveMode",
+    "ReadingSaveRequest",
     "ReadingDigestFormat",
     "ReadingDigestOutput",
     "ReadingDigestOutputsListResponse",

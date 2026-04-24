@@ -921,6 +921,20 @@ class MediaReadingScopeService:
             return await self._maybe_await(service.save_to_read_it_later(media_id))
         return await self._maybe_await(service.update_media_metadata(media_id, status="saved"))
 
+    async def save_reading_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading URL save is not available yet.")
+        self._enforce_policy(self._reading_list_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.save_reading_item(request_data))
+        return self._as_mapping_payload(payload)
+
     async def remove_from_read_it_later(
         self,
         *,

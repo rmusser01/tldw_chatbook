@@ -41,6 +41,7 @@ from tldw_chatbook.tldw_api import (
     ReadingArchiveCreateRequest,
     ReadingExportRequest,
     ReadingImportJobStatus,
+    ReadingSaveRequest,
     ReadingSavedSearchCreateRequest,
     ReadingSavedSearchUpdateRequest,
     ReadingSummarizeRequest,
@@ -224,6 +225,29 @@ def test_media_item_models_match_server_contracts():
     }
     assert keywords_update.model_dump(mode="json") == {"keywords": ["ai", "ml"], "mode": "set"}
     assert keywords_response.keywords == ["ai", "ml"]
+
+
+def test_reading_save_request_matches_server_contract_and_normalizes_tags():
+    request = ReadingSaveRequest(
+        url="https://example.com/article",
+        title="Saved Article",
+        tags=[" ai ", "reading"],
+        archive_mode="always",
+        favorite=True,
+        notes="Why this matters",
+        content="Inline body",
+    )
+
+    assert request.model_dump(exclude_none=True, mode="json") == {
+        "url": "https://example.com/article",
+        "title": "Saved Article",
+        "tags": ["ai", "reading"],
+        "status": "saved",
+        "archive_mode": "always",
+        "favorite": True,
+        "notes": "Why this matters",
+        "content": "Inline body",
+    }
 
 
 def test_document_insights_and_references_models_match_server_contracts():

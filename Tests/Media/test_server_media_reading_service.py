@@ -13,6 +13,7 @@ from tldw_chatbook.tldw_api import (
     ProcessMediaWikiRequest,
     ProcessPDFRequest,
     ProcessVideoRequest,
+    ReadingSaveRequest,
     ReprocessMediaRequest,
     WebScrapingRequest,
 )
@@ -94,6 +95,18 @@ class FakeClient:
                     "db_id": 42,
                 }
             ],
+        }
+
+    async def save_reading_item(self, request_data):
+        self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "id": 77,
+            "media_id": 123,
+            "title": request_data.title or "Saved Article",
+            "url": str(request_data.url),
+            "status": request_data.status,
+            "favorite": request_data.favorite,
+            "tags": request_data.tags,
         }
 
     async def process_video(self, request_data, file_paths=None):
@@ -1008,6 +1021,47 @@ async def test_server_service_routes_persistent_add_media():
                 "generate_embeddings": False,
             },
             ["/tmp/clip.mp4"],
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_reading_url_save():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    result = await service.save_reading_item(
+        ReadingSaveRequest(
+            url="https://example.com/article",
+            title="Saved Article",
+            tags=[" ai ", "reading"],
+            archive_mode="always",
+            favorite=True,
+            notes="Why this matters",
+        )
+    )
+
+    assert result == {
+        "id": 77,
+        "media_id": 123,
+        "title": "Saved Article",
+        "url": "https://example.com/article",
+        "status": "saved",
+        "favorite": True,
+        "tags": ["ai", "reading"],
+    }
+    assert client.calls == [
+        (
+            "save_reading_item",
+            {
+                "url": "https://example.com/article",
+                "title": "Saved Article",
+                "tags": ["ai", "reading"],
+                "status": "saved",
+                "archive_mode": "always",
+                "favorite": True,
+                "notes": "Why this matters",
+            },
         )
     ]
 

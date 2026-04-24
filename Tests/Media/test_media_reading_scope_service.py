@@ -18,6 +18,7 @@ from tldw_chatbook.tldw_api import (
     ProcessMediaWikiRequest,
     ProcessPDFRequest,
     ProcessVideoRequest,
+    ReadingSaveRequest,
     WebScrapingRequest,
 )
 
@@ -333,6 +334,18 @@ class FakeServerMediaService:
                     "db_id": 42,
                 }
             ],
+        }
+
+    async def save_reading_item(self, request_data):
+        self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "id": 77,
+            "media_id": 123,
+            "title": request_data.title or "Saved Article",
+            "url": str(request_data.url),
+            "status": request_data.status,
+            "favorite": request_data.favorite,
+            "tags": request_data.tags,
         }
 
     async def process_video(self, request_data, *, file_paths=None):
@@ -1353,6 +1366,67 @@ async def test_scope_service_routes_persistent_add_media_with_create_policy():
             request_data=AddMediaRequest(media_type="video", urls=["https://example.com/clip"]),
         )
     assert denied_policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_reading_url_save_with_reading_list_create_policy():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    result = await scope.save_reading_item(
+        mode="server",
+        request_data=ReadingSaveRequest(
+            url="https://example.com/article",
+            title="Saved Article",
+            tags=[" ai ", "reading"],
+            archive_mode="always",
+            favorite=True,
+            notes="Why this matters",
+        ),
+    )
+
+    assert policy.calls == ["collections.reading_list.create.server"]
+    assert result == {
+        "id": 77,
+        "media_id": 123,
+        "title": "Saved Article",
+        "url": "https://example.com/article",
+        "status": "saved",
+        "favorite": True,
+        "tags": ["ai", "reading"],
+    }
+    assert server.calls == [
+        (
+            "save_reading_item",
+            {
+                "url": "https://example.com/article",
+                "title": "Saved Article",
+                "tags": ["ai", "reading"],
+                "status": "saved",
+                "archive_mode": "always",
+                "favorite": True,
+                "notes": "Why this matters",
+            },
+        )
+    ]
+
+    local_policy = FakePolicyEnforcer()
+    local_scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=local_policy,
+    )
+    with pytest.raises(ValueError, match="Local reading URL save is not available yet."):
+        await local_scope.save_reading_item(
+            mode="local",
+            request_data=ReadingSaveRequest(url="https://example.com/local"),
+        )
+    assert local_policy.calls == []
 
 
 @pytest.mark.asyncio

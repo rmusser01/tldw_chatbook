@@ -189,6 +189,8 @@ _EXPORT_GROUPS = (
             "ReadingProgressNotFound",
             "ReadingProgressResponse",
             "ReadingProgressUpdate",
+            "ReadingSaveArchiveMode",
+            "ReadingSaveRequest",
             "ReadingSavedSearchCreateRequest",
             "ReadingSavedSearchListResponse",
             "ReadingSavedSearchResponse",

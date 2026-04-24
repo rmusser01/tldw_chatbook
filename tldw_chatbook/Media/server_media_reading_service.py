@@ -38,6 +38,7 @@ from ..tldw_api import (
     ReadingHighlightUpdateRequest,
     ReadingNoteLinkCreateRequest,
     ReadingProgressUpdate,
+    ReadingSaveRequest,
     ReadingSavedSearchCreateRequest,
     ReadingSavedSearchUpdateRequest,
     ReadingSummarizeRequest,
@@ -151,6 +152,10 @@ class ServerMediaReadingService:
 
     async def add_media(self, request_data: AddMediaRequest, file_paths: list[str] | None = None) -> Any:
         response = await self._require_client().add_media(request_data, file_paths=file_paths)
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
+
+    async def save_reading_item(self, request_data: ReadingSaveRequest) -> Any:
+        response = await self._require_client().save_reading_item(request_data)
         return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
 
     async def process_video(self, request_data: ProcessVideoRequest, file_paths: list[str] | None = None) -> Any:
