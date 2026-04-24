@@ -382,7 +382,6 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         evaluations.dataset.list.local
         evaluations.dataset.list.server
         evaluations.dataset.update.local
-        evaluations.dataset.update.server
         evaluations.run.create.local
         evaluations.run.create.server
         evaluations.run.delete.local

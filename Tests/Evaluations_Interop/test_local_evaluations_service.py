@@ -112,6 +112,10 @@ class FakeEvalsDB:
         self.calls.append(("create_dataset", name, format, source_path, description, metadata))
         return "dataset_999"
 
+    def update_dataset(self, dataset_id, **kwargs):
+        self.calls.append(("update_dataset", dataset_id, kwargs))
+        return True
+
     def delete_dataset(self, dataset_id):
         self.calls.append(("delete_dataset", dataset_id))
         return True
@@ -233,6 +237,62 @@ def test_create_dataset_stores_inline_samples_in_local_metadata():
             "inline_samples": True,
         },
     )
+
+
+def test_update_dataset_threads_inline_samples_through_local_metadata():
+    db = FakeEvalsDB()
+    service = LocalEvaluationsService(db=db)
+
+    updated = service.update_dataset(
+        "dataset_123",
+        name="renamed_dataset",
+        description="Renamed dataset",
+        samples=[{"input": "New question", "expected": "New answer"}],
+        metadata={"project": "offline-v2"},
+    )
+
+    assert updated["id"] == "dataset_123"
+    assert db.calls[-2] == (
+        "update_dataset",
+        "dataset_123",
+        {
+            "name": "renamed_dataset",
+            "description": "Renamed dataset",
+            "format": None,
+            "source_path": "/tmp/demo.json",
+            "metadata": {
+                "project": "offline-v2",
+                "__tldw_eval_samples__": [{"input": "New question", "expected": "New answer"}],
+                "sample_count": 1,
+                "inline_samples": True,
+            },
+        },
+    )
+
+
+def test_update_dataset_preserves_inline_samples_when_metadata_changes_against_evals_db(tmp_path):
+    db = EvalsDB(db_path=str(tmp_path / "evals.db"), client_id="test_client")
+    service = LocalEvaluationsService(db=db)
+
+    dataset_id = service.create_dataset(
+        name="offline_dataset",
+        samples=[{"input": "Question", "expected": "Answer"}],
+        metadata={"project": "offline", "owner": "local"},
+    )
+    updated = service.update_dataset(
+        dataset_id,
+        name="renamed_dataset",
+        description="Updated dataset",
+        metadata={"project": "server-sync"},
+    )
+
+    assert updated["id"] == dataset_id
+    assert updated["name"] == "renamed_dataset"
+    assert updated["description"] == "Updated dataset"
+    assert updated["samples"] == [{"input": "Question", "expected": "Answer"}]
+    assert updated["sample_count"] == 1
+    assert updated["metadata"] == {"project": "server-sync"}
+    assert updated["version"] == 2
 
 
 def test_local_evaluations_service_deletes_dataset_against_evals_db(tmp_path):

@@ -46,6 +46,33 @@ class FakeLocalEvaluationService:
         self.calls.append(("create_dataset", name, samples, description, metadata, format, source_path))
         return "dataset_local"
 
+    def update_dataset(
+        self,
+        dataset_id,
+        *,
+        name=None,
+        samples=None,
+        description=None,
+        metadata=None,
+        format=None,
+        source_path=None,
+    ):
+        self.calls.append(("update_dataset", dataset_id, name, samples, description, metadata, format, source_path))
+        return {
+            "id": dataset_id,
+            "name": name or "local_dataset",
+            "description": description,
+            "format": format or "custom",
+            "source_path": source_path or "inline:local_dataset",
+            "samples": list(samples or []),
+            "sample_count": len(samples or []),
+            "metadata": metadata or {},
+            "created_at": "2026-04-20T00:00:00Z",
+            "updated_at": "2026-04-20T00:02:00Z",
+            "version": 2,
+            "client_id": "local_client",
+        }
+
     def delete_dataset(self, dataset_id):
         self.calls.append(("delete_dataset", dataset_id))
         return None
@@ -651,6 +678,42 @@ async def test_scope_service_routes_dataset_create_and_delete_by_backend():
         {"project": "server"},
     ) in server.calls
     assert ("delete_dataset", "dataset_server") in server.calls
+
+
+@pytest.mark.asyncio
+async def test_scope_service_updates_local_dataset_but_rejects_server_dataset_update():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    updated = await scope.update_dataset(
+        mode="local",
+        dataset_id="dataset_local",
+        name="renamed_dataset",
+        samples=[{"input": "Q2", "expected": "A2"}],
+        metadata={"project": "offline-v2"},
+    )
+
+    assert updated["record_id"] == "local:evaluation_dataset:dataset_local"
+    assert updated["name"] == "renamed_dataset"
+    assert updated["sample_count"] == 1
+    assert (
+        "update_dataset",
+        "dataset_local",
+        "renamed_dataset",
+        [{"input": "Q2", "expected": "A2"}],
+        None,
+        {"project": "offline-v2"},
+        None,
+        None,
+    ) in local.calls
+    with pytest.raises(ValueError, match="dataset update is not available"):
+        await scope.update_dataset(
+            mode="server",
+            dataset_id="dataset_server",
+            name="unsupported",
+        )
+    assert not any(call[0] == "update_dataset" for call in server.calls)
 
 
 @pytest.mark.asyncio

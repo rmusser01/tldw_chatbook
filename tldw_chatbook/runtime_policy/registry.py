@@ -577,7 +577,8 @@ AUDITED_CAPABILITY_SEEDS = (
         "evaluations",
         sources=SEPARATED_SOURCES,
         resources=(
-            _resource("evaluations.dataset", actions=CRUD_ACTIONS),
+            _resource("evaluations.dataset", actions=CRUD_ACTIONS, sources=LOCAL_ONLY_SOURCES),
+            _resource("evaluations.dataset", actions=(LIST, DETAIL, CREATE, DELETE), sources=(SERVER_SOURCE,)),
             _resource("evaluations.run", actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH, OBSERVE))),
         ),
     ),

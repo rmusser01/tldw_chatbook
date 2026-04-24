@@ -329,6 +329,68 @@ class LocalEvaluationsService:
         )
         return dataset_id
 
+    def update_dataset(
+        self,
+        dataset_id: str,
+        *,
+        name: str | None = None,
+        samples: list[dict[str, Any]] | None = None,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        format: str | None = None,
+        source_path: str | None = None,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        existing = db.get_dataset(dataset_id)
+        if not existing:
+            raise ValueError(f"Local evaluation dataset '{dataset_id}' was not found.")
+
+        existing_metadata = self._as_mapping(existing.get("metadata"))
+        existing_samples = existing_metadata.get(RESERVED_LOCAL_DATASET_SAMPLES_KEY)
+        existing_sample_count = existing_metadata.get("sample_count")
+        existing_inline_samples = existing_metadata.get("inline_samples")
+
+        metadata_payload = self._as_mapping(metadata) if metadata is not None else dict(existing_metadata)
+        metadata_payload.pop(RESERVED_LOCAL_DATASET_SAMPLES_KEY, None)
+        metadata_payload.pop("sample_count", None)
+        metadata_payload.pop("inline_samples", None)
+
+        if samples is not None:
+            normalized_samples = self._normalize_inline_samples(samples)
+            metadata_payload[RESERVED_LOCAL_DATASET_SAMPLES_KEY] = normalized_samples
+            metadata_payload["sample_count"] = len(normalized_samples)
+            metadata_payload["inline_samples"] = True
+            source_path = source_path or existing.get("source_path") or f"inline:{name or existing.get('name') or dataset_id}"
+        elif isinstance(existing_samples, list):
+            preserved_samples = [self._as_mapping(sample) for sample in existing_samples]
+            metadata_payload[RESERVED_LOCAL_DATASET_SAMPLES_KEY] = preserved_samples
+            metadata_payload["sample_count"] = len(preserved_samples)
+            metadata_payload["inline_samples"] = True
+        elif existing_sample_count is not None:
+            metadata_payload["sample_count"] = existing_sample_count
+            if existing_inline_samples is not None:
+                metadata_payload["inline_samples"] = existing_inline_samples
+
+        updated = db.update_dataset(
+            dataset_id,
+            name=name,
+            description=description,
+            format=format,
+            source_path=source_path,
+            metadata=metadata_payload,
+        )
+        if not updated:
+            raise ValueError(f"Local evaluation dataset '{dataset_id}' could not be updated.")
+
+        self._dispatch_local_notification(
+            title="Local evaluation dataset updated",
+            message=f"Local evaluation dataset updated: {name or existing.get('name') or dataset_id}",
+            source_entity_id=str(dataset_id),
+            source_entity_kind="evaluation_dataset",
+            payload={"action": "dataset_updated", "dataset_id": str(dataset_id)},
+        )
+        return self.get_dataset(dataset_id)
+
     def delete_dataset(self, dataset_id: str) -> None:
         deleted = self._require_db().delete_dataset(dataset_id)
         if not deleted:

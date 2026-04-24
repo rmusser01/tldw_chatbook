@@ -256,6 +256,39 @@ class EvaluationScopeService:
         resolved = await self._resolve_record(record, service.get_dataset, str(record or name))
         return normalize_evaluation_dataset_record(normalized_mode.value, resolved)
 
+    async def update_dataset(
+        self,
+        dataset_id: str,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str | None = None,
+        samples: list[dict[str, Any]] | None = None,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        format: str | None = None,
+        source_path: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == EvaluationBackend.SERVER:
+            raise ValueError(
+                "Evaluation dataset update is not available on the current server contract."
+            )
+
+        service = self._service_for_mode(normalized_mode)
+        record = await self._maybe_await(
+            service.update_dataset(
+                dataset_id,
+                name=name,
+                samples=samples,
+                description=description,
+                metadata=metadata,
+                format=format,
+                source_path=source_path,
+            )
+        )
+        resolved = await self._resolve_record(record, service.get_dataset, dataset_id)
+        return normalize_evaluation_dataset_record(normalized_mode.value, resolved)
+
     async def delete_dataset(
         self,
         *,

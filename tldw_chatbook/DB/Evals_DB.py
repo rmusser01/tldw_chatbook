@@ -34,7 +34,7 @@ from .sql_validation import validate_table_name, validate_column_name
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 # Database Schema Version
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 class EvalsDBError(Exception):
     """Base exception for EvalsDB related errors."""
@@ -266,41 +266,47 @@ class EvalsDB:
         # Create triggers to maintain FTS5 tables
         conn.execute("""
             CREATE TRIGGER eval_tasks_fts_insert AFTER INSERT ON eval_tasks BEGIN
-                INSERT INTO eval_tasks_fts (id, name, description) 
-                VALUES (new.id, new.name, new.description);
+                INSERT INTO eval_tasks_fts (rowid, id, name, description)
+                VALUES (new.rowid, new.id, new.name, new.description);
             END
         """)
         
         conn.execute("""
             CREATE TRIGGER eval_tasks_fts_update AFTER UPDATE ON eval_tasks BEGIN
-                UPDATE eval_tasks_fts SET name = new.name, description = new.description 
-                WHERE id = new.id;
+                INSERT INTO eval_tasks_fts (eval_tasks_fts, rowid, id, name, description)
+                VALUES ('delete', old.rowid, old.id, old.name, old.description);
+                INSERT INTO eval_tasks_fts (rowid, id, name, description)
+                VALUES (new.rowid, new.id, new.name, new.description);
             END
         """)
         
         conn.execute("""
             CREATE TRIGGER eval_tasks_fts_delete AFTER DELETE ON eval_tasks BEGIN
-                DELETE FROM eval_tasks_fts WHERE id = old.id;
+                INSERT INTO eval_tasks_fts (eval_tasks_fts, rowid, id, name, description)
+                VALUES ('delete', old.rowid, old.id, old.name, old.description);
             END
         """)
         
         conn.execute("""
             CREATE TRIGGER eval_datasets_fts_insert AFTER INSERT ON eval_datasets BEGIN
-                INSERT INTO eval_datasets_fts (id, name, description) 
-                VALUES (new.id, new.name, new.description);
+                INSERT INTO eval_datasets_fts (rowid, id, name, description)
+                VALUES (new.rowid, new.id, new.name, new.description);
             END
         """)
         
         conn.execute("""
             CREATE TRIGGER eval_datasets_fts_update AFTER UPDATE ON eval_datasets BEGIN
-                UPDATE eval_datasets_fts SET name = new.name, description = new.description 
-                WHERE id = new.id;
+                INSERT INTO eval_datasets_fts (eval_datasets_fts, rowid, id, name, description)
+                VALUES ('delete', old.rowid, old.id, old.name, old.description);
+                INSERT INTO eval_datasets_fts (rowid, id, name, description)
+                VALUES (new.rowid, new.id, new.name, new.description);
             END
         """)
         
         conn.execute("""
             CREATE TRIGGER eval_datasets_fts_delete AFTER DELETE ON eval_datasets BEGIN
-                DELETE FROM eval_datasets_fts WHERE id = old.id;
+                INSERT INTO eval_datasets_fts (eval_datasets_fts, rowid, id, name, description)
+                VALUES ('delete', old.rowid, old.id, old.name, old.description);
             END
         """)
         
@@ -410,6 +416,71 @@ class EvalsDB:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ab_tests_task ON ab_tests (task_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ab_tests_models ON ab_tests (model_a_id, model_b_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ab_test_runs_test ON ab_test_runs (ab_test_id)")
+
+        if current_version < 3 and SCHEMA_VERSION >= 3:
+            logger.info("Migrating to version 3: Rebuilding eval FTS triggers")
+
+            for trigger_name in (
+                "eval_tasks_fts_insert",
+                "eval_tasks_fts_update",
+                "eval_tasks_fts_delete",
+                "eval_datasets_fts_insert",
+                "eval_datasets_fts_update",
+                "eval_datasets_fts_delete",
+            ):
+                conn.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+
+            conn.execute("DELETE FROM eval_tasks_fts")
+            conn.execute("""
+                INSERT INTO eval_tasks_fts (rowid, id, name, description)
+                SELECT rowid, id, name, description FROM eval_tasks
+            """)
+            conn.execute("DELETE FROM eval_datasets_fts")
+            conn.execute("""
+                INSERT INTO eval_datasets_fts (rowid, id, name, description)
+                SELECT rowid, id, name, description FROM eval_datasets
+            """)
+
+            conn.execute("""
+                CREATE TRIGGER eval_tasks_fts_insert AFTER INSERT ON eval_tasks BEGIN
+                    INSERT INTO eval_tasks_fts (rowid, id, name, description)
+                    VALUES (new.rowid, new.id, new.name, new.description);
+                END
+            """)
+            conn.execute("""
+                CREATE TRIGGER eval_tasks_fts_update AFTER UPDATE ON eval_tasks BEGIN
+                    INSERT INTO eval_tasks_fts (eval_tasks_fts, rowid, id, name, description)
+                    VALUES ('delete', old.rowid, old.id, old.name, old.description);
+                    INSERT INTO eval_tasks_fts (rowid, id, name, description)
+                    VALUES (new.rowid, new.id, new.name, new.description);
+                END
+            """)
+            conn.execute("""
+                CREATE TRIGGER eval_tasks_fts_delete AFTER DELETE ON eval_tasks BEGIN
+                    INSERT INTO eval_tasks_fts (eval_tasks_fts, rowid, id, name, description)
+                    VALUES ('delete', old.rowid, old.id, old.name, old.description);
+                END
+            """)
+            conn.execute("""
+                CREATE TRIGGER eval_datasets_fts_insert AFTER INSERT ON eval_datasets BEGIN
+                    INSERT INTO eval_datasets_fts (rowid, id, name, description)
+                    VALUES (new.rowid, new.id, new.name, new.description);
+                END
+            """)
+            conn.execute("""
+                CREATE TRIGGER eval_datasets_fts_update AFTER UPDATE ON eval_datasets BEGIN
+                    INSERT INTO eval_datasets_fts (eval_datasets_fts, rowid, id, name, description)
+                    VALUES ('delete', old.rowid, old.id, old.name, old.description);
+                    INSERT INTO eval_datasets_fts (rowid, id, name, description)
+                    VALUES (new.rowid, new.id, new.name, new.description);
+                END
+            """)
+            conn.execute("""
+                CREATE TRIGGER eval_datasets_fts_delete AFTER DELETE ON eval_datasets BEGIN
+                    INSERT INTO eval_datasets_fts (eval_datasets_fts, rowid, id, name, description)
+                    VALUES ('delete', old.rowid, old.id, old.name, old.description);
+                END
+            """)
         
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     
@@ -712,6 +783,74 @@ class EvalsDB:
             datasets.append(dataset)
         
         return datasets
+
+    def update_dataset(
+        self,
+        dataset_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        format: Optional[str] = None,
+        source_path: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Update an evaluation dataset."""
+        updates: list[str] = []
+        values: list[Any] = []
+
+        if name is not None:
+            if not name.strip():
+                raise InputError("Dataset name cannot be empty")
+            updates.append("name = ?")
+            values.append(name.strip())
+
+        if description is not None:
+            updates.append("description = ?")
+            values.append(description)
+
+        if format is not None:
+            if format not in ['huggingface', 'json', 'csv', 'custom']:
+                raise InputError(f"Invalid format: {format}")
+            updates.append("format = ?")
+            values.append(format)
+
+        if source_path is not None:
+            if not source_path.strip():
+                raise InputError("Source path cannot be empty")
+            updates.append("source_path = ?")
+            values.append(source_path.strip())
+
+        if metadata is not None:
+            updates.append("metadata = ?")
+            values.append(json.dumps(metadata))
+
+        if not updates:
+            return self.get_dataset(dataset_id) is not None
+
+        updates.extend(["updated_at = datetime('now', 'utc')", "version = version + 1"])
+        values.append(dataset_id)
+
+        conn = self._get_connection()
+        try:
+            with conn:
+                cursor = conn.execute(f"""
+                    UPDATE eval_datasets
+                    SET {', '.join(updates)}
+                    WHERE id = ? AND deleted_at IS NULL
+                """, values)
+
+                if cursor.rowcount > 0:
+                    logger.info(f"Updated eval dataset: {dataset_id}")
+                    return True
+                return False
+
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                conflict_name = name if name is not None else dataset_id
+                raise ConflictError(f"Dataset with name '{conflict_name}' already exists", "eval_datasets", conflict_name)
+            raise EvalsDBError(f"Failed to update dataset: {e}")
+        except Exception as e:
+            raise EvalsDBError(f"Failed to update dataset: {e}")
 
     def delete_dataset(self, dataset_id: str) -> bool:
         """Soft delete an evaluation dataset."""
