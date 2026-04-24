@@ -60,6 +60,12 @@ class LocalCharacterPersonaService:
             raise ValueError(f"Local character chat session '{chat_id}' not found.")
         return row
 
+    def _character_record(self, character_id: int | str) -> dict[str, Any]:
+        record = self.db.get_character_card_by_id(int(character_id))
+        if record is None:
+            raise ValueError(f"Local character '{character_id}' not found.")
+        return record
+
     def _world_book_manager(self) -> WorldBookManager:
         return WorldBookManager(self.db)
 
@@ -99,6 +105,77 @@ class LocalCharacterPersonaService:
 
     def list_characters(self, limit: int = 100, offset: int = 0) -> Any:
         return self.db.list_character_cards(limit=limit, offset=offset)
+
+    def get_character(self, character_id: int | str) -> dict[str, Any]:
+        return self._character_record(character_id)
+
+    def create_character(self, request_data: Mapping[str, Any] | Any) -> dict[str, Any]:
+        payload = self._payload_dict(request_data)
+        character_id = self.db.add_character_card(payload)
+        if character_id is None:
+            raise ValueError("Local character could not be created.")
+        return self._character_record(character_id)
+
+    def update_character(
+        self,
+        character_id: int | str,
+        request_data: Mapping[str, Any] | Any,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        payload = self._payload_dict(request_data)
+        updated = self.db.update_character_card(int(character_id), payload, expected_version=expected_version)
+        if not updated:
+            raise ValueError(f"Local character '{character_id}' could not be updated.")
+        return self._character_record(character_id)
+
+    def delete_character(self, character_id: int | str, expected_version: int | None = None) -> dict[str, Any]:
+        if expected_version is None:
+            expected_version = int(self._character_record(character_id)["version"])
+        deleted = self.db.soft_delete_character_card(int(character_id), expected_version=expected_version)
+        if not deleted:
+            raise ValueError(f"Local character '{character_id}' could not be deleted.")
+        return {"deleted": True, "id": str(character_id)}
+
+    def restore_character(self, character_id: int | str, expected_version: int) -> dict[str, Any]:
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT version, deleted FROM character_cards WHERE id = ?",
+                (int(character_id),),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Local character '{character_id}' not found.")
+            if int(row["version"]) != int(expected_version):
+                raise ValueError(
+                    f"Local character '{character_id}' version mismatch: "
+                    f"expected {expected_version}, found {row['version']}."
+                )
+            if not bool(row["deleted"]):
+                return self._character_record(character_id)
+            # The existing FTS update trigger deletes OLD before inserting NEW.
+            # Soft-deleted rows are absent from FTS, so seed OLD before undelete.
+            conn.execute(
+                """
+                INSERT INTO character_cards_fts(rowid, name, description, personality, scenario, system_prompt)
+                SELECT id, name, description, personality, scenario, system_prompt
+                FROM character_cards
+                WHERE id = ?
+                """,
+                (int(character_id),),
+            )
+            cursor = conn.execute(
+                """
+                UPDATE character_cards
+                SET deleted = 0,
+                    version = version + 1,
+                    last_modified = CURRENT_TIMESTAMP,
+                    client_id = ?
+                WHERE id = ? AND version = ? AND deleted = 1
+                """,
+                (self.db.client_id, int(character_id), int(expected_version)),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Local character '{character_id}' could not be restored.")
+        return self._character_record(character_id)
 
     def create_character_chat_session(
         self,

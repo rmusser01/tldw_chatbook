@@ -17,6 +17,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 class FakeCharacterPersonaClient:
     def __init__(self):
         self.list_characters_calls = []
+        self.character_calls = []
         self.list_persona_profiles_calls = []
         self.get_persona_profile_calls = []
         self.create_persona_profile_calls = []
@@ -40,6 +41,28 @@ class FakeCharacterPersonaClient:
     async def list_characters(self, limit=100, offset=0):
         self.list_characters_calls.append({"limit": limit, "offset": offset})
         return [{"id": 1, "name": "Ada"}]
+
+    async def get_character(self, character_id):
+        self.character_calls.append(("detail", character_id))
+        return {"id": character_id, "name": "Ada"}
+
+    async def create_character(self, payload):
+        payload = self._payload_dict(payload)
+        self.character_calls.append(("create", payload))
+        return {"id": 42, "name": payload.get("name"), "version": 1}
+
+    async def update_character(self, character_id, payload, expected_version):
+        payload = self._payload_dict(payload)
+        self.character_calls.append(("update", character_id, payload, expected_version))
+        return {"id": character_id, "name": payload.get("name", "Ada"), "version": expected_version + 1}
+
+    async def delete_character(self, character_id, expected_version):
+        self.character_calls.append(("delete", character_id, expected_version))
+        return {"deleted": True, "id": character_id}
+
+    async def restore_character(self, character_id, expected_version):
+        self.character_calls.append(("restore", character_id, expected_version))
+        return {"id": character_id, "deleted": False, "version": expected_version + 1}
 
     async def list_persona_profiles(self, active_only=False, include_deleted=False, limit=100, offset=0):
         self.list_persona_profiles_calls.append(
@@ -339,6 +362,43 @@ async def test_scope_service_routes_character_and_persona_parameters():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_character_catalog_crud_to_server_with_policy():
+    server_service = FakeCharacterPersonaClient()
+    policy = FakePolicyEnforcer()
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterBackend(),
+        server_service=server_service,
+        policy_enforcer=policy,
+    )
+
+    detail = await scope_service.get_character(12, mode="server")
+    created = await scope_service.create_character({"name": "Ada"}, mode="server")
+    updated = await scope_service.update_character(12, {"name": "Ada v2"}, expected_version=3, mode="server")
+    deleted = await scope_service.delete_character(12, expected_version=4, mode="server")
+    restored = await scope_service.restore_character(12, expected_version=5, mode="server")
+
+    assert detail["id"] == 12
+    assert created["id"] == 42
+    assert updated["version"] == 4
+    assert deleted["deleted"] is True
+    assert restored["deleted"] is False
+    assert policy.actions == [
+        "character.persona.detail.server",
+        "character.persona.create.server",
+        "character.persona.update.server",
+        "character.persona.delete.server",
+        "character.persona.update.server",
+    ]
+    assert server_service.character_calls == [
+        ("detail", 12),
+        ("create", {"name": "Ada"}),
+        ("update", 12, {"name": "Ada v2"}, 3),
+        ("delete", 12, 4),
+        ("restore", 12, 5),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_persona_profile_crud_to_server_backend():
     scope_service = CharacterPersonaScopeService(
         local_service=FakeLocalCharacterBackend(),
@@ -548,6 +608,34 @@ def test_local_character_persona_service_persists_sessions_messages_settings_and
     assert service.delete_character_memory(str(character_id), memory["id"]) == {"deleted": True}
     with pytest.raises(ValueError, match="Local character memory extraction is unavailable"):
         service.extract_character_memories(str(character_id), {"chat_id": session["id"]})
+
+
+def test_local_character_persona_service_persists_character_catalog_crud_and_restore(tmp_path):
+    db = CharactersRAGDB(tmp_path / "ccp-character-catalog.sqlite", "test_client")
+    service = LocalCharacterPersonaService(db)
+
+    created = service.create_character({"name": "Local Ada", "first_message": "Hello."})
+    fetched = service.get_character(created["id"])
+    updated = service.update_character(
+        created["id"],
+        {"name": "Local Ada v2", "tags": ["offline"]},
+        expected_version=created["version"],
+    )
+    deleted = service.delete_character(created["id"], expected_version=updated["version"])
+
+    with pytest.raises(ValueError, match="Local character '.*' not found"):
+        service.get_character(created["id"])
+
+    restored = service.restore_character(created["id"], expected_version=updated["version"] + 1)
+
+    assert created["name"] == "Local Ada"
+    assert fetched["id"] == created["id"]
+    assert updated["name"] == "Local Ada v2"
+    assert updated["tags"] == ["offline"]
+    assert deleted == {"deleted": True, "id": str(created["id"])}
+    assert restored["name"] == "Local Ada v2"
+    assert restored["version"] == updated["version"] + 2
+    db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -760,6 +848,35 @@ async def test_server_character_persona_service_delegates_to_client():
             "limit": 25,
             "offset": 9,
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_character_persona_service_delegates_character_catalog_crud_to_client():
+    client = FakeCharacterPersonaClient()
+    service = ServerCharacterPersonaService(client=client)
+
+    detail = await service.get_character(12)
+    created = await service.create_character(Mock(model_dump=lambda exclude_none=True, mode="json": {"name": "Ada"}))
+    updated = await service.update_character(
+        12,
+        Mock(model_dump=lambda exclude_unset=True, exclude_none=True, mode="json": {"name": "Ada v2"}),
+        expected_version=3,
+    )
+    deleted = await service.delete_character(12, expected_version=4)
+    restored = await service.restore_character(12, expected_version=5)
+
+    assert detail["id"] == 12
+    assert created["name"] == "Ada"
+    assert updated["version"] == 4
+    assert deleted["deleted"] is True
+    assert restored["deleted"] is False
+    assert client.character_calls == [
+        ("detail", 12),
+        ("create", {"name": "Ada"}),
+        ("update", 12, {"name": "Ada v2"}, 3),
+        ("delete", 12, 4),
+        ("restore", 12, 5),
     ]
 
 

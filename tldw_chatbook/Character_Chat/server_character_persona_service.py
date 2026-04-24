@@ -8,6 +8,7 @@ from typing import Any, Mapping, Optional
 
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
 from ..tldw_api import (
+    CharacterCreateRequest,
     CharacterChatMessageCreate,
     CharacterChatMessageUpdate,
     CharacterChatSessionCreate,
@@ -17,6 +18,7 @@ from ..tldw_api import (
     CharacterMemoryCreate,
     CharacterMemoryExtractRequest,
     CharacterMemoryUpdate,
+    CharacterUpdateRequest,
     PersonaProfileCreate,
     PersonaProfileUpdate,
     PresetCreate,
@@ -40,6 +42,14 @@ class ServerCharacterPersonaService:
             raise ValueError("TLDW API client is required for server character and persona operations.")
         return self.client
 
+    @staticmethod
+    def _request_model(request_data: Any, model_cls: Any, **dump_kwargs: Any) -> Any:
+        if isinstance(request_data, model_cls):
+            return request_data
+        if hasattr(request_data, "model_dump"):
+            return model_cls.model_validate(request_data.model_dump(**dump_kwargs))
+        return model_cls.model_validate(dict(request_data))
+
     async def list_characters(
         self,
         limit: int = 100,
@@ -47,6 +57,39 @@ class ServerCharacterPersonaService:
     ) -> Any:
         client = self._require_client()
         return await client.list_characters(limit=limit, offset=offset)
+
+    async def get_character(self, character_id: int) -> Any:
+        client = self._require_client()
+        return await client.get_character(character_id)
+
+    async def create_character(self, request_data: CharacterCreateRequest | Mapping[str, Any]) -> Any:
+        client = self._require_client()
+        request = self._request_model(request_data, CharacterCreateRequest, exclude_none=True, mode="json")
+        return await client.create_character(request)
+
+    async def update_character(
+        self,
+        character_id: int,
+        request_data: CharacterUpdateRequest | Mapping[str, Any],
+        expected_version: int,
+    ) -> Any:
+        client = self._require_client()
+        request = self._request_model(
+            request_data,
+            CharacterUpdateRequest,
+            exclude_unset=True,
+            exclude_none=True,
+            mode="json",
+        )
+        return await client.update_character(character_id, request, expected_version)
+
+    async def delete_character(self, character_id: int, expected_version: int) -> Any:
+        client = self._require_client()
+        return await client.delete_character(character_id, expected_version)
+
+    async def restore_character(self, character_id: int, expected_version: int) -> Any:
+        client = self._require_client()
+        return await client.restore_character(character_id, expected_version)
 
     async def list_persona_profiles(
         self,
