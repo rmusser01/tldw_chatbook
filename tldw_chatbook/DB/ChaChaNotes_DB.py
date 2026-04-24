@@ -133,7 +133,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 15  # Incremented schema version to add local quiz parity tables
+    _CURRENT_SCHEMA_VERSION = 16  # Incremented schema version to add local flashcard template parity
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -1977,6 +1977,35 @@ UPDATE db_schema_version
    AND version = 14;
 """
 
+    _MIGRATE_V15_TO_V16_SQL = """
+-- Migration from V15 to V16: Add local flashcard template parity
+
+CREATE TABLE IF NOT EXISTS flashcard_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    model_type TEXT NOT NULL DEFAULT 'basic',
+    front_template TEXT NOT NULL,
+    back_template TEXT,
+    notes_template TEXT,
+    extra_template TEXT,
+    placeholder_definitions TEXT NOT NULL DEFAULT '[]',
+    deleted INTEGER NOT NULL DEFAULT 0,
+    client_id TEXT NOT NULL DEFAULT 'unknown',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_flashcard_templates_name ON flashcard_templates(name);
+CREATE INDEX IF NOT EXISTS idx_flashcard_templates_model_type ON flashcard_templates(model_type);
+CREATE INDEX IF NOT EXISTS idx_flashcard_templates_last_modified ON flashcard_templates(last_modified);
+
+UPDATE db_schema_version
+   SET version = 16
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 15;
+"""
+
     def __init__(self, db_path: Union[str, Path], client_id: str, 
                  check_integrity_on_startup: bool = False):
         """
@@ -2761,6 +2790,31 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V14→V15] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V14 to V15 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v15_to_v16(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 15 to version 16.
+
+        This migration adds local flashcard template storage.
+        """
+        logger.info(f"Migrating schema from V15 to V16 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V15_TO_V16_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V15→V16] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 16:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V15→V16] Migration version check failed. Expected 16, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V15→V16] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V15→V16] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V15 to V16 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V15→V16] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V15 to V16 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 7 to version 8.
@@ -2844,6 +2898,7 @@ UPDATE db_schema_version
                     12: self._migrate_from_v12_to_v13,
                     13: self._migrate_from_v13_to_v14,
                     14: self._migrate_from_v14_to_v15,
+                    15: self._migrate_from_v15_to_v16,
                 }
 
                 if current_db_version == 0:
@@ -7320,6 +7375,204 @@ UPDATE db_schema_version
                 return True
         except sqlite3.Error as e:
             raise CharactersRAGDBError(f"Failed to delete deck: {e}") from e
+
+    @staticmethod
+    def _flashcard_template_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+        record = dict(row)
+        raw_placeholders = record.get("placeholder_definitions")
+        if isinstance(raw_placeholders, str) and raw_placeholders.strip():
+            try:
+                parsed = json.loads(raw_placeholders)
+                record["placeholder_definitions"] = parsed if isinstance(parsed, list) else []
+            except json.JSONDecodeError:
+                record["placeholder_definitions"] = []
+        elif raw_placeholders is None:
+            record["placeholder_definitions"] = []
+        return record
+
+    def create_flashcard_template(
+        self,
+        *,
+        name: str,
+        model_type: str = "basic",
+        front_template: str,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Create a durable local flashcard template."""
+        normalized_name = str(name or "").strip()
+        normalized_model_type = str(model_type or "basic").strip() or "basic"
+        if not normalized_name:
+            raise InputError("Flashcard template name is required")
+        if not str(front_template or "").strip():
+            raise InputError("Flashcard template front_template is required")
+
+        template_id = self._generate_uuid()
+        placeholders_json = json.dumps(list(placeholder_definitions or []))
+        try:
+            with self.transaction() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO flashcard_templates (
+                        id, name, model_type, front_template, back_template,
+                        notes_template, extra_template, placeholder_definitions, client_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        template_id,
+                        normalized_name,
+                        normalized_model_type,
+                        front_template,
+                        back_template,
+                        notes_template,
+                        extra_template,
+                        placeholders_json,
+                        self.client_id,
+                    ),
+                )
+            return self.get_flashcard_template(template_id)
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(f"Failed to create flashcard template: {e}") from e
+
+    def list_flashcard_templates(self, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        """List non-deleted local flashcard templates."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        total_row = cursor.execute(
+            "SELECT COUNT(*) AS total FROM flashcard_templates WHERE deleted = 0"
+        ).fetchone()
+        cursor.execute(
+            """
+            SELECT *
+            FROM flashcard_templates
+            WHERE deleted = 0
+            ORDER BY name COLLATE NOCASE ASC, created_at ASC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        )
+        items = [self._flashcard_template_from_row(row) for row in cursor.fetchall()]
+        total = int(total_row["total"]) if total_row else len(items)
+        return {"items": items, "count": len(items), "total": total}
+
+    def get_flashcard_template(self, template_id: str) -> Optional[Dict[str, Any]]:
+        """Get a non-deleted local flashcard template by ID."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        row = cursor.execute(
+            """
+            SELECT *
+            FROM flashcard_templates
+            WHERE id = ? AND deleted = 0
+            """,
+            (str(template_id),),
+        ).fetchone()
+        return self._flashcard_template_from_row(row) if row else None
+
+    def update_flashcard_template(
+        self,
+        template_id: str,
+        *,
+        name: Optional[str] = None,
+        model_type: Optional[str] = None,
+        front_template: Optional[str] = None,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[List[Dict[str, Any]]] = None,
+        expected_version: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Update a local flashcard template using optimistic locking when supplied."""
+        try:
+            with self.transaction() as cursor:
+                row = cursor.execute(
+                    "SELECT * FROM flashcard_templates WHERE id = ? AND deleted = 0",
+                    (str(template_id),),
+                ).fetchone()
+                if not row:
+                    return None
+                current_version = int(row["version"])
+                if expected_version is not None and current_version != expected_version:
+                    raise ConflictError(
+                        "Version mismatch updating flashcard template",
+                        entity="flashcard_templates",
+                        entity_id=template_id,
+                    )
+                target_name = name if name is not None else row["name"]
+                target_model_type = model_type if model_type is not None else row["model_type"]
+                target_front_template = front_template if front_template is not None else row["front_template"]
+                if not str(target_name or "").strip():
+                    raise InputError("Flashcard template name is required")
+                if not str(target_front_template or "").strip():
+                    raise InputError("Flashcard template front_template is required")
+
+                cursor.execute(
+                    """
+                    UPDATE flashcard_templates
+                    SET name = ?,
+                        model_type = ?,
+                        front_template = ?,
+                        back_template = ?,
+                        notes_template = ?,
+                        extra_template = ?,
+                        placeholder_definitions = ?,
+                        last_modified = CURRENT_TIMESTAMP,
+                        version = version + 1,
+                        client_id = ?
+                    WHERE id = ? AND deleted = 0
+                    """,
+                    (
+                        target_name,
+                        target_model_type,
+                        target_front_template,
+                        back_template if back_template is not None else row["back_template"],
+                        notes_template if notes_template is not None else row["notes_template"],
+                        extra_template if extra_template is not None else row["extra_template"],
+                        json.dumps(list(placeholder_definitions or []))
+                        if placeholder_definitions is not None
+                        else row["placeholder_definitions"],
+                        self.client_id,
+                        str(template_id),
+                    ),
+                )
+            return self.get_flashcard_template(str(template_id))
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(f"Failed to update flashcard template: {e}") from e
+
+    def delete_flashcard_template(self, template_id: str, *, expected_version: int) -> bool:
+        """Soft-delete a local flashcard template."""
+        try:
+            with self.transaction() as cursor:
+                row = cursor.execute(
+                    "SELECT version, deleted FROM flashcard_templates WHERE id = ?",
+                    (str(template_id),),
+                ).fetchone()
+                if not row:
+                    return False
+                if int(row["deleted"]):
+                    return True
+                if int(row["version"]) != int(expected_version):
+                    raise ConflictError(
+                        "Version mismatch deleting flashcard template",
+                        entity="flashcard_templates",
+                        entity_id=template_id,
+                    )
+                cursor.execute(
+                    """
+                    UPDATE flashcard_templates
+                    SET deleted = 1,
+                        last_modified = CURRENT_TIMESTAMP,
+                        version = version + 1,
+                        client_id = ?
+                    WHERE id = ? AND deleted = 0
+                    """,
+                    (self.client_id, str(template_id)),
+                )
+                return True
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(f"Failed to delete flashcard template: {e}") from e
 
     def list_flashcards(
         self,

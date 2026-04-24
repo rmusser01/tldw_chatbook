@@ -72,24 +72,32 @@ class StudyScopeService:
         return StudyScopeService._with_source("server", payload)
 
     @classmethod
-    def _with_server_template_record(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
-        result = dict(cls._with_server_source(payload))
+    def _with_template_record(cls, source: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(cls._with_source(source, payload))
         result.setdefault("entity_kind", "flashcard_template")
         template_id = result.get("id")
         if template_id is not None:
-            result.setdefault("record_id", f"server:flashcard_template:{template_id}")
+            result.setdefault("record_id", f"{source}:flashcard_template:{template_id}")
         return result
 
     @classmethod
-    def _with_server_template_list(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
-        result = dict(cls._with_server_source(payload))
+    def _with_template_list(cls, source: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(cls._with_source(source, payload))
         result.setdefault("entity_kind", "flashcard_template_list")
         result["items"] = [
-            cls._with_server_template_record(item)
+            cls._with_template_record(source, item)
             for item in list(result.get("items") or [])
             if isinstance(item, Mapping)
         ]
         return result
+
+    @classmethod
+    def _with_server_template_record(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return cls._with_template_record("server", payload)
+
+    @classmethod
+    def _with_server_template_list(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return cls._with_template_list("server", payload)
 
     @classmethod
     def _with_server_flashcard_list(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -668,7 +676,8 @@ class StudyScopeService:
         extra_template: str | None = None,
         placeholder_definitions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard templates")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
             service.create_flashcard_template(
                 name=name,
@@ -680,7 +689,7 @@ class StudyScopeService:
                 placeholder_definitions=placeholder_definitions,
             )
         )
-        return self._with_server_template_record(payload or {})
+        return self._with_template_record(normalized_mode.value, payload or {})
 
     async def list_flashcard_templates(
         self,
@@ -689,25 +698,27 @@ class StudyScopeService:
         limit: int = 100,
         offset: int = 0,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard templates")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.list_flashcard_templates(limit=limit, offset=offset))
-        return self._with_server_template_list(payload or {})
+        return self._with_template_list(normalized_mode.value, payload or {})
 
     async def get_flashcard_template(
         self,
         *,
         mode: StudyBackend | str | None = None,
-        template_id: int,
+        template_id: str | int,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard templates")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.get_flashcard_template(template_id))
-        return self._with_server_template_record(payload or {})
+        return self._with_template_record(normalized_mode.value, payload or {})
 
     async def update_flashcard_template(
         self,
         *,
         mode: StudyBackend | str | None = None,
-        template_id: int,
+        template_id: str | int,
         name: str | None = None,
         model_type: str | None = None,
         front_template: str | None = None,
@@ -717,7 +728,8 @@ class StudyScopeService:
         placeholder_definitions: list[dict[str, Any]] | None = None,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard templates")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
             service.update_flashcard_template(
                 template_id,
@@ -731,16 +743,17 @@ class StudyScopeService:
                 expected_version=expected_version,
             )
         )
-        return self._with_server_template_record(payload or {})
+        return self._with_template_record(normalized_mode.value, payload or {})
 
     async def delete_flashcard_template(
         self,
         *,
         mode: StudyBackend | str | None = None,
-        template_id: int,
+        template_id: str | int,
         expected_version: int,
     ) -> bool:
-        service = self._server_only_service(mode, "Flashcard templates")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
             service.delete_flashcard_template(template_id, expected_version=expected_version)
         )

@@ -110,6 +110,111 @@ class FakeDB:
         self.calls.append(("delete_deck", deck_id, expected_version, hard_delete))
         return True
 
+    def create_flashcard_template(
+        self,
+        *,
+        name,
+        model_type="basic",
+        front_template,
+        back_template=None,
+        notes_template=None,
+        extra_template=None,
+        placeholder_definitions=None,
+    ):
+        self.calls.append(
+            (
+                "create_flashcard_template",
+                name,
+                model_type,
+                front_template,
+                back_template,
+                notes_template,
+                extra_template,
+                placeholder_definitions,
+            )
+        )
+        return {
+            "id": "tmpl-local-1",
+            "name": name,
+            "model_type": model_type,
+            "front_template": front_template,
+            "back_template": back_template,
+            "notes_template": notes_template,
+            "extra_template": extra_template,
+            "placeholder_definitions": placeholder_definitions or [],
+            "version": 1,
+        }
+
+    def list_flashcard_templates(self, *, limit=100, offset=0):
+        self.calls.append(("list_flashcard_templates", limit, offset))
+        return {
+            "items": [
+                {
+                    "id": "tmpl-local-1",
+                    "name": "Cloze Drill",
+                    "model_type": "cloze",
+                    "front_template": "{{statement}}",
+                    "placeholder_definitions": [],
+                    "version": 1,
+                }
+            ],
+            "count": 1,
+        }
+
+    def get_flashcard_template(self, template_id):
+        self.calls.append(("get_flashcard_template", template_id))
+        return {
+            "id": template_id,
+            "name": "Cloze Drill",
+            "model_type": "cloze",
+            "front_template": "{{statement}}",
+            "placeholder_definitions": [],
+            "version": 1,
+        }
+
+    def update_flashcard_template(
+        self,
+        template_id,
+        *,
+        name=None,
+        model_type=None,
+        front_template=None,
+        back_template=None,
+        notes_template=None,
+        extra_template=None,
+        placeholder_definitions=None,
+        expected_version=None,
+    ):
+        self.calls.append(
+            (
+                "update_flashcard_template",
+                template_id,
+                name,
+                model_type,
+                front_template,
+                back_template,
+                notes_template,
+                extra_template,
+                placeholder_definitions,
+                expected_version,
+            )
+        )
+        return {
+            "id": template_id,
+            "name": name or "Cloze Drill",
+            "model_type": model_type or "cloze",
+            "front_template": front_template or "{{statement}}",
+            "back_template": back_template,
+            "notes_template": notes_template,
+            "extra_template": extra_template,
+            "placeholder_definitions": placeholder_definitions or [],
+            "version": 2,
+        }
+
+    def delete_flashcard_template(self, template_id, *, expected_version):
+        self.calls.append(("delete_flashcard_template", template_id, expected_version))
+        return {"deleted": True}
+
 
 def test_local_study_service_lists_and_creates_decks():
     db = FakeDB()
@@ -466,3 +571,45 @@ def test_local_study_service_deletes_deck_with_expected_version():
 
     assert deleted is True
     assert db.calls == [("delete_deck", "deck-local-1", 4, False)]
+
+
+def test_local_study_service_persists_flashcard_templates_against_chachanotes_db(tmp_path):
+    db_path = tmp_path / "study.db"
+    db = CharactersRAGDB(db_path, client_id="test_client")
+    service = LocalStudyService(db=db)
+
+    created = service.create_flashcard_template(
+        name="Cloze Drill",
+        model_type="cloze",
+        front_template="{{statement}}",
+        notes_template="Focus: {{topic}}",
+        placeholder_definitions=[{"name": "statement", "targets": ["front_template"]}],
+    )
+    listed = service.list_flashcard_templates(limit=10, offset=0)
+    updated = service.update_flashcard_template(
+        created["id"],
+        notes_template="Updated focus: {{topic}}",
+        expected_version=created["version"],
+    )
+    fetched = service.get_flashcard_template(created["id"])
+    db.close()
+
+    reopened = CharactersRAGDB(db_path, client_id="test_client")
+    reopened_service = LocalStudyService(db=reopened)
+    reopened_fetched = reopened_service.get_flashcard_template(created["id"])
+    deleted = reopened_service.delete_flashcard_template(
+        created["id"],
+        expected_version=reopened_fetched["version"],
+    )
+    after_delete = reopened_service.list_flashcard_templates(limit=10, offset=0)
+
+    assert created["id"]
+    assert created["version"] == 1
+    assert created["placeholder_definitions"] == [{"name": "statement", "targets": ["front_template"]}]
+    assert listed["items"][0]["id"] == created["id"]
+    assert updated["notes_template"] == "Updated focus: {{topic}}"
+    assert updated["version"] == created["version"] + 1
+    assert fetched["notes_template"] == "Updated focus: {{topic}}"
+    assert reopened_fetched["notes_template"] == "Updated focus: {{topic}}"
+    assert deleted is True
+    assert after_delete == {"items": [], "count": 0, "total": 0}

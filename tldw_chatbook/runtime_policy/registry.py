@@ -335,7 +335,6 @@ AUDITED_CAPABILITY_SEEDS = (
                 "study.flashcard.bulk",
                 actions=(CREATE, UPDATE),
                 domain_id="study",
-                sources=(SERVER_SOURCE,),
             ),
             _resource(
                 "study.flashcard.assets",
@@ -353,25 +352,21 @@ AUDITED_CAPABILITY_SEEDS = (
                 "study.flashcard.import",
                 actions=(PREVIEW, IMPORT),
                 domain_id="study",
-                sources=(SERVER_SOURCE,),
             ),
             _resource(
                 "study.flashcard.export",
                 actions=(EXPORT,),
                 domain_id="study",
-                sources=(SERVER_SOURCE,),
             ),
             _resource(
                 "study.flashcard.tags",
                 actions=(LIST,),
                 domain_id="study",
-                sources=(SERVER_SOURCE,),
             ),
             _resource(
                 "study.flashcard.template",
                 actions=CRUD_ACTIONS,
                 domain_id="study",
-                sources=(SERVER_SOURCE,),
             ),
             _resource("quiz", actions=CRUD_ACTIONS, domain_id="quiz"),
             _resource("quiz.question", actions=(LIST, DETAIL), domain_id="quiz"),

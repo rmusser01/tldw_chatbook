@@ -587,6 +587,83 @@ class LocalStudyService:
         )
         return data
 
+    def create_flashcard_template(
+        self,
+        *,
+        name: str,
+        model_type: str = "basic",
+        front_template: str,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        template = self._require_db().create_flashcard_template(
+            name=name,
+            model_type=model_type,
+            front_template=front_template,
+            back_template=back_template,
+            notes_template=notes_template,
+            extra_template=extra_template,
+            placeholder_definitions=placeholder_definitions,
+        )
+        self._dispatch_local_notification(
+            title="Local flashcard template created",
+            message=f"Created local flashcard template: {template.get('name') or name}",
+            source_entity_id=str(template.get("id") or ""),
+            source_entity_kind="flashcard_template",
+            payload={"action": "flashcard_template_created", "template_id": str(template.get("id") or "")},
+        )
+        return template
+
+    def list_flashcard_templates(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        return dict(self._require_db().list_flashcard_templates(limit=limit, offset=offset) or {})
+
+    def get_flashcard_template(self, template_id: str) -> dict[str, Any] | None:
+        return self._require_db().get_flashcard_template(str(template_id))
+
+    def update_flashcard_template(
+        self,
+        template_id: str,
+        *,
+        name: Optional[str] = None,
+        model_type: Optional[str] = None,
+        front_template: Optional[str] = None,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+        expected_version: Optional[int] = None,
+    ) -> dict[str, Any] | None:
+        return self._require_db().update_flashcard_template(
+            str(template_id),
+            name=name,
+            model_type=model_type,
+            front_template=front_template,
+            back_template=back_template,
+            notes_template=notes_template,
+            extra_template=extra_template,
+            placeholder_definitions=placeholder_definitions,
+            expected_version=expected_version,
+        )
+
+    def delete_flashcard_template(self, template_id: str, *, expected_version: int) -> bool:
+        deleted = bool(
+            self._require_db().delete_flashcard_template(
+                str(template_id),
+                expected_version=expected_version,
+            )
+        )
+        if deleted:
+            self._dispatch_local_notification(
+                title="Local flashcard template deleted",
+                message="Deleted local flashcard template.",
+                source_entity_id=str(template_id),
+                source_entity_kind="flashcard_template",
+                payload={"action": "flashcard_template_deleted", "template_id": str(template_id)},
+            )
+        return deleted
+
     def delete_flashcard(
         self,
         card_id: str,
