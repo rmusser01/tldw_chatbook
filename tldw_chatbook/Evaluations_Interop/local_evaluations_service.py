@@ -12,13 +12,59 @@ from .evaluation_normalizers import RESERVED_LOCAL_DATASET_SAMPLES_KEY, RESERVED
 class LocalEvaluationsService:
     """Wrap the local eval DB with a compat-oriented evaluation surface."""
 
-    def __init__(self, db: Any):
+    def __init__(
+        self,
+        db: Any,
+        *,
+        notification_dispatch_service: Any = None,
+        notification_app: Any = None,
+    ):
         self.db = db
+        self.notification_dispatch_service = notification_dispatch_service
+        self.notification_app = notification_app
+
+    def configure_notification_dispatch(
+        self,
+        *,
+        notification_dispatch_service: Any = None,
+        notification_app: Any = None,
+    ) -> None:
+        self.notification_dispatch_service = notification_dispatch_service
+        self.notification_app = notification_app
 
     def _require_db(self) -> Any:
         if self.db is None:
             raise ValueError("Local evaluations DB is unavailable.")
         return self.db
+
+    def _dispatch_local_notification(
+        self,
+        *,
+        title: str,
+        message: str,
+        source_entity_id: str | None,
+        source_entity_kind: str,
+        severity: str = "info",
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        dispatcher = getattr(self, "notification_dispatch_service", None)
+        dispatch = getattr(dispatcher, "dispatch", None)
+        if not callable(dispatch):
+            return None
+        try:
+            return dispatch(
+                app=getattr(self, "notification_app", None),
+                category="evaluations",
+                title=title,
+                message=message,
+                severity=severity,
+                source_backend="local",
+                source_entity_id=source_entity_id,
+                source_entity_kind=source_entity_kind,
+                payload=payload or {},
+            )
+        except Exception:
+            return None
 
     def _model_dump(self, value: Any) -> Any:
         if hasattr(value, "model_dump") and callable(value.model_dump):
@@ -179,7 +225,7 @@ class LocalEvaluationsService:
                 samples=dataset,
                 description=f"Inline dataset for {name}",
             )
-        return self._require_db().create_task(
+        task_id = self._require_db().create_task(
             name=name,
             description=description,
             task_type=eval_type,
@@ -187,6 +233,14 @@ class LocalEvaluationsService:
             config_data=self._build_task_payload(eval_spec=eval_spec, metadata=metadata),
             dataset_id=dataset_id,
         )
+        self._dispatch_local_notification(
+            title="Local evaluation created",
+            message=f"Local evaluation created: {name}",
+            source_entity_id=str(task_id),
+            source_entity_kind="evaluation",
+            payload={"action": "evaluation_created", "evaluation_id": str(task_id), "eval_type": eval_type},
+        )
+        return task_id
 
     def update_evaluation(
         self,
@@ -255,13 +309,25 @@ class LocalEvaluationsService:
             source_path = source_path or f"inline:{name}"
         if not source_path:
             raise ValueError("Local evaluation dataset creation requires source_path or inline samples.")
-        return self._require_db().create_dataset(
+        dataset_id = self._require_db().create_dataset(
             name=name,
             format=format or "custom",
             source_path=source_path,
             description=description,
             metadata=metadata_payload,
         )
+        self._dispatch_local_notification(
+            title="Local evaluation dataset created",
+            message=f"Local evaluation dataset created: {name}",
+            source_entity_id=str(dataset_id),
+            source_entity_kind="evaluation_dataset",
+            payload={
+                "action": "dataset_created",
+                "dataset_id": str(dataset_id),
+                "sample_count": len(normalized_samples),
+            },
+        )
+        return dataset_id
 
     def delete_dataset(self, dataset_id: str) -> None:
         deleted = self._require_db().delete_dataset(dataset_id)
@@ -328,6 +394,19 @@ class LocalEvaluationsService:
         created_run = dict(record)
         created_run["config_overrides"] = self._coerce_json_mapping(created_run.get("config_overrides"))
         created_run.setdefault("target_model", self._target_model_string(model_record))
+        self._dispatch_local_notification(
+            title="Local evaluation run created",
+            message=f"Local evaluation run created: {created_run.get('name') or run_id}",
+            source_entity_id=str(run_id),
+            source_entity_kind="evaluation_run",
+            payload={
+                "action": "run_created",
+                "run_id": str(run_id),
+                "evaluation_id": str(eval_id),
+                "target_model": created_run.get("target_model"),
+                "status": created_run.get("status"),
+            },
+        )
         return created_run
 
     def get_run_artifacts(self, run_id: str) -> dict[str, Any]:
@@ -341,4 +420,11 @@ class LocalEvaluationsService:
 
     def cancel_run(self, run_id: str) -> dict[str, Any]:
         self._require_db().update_run_status(run_id, "cancelled")
+        self._dispatch_local_notification(
+            title="Local evaluation run cancelled",
+            message=f"Local evaluation run cancelled: {run_id}",
+            source_entity_id=str(run_id),
+            source_entity_kind="evaluation_run",
+            payload={"action": "run_cancelled", "run_id": str(run_id), "status": "cancelled"},
+        )
         return {"id": run_id, "status": "cancelled"}

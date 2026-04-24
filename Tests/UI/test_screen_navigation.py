@@ -15,6 +15,7 @@ from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_loop_scope_service import ServerChatLoopScopeService
 from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
 from tldw_chatbook.Chat.server_chat_loop_service import ServerChatLoopService
+from tldw_chatbook.Evaluations_Interop import LocalEvaluationsService
 from tldw_chatbook.Media import (
     LocalMediaReadingService,
     MediaReadingScopeService,
@@ -191,6 +192,22 @@ def test_app_initializes_research_services(app):
     assert app.research_scope_service.local_service is app.local_research_service
     assert app.research_scope_service.server_service is app.server_research_service
     assert app.research_scope_service.policy_enforcer is app.service_policy_enforcer
+
+
+def test_app_wires_local_evaluation_notifications():
+    app = TldwCli.__new__(TldwCli)
+    app.app_config = {"tldw_api": {"base_url": "http://localhost:8000"}}
+    app.service_policy_enforcer = MagicMock()
+    app.notification_dispatch_service = MagicMock()
+
+    with patch("tldw_chatbook.app.EvaluationOrchestrator", return_value=SimpleNamespace(db=MagicMock())):
+        with patch("tldw_chatbook.app.ServerEvaluationsService.from_config", return_value=MagicMock(client=MagicMock())):
+            TldwCli._wire_evaluation_services(app)
+
+    assert isinstance(app.local_evaluation_service, LocalEvaluationsService)
+    assert app.local_evaluation_service.notification_dispatch_service is app.notification_dispatch_service
+    assert app.local_evaluation_service.notification_app is app
+    assert app.evaluation_scope_service.local_service is app.local_evaluation_service
 
 
 def test_app_wires_local_study_notifications():

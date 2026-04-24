@@ -23,9 +23,16 @@ class EvaluationBackend(str, Enum):
 class EvaluationScopeService:
     """Route evaluation actions to local or server backends and normalize outputs."""
 
-    def __init__(self, *, local_service: Any, server_service: Any):
+    def __init__(
+        self,
+        *,
+        local_service: Any,
+        server_service: Any,
+        policy_enforcer: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
+        self.policy_enforcer = policy_enforcer
 
     def _normalize_mode(self, mode: EvaluationBackend | str | None) -> EvaluationBackend:
         if mode is None:

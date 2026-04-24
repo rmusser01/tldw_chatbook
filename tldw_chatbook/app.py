@@ -1529,7 +1529,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.local_evaluation_service = None
         try:
             self.evaluation_orchestrator = EvaluationOrchestrator(client_id="tldw_cli_app")
-            self.local_evaluation_service = LocalEvaluationsService(self.evaluation_orchestrator.db)
+            self.local_evaluation_service = LocalEvaluationsService(
+                self.evaluation_orchestrator.db,
+                notification_dispatch_service=self.notification_dispatch_service,
+                notification_app=self,
+            )
         except Exception:
             logger.warning("Local evaluation service unavailable during app wiring", exc_info=True)
             self.evaluation_orchestrator = None

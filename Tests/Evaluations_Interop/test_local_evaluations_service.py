@@ -1,7 +1,10 @@
 import pytest
+from types import SimpleNamespace
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evaluations_Interop.local_evaluations_service import LocalEvaluationsService
+from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 
 
 class FakeEvalsDB:
@@ -302,3 +305,38 @@ def test_cancel_run_marks_local_run_cancelled():
     service.cancel_run("run_123")
 
     assert db.calls[-1] == ("update_run_status", "run_123", "cancelled", None)
+
+
+def test_local_evaluations_service_dispatches_lifecycle_notifications(tmp_path):
+    db = FakeEvalsDB()
+    notifications_db = ClientNotificationsDB(tmp_path / "notifications.db")
+    dispatcher = NotificationDispatchService(notifications_db)
+    service = LocalEvaluationsService(
+        db=db,
+        notification_dispatch_service=dispatcher,
+        notification_app=SimpleNamespace(),
+    )
+
+    dataset_id = service.create_dataset(
+        name="offline_dataset",
+        samples=[{"input": "Question", "expected": "Answer"}],
+    )
+    eval_id = service.create_evaluation(
+        name="demo_eval",
+        eval_type="question_answer",
+        eval_spec={"metrics": ["accuracy"]},
+        dataset_id=dataset_id,
+    )
+    run = service.create_run(eval_id, target_model="openai:gpt-4.1-mini")
+    cancelled = service.cancel_run(run["id"])
+
+    rows = notifications_db.list_notifications(limit=10, category="evaluations")
+    actions = {row["payload"]["action"] for row in rows}
+    assert cancelled["status"] == "cancelled"
+    assert {
+        "dataset_created",
+        "evaluation_created",
+        "run_created",
+        "run_cancelled",
+    }.issubset(actions)
+    assert all(row["source_backend"] == "local" for row in rows)
