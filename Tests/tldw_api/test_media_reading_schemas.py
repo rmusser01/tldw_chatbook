@@ -22,6 +22,8 @@ from tldw_chatbook.tldw_api import (
     MediaDetailResponse,
     MediaKeywordsResponse,
     MediaKeywordsUpdateRequest,
+    MediaNavigationContentResponse,
+    MediaNavigationResponse,
     MediaUpdateRequest,
     ReadingDigestOutput,
     ReadingDigestOutputsListResponse,
@@ -40,6 +42,50 @@ from tldw_chatbook.tldw_api import (
     ReadingTTSRequest,
     ReadingUpdateRequest,
 )
+
+
+def test_media_navigation_models_match_server_contracts():
+    navigation = MediaNavigationResponse(
+        media_id=99,
+        available=True,
+        navigation_version="nav-v1",
+        source_order_used=["pdf_outline"],
+        nodes=[
+            {
+                "id": "node-1",
+                "parent_id": None,
+                "level": 1,
+                "title": "Chapter 1",
+                "order": 0,
+                "path_label": "1",
+                "target_type": "page",
+                "target_start": 1,
+                "source": "pdf_outline",
+                "confidence": 0.9,
+            }
+        ],
+        stats={
+            "returned_node_count": 1,
+            "node_count": 1,
+            "max_depth": 1,
+            "truncated": False,
+        },
+    )
+    content = MediaNavigationContentResponse(
+        media_id=99,
+        node_id="node-1",
+        title="Chapter 1",
+        content_format="markdown",
+        available_formats=["plain", "markdown"],
+        content="# Chapter 1\n\nBody",
+        alternate_content={"plain": "Chapter 1\n\nBody"},
+        target={"target_type": "page", "target_start": 1},
+    )
+
+    assert navigation.nodes[0].target_type == "page"
+    assert navigation.stats.returned_node_count == 1
+    assert content.content_format == "markdown"
+    assert content.available_formats == ["plain", "markdown"]
 
 
 def test_media_item_models_match_server_contracts():

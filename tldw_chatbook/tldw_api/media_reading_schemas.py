@@ -57,6 +57,8 @@ ItemsBulkAction = Literal[
     "delete",
 ]
 MediaKeywordsUpdateMode = Literal["add", "remove", "set"]
+MediaNavigationFormat = Literal["auto", "plain", "markdown", "html"]
+MediaNavigationTargetType = Literal["page", "char_range", "time_range", "href"]
 
 _READING_SAVED_SEARCH_ALLOWED_QUERY_KEYS = {
     "q",
@@ -720,6 +722,57 @@ class MediaDetailResponse(BaseModel):
         if not isinstance(value, list):
             raise ValueError("keywords_must_be_list")
         return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+
+
+class MediaNavigationNode(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    parent_id: str | None = None
+    level: int = Field(..., ge=0)
+    title: str
+    order: int = Field(..., ge=0)
+    path_label: str | None = None
+    target_type: MediaNavigationTargetType
+    target_start: float | None = None
+    target_end: float | None = None
+    target_href: str | None = None
+    source: str
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class MediaNavigationStats(BaseModel):
+    returned_node_count: int = Field(..., ge=0)
+    node_count: int = Field(..., ge=0)
+    max_depth: int = Field(..., ge=0)
+    truncated: bool = False
+
+
+class MediaNavigationResponse(BaseModel):
+    media_id: int = Field(..., ge=1)
+    available: bool = True
+    navigation_version: str
+    source_order_used: list[str] = Field(default_factory=list)
+    nodes: list[MediaNavigationNode] = Field(default_factory=list)
+    stats: MediaNavigationStats
+
+
+class MediaNavigationTarget(BaseModel):
+    target_type: MediaNavigationTargetType
+    target_start: float | None = None
+    target_end: float | None = None
+    target_href: str | None = None
+
+
+class MediaNavigationContentResponse(BaseModel):
+    media_id: int = Field(..., ge=1)
+    node_id: str
+    title: str
+    content_format: MediaNavigationFormat
+    available_formats: list[MediaNavigationFormat] = Field(default_factory=list)
+    content: str
+    alternate_content: dict[MediaNavigationFormat, str] | None = None
+    target: MediaNavigationTarget
 
 
 class ReadingUpdateRequest(BaseModel):

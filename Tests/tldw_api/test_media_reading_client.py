@@ -35,6 +35,8 @@ from tldw_chatbook.tldw_api import (
     MediaIngestJobSubmitRequest,
     MediaKeywordsResponse,
     MediaKeywordsUpdateRequest,
+    MediaNavigationContentResponse,
+    MediaNavigationResponse,
     MediaUpdateRequest,
     ReadingDigestOutputsListResponse,
     ReadingDigestScheduleCreateRequest,
@@ -49,6 +51,78 @@ from tldw_chatbook.tldw_api import (
     SubmitMediaIngestJobsResponse,
     TLDWAPIClient,
 )
+
+
+@pytest.mark.asyncio
+async def test_media_navigation_routes_wire_to_server_contract(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "media_id": 99,
+                "available": True,
+                "navigation_version": "nav-v1",
+                "source_order_used": ["pdf_outline"],
+                "nodes": [
+                    {
+                        "id": "node-1",
+                        "parent_id": None,
+                        "level": 1,
+                        "title": "Chapter 1",
+                        "order": 0,
+                        "target_type": "page",
+                        "target_start": 1,
+                        "source": "pdf_outline",
+                    }
+                ],
+                "stats": {
+                    "returned_node_count": 1,
+                    "node_count": 1,
+                    "max_depth": 1,
+                    "truncated": False,
+                },
+            },
+            {
+                "media_id": 99,
+                "node_id": "node-1",
+                "title": "Chapter 1",
+                "content_format": "markdown",
+                "available_formats": ["plain", "markdown"],
+                "content": "# Chapter 1",
+                "target": {"target_type": "page", "target_start": 1},
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    navigation = await client.get_media_navigation(
+        99,
+        include_generated_fallback=True,
+        max_depth=3,
+        max_nodes=100,
+        parent_id="root",
+    )
+    content = await client.get_media_navigation_content(
+        99,
+        "node-1",
+        content_format="markdown",
+        include_alternates=True,
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/media/99/navigation")
+    assert mocked.await_args_list[0].kwargs["params"] == {
+        "include_generated_fallback": "true",
+        "max_depth": 3,
+        "max_nodes": 100,
+        "parent_id": "root",
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/99/navigation/node-1/content")
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "format": "markdown",
+        "include_alternates": "true",
+    }
+    assert isinstance(navigation, MediaNavigationResponse)
+    assert isinstance(content, MediaNavigationContentResponse)
 
 
 @pytest.mark.asyncio

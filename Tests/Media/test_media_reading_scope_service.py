@@ -344,6 +344,29 @@ class FakeServerMediaService:
         self.calls.append(("download_media_file", media_id, file_type))
         return b"%PDF"
 
+    async def get_media_navigation(self, media_id, **kwargs):
+        self.calls.append(("get_media_navigation", media_id, kwargs))
+        return {
+            "media_id": media_id,
+            "available": True,
+            "navigation_version": "nav-v1",
+            "source_order_used": ["pdf_outline"],
+            "nodes": [],
+            "stats": {"returned_node_count": 0, "node_count": 0, "max_depth": 0, "truncated": False},
+        }
+
+    async def get_media_navigation_content(self, media_id, node_id, **kwargs):
+        self.calls.append(("get_media_navigation_content", media_id, node_id, kwargs))
+        return {
+            "media_id": media_id,
+            "node_id": node_id,
+            "title": "Chapter 1",
+            "content_format": "plain",
+            "available_formats": ["plain"],
+            "content": "Body",
+            "target": {"target_type": "page", "target_start": 1},
+        }
+
     async def get_reading_progress(self, media_id):
         self.calls.append(("get_reading_progress", media_id))
         return {
@@ -1110,6 +1133,78 @@ async def test_scope_service_rejects_local_backing_media_item_lifecycle_before_p
         await scope.update_backing_media_keywords(mode="local", media_id=12, keywords=["ai"])
     with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
         await scope.download_backing_media_file(mode="local", media_id=12)
+
+    assert policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_media_navigation_with_policy():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    navigation = await scope.get_document_navigation(
+        mode="server",
+        media_id=99,
+        include_generated_fallback=True,
+        max_depth=3,
+        max_nodes=100,
+        parent_id="root",
+    )
+    content = await scope.get_document_navigation_content(
+        mode="server",
+        media_id=99,
+        node_id="node-1",
+        content_format="markdown",
+        include_alternates=True,
+    )
+
+    assert policy.calls == [
+        "media.document_navigation.detail.server",
+        "media.document_navigation_content.detail.server",
+    ]
+    assert navigation["media_id"] == 99
+    assert content["node_id"] == "node-1"
+    assert server.calls[:2] == [
+        (
+            "get_media_navigation",
+            99,
+            {
+                "include_generated_fallback": True,
+                "max_depth": 3,
+                "max_nodes": 100,
+                "parent_id": "root",
+            },
+        ),
+        (
+            "get_media_navigation_content",
+            99,
+            "node-1",
+            {
+                "content_format": "markdown",
+                "include_alternates": True,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_local_media_navigation_before_policy():
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Local document workspace is not available yet."):
+        await scope.get_document_navigation(mode="local", media_id=12)
+    with pytest.raises(ValueError, match="Local document workspace is not available yet."):
+        await scope.get_document_navigation_content(mode="local", media_id=12, node_id="node-1")
 
     assert policy.calls == []
 

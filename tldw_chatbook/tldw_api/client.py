@@ -77,6 +77,8 @@ from .media_reading_schemas import (
     MediaIngestJobSubmitRequest,
     MediaKeywordsResponse,
     MediaKeywordsUpdateRequest,
+    MediaNavigationContentResponse,
+    MediaNavigationResponse,
     MediaUpdateRequest,
     ReadingArchiveCreateRequest,
     ReadingArchiveResponse,
@@ -987,6 +989,46 @@ class TLDWAPIClient:
             f"/api/v1/media/{media_id}/file",
             params={"file_type": file_type},
         )
+
+    async def get_media_navigation(
+        self,
+        media_id: int,
+        *,
+        include_generated_fallback: bool = False,
+        max_depth: int = 4,
+        max_nodes: int = 500,
+        parent_id: str | None = None,
+    ) -> MediaNavigationResponse:
+        params: Dict[str, Any] = {
+            "include_generated_fallback": str(include_generated_fallback).lower(),
+            "max_depth": max_depth,
+            "max_nodes": max_nodes,
+            "parent_id": parent_id,
+        }
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/navigation",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return MediaNavigationResponse.model_validate(response)
+
+    async def get_media_navigation_content(
+        self,
+        media_id: int,
+        node_id: str,
+        *,
+        content_format: str = "auto",
+        include_alternates: bool = False,
+    ) -> MediaNavigationContentResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/navigation/{node_id}/content",
+            params={
+                "format": content_format,
+                "include_alternates": str(include_alternates).lower(),
+            },
+        )
+        return MediaNavigationContentResponse.model_validate(response)
 
     async def create_file_artifact(self, request_data: FileCreateRequest) -> Dict[str, Any]:
         return await self._request(

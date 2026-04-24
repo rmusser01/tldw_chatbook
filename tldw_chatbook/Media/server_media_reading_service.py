@@ -159,6 +159,38 @@ class ServerMediaReadingService:
     async def download_media_file(self, media_id: Any, *, file_type: str = "original") -> bytes:
         return await self._require_client().download_media_file(int(media_id), file_type=file_type)
 
+    async def get_media_navigation(
+        self,
+        media_id: Any,
+        *,
+        include_generated_fallback: bool = False,
+        max_depth: int = 4,
+        max_nodes: int = 500,
+        parent_id: str | None = None,
+    ) -> Any:
+        return await self._require_client().get_media_navigation(
+            int(media_id),
+            include_generated_fallback=include_generated_fallback,
+            max_depth=max_depth,
+            max_nodes=max_nodes,
+            parent_id=parent_id,
+        )
+
+    async def get_media_navigation_content(
+        self,
+        media_id: Any,
+        node_id: str,
+        *,
+        content_format: str = "auto",
+        include_alternates: bool = False,
+    ) -> Any:
+        return await self._require_client().get_media_navigation_content(
+            int(media_id),
+            str(node_id),
+            content_format=content_format,
+            include_alternates=include_alternates,
+        )
+
     async def delete_media(self, media_id: Any) -> Any:
         return await self._require_client().delete_reading_item(int(media_id), hard=False)
 

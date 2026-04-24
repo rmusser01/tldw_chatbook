@@ -91,6 +91,44 @@ class FakeClient:
         self.calls.append(("download_media_file", media_id, file_type))
         return b"%PDF"
 
+    async def get_media_navigation(
+        self,
+        media_id,
+        *,
+        include_generated_fallback=False,
+        max_depth=4,
+        max_nodes=500,
+        parent_id=None,
+    ):
+        self.calls.append(("get_media_navigation", media_id, include_generated_fallback, max_depth, max_nodes, parent_id))
+        return {
+            "media_id": media_id,
+            "available": True,
+            "navigation_version": "nav-v1",
+            "source_order_used": ["pdf_outline"],
+            "nodes": [],
+            "stats": {"returned_node_count": 0, "node_count": 0, "max_depth": 0, "truncated": False},
+        }
+
+    async def get_media_navigation_content(
+        self,
+        media_id,
+        node_id,
+        *,
+        content_format="auto",
+        include_alternates=False,
+    ):
+        self.calls.append(("get_media_navigation_content", media_id, node_id, content_format, include_alternates))
+        return {
+            "media_id": media_id,
+            "node_id": node_id,
+            "title": "Chapter 1",
+            "content_format": "plain",
+            "available_formats": ["plain"],
+            "content": "Body",
+            "target": {"target_type": "page", "target_start": 1},
+        }
+
     async def bulk_update_reading_items(self, request_data):
         self.calls.append(("bulk_update_reading_items", request_data.model_dump(exclude_none=True, mode="json")))
         return {
@@ -713,6 +751,33 @@ async def test_server_service_rejects_media_item_keywords_on_general_update():
 
     with pytest.raises(ValueError, match="Use update_media_keywords"):
         await service.update_media_item(99, title="Renamed", keywords=["ai"])
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_media_navigation_to_server_contract():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    navigation = await service.get_media_navigation(
+        99,
+        include_generated_fallback=True,
+        max_depth=3,
+        max_nodes=100,
+        parent_id="root",
+    )
+    content = await service.get_media_navigation_content(
+        99,
+        "node-1",
+        content_format="markdown",
+        include_alternates=True,
+    )
+
+    assert navigation["media_id"] == 99
+    assert content["node_id"] == "node-1"
+    assert client.calls == [
+        ("get_media_navigation", 99, True, 3, 100, "root"),
+        ("get_media_navigation_content", 99, "node-1", "markdown", True),
+    ]
 
 
 @pytest.mark.asyncio

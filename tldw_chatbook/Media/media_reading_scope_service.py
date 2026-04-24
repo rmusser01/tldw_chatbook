@@ -189,6 +189,14 @@ class MediaReadingScopeService:
         return f"media.document_annotations.{action}.{mode.value}"
 
     @staticmethod
+    def _document_navigation_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.document_navigation.{action}.{mode.value}"
+
+    @staticmethod
+    def _document_navigation_content_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.document_navigation_content.{action}.{mode.value}"
+
+    @staticmethod
     def _media_item_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.items.{action}.{mode.value}"
 
@@ -498,6 +506,54 @@ class MediaReadingScopeService:
         self._enforce_policy(self._media_item_file_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.download_media_file(media_id, file_type=file_type))
+
+    async def get_document_navigation(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        include_generated_fallback: bool = False,
+        max_depth: int = 4,
+        max_nodes: int = 500,
+        parent_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_document_workspace(normalized_mode)
+        self._enforce_policy(self._document_navigation_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.get_media_navigation(
+                media_id,
+                include_generated_fallback=include_generated_fallback,
+                max_depth=max_depth,
+                max_nodes=max_nodes,
+                parent_id=parent_id,
+            )
+        )
+        return self._as_mapping_payload(payload)
+
+    async def get_document_navigation_content(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        node_id: str,
+        content_format: str = "auto",
+        include_alternates: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_document_workspace(normalized_mode)
+        self._enforce_policy(self._document_navigation_content_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.get_media_navigation_content(
+                media_id,
+                node_id,
+                content_format=content_format,
+                include_alternates=include_alternates,
+            )
+        )
+        return self._as_mapping_payload(payload)
 
     async def list_read_it_later(
         self,
