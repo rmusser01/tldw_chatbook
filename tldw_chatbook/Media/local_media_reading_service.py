@@ -10,7 +10,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Mapping, Optional
-from urllib.parse import urlparse
+from urllib.parse import urldefrag, urljoin, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -1147,6 +1147,85 @@ class LocalMediaReadingService:
         lines = [" ".join(line.split()) for line in text.splitlines()]
         return "\n".join(line for line in lines if line).strip()
 
+    @staticmethod
+    def _normalize_web_url(url: str) -> str | None:
+        normalized, _fragment = urldefrag(str(url or "").strip())
+        parsed = urlparse(normalized)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            return None
+        return normalized
+
+    def _extract_web_links(self, base_url: str, html: str, *, include_external: bool) -> list[str]:
+        base_parsed = urlparse(base_url)
+        base_netloc = base_parsed.netloc.lower()
+        links: list[str] = []
+        seen: set[str] = set()
+        for match in re.finditer(r"""(?is)<a\b[^>]*\bhref\s*=\s*(["'])(.*?)\1""", html or ""):
+            href = unescape(match.group(2)).strip()
+            if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+                continue
+            normalized = self._normalize_web_url(urljoin(base_url, href))
+            if normalized is None:
+                continue
+            parsed = urlparse(normalized)
+            if not include_external and parsed.netloc.lower() != base_netloc:
+                continue
+            if normalized not in seen:
+                seen.add(normalized)
+                links.append(normalized)
+        return links
+
+    def _expand_web_crawl_urls(
+        self,
+        urls: list[str],
+        *,
+        max_depth: int,
+        max_pages: int,
+        include_external: bool,
+        timeout: int,
+        user_agent: str | None,
+    ) -> tuple[list[str], dict[str, dict[str, Any]]]:
+        ordered: list[str] = []
+        fetched_by_url: dict[str, dict[str, Any]] = {}
+        queue: list[tuple[str, int]] = [(url, 0) for url in urls]
+        queued: set[str] = set(urls)
+        visited: set[str] = set()
+
+        while queue and len(ordered) < max_pages:
+            current_url, depth = queue.pop(0)
+            queued.discard(current_url)
+            normalized_url = self._normalize_web_url(current_url)
+            if normalized_url is None or normalized_url in visited:
+                continue
+            visited.add(normalized_url)
+
+            try:
+                fetched = self._fetch_web_content_url(normalized_url, timeout=timeout, user_agent=user_agent)
+            except Exception as exc:
+                fetched = {
+                    "url": normalized_url,
+                    "title": normalized_url,
+                    "content": None,
+                    "metadata": {},
+                    "extraction_successful": False,
+                    "error": str(exc),
+                }
+
+            fetched_by_url[normalized_url] = fetched
+            ordered.append(normalized_url)
+
+            if depth >= max_depth or len(ordered) >= max_pages:
+                continue
+
+            raw_html = str(fetched.get("raw_html") or fetched.get("html") or fetched.get("content") or "")
+            for link in self._extract_web_links(normalized_url, raw_html, include_external=include_external):
+                if link in visited or link in queued:
+                    continue
+                queue.append((link, depth + 1))
+                queued.add(link)
+
+        return ordered, fetched_by_url
+
     def _fetch_web_content_url(
         self,
         url: str,
@@ -1170,6 +1249,7 @@ class LocalMediaReadingService:
                 "url": url,
                 "title": title or url,
                 "content": self._plain_text_from_html(html_body) or html_body,
+                "raw_html": html_body,
                 "metadata": {
                     "content_type": content_type,
                     "status_code": getattr(response, "status", None),
@@ -1183,18 +1263,45 @@ class LocalMediaReadingService:
         if not normalized_urls:
             raise ValueError("At least one URL is required for local web-content ingest.")
 
+        scrape_method = str(kwargs.get("scrape_method") or "individual").lower()
         titles = self._split_web_text_list(kwargs.get("titles"))
         authors = self._split_web_text_list(kwargs.get("authors"))
         keywords = self._normalize_web_keywords(kwargs.get("keywords"))
         timeout = int(kwargs.get("timeout") or 15)
         user_agent = kwargs.get("user_agent")
         overwrite_existing = bool(kwargs.get("overwrite_existing", False))
+        fetched_by_url: dict[str, dict[str, Any]] = {}
+
+        if scrape_method not in {"individual", "single", "url"}:
+            depth_value = kwargs.get("max_depth")
+            if depth_value is None:
+                depth_value = kwargs.get("url_level")
+            max_depth = max(0, int(depth_value if depth_value is not None else 1))
+            max_pages = max(1, int(kwargs.get("max_pages") or 25))
+            include_external = bool(kwargs.get("include_external", False))
+            normalized_urls = [
+                normalized_url
+                for url in normalized_urls
+                if (normalized_url := self._normalize_web_url(url)) is not None
+            ]
+            normalized_urls, fetched_by_url = self._expand_web_crawl_urls(
+                normalized_urls,
+                max_depth=max_depth,
+                max_pages=max_pages,
+                include_external=include_external,
+                timeout=timeout,
+                user_agent=user_agent,
+            )
 
         results: list[dict[str, Any]] = []
         media_ids: list[int] = []
         for index, url in enumerate(normalized_urls):
             try:
-                fetched = self._fetch_web_content_url(url, timeout=timeout, user_agent=user_agent)
+                fetched = fetched_by_url.get(url)
+                if fetched is None:
+                    fetched = self._fetch_web_content_url(url, timeout=timeout, user_agent=user_agent)
+                if not fetched.get("extraction_successful", True) and fetched.get("error"):
+                    raise ValueError(str(fetched["error"]))
                 title = titles[index] if index < len(titles) else str(fetched.get("title") or url)
                 author = authors[index] if index < len(authors) else fetched.get("author")
                 content = str(fetched.get("content") or "")
@@ -1253,6 +1360,13 @@ class LocalMediaReadingService:
             urls=urls,
             titles=titles,
             keywords=keywords,
+            scrape_method=payload.get("scrape_method") or "individual",
+            url_level=payload.get("url_level"),
+            max_depth=payload.get("max_depth", payload.get("url_level")),
+            max_pages=payload.get("max_pages"),
+            include_external=payload.get("include_external"),
+            crawl_strategy=payload.get("crawl_strategy"),
+            score_threshold=payload.get("score_threshold"),
             user_agent=payload.get("user_agent"),
             overwrite_existing=payload.get("mode") == "persist",
         )

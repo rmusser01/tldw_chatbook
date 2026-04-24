@@ -787,3 +787,113 @@ def test_local_service_processes_legacy_web_scraping_request(memory_db_factory, 
     assert result["results"][0]["title"] == "Legacy Override"
     assert media["url"] == "https://example.com/legacy"
     assert db.fetch_keywords_for_media_batch([media["id"]]) == {media["id"]: ["legacy", "local"]}
+
+
+def test_local_service_crawls_internal_web_links_with_depth_and_page_limits(memory_db_factory, monkeypatch):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    fetched_urls: list[str] = []
+
+    pages = {
+        "https://example.com/root": {
+            "title": "Root",
+            "content": "Root body",
+            "raw_html": """
+                <html><body>
+                    <a href="/first#fragment">First</a>
+                    <a href="https://external.example/out">External</a>
+                </body></html>
+            """,
+        },
+        "https://example.com/first": {
+            "title": "First",
+            "content": "First body",
+            "raw_html": '<html><body><a href="/second">Second</a></body></html>',
+        },
+        "https://example.com/second": {
+            "title": "Second",
+            "content": "Second body",
+            "raw_html": "<html><body>Second</body></html>",
+        },
+    }
+
+    def fake_fetch(url, *, timeout=15, user_agent=None):
+        fetched_urls.append(url)
+        page = pages[url]
+        return {
+            "url": url,
+            "title": page["title"],
+            "content": page["content"],
+            "raw_html": page["raw_html"],
+            "metadata": {},
+            "extraction_successful": True,
+        }
+
+    monkeypatch.setattr(service, "_fetch_web_content_url", fake_fetch, raising=False)
+
+    result = service.ingest_web_content(
+        urls=["https://example.com/root"],
+        scrape_method="url_level",
+        max_depth=1,
+        max_pages=5,
+        include_external=False,
+        keywords=["crawl"],
+    )
+
+    assert [item["url"] for item in result["results"]] == [
+        "https://example.com/root",
+        "https://example.com/first",
+    ]
+    assert fetched_urls == ["https://example.com/root", "https://example.com/first"]
+    assert result["count"] == 2
+    assert all(db.get_media_by_id(media_id)["type"] == "web" for media_id in result["media_ids"])
+
+
+def test_local_service_processes_legacy_web_scraping_crawl_options(memory_db_factory, monkeypatch):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    pages = {
+        "https://example.com/root": {
+            "title": "Root",
+            "content": "Root body",
+            "raw_html": '<html><body><a href="https://external.example/out">External</a></body></html>',
+        },
+        "https://external.example/out": {
+            "title": "External",
+            "content": "External body",
+            "raw_html": "<html><body>External</body></html>",
+        },
+    }
+
+    monkeypatch.setattr(
+        service,
+        "_fetch_web_content_url",
+        lambda url, **kwargs: {
+            "url": url,
+            "title": pages[url]["title"],
+            "content": pages[url]["content"],
+            "raw_html": pages[url]["raw_html"],
+            "metadata": {},
+            "extraction_successful": True,
+        },
+        raising=False,
+    )
+
+    result = service.process_web_scraping(
+        {
+            "scrape_method": "url_level",
+            "url_input": "https://example.com/root",
+            "url_level": 1,
+            "max_pages": 2,
+            "include_external": True,
+            "keywords": "legacy,crawl",
+        }
+    )
+
+    assert [item["url"] for item in result["results"]] == [
+        "https://example.com/root",
+        "https://external.example/out",
+    ]
+    assert result["count"] == 2
