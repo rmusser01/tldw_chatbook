@@ -605,9 +605,21 @@ def test_local_character_persona_service_persists_sessions_messages_settings_and
     assert listed_memories["total"] == 1
     assert archived_memory["archived"] is True
 
+    service.create_character_chat_message(
+        session["id"],
+        {"role": "user", "content": "Remember that I keep a travel notebook."},
+    )
+    extracted = service.extract_character_memories(str(character_id), {"chat_id": session["id"], "message_limit": 5})
+    duplicate_extract = service.extract_character_memories(str(character_id), {"chat_id": session["id"], "message_limit": 5})
+
+    assert extracted["extracted"] == 1
+    assert extracted["skipped_duplicates"] == 0
+    assert extracted["memories"][0]["memory_type"] == "extracted"
+    assert extracted["memories"][0]["content"] == "I keep a travel notebook."
+    assert duplicate_extract["extracted"] == 0
+    assert duplicate_extract["skipped_duplicates"] == 1
+
     assert service.delete_character_memory(str(character_id), memory["id"]) == {"deleted": True}
-    with pytest.raises(ValueError, match="Local character memory extraction is unavailable"):
-        service.extract_character_memories(str(character_id), {"chat_id": session["id"]})
 
 
 def test_local_character_persona_service_persists_character_catalog_crud_and_restore(tmp_path):

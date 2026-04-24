@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import uuid
 from typing import Any, Mapping
 
@@ -12,6 +13,11 @@ from .world_book_manager import WorldBookManager
 
 class LocalCharacterPersonaService:
     """Expose local ChaChaNotes character chat data through server-compatible method names."""
+
+    _REMEMBER_PATTERNS = (
+        re.compile(r"\bremember\s+that\s+(?P<content>.+?)[.!?]*$", re.IGNORECASE),
+        re.compile(r"\bplease\s+remember\s+(?P<content>.+?)[.!?]*$", re.IGNORECASE),
+    )
 
     def __init__(self, db: Any):
         self.db = db
@@ -508,8 +514,86 @@ class LocalCharacterPersonaService:
                 raise ValueError(f"Local character memory '{memory_id}' not found.")
         return {"deleted": True}
 
+    @staticmethod
+    def _normalize_memory_for_duplicate_check(content: str) -> str:
+        return re.sub(r"\s+", " ", str(content or "").strip().lower()).rstrip(".!?")
+
+    @staticmethod
+    def _finish_memory_sentence(content: str) -> str:
+        cleaned = re.sub(r"\s+", " ", str(content or "").strip().strip("\"'` "))
+        if cleaned and cleaned[-1] not in ".!?":
+            cleaned += "."
+        return cleaned
+
+    @classmethod
+    def _extract_memory_candidates_from_text(cls, text: str) -> list[str]:
+        candidates: list[str] = []
+        for raw_sentence in re.split(r"(?<=[.!?])\s+", str(text or "")):
+            sentence = raw_sentence.strip()
+            if not sentence:
+                continue
+            for pattern in cls._REMEMBER_PATTERNS:
+                match = pattern.search(sentence)
+                if match:
+                    candidate = cls._finish_memory_sentence(match.group("content"))
+                    if candidate:
+                        candidates.append(candidate)
+                    break
+        return candidates
+
     def extract_character_memories(self, character_id: str, request_data: Mapping[str, Any] | Any) -> dict[str, Any]:
-        raise ValueError("Local character memory extraction is unavailable without a local extraction engine.")
+        payload = self._payload_dict(request_data)
+        chat_id = payload.get("chat_id") or payload.get("conversation_id")
+        if not chat_id:
+            raise ValueError("Local character memory extraction requires chat_id.")
+
+        conversation = self._conversation_record(str(chat_id))
+        conversation_character_id = conversation.get("character_id")
+        if conversation_character_id is not None and str(conversation_character_id) != str(character_id):
+            raise ValueError("Local character memory extraction chat_id does not belong to character_id.")
+
+        message_limit = max(1, int(payload.get("message_limit") or 25))
+        memory_type = str(payload.get("memory_type") or "extracted")
+        salience = float(payload.get("salience", 0.6))
+        include_assistant = bool(payload.get("include_assistant", False))
+
+        messages = self.list_character_chat_messages(str(chat_id), limit=message_limit).get("messages", [])
+        existing = {
+            self._normalize_memory_for_duplicate_check(memory.get("content", ""))
+            for memory in self.list_character_memories(str(character_id), include_archived=True).get("memories", [])
+        }
+
+        created: list[dict[str, Any]] = []
+        skipped_duplicates = 0
+        for message in messages:
+            role = str(message.get("role") or "").lower()
+            sender = str(message.get("sender") or "").lower()
+            if not include_assistant and role != "user" and sender != "user":
+                continue
+            for candidate in self._extract_memory_candidates_from_text(str(message.get("content") or "")):
+                normalized_candidate = self._normalize_memory_for_duplicate_check(candidate)
+                if not normalized_candidate:
+                    continue
+                if normalized_candidate in existing:
+                    skipped_duplicates += 1
+                    continue
+                existing.add(normalized_candidate)
+                created.append(
+                    self.create_character_memory(
+                        str(character_id),
+                        {
+                            "content": candidate,
+                            "memory_type": memory_type,
+                            "salience": salience,
+                        },
+                    )
+                )
+
+        return {
+            "extracted": len(created),
+            "skipped_duplicates": skipped_duplicates,
+            "memories": created,
+        }
 
     def list_character_world_books(self, **kwargs: Any) -> dict[str, Any]:
         include_disabled = bool(kwargs.get("include_disabled", False))
