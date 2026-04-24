@@ -853,7 +853,15 @@ class FakeServerMediaService:
 
     async def undelete_media(self, media_id):
         self.calls.append(("undelete_media", media_id))
-        raise ValueError("Server media undelete is not available yet.")
+        return {
+            "media_id": media_id,
+            "source": {"url": None, "title": "Restored", "duration": None, "type": "pdf"},
+            "processing": {},
+            "content": {"metadata": {}, "text": "Body", "word_count": 1},
+            "keywords": ["ai"],
+            "timestamps": [],
+            "versions": [],
+        }
 
     async def get_media_item(self, media_id, **kwargs):
         self.calls.append(("get_media_item", media_id, kwargs))
@@ -2870,6 +2878,19 @@ async def test_scope_service_save_and_remove_use_explicit_reading_list_actions()
     ]
     assert ("update_media_metadata", 41, {"status": "saved"}) in server.calls
     assert ("update_media_metadata", 41, {"status": "archived"}) in server.calls
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_reading_undelete_with_policy_action():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(local_service=None, server_service=server, policy_enforcer=policy)
+
+    restored = await scope.undelete_media(mode="server", media_id=41)
+
+    assert restored["media_id"] == 41
+    assert policy.calls == ["media.reading.update.server"]
+    assert server.calls[-1] == ("undelete_media", 41)
 
 
 @pytest.mark.asyncio

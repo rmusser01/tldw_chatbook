@@ -296,7 +296,12 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("media.items.file", actions=(DETAIL,), sources=(SERVER_SOURCE,)),
             _resource("media.processing", actions=(LAUNCH,), sources=(SERVER_SOURCE,)),
             _resource("media.processing_models", actions=(LIST,), sources=(SERVER_SOURCE,)),
-            _resource("media.ingestion_sources", actions=CRUD_ACTIONS),
+            _resource("media.ingestion_sources", actions=CRUD_ACTIONS, sources=(LOCAL_SOURCE,)),
+            _resource(
+                "media.ingestion_sources",
+                actions=(LIST, DETAIL, CREATE, UPDATE),
+                sources=(SERVER_SOURCE,),
+            ),
             _resource("media.ingestion_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE)),
             _resource("media.web_content_ingest", actions=(LAUNCH,)),
         ),

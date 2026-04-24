@@ -329,7 +329,7 @@ class ServerMediaReadingService:
         return await self._require_client().delete_reading_item(int(media_id), hard=False)
 
     async def undelete_media(self, media_id: Any) -> Any:
-        raise ValueError("Server media undelete is not available yet.")
+        return await self.restore_media_item(int(media_id))
 
     async def get_reading_progress(self, media_id: Any) -> Any:
         return await self._require_client().get_reading_progress(int(media_id))

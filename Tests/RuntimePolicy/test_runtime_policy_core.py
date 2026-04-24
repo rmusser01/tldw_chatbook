@@ -411,7 +411,6 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.ingestion_sources.create.local
         media.ingestion_sources.create.server
         media.ingestion_sources.delete.local
-        media.ingestion_sources.delete.server
         media.ingestion_sources.detail.local
         media.ingestion_sources.detail.server
         media.ingestion_sources.list.local

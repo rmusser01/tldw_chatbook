@@ -1731,17 +1731,19 @@ async def test_server_service_routes_mediawiki_process_and_ingest_streams():
 
 
 @pytest.mark.asyncio
-async def test_server_service_delete_routes_to_soft_delete_endpoint_and_undelete_fails_explicitly():
+async def test_server_service_delete_and_undelete_route_to_media_lifecycle_endpoints():
     client = FakeClient()
     service = ServerMediaReadingService(client=client)
 
     deleted = await service.delete_media(41)
+    undeleted = await service.undelete_media(41)
 
     assert deleted["status"] == "deleted"
-    assert client.calls == [("delete_reading_item", 41, False)]
-
-    with pytest.raises(ValueError, match="Server media undelete is not available yet."):
-        await service.undelete_media(41)
+    assert undeleted["media_id"] == 41
+    assert client.calls == [
+        ("delete_reading_item", 41, False),
+        ("restore_media_item", 41, True, True, False),
+    ]
 
 
 @pytest.mark.asyncio
