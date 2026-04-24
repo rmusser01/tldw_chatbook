@@ -1,3 +1,4 @@
+import json
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
@@ -280,3 +281,35 @@ def test_local_service_reading_note_links_round_trip(memory_db_factory):
     assert listed == {"item_id": media_id, "links": [linked]}
     assert unlinked == {"ok": True}
     assert service.list_reading_item_note_links(media_id) == {"item_id": media_id, "links": []}
+
+
+def test_local_service_exports_saved_reading_items_jsonl(memory_db_factory):
+    db = memory_db_factory()
+    kept_id, _, _ = db.add_media_with_keywords(
+        title="Saved RAG Article",
+        content="RAG notes for export",
+        media_type="article",
+        keywords=["ai"],
+    )
+    db.add_media_with_keywords(title="Unsaved", content="Ignored", media_type="article", keywords=["ai"])
+    db.save_media_to_read_it_later(kept_id)
+    service = LocalMediaReadingService(db)
+    service.create_reading_highlight(kept_id, quote="RAG notes", start_offset=0, end_offset=9)
+    service.link_reading_item_note(kept_id, note_id="note-uuid-1")
+
+    exported = service.export_reading_items(
+        status=["saved"],
+        tags=["ai"],
+        include_text=True,
+        include_highlights=True,
+        include_notes=True,
+        format="jsonl",
+    )
+
+    rows = [json.loads(line) for line in exported.decode("utf-8").splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["id"] == kept_id
+    assert rows[0]["title"] == "Saved RAG Article"
+    assert rows[0]["content"] == "RAG notes for export"
+    assert rows[0]["highlights"][0]["quote"] == "RAG notes"
+    assert rows[0]["note_links"][0]["note_id"] == "note-uuid-1"

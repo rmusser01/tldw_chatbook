@@ -233,6 +233,10 @@ class FakeLocalMediaService:
         self.calls.append(("unlink_reading_item_note", item_id, note_id))
         return {"ok": True}
 
+    def export_reading_items(self, **kwargs):
+        self.calls.append(("export_reading_items", kwargs))
+        return b'{"id":31}\n'
+
     def ingest_web_content(self, **kwargs):
         raise ValueError("Local web-content ingest is not available yet.")
 
@@ -2606,6 +2610,22 @@ async def test_scope_service_routes_local_reading_note_links_with_policy():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_local_reading_export_with_policy():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope = MediaReadingScopeService(local_service=local, server_service=None, policy_enforcer=policy)
+
+    exported = await scope.export_reading_items(mode="local", status=["saved"], include_text=True, format="jsonl")
+
+    assert exported == b'{"id":31}\n'
+    assert policy.calls == ["media.reading_export.export.local"]
+    assert local.calls[-1] == (
+        "export_reading_items",
+        {"status": ["saved"], "include_text": True, "format": "jsonl"},
+    )
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_server_reading_import_jobs_and_archive_creation():
     policy = FakePolicyEnforcer()
     server = FakeServerMediaService()
@@ -2740,7 +2760,7 @@ async def test_scope_service_routes_server_reading_digest_schedules_and_outputs_
 
 
 @pytest.mark.asyncio
-async def test_scope_service_fails_explicitly_for_local_reading_export_summary_and_tts_before_policy():
+async def test_scope_service_fails_explicitly_for_local_reading_summary_and_tts_before_policy():
     policy = FakePolicyEnforcer.deny("blocked")
     scope = MediaReadingScopeService(
         local_service=FakeLocalMediaService(),
@@ -2748,14 +2768,27 @@ async def test_scope_service_fails_explicitly_for_local_reading_export_summary_a
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local reading export is not available yet."):
-        await scope.export_reading_items(mode="local")
     with pytest.raises(ValueError, match="Local reading summaries are not available yet."):
         await scope.summarize_reading_item(mode="local", item_id=31)
     with pytest.raises(ValueError, match="Local reading TTS is not available yet."):
         await scope.tts_reading_item(mode="local", item_id=31, model="kokoro")
 
     assert policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_enforces_policy_for_local_reading_export():
+    policy = FakePolicyEnforcer.deny("blocked")
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(PolicyDeniedError):
+        await scope.export_reading_items(mode="local")
+
+    assert policy.calls == ["media.reading_export.export.local"]
 
 
 @pytest.mark.asyncio

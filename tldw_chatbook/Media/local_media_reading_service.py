@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Mapping, Optional
 
 
@@ -32,6 +33,13 @@ class LocalMediaReadingService:
         for media_id in media_ids or []:
             normalized.append(self._coerce_media_id(media_id))
         return normalized
+
+    def _normalize_filter_list(self, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        return [str(item) for item in value]
 
     def _enrich_with_read_it_later_state(self, row: Mapping[str, Any]) -> dict[str, Any]:
         enriched = dict(row)
@@ -222,6 +230,70 @@ class LocalMediaReadingService:
 
     def unlink_reading_item_note(self, item_id: Any, note_id: str) -> Any:
         return self._require_db().unlink_local_reading_item_note(self._coerce_media_id(item_id), note_id)
+
+    def export_reading_items(self, **filters: Any) -> bytes:
+        export_format = str(filters.get("format") or "jsonl").lower()
+        if export_format != "jsonl":
+            raise ValueError("Local reading export supports jsonl format only.")
+        if filters.get("include_clean_html"):
+            raise ValueError("Local reading export does not support clean HTML snapshots yet.")
+        if filters.get("favorite") is not None:
+            raise ValueError("Local reading export does not support favorite filtering yet.")
+
+        status_filters = {value.lower() for value in self._normalize_filter_list(filters.get("status"))}
+        supported_statuses = {"saved", "read_it_later", "read-it-later"}
+        unsupported_statuses = sorted(status_filters - supported_statuses)
+        if unsupported_statuses:
+            raise ValueError(f"Unsupported local reading export status filters: {', '.join(unsupported_statuses)}")
+
+        page = max(1, int(filters.get("page") or 1))
+        size = max(1, int(filters.get("size") or 1000))
+        offset = (page - 1) * size
+        tags = self._normalize_filter_list(filters.get("tags"))
+        domain_filter = str(filters.get("domain") or "").strip().lower()
+
+        payload = self.search_media(
+            query=filters.get("q"),
+            limit=size,
+            offset=offset,
+            read_it_later_only=bool(status_filters),
+            must_have_keywords=tags,
+        )
+        include_metadata = bool(filters.get("include_metadata", True))
+        include_text = bool(filters.get("include_text", False))
+        include_highlights = bool(filters.get("include_highlights", False))
+        include_notes = bool(filters.get("include_notes", True))
+
+        records: list[dict[str, Any]] = []
+        for item in payload.get("items", []):
+            detail = self.get_media_detail(item["id"])
+            if domain_filter and domain_filter not in str(detail.get("url") or "").lower():
+                continue
+            record: dict[str, Any] = {"id": detail.get("id")}
+            if include_metadata:
+                record.update(
+                    {
+                        "uuid": detail.get("uuid"),
+                        "url": detail.get("url"),
+                        "title": detail.get("title"),
+                        "type": detail.get("type"),
+                        "author": detail.get("author"),
+                        "ingestion_date": detail.get("ingestion_date"),
+                        "last_modified": detail.get("last_modified"),
+                        "is_read_it_later": detail.get("is_read_it_later", False),
+                        "read_it_later_saved_at": detail.get("read_it_later_saved_at"),
+                    }
+                )
+            if include_text:
+                record["content"] = detail.get("content")
+            if include_highlights:
+                record["highlights"] = self.list_reading_highlights(detail["id"])
+            if include_notes:
+                record["note_links"] = self.list_reading_item_note_links(detail["id"]).get("links", [])
+            records.append(record)
+
+        body = "".join(json.dumps(record, default=str, separators=(",", ":")) + "\n" for record in records)
+        return body.encode("utf-8")
 
     def list_ingestion_sources(self) -> Any:
         return self._require_db().list_local_ingestion_sources()

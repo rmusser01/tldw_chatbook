@@ -286,10 +286,6 @@ class MediaReadingScopeService:
         raise ValueError("Local reading archives are not available yet.")
 
     @staticmethod
-    def _raise_local_reading_export_unavailable() -> None:
-        raise ValueError("Local reading export is not available yet.")
-
-    @staticmethod
     def _raise_local_reading_summaries_unavailable() -> None:
         raise ValueError("Local reading summaries are not available yet.")
 
@@ -1397,8 +1393,6 @@ class MediaReadingScopeService:
         **filters: Any,
     ) -> bytes:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_export_unavailable()
         self._enforce_policy(self._reading_export_action_id(normalized_mode, "export"))
         service = self._service_for_mode(normalized_mode)
         payload = {key: value for key, value in filters.items() if value is not None}
