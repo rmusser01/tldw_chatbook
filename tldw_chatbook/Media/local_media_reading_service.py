@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
 from typing import Any, Mapping, Optional
 from urllib.parse import urlparse
 
@@ -522,7 +524,40 @@ class LocalMediaReadingService:
         raise self._unsupported_ingestion_jobs()
 
     def upload_ingestion_source_archive(self, source_id: Any, archive_path: str) -> Any:
-        raise self._unsupported_ingestion_jobs()
+        db = self._require_db()
+        normalized_source_id = int(source_id)
+        source = self.get_ingestion_source(normalized_source_id)
+        if source.get("source_type") != "archive_snapshot":
+            raise ValueError("Local archive upload requires an archive_snapshot ingestion source.")
+
+        path = Path(archive_path).expanduser()
+        if not path.is_file():
+            raise ValueError(f"Local archive path does not exist: {archive_path}")
+
+        digest = hashlib.sha256()
+        with path.open("rb") as archive_file:
+            for chunk in iter(lambda: archive_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        content_hash = digest.hexdigest()
+        item = db.upsert_local_ingestion_source_item(
+            normalized_source_id,
+            normalized_relative_path=path.name,
+            content_hash=content_hash,
+            sync_status="tracked",
+            binding={
+                "archive_path": str(path),
+                "file_name": path.name,
+                "size_bytes": path.stat().st_size,
+                "content_hash": content_hash,
+            },
+        )
+        db.update_local_ingestion_source(normalized_source_id, last_sync_status="tracked", last_error=None)
+        return {
+            "status": "tracked",
+            "source_id": normalized_source_id,
+            "job_id": None,
+            "item": item,
+        }
 
     def submit_media_ingest_jobs(
         self,

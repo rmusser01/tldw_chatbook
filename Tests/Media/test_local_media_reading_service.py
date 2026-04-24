@@ -423,3 +423,26 @@ def test_local_service_bulk_updates_unified_items(memory_db_factory):
     assert service.get_unified_item(second_id)["status"] == "saved"
     assert tagged["succeeded"] == 1
     assert service.get_unified_item(first_id)["tags"] == ["new"]
+
+
+def test_local_service_uploads_archive_snapshot_source(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    source = db.create_local_ingestion_source(
+        source_type="archive_snapshot",
+        sink_type="media",
+        policy="canonical",
+    )
+    archive_path = tmp_path / "reading-archive.zip"
+    archive_path.write_bytes(b"archive bytes")
+    service = LocalMediaReadingService(db)
+
+    uploaded = service.upload_ingestion_source_archive(source["id"], str(archive_path))
+    items = service.list_ingestion_source_items(source["id"])
+
+    assert uploaded["status"] == "tracked"
+    assert uploaded["source_id"] == source["id"]
+    assert uploaded["item"]["normalized_relative_path"] == "reading-archive.zip"
+    assert uploaded["item"]["sync_status"] == "tracked"
+    assert uploaded["item"]["binding"]["archive_path"] == str(archive_path)
+    assert uploaded["item"]["binding"]["size_bytes"] == len(b"archive bytes")
+    assert items == [uploaded["item"]]

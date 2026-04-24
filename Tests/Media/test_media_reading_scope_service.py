@@ -347,7 +347,17 @@ class FakeLocalMediaService:
         raise ValueError("Local ingestion sources are not available yet.")
 
     def upload_ingestion_source_archive(self, source_id, archive_path):
-        raise ValueError("Local ingestion sources are not available yet.")
+        self.calls.append(("upload_ingestion_source_archive", source_id, archive_path))
+        return {
+            "status": "tracked",
+            "source_id": source_id,
+            "item": {
+                "id": 11,
+                "source_id": source_id,
+                "normalized_relative_path": "archive.zip",
+                "sync_status": "tracked",
+            },
+        }
 
     def list_document_versions(self, media_id, include_deleted=False):
         self.calls.append(("list_document_versions", media_id, include_deleted))
@@ -2596,6 +2606,11 @@ async def test_scope_service_routes_local_ingestion_source_operations_and_policy
     detail = await scope_service.get_ingestion_source(mode="local", source_id=3)
     patched = await scope_service.patch_ingestion_source(mode="local", source_id=3, enabled=False)
     items = await scope_service.list_ingestion_source_items(mode="local", source_id=3)
+    uploaded = await scope_service.upload_ingestion_source_archive(
+        mode="local",
+        source_id=3,
+        archive_path="/tmp/archive.zip",
+    )
     deleted = await scope_service.delete_ingestion_source(mode="local", source_id=3)
 
     assert listed[0]["id"] == "local:ingestion_source:3"
@@ -2603,6 +2618,8 @@ async def test_scope_service_routes_local_ingestion_source_operations_and_policy
     assert detail["source_type"] == "local_directory"
     assert patched["enabled"] is False
     assert items == []
+    assert uploaded["status"] == "tracked"
+    assert uploaded["item"]["normalized_relative_path"] == "archive.zip"
     assert deleted is True
     assert policy.calls == [
         "media.ingestion_sources.list.local",
@@ -2610,6 +2627,7 @@ async def test_scope_service_routes_local_ingestion_source_operations_and_policy
         "media.ingestion_sources.detail.local",
         "media.ingestion_sources.update.local",
         "media.ingestion_jobs.observe.local",
+        "media.ingestion_jobs.launch.local",
         "media.ingestion_sources.delete.local",
     ]
     assert ("create_ingestion_source", {

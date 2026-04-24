@@ -3010,6 +3010,100 @@ class MediaDatabase:
             logger.error(f"Error listing local ingestion source items for source_id={source_id}: {e}")
             raise DatabaseError(f"Failed to list local ingestion source items for {source_id}") from e
 
+    def get_local_ingestion_source_item(self, item_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch one locally tracked ingestion source item."""
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT id, source_id, normalized_relative_path, content_hash, sync_status,
+                       binding_json, present_in_source, created_at, updated_at
+                FROM LocalIngestionSourceItems
+                WHERE id = ?
+                """,
+                (item_id,),
+            )
+            row = cursor.fetchone()
+            return self._local_ingestion_source_item_row_to_dict(row) if row else None
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching local ingestion source item id={item_id}: {e}")
+            raise DatabaseError(f"Failed to fetch local ingestion source item {item_id}") from e
+
+    def upsert_local_ingestion_source_item(
+        self,
+        source_id: int,
+        *,
+        normalized_relative_path: str,
+        content_hash: Optional[str] = None,
+        sync_status: str = "tracked",
+        binding: Optional[Dict[str, Any]] = None,
+        present_in_source: bool = True,
+    ) -> Dict[str, Any]:
+        """Create or update a locally tracked ingestion source item by source/path."""
+        if self.get_local_ingestion_source(source_id) is None:
+            raise InputError(f"Local ingestion source {source_id} not found.")
+        normalized_path = str(normalized_relative_path or "").strip()
+        if not normalized_path:
+            raise InputError("normalized_relative_path is required.")
+
+        current_time = self._get_current_utc_timestamp_str()
+        binding_json = json.dumps(binding or {}, separators=(',', ':'), cls=DateTimeEncoder)
+        try:
+            with self.transaction() as conn:
+                existing = conn.execute(
+                    """
+                    SELECT id
+                    FROM LocalIngestionSourceItems
+                    WHERE source_id = ? AND normalized_relative_path = ?
+                    """,
+                    (source_id, normalized_path),
+                ).fetchone()
+                if existing:
+                    item_id = int(existing["id"])
+                    conn.execute(
+                        """
+                        UPDATE LocalIngestionSourceItems
+                        SET content_hash = ?, sync_status = ?, binding_json = ?,
+                            present_in_source = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            content_hash,
+                            sync_status,
+                            binding_json,
+                            1 if present_in_source else 0,
+                            current_time,
+                            item_id,
+                        ),
+                    )
+                else:
+                    cursor = conn.execute(
+                        """
+                        INSERT INTO LocalIngestionSourceItems (
+                            source_id, normalized_relative_path, content_hash, sync_status,
+                            binding_json, present_in_source, created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            source_id,
+                            normalized_path,
+                            content_hash,
+                            sync_status,
+                            binding_json,
+                            1 if present_in_source else 0,
+                            current_time,
+                            current_time,
+                        ),
+                    )
+                    item_id = int(cursor.lastrowid)
+            item = self.get_local_ingestion_source_item(item_id)
+            if item is None:
+                raise DatabaseError(f"Failed to fetch local ingestion source item {item_id}")
+            return item
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error upserting local ingestion source item for source_id={source_id}: {e}")
+            raise DatabaseError(f"Failed to upsert local ingestion source item for source {source_id}") from e
+
     def get_media_read_it_later_state(self, media_id: int) -> Optional[Dict[str, Any]]:
         """Fetch the local-only read-it-later state for a media item."""
         try:
