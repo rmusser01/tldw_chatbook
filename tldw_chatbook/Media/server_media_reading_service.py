@@ -159,6 +159,9 @@ class ServerMediaReadingService:
         request_data = IngestionSourcePatchRequest(**changes)
         return await self._require_client().patch_ingestion_source(int(source_id), request_data)
 
+    async def delete_ingestion_source(self, source_id: Any) -> Any:
+        raise ValueError("Server ingestion source delete is not available yet.")
+
     async def list_ingestion_source_items(self, source_id: Any) -> Any:
         return await self._require_client().list_ingestion_source_items(int(source_id))
 

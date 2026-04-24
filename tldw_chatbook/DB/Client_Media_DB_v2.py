@@ -98,7 +98,7 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 5  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 6  # Define the version this code supports
     
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
@@ -126,6 +126,11 @@ class MediaDatabase:
             'to_version': 5,
             'function': '_apply_migration_v4_to_v5',
             'description': 'Add local reading highlights store'
+        },
+        5: {
+            'to_version': 6,
+            'function': '_apply_migration_v5_to_v6',
+            'description': 'Add local ingestion source registry'
         },
         # Future migrations: just add new entries here
         # 5: {
@@ -475,6 +480,43 @@ class MediaDatabase:
 
     CREATE INDEX IF NOT EXISTS idx_reading_highlights_media_id ON ReadingHighlights(media_id);
     CREATE INDEX IF NOT EXISTS idx_reading_highlights_state ON ReadingHighlights(state);
+    """
+
+    _LOCAL_INGESTION_SOURCES_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS LocalIngestionSources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_type TEXT NOT NULL,
+        sink_type TEXT NOT NULL,
+        policy TEXT NOT NULL DEFAULT 'canonical',
+        enabled BOOLEAN NOT NULL DEFAULT 1,
+        schedule_enabled BOOLEAN NOT NULL DEFAULT 0,
+        schedule_json TEXT NOT NULL DEFAULT '{}',
+        config_json TEXT NOT NULL DEFAULT '{}',
+        last_sync_status TEXT,
+        last_error TEXT,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        deleted BOOLEAN NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_local_ingestion_sources_deleted ON LocalIngestionSources(deleted);
+    CREATE INDEX IF NOT EXISTS idx_local_ingestion_sources_type_sink ON LocalIngestionSources(source_type, sink_type);
+
+    CREATE TABLE IF NOT EXISTS LocalIngestionSourceItems (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id INTEGER NOT NULL,
+        normalized_relative_path TEXT NOT NULL,
+        content_hash TEXT,
+        sync_status TEXT NOT NULL DEFAULT 'tracked',
+        binding_json TEXT NOT NULL DEFAULT '{}',
+        present_in_source BOOLEAN NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        FOREIGN KEY (source_id) REFERENCES LocalIngestionSources(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_local_ingestion_source_items_source ON LocalIngestionSourceItems(source_id);
+    CREATE INDEX IF NOT EXISTS idx_local_ingestion_source_items_status ON LocalIngestionSourceItems(sync_status);
     """
 
     def __init__(self, db_path: Union[str, Path], client_id: str, 
@@ -1075,6 +1117,26 @@ class MediaDatabase:
             logging.error(f"[Migration v4->v5] Unexpected error during migration: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during migration v4->v5: {e}") from e
 
+    def _apply_migration_v5_to_v6(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 5 to version 6 (adds local ingestion sources)."""
+        logging.info(f"Applying migration from version 5 to 6 (local ingestion sources) to DB: {self.db_path_str}...")
+        try:
+            migration_sql = f"""
+            {self._LOCAL_INGESTION_SOURCES_TABLE_SQL}
+            UPDATE schema_version SET version = 6;
+            """
+
+            with self.transaction():
+                logging.debug("[Migration v5->v6] Creating LocalIngestionSources tables...")
+                conn.executescript(migration_sql)
+                logging.info("[Migration v5->v6] LocalIngestionSources migration applied successfully.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v5->v6] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v5->v6 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v5->v6] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v5->v6: {e}") from e
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -1089,7 +1151,8 @@ class MediaDatabase:
                 # Ensure FTS and local-only tables exist even if schema version matches
                 try:
                     conn.executescript(
-                        f"{self._FTS_TABLES_SQL}\n{self._LOCAL_ONLY_TABLES_SQL}\n{self._READING_HIGHLIGHTS_TABLE_SQL}"
+                        f"{self._FTS_TABLES_SQL}\n{self._LOCAL_ONLY_TABLES_SQL}\n"
+                        f"{self._READING_HIGHLIGHTS_TABLE_SQL}\n{self._LOCAL_INGESTION_SOURCES_TABLE_SQL}"
                     )
                     conn.commit()
                     logging.debug("Verified FTS and local-only media tables exist.")
@@ -2324,6 +2387,273 @@ class MediaDatabase:
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error deleting reading highlight id={highlight_id} from DB '{self.db_path_str}': {e}")
             raise DatabaseError(f"Failed to delete reading highlight {highlight_id}") from e
+
+    @staticmethod
+    def _json_object_from_db(value: Optional[str]) -> Dict[str, Any]:
+        if not value:
+            return {}
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+
+    @staticmethod
+    def _local_ingestion_source_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "source_type": row["source_type"],
+            "sink_type": row["sink_type"],
+            "policy": row["policy"],
+            "enabled": bool(row["enabled"]),
+            "schedule_enabled": bool(row["schedule_enabled"]),
+            "schedule_config": MediaDatabase._json_object_from_db(row["schedule_json"]),
+            "config": MediaDatabase._json_object_from_db(row["config_json"]),
+            "last_sync_status": row["last_sync_status"],
+            "last_error": row["last_error"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "deleted": bool(row["deleted"]),
+        }
+
+    @staticmethod
+    def _local_ingestion_source_item_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "source_id": row["source_id"],
+            "normalized_relative_path": row["normalized_relative_path"],
+            "content_hash": row["content_hash"],
+            "sync_status": row["sync_status"],
+            "binding": MediaDatabase._json_object_from_db(row["binding_json"]),
+            "present_in_source": bool(row["present_in_source"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    @staticmethod
+    def _validate_local_ingestion_source_values(
+        *,
+        source_type: Optional[str] = None,
+        sink_type: Optional[str] = None,
+        policy: Optional[str] = None,
+    ) -> None:
+        valid_source_types = {"local_directory", "archive_snapshot", "git_repository"}
+        valid_sink_types = {"media", "notes"}
+        valid_policies = {"canonical", "import_only"}
+        if source_type is not None and source_type not in valid_source_types:
+            raise InputError(f"Unsupported local ingestion source_type: {source_type}")
+        if sink_type is not None and sink_type not in valid_sink_types:
+            raise InputError(f"Unsupported local ingestion sink_type: {sink_type}")
+        if policy is not None and policy not in valid_policies:
+            raise InputError(f"Unsupported local ingestion policy: {policy}")
+
+    def list_local_ingestion_sources(self, *, include_deleted: bool = False) -> List[Dict[str, Any]]:
+        """List locally configured ingestion sources."""
+        sql = """
+            SELECT id, source_type, sink_type, policy, enabled, schedule_enabled,
+                   schedule_json, config_json, last_sync_status, last_error,
+                   created_at, updated_at, deleted
+            FROM LocalIngestionSources
+        """
+        params: tuple[Any, ...] = ()
+        if not include_deleted:
+            sql += " WHERE deleted = 0"
+        sql += " ORDER BY updated_at DESC, id DESC"
+        try:
+            cursor = self.execute_query(sql, params)
+            return [self._local_ingestion_source_row_to_dict(row) for row in cursor.fetchall()]
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error listing local ingestion sources from DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to list local ingestion sources") from e
+
+    def get_local_ingestion_source(
+        self,
+        source_id: int,
+        *,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch one locally configured ingestion source."""
+        sql = """
+            SELECT id, source_type, sink_type, policy, enabled, schedule_enabled,
+                   schedule_json, config_json, last_sync_status, last_error,
+                   created_at, updated_at, deleted
+            FROM LocalIngestionSources
+            WHERE id = ?
+        """
+        params: list[Any] = [source_id]
+        if not include_deleted:
+            sql += " AND deleted = 0"
+        try:
+            cursor = self.execute_query(sql, tuple(params))
+            row = cursor.fetchone()
+            return self._local_ingestion_source_row_to_dict(row) if row else None
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching local ingestion source id={source_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to fetch local ingestion source {source_id}") from e
+
+    def create_local_ingestion_source(
+        self,
+        *,
+        source_type: str,
+        sink_type: str,
+        policy: str = "canonical",
+        enabled: bool = True,
+        schedule_enabled: bool = False,
+        schedule: Optional[Dict[str, Any]] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create a locally configured ingestion source."""
+        self._validate_local_ingestion_source_values(
+            source_type=source_type,
+            sink_type=sink_type,
+            policy=policy,
+        )
+        current_time = self._get_current_utc_timestamp_str()
+        schedule_json = json.dumps(schedule or {}, separators=(',', ':'), cls=DateTimeEncoder)
+        config_json = json.dumps(config or {}, separators=(',', ':'), cls=DateTimeEncoder)
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO LocalIngestionSources (
+                        source_type, sink_type, policy, enabled, schedule_enabled,
+                        schedule_json, config_json, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        source_type,
+                        sink_type,
+                        policy,
+                        1 if enabled else 0,
+                        1 if schedule_enabled else 0,
+                        schedule_json,
+                        config_json,
+                        current_time,
+                        current_time,
+                    ),
+                )
+                source_id = int(cursor.lastrowid)
+            created = self.get_local_ingestion_source(source_id)
+            if created is None:
+                raise DatabaseError(f"Failed to fetch newly created local ingestion source {source_id}")
+            return created
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error creating local ingestion source in DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to create local ingestion source") from e
+
+    def update_local_ingestion_source(self, source_id: int, **changes: Any) -> Dict[str, Any]:
+        """Update mutable local ingestion source fields."""
+        allowed_fields = {
+            "source_type",
+            "sink_type",
+            "policy",
+            "enabled",
+            "schedule_enabled",
+            "schedule",
+            "schedule_config",
+            "config",
+            "last_sync_status",
+            "last_error",
+        }
+        unsupported = sorted(key for key in changes if key not in allowed_fields)
+        if unsupported:
+            unsupported_text = ", ".join(unsupported)
+            raise InputError(f"Unsupported local ingestion source update fields: {unsupported_text}")
+
+        current = self.get_local_ingestion_source(source_id)
+        if current is None:
+            raise InputError(f"Local ingestion source {source_id} not found.")
+        if not changes:
+            return current
+
+        self._validate_local_ingestion_source_values(
+            source_type=changes.get("source_type"),
+            sink_type=changes.get("sink_type"),
+            policy=changes.get("policy"),
+        )
+
+        current_time = self._get_current_utc_timestamp_str()
+        column_map = {
+            "source_type": "source_type",
+            "sink_type": "sink_type",
+            "policy": "policy",
+            "enabled": "enabled",
+            "schedule_enabled": "schedule_enabled",
+            "last_sync_status": "last_sync_status",
+            "last_error": "last_error",
+        }
+        assignments: list[str] = []
+        values: list[Any] = []
+        for field, column in column_map.items():
+            if field not in changes:
+                continue
+            value = changes[field]
+            if field in {"enabled", "schedule_enabled"}:
+                value = 1 if bool(value) else 0
+            assignments.append(f"{column} = ?")
+            values.append(value)
+
+        if "schedule" in changes or "schedule_config" in changes:
+            schedule_value = changes.get("schedule_config", changes.get("schedule"))
+            assignments.append("schedule_json = ?")
+            values.append(json.dumps(schedule_value or {}, separators=(',', ':'), cls=DateTimeEncoder))
+        if "config" in changes:
+            assignments.append("config_json = ?")
+            values.append(json.dumps(changes.get("config") or {}, separators=(',', ':'), cls=DateTimeEncoder))
+
+        assignments.append("updated_at = ?")
+        values.append(current_time)
+        values.append(source_id)
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    f"UPDATE LocalIngestionSources SET {', '.join(assignments)} WHERE id = ? AND deleted = 0",
+                    tuple(values),
+                )
+            updated = self.get_local_ingestion_source(source_id)
+            if updated is None:
+                raise DatabaseError(f"Failed to fetch updated local ingestion source {source_id}")
+            return updated
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error updating local ingestion source id={source_id} in DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to update local ingestion source {source_id}") from e
+
+    def delete_local_ingestion_source(self, source_id: int) -> bool:
+        """Soft-delete a locally configured ingestion source."""
+        current_time = self._get_current_utc_timestamp_str()
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE LocalIngestionSources
+                    SET deleted = 1, enabled = 0, updated_at = ?
+                    WHERE id = ? AND deleted = 0
+                    """,
+                    (current_time, source_id),
+                )
+                return cursor.rowcount > 0
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error deleting local ingestion source id={source_id} in DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to delete local ingestion source {source_id}") from e
+
+    def list_local_ingestion_source_items(self, source_id: int) -> List[Dict[str, Any]]:
+        """List locally tracked items for an ingestion source."""
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT id, source_id, normalized_relative_path, content_hash, sync_status,
+                       binding_json, present_in_source, created_at, updated_at
+                FROM LocalIngestionSourceItems
+                WHERE source_id = ?
+                ORDER BY normalized_relative_path ASC, id ASC
+                """,
+                (source_id,),
+            )
+            return [self._local_ingestion_source_item_row_to_dict(row) for row in cursor.fetchall()]
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error listing local ingestion source items for source_id={source_id}: {e}")
+            raise DatabaseError(f"Failed to list local ingestion source items for {source_id}") from e
 
     def get_media_read_it_later_state(self, media_id: int) -> Optional[Dict[str, Any]]:
         """Fetch the local-only read-it-later state for a media item."""

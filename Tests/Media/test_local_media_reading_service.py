@@ -195,3 +195,43 @@ def test_local_service_reading_highlights_round_trip(memory_db_factory):
     assert updated["note"] == "Updated"
     assert deleted is True
     assert service.list_reading_highlights(media_id) == []
+
+
+def test_local_service_ingestion_sources_round_trip(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    created = service.create_ingestion_source(
+        source_type="local_directory",
+        sink_type="media",
+        policy="canonical",
+        enabled=True,
+        schedule_enabled=True,
+        schedule={"interval": "daily"},
+        config={"path": "/tmp/media"},
+    )
+    listed = service.list_ingestion_sources()
+    detail = service.get_ingestion_source(created["id"])
+    patched = service.patch_ingestion_source(
+        created["id"],
+        enabled=False,
+        policy="import_only",
+        schedule={"interval": "weekly"},
+        config={"path": "/tmp/media-v2"},
+    )
+    items = service.list_ingestion_source_items(created["id"])
+    deleted = service.delete_ingestion_source(created["id"])
+
+    assert created["source_type"] == "local_directory"
+    assert created["sink_type"] == "media"
+    assert created["schedule_config"] == {"interval": "daily"}
+    assert created["config"] == {"path": "/tmp/media"}
+    assert listed == [created]
+    assert detail == created
+    assert patched["enabled"] is False
+    assert patched["policy"] == "import_only"
+    assert patched["schedule_config"] == {"interval": "weekly"}
+    assert patched["config"] == {"path": "/tmp/media-v2"}
+    assert items == []
+    assert deleted is True
+    assert service.list_ingestion_sources() == []

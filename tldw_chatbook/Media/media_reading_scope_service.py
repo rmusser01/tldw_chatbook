@@ -29,6 +29,7 @@ from .media_reading_normalizers import (
     normalize_server_reading_item,
 )
 
+ALLOWED_LOCAL_CREATE_SOURCE_TYPES = ("local_directory", "archive_snapshot", "git_repository")
 ALLOWED_SERVER_CREATE_SOURCE_TYPES = ("archive_snapshot", "git_repository")
 
 
@@ -226,6 +227,17 @@ class MediaReadingScopeService:
             allowed_types = ", ".join(ALLOWED_SERVER_CREATE_SOURCE_TYPES)
             raise ValueError(
                 f"Unsupported server ingestion source type: {normalized_source_type}. "
+                f"Allowed types: {allowed_types}."
+            )
+        return normalized_source_type
+
+    @staticmethod
+    def _validate_local_create_source_type(source_type: str) -> str:
+        normalized_source_type = str(source_type or "").strip()
+        if normalized_source_type not in ALLOWED_LOCAL_CREATE_SOURCE_TYPES:
+            allowed_types = ", ".join(ALLOWED_LOCAL_CREATE_SOURCE_TYPES)
+            raise ValueError(
+                f"Unsupported local ingestion source type: {normalized_source_type}. "
                 f"Allowed types: {allowed_types}."
             )
         return normalized_source_type
@@ -918,8 +930,9 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == MediaReadingBackend.LOCAL:
-            raise ValueError("Local ingestion sources are not available yet.")
-        normalized_source_type = self._validate_server_create_source_type(source_type)
+            normalized_source_type = self._validate_local_create_source_type(source_type)
+        else:
+            normalized_source_type = self._validate_server_create_source_type(source_type)
         self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         source = await self._maybe_await(
@@ -959,6 +972,17 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         source = await self._maybe_await(service.patch_ingestion_source(source_id, **changes))
         return normalize_ingestion_source(source, backend=normalized_mode.value)
+
+    async def delete_ingestion_source(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        source_id: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "delete"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.delete_ingestion_source(source_id))
 
     async def list_ingestion_source_items(
         self,

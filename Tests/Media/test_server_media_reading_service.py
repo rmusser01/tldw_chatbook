@@ -595,6 +595,14 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
 
 
 @pytest.mark.asyncio
+async def test_server_service_ingestion_source_delete_fails_explicitly():
+    service = ServerMediaReadingService(client=FakeClient())
+
+    with pytest.raises(ValueError, match="Server ingestion source delete is not available yet."):
+        await service.delete_ingestion_source(7)
+
+
+@pytest.mark.asyncio
 async def test_server_service_routes_ingestion_item_reattach_saved_searches_and_note_links():
     client = FakeClient()
     service = ServerMediaReadingService(client=client)

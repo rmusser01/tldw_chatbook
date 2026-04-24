@@ -21,9 +21,6 @@ class LocalMediaReadingService:
     def _coerce_media_id(self, media_id: Any) -> int:
         return int(media_id)
 
-    def _unsupported_ingestion_sources(self) -> ValueError:
-        return ValueError("Local ingestion sources are not available yet.")
-
     def _unsupported_ingestion_jobs(self) -> ValueError:
         return ValueError("Local media ingest jobs are not available yet.")
 
@@ -192,22 +189,49 @@ class LocalMediaReadingService:
         }
 
     def list_ingestion_sources(self) -> Any:
-        raise self._unsupported_ingestion_sources()
+        return self._require_db().list_local_ingestion_sources()
+
+    def create_ingestion_source(
+        self,
+        *,
+        source_type: str,
+        sink_type: str,
+        policy: str = "canonical",
+        enabled: bool = True,
+        schedule_enabled: bool = False,
+        schedule: Optional[Mapping[str, Any]] = None,
+        config: Optional[Mapping[str, Any]] = None,
+    ) -> Any:
+        return self._require_db().create_local_ingestion_source(
+            source_type=source_type,
+            sink_type=sink_type,
+            policy=policy,
+            enabled=enabled,
+            schedule_enabled=schedule_enabled,
+            schedule=dict(schedule or {}),
+            config=dict(config or {}),
+        )
 
     def get_ingestion_source(self, source_id: Any) -> Any:
-        raise self._unsupported_ingestion_sources()
+        source = self._require_db().get_local_ingestion_source(int(source_id))
+        if source is None:
+            raise ValueError(f"Local ingestion source {source_id} not found.")
+        return source
 
     def patch_ingestion_source(self, source_id: Any, **changes: Any) -> Any:
-        raise self._unsupported_ingestion_sources()
+        return self._require_db().update_local_ingestion_source(int(source_id), **changes)
+
+    def delete_ingestion_source(self, source_id: Any) -> Any:
+        return self._require_db().delete_local_ingestion_source(int(source_id))
 
     def list_ingestion_source_items(self, source_id: Any) -> Any:
-        raise self._unsupported_ingestion_sources()
+        return self._require_db().list_local_ingestion_source_items(int(source_id))
 
     def trigger_ingestion_source_sync(self, source_id: Any) -> Any:
-        raise self._unsupported_ingestion_sources()
+        raise self._unsupported_ingestion_jobs()
 
     def upload_ingestion_source_archive(self, source_id: Any, archive_path: str) -> Any:
-        raise self._unsupported_ingestion_sources()
+        raise self._unsupported_ingestion_jobs()
 
     def submit_media_ingest_jobs(
         self,
