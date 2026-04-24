@@ -1309,7 +1309,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         initial_media_runtime_backend = self._resolve_initial_media_runtime_backend()
         self.media_runtime_state = MediaRuntimeState(runtime_backend=initial_media_runtime_backend)
-        self.local_media_reading_service = LocalMediaReadingService(self.media_db)
+        self.local_media_reading_service = LocalMediaReadingService(self.media_db, app_config=self.app_config)
         try:
             self.server_media_reading_service = ServerMediaReadingService.from_config(self.app_config)
         except ValueError:

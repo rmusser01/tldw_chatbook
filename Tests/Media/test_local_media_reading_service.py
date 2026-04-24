@@ -549,6 +549,70 @@ def test_local_service_summarizes_reading_item_extractively(memory_db_factory):
     ]
 
 
+class FakeTTSService:
+    def __init__(self):
+        self.calls = []
+
+    async def generate_audio_stream(self, request, internal_model_id):
+        self.calls.append((request, internal_model_id))
+        yield b"audio-"
+        yield b"bytes"
+
+
+@pytest.mark.asyncio
+async def test_local_service_generates_reading_tts_from_local_tts_service(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="TTS Target",
+        content="Alpha beta gamma.",
+        media_type="article",
+        url="https://example.test/tts",
+        keywords=[],
+    )
+    tts_service = FakeTTSService()
+    service = LocalMediaReadingService(db, tts_service=tts_service)
+
+    audio = await service.tts_reading_item(
+        media_id,
+        model="local-kokoro",
+        voice="af_heart",
+        response_format="wav",
+        stream=False,
+        speed=1.25,
+        max_chars=10,
+        text_source="text",
+    )
+
+    request, internal_model_id = tts_service.calls[0]
+    assert audio == b"audio-bytes"
+    assert internal_model_id == "local-kokoro"
+    assert request.model == "local-kokoro"
+    assert request.input == "Alpha beta"
+    assert request.voice == "af_heart"
+    assert request.response_format == "wav"
+    assert request.stream is False
+    assert request.speed == 1.25
+
+
+@pytest.mark.asyncio
+async def test_local_service_coerces_reading_tts_stream_string_false(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="TTS Target",
+        content="Alpha beta gamma.",
+        media_type="article",
+        url="https://example.test/tts",
+        keywords=[],
+    )
+    tts_service = FakeTTSService()
+    service = LocalMediaReadingService(db, tts_service=tts_service)
+
+    await service.tts_reading_item(media_id, stream="false")
+
+    request, _ = tts_service.calls[0]
+    assert request.stream is False
+
+
 def test_local_service_imports_pocket_reading_items(memory_db_factory, tmp_path):
     import_file = tmp_path / "pocket.json"
     import_file.write_text(

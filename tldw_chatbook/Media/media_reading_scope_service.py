@@ -281,10 +281,6 @@ class MediaReadingScopeService:
         raise ValueError("Local reading archives are not available yet.")
 
     @staticmethod
-    def _raise_local_reading_tts_unavailable() -> None:
-        raise ValueError("Local reading TTS is not available yet.")
-
-    @staticmethod
     def _raise_local_reading_digest_schedules_unavailable() -> None:
         raise ValueError("Local reading digest schedules are not available yet.")
 
@@ -1390,8 +1386,6 @@ class MediaReadingScopeService:
         **options: Any,
     ) -> bytes:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            self._raise_local_reading_tts_unavailable()
         self._enforce_policy(self._reading_tts_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         payload = {key: value for key, value in options.items() if value is not None}

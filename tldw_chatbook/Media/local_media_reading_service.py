@@ -24,10 +24,14 @@ class LocalMediaReadingService:
         self,
         media_db: Any,
         *,
+        app_config: Mapping[str, Any] | None = None,
+        tts_service: Any = None,
         notification_dispatch_service: Any = None,
         notification_app: Any = None,
     ):
         self.media_db = media_db
+        self.app_config = dict(app_config or {})
+        self.tts_service = tts_service
         self.notification_dispatch_service = notification_dispatch_service
         self.notification_app = notification_app
 
@@ -66,6 +70,19 @@ class LocalMediaReadingService:
         if isinstance(value, str):
             return [value]
         return [str(item) for item in value]
+
+    def _coerce_bool(self, value: Any, *, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        return bool(value)
 
     def _domain_from_url(self, url: Any) -> str | None:
         parsed = urlparse(str(url or ""))
@@ -600,6 +617,61 @@ class LocalMediaReadingService:
             ],
             "generated_at": None,
         }
+
+    def _text_for_tts(self, detail: Mapping[str, Any], *, text_source: str | None = None) -> str:
+        normalized_source = str(text_source or "text").strip().lower()
+        base_text = self._plain_text_for_summary(
+            detail.get("content")
+            or detail.get("transcription")
+            or detail.get("analysis_content")
+            or detail.get("title")
+            or ""
+        )
+        if normalized_source == "text":
+            return base_text
+        if normalized_source == "summary":
+            return self._extractive_summary(base_text)
+        if normalized_source == "notes":
+            return self._plain_text_for_summary(detail.get("notes") or detail.get("title") or base_text)
+        raise ValueError(f"Unsupported local reading TTS text source: {text_source}")
+
+    async def _resolve_tts_service(self) -> Any:
+        if self.tts_service is not None:
+            return self.tts_service
+        from tldw_chatbook.TTS.TTS_Generation import get_tts_service
+
+        self.tts_service = await get_tts_service(self.app_config or None)
+        return self.tts_service
+
+    async def tts_reading_item(self, item_id: Any, **options: Any) -> bytes:
+        from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+
+        media_id = self._coerce_media_id(item_id)
+        detail = self.get_media_detail(media_id)
+        if not isinstance(detail, Mapping):
+            raise ValueError(f"Local reading item {item_id} not found.")
+
+        text = self._text_for_tts(detail, text_source=options.get("text_source"))
+        max_chars = options.get("max_chars")
+        if max_chars is not None:
+            text = text[: int(max_chars)].strip()
+        if not text:
+            raise ValueError(f"Local reading item {item_id} has no text for TTS.")
+
+        model = str(options.get("model") or "kokoro")
+        request = OpenAISpeechRequest(
+            model=model,
+            input=text,
+            voice=str(options.get("voice") or "af_heart"),
+            response_format=str(options.get("response_format") or "mp3"),
+            stream=self._coerce_bool(options.get("stream"), default=True),
+            speed=float(options.get("speed") or 1.0),
+        )
+        service = await self._resolve_tts_service()
+        chunks: list[bytes] = []
+        async for chunk in service.generate_audio_stream(request, model):
+            chunks.append(bytes(chunk))
+        return b"".join(chunks)
 
     def list_unified_items(self, **filters: Any) -> dict[str, Any]:
         origin = str(filters.get("origin") or "").strip().lower()
