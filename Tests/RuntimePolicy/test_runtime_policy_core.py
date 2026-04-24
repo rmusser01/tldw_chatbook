@@ -443,6 +443,13 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.document_insights.create.server
         media.document_outline.detail.server
         media.document_references.list.server
+        media.items.delete.server
+        media.items.detail.server
+        media.items.file.detail.server
+        media.items.keywords.update.server
+        media.items.permanent_delete.server
+        media.items.restore.server
+        media.items.update.server
         media.reading.create.local
         media.reading.create.server
         media.reading.delete.local

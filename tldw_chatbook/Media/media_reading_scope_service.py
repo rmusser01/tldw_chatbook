@@ -189,9 +189,26 @@ class MediaReadingScopeService:
         return f"media.document_annotations.{action}.{mode.value}"
 
     @staticmethod
+    def _media_item_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.items.{action}.{mode.value}"
+
+    @staticmethod
+    def _media_item_keywords_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.items.keywords.{action}.{mode.value}"
+
+    @staticmethod
+    def _media_item_file_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.items.file.{action}.{mode.value}"
+
+    @staticmethod
     def _require_server_document_workspace(mode: MediaReadingBackend) -> None:
         if mode == MediaReadingBackend.LOCAL:
             raise ValueError("Local document workspace is not available yet.")
+
+    @staticmethod
+    def _require_server_media_item_lifecycle(mode: MediaReadingBackend) -> None:
+        if mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Server media item lifecycle requires server mode.")
 
     def _service_for_mode(self, mode: MediaReadingBackend) -> Any:
         if mode == MediaReadingBackend.LOCAL:
@@ -367,6 +384,120 @@ class MediaReadingScopeService:
                 backing_media_id=backing_media_id,
             )
         return normalized
+
+    async def get_backing_media_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        include_content: bool = True,
+        include_versions: bool = True,
+        include_version_content: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.get_media_item(
+                media_id,
+                include_content=include_content,
+                include_versions=include_versions,
+                include_version_content=include_version_content,
+            )
+        )
+        return self._as_mapping_payload(payload)
+
+    async def update_backing_media_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        **changes: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.update_media_item(media_id, **changes))
+        return self._as_mapping_payload(payload)
+
+    async def trash_backing_media_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_action_id(normalized_mode, "delete"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.trash_media_item(media_id))
+
+    async def restore_backing_media_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        include_content: bool = True,
+        include_versions: bool = True,
+        include_version_content: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_action_id(normalized_mode, "restore"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.restore_media_item(
+                media_id,
+                include_content=include_content,
+                include_versions=include_versions,
+                include_version_content=include_version_content,
+            )
+        )
+        return self._as_mapping_payload(payload)
+
+    async def permanently_delete_backing_media_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_action_id(normalized_mode, "permanent_delete"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.permanently_delete_media_item(media_id))
+
+    async def update_backing_media_keywords(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        keywords: list[str],
+        update_mode: str = "add",
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_keywords_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(
+            service.update_media_keywords(media_id, keywords=keywords, mode=update_mode)
+        )
+        return self._as_mapping_payload(payload)
+
+    async def download_backing_media_file(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        file_type: str = "original",
+    ) -> bytes:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_file_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.download_media_file(media_id, file_type=file_type))
 
     async def list_read_it_later(
         self,

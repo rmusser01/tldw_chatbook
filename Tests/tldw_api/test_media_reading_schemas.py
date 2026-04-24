@@ -19,6 +19,10 @@ from tldw_chatbook.tldw_api import (
     ItemsBulkResponse,
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
+    MediaDetailResponse,
+    MediaKeywordsResponse,
+    MediaKeywordsUpdateRequest,
+    MediaUpdateRequest,
     ReadingDigestOutput,
     ReadingDigestOutputsListResponse,
     ReadingDigestScheduleCreateRequest,
@@ -36,6 +40,70 @@ from tldw_chatbook.tldw_api import (
     ReadingTTSRequest,
     ReadingUpdateRequest,
 )
+
+
+def test_media_item_models_match_server_contracts():
+    detail = MediaDetailResponse(
+        media_id=99,
+        source={
+            "url": "https://example.com/paper.pdf",
+            "title": "Paper",
+            "duration": None,
+            "type": "pdf",
+        },
+        processing={
+            "prompt": "Summarize",
+            "analysis": "Analysis",
+            "safe_metadata": {"doi": "10/example"},
+            "model": "local",
+            "timestamp_option": False,
+            "chunking_status": "completed",
+            "vector_processing_status": 1,
+        },
+        content={
+            "metadata": {"pages": 3},
+            "text": "Body",
+            "word_count": 1,
+        },
+        keywords=[" ai ", "testing"],
+        timestamps=[],
+        versions=[
+            {
+                "uuid": "version-1",
+                "media_id": 99,
+                "version_number": 1,
+                "created_at": "2026-04-23T12:00:00Z",
+                "prompt": "Summarize",
+                "analysis_content": "Analysis",
+                "content": None,
+            }
+        ],
+        has_original_file=True,
+        original_file_url="/api/v1/media/99/file",
+    )
+    update = MediaUpdateRequest(
+        title=" New title ",
+        content="Body 2",
+        author="Ada",
+        analysis="Analysis 2",
+        prompt="Prompt 2",
+    )
+    keywords_update = MediaKeywordsUpdateRequest(keywords=[" ai ", "ml"], mode="set")
+    keywords_response = MediaKeywordsResponse(media_id=99, keywords=["ai", "ml"])
+
+    assert detail.media_id == 99
+    assert detail.source.title == "Paper"
+    assert detail.keywords == ["ai", "testing"]
+    assert detail.versions[0].version_number == 1
+    assert update.model_dump(exclude_none=True, mode="json") == {
+        "title": "New title",
+        "content": "Body 2",
+        "author": "Ada",
+        "analysis": "Analysis 2",
+        "prompt": "Prompt 2",
+    }
+    assert keywords_update.model_dump(mode="json") == {"keywords": ["ai", "ml"], "mode": "set"}
+    assert keywords_response.keywords == ["ai", "ml"]
 
 
 def test_document_insights_and_references_models_match_server_contracts():

@@ -28,10 +28,14 @@ from tldw_chatbook.tldw_api import (
     IngestionSourceItemResponse,
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
+    MediaDetailResponse,
     MediaIngestJobListResponse,
     MediaIngestJobStatus,
     MediaIngestJobStreamEvent,
     MediaIngestJobSubmitRequest,
+    MediaKeywordsResponse,
+    MediaKeywordsUpdateRequest,
+    MediaUpdateRequest,
     ReadingDigestOutputsListResponse,
     ReadingDigestScheduleCreateRequest,
     ReadingDigestScheduleResponse,
@@ -45,6 +49,100 @@ from tldw_chatbook.tldw_api import (
     SubmitMediaIngestJobsResponse,
     TLDWAPIClient,
 )
+
+
+@pytest.mark.asyncio
+async def test_media_item_lifecycle_routes_wire_to_server_contract(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    detail_payload = {
+        "media_id": 99,
+        "source": {
+            "url": "https://example.com/paper.pdf",
+            "title": "Paper",
+            "duration": None,
+            "type": "pdf",
+        },
+        "processing": {
+            "prompt": "Prompt",
+            "analysis": "Analysis",
+            "safe_metadata": {"doi": "10/example"},
+            "model": "local",
+            "timestamp_option": False,
+            "chunking_status": "completed",
+            "vector_processing_status": 1,
+        },
+        "content": {"metadata": {"pages": 3}, "text": "Body", "word_count": 1},
+        "keywords": ["ai"],
+        "timestamps": [],
+        "versions": [],
+        "has_original_file": True,
+        "original_file_url": "/api/v1/media/99/file",
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            detail_payload,
+            {**detail_payload, "source": {**detail_payload["source"], "title": "Renamed"}},
+            {},
+            detail_payload,
+            {},
+            {"media_id": 99, "keywords": ["ai", "ml"]},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+    request_bytes = AsyncMock(return_value=b"%PDF")
+    monkeypatch.setattr(client, "_request_bytes", request_bytes)
+
+    detail = await client.get_media_item(
+        99,
+        include_content=False,
+        include_versions=False,
+        include_version_content=True,
+    )
+    updated = await client.update_media_item(
+        99,
+        MediaUpdateRequest(title="Renamed", author="Ada"),
+    )
+    trashed = await client.trash_media_item(99)
+    restored = await client.restore_media_item(
+        99,
+        include_content=True,
+        include_versions=True,
+        include_version_content=False,
+    )
+    purged = await client.permanently_delete_media_item(99)
+    keywords = await client.update_media_keywords(
+        99,
+        MediaKeywordsUpdateRequest(keywords=["ai", "ml"], mode="set"),
+    )
+    downloaded = await client.download_media_file(99, file_type="original")
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/media/99")
+    assert mocked.await_args_list[0].kwargs["params"] == {
+        "include_content": "false",
+        "include_versions": "false",
+        "include_version_content": "true",
+    }
+    assert mocked.await_args_list[1].args[:2] == ("PUT", "/api/v1/media/99")
+    assert mocked.await_args_list[1].kwargs["json_data"] == {"title": "Renamed", "author": "Ada"}
+    assert mocked.await_args_list[2].args[:2] == ("DELETE", "/api/v1/media/99")
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/media/99/restore")
+    assert mocked.await_args_list[3].kwargs["params"] == {
+        "include_content": "true",
+        "include_versions": "true",
+        "include_version_content": "false",
+    }
+    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/media/99/permanent")
+    assert mocked.await_args_list[5].args[:2] == ("PATCH", "/api/v1/media/99/keywords")
+    assert mocked.await_args_list[5].kwargs["json_data"] == {"keywords": ["ai", "ml"], "mode": "set"}
+    assert request_bytes.await_args.args[:2] == ("GET", "/api/v1/media/99/file")
+    assert request_bytes.await_args.kwargs["params"] == {"file_type": "original"}
+    assert isinstance(detail, MediaDetailResponse)
+    assert isinstance(updated, MediaDetailResponse)
+    assert trashed == {"deleted": True}
+    assert isinstance(restored, MediaDetailResponse)
+    assert purged == {"deleted": True}
+    assert isinstance(keywords, MediaKeywordsResponse)
+    assert downloaded == b"%PDF"
 
 
 @pytest.mark.asyncio

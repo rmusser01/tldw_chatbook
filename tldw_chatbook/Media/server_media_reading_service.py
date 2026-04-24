@@ -16,6 +16,8 @@ from ..tldw_api import (
     ItemsBulkRequest,
     MediaSearchRequest,
     MediaIngestJobSubmitRequest,
+    MediaKeywordsUpdateRequest,
+    MediaUpdateRequest,
     ReadingArchiveCreateRequest,
     ReadingDigestScheduleCreateRequest,
     ReadingDigestScheduleUpdateRequest,
@@ -100,6 +102,62 @@ class ServerMediaReadingService:
             hard=hard,
         )
         return await self._require_client().bulk_update_reading_items(request_data)
+
+    async def get_media_item(
+        self,
+        media_id: Any,
+        *,
+        include_content: bool = True,
+        include_versions: bool = True,
+        include_version_content: bool = False,
+    ) -> Any:
+        return await self._require_client().get_media_item(
+            int(media_id),
+            include_content=include_content,
+            include_versions=include_versions,
+            include_version_content=include_version_content,
+        )
+
+    async def update_media_item(self, media_id: Any, **changes: Any) -> Any:
+        if changes.get("keywords") is not None:
+            raise ValueError("Use update_media_keywords for server media keyword changes.")
+        payload = {key: value for key, value in changes.items() if value is not None}
+        request_data = MediaUpdateRequest(**payload)
+        return await self._require_client().update_media_item(int(media_id), request_data)
+
+    async def trash_media_item(self, media_id: Any) -> Any:
+        return await self._require_client().trash_media_item(int(media_id))
+
+    async def restore_media_item(
+        self,
+        media_id: Any,
+        *,
+        include_content: bool = True,
+        include_versions: bool = True,
+        include_version_content: bool = False,
+    ) -> Any:
+        return await self._require_client().restore_media_item(
+            int(media_id),
+            include_content=include_content,
+            include_versions=include_versions,
+            include_version_content=include_version_content,
+        )
+
+    async def permanently_delete_media_item(self, media_id: Any) -> Any:
+        return await self._require_client().permanently_delete_media_item(int(media_id))
+
+    async def update_media_keywords(
+        self,
+        media_id: Any,
+        *,
+        keywords: list[str],
+        mode: str = "add",
+    ) -> Any:
+        request_data = MediaKeywordsUpdateRequest(keywords=keywords, mode=mode)
+        return await self._require_client().update_media_keywords(int(media_id), request_data)
+
+    async def download_media_file(self, media_id: Any, *, file_type: str = "original") -> bytes:
+        return await self._require_client().download_media_file(int(media_id), file_type=file_type)
 
     async def delete_media(self, media_id: Any) -> Any:
         return await self._require_client().delete_reading_item(int(media_id), hard=False)

@@ -56,6 +56,7 @@ ItemsBulkAction = Literal[
     "replace_tags",
     "delete",
 ]
+MediaKeywordsUpdateMode = Literal["add", "remove", "set"]
 
 _READING_SAVED_SEARCH_ALLOWED_QUERY_KEYS = {
     "q",
@@ -229,6 +230,88 @@ class ReferenceImageListItem(BaseModel):
 
 class ReferenceImageListResponse(BaseModel):
     items: list[ReferenceImageListItem] = Field(default_factory=list)
+
+
+class MediaSourceDetail(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    url: str | None = None
+    title: str
+    duration: float | str | None = None
+    type: str
+
+
+class MediaProcessingDetail(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    prompt: str | None = None
+    analysis: str | None = None
+    safe_metadata: dict[str, Any] | None = None
+    model: str | None = None
+    timestamp_option: bool | None = None
+    chunking_status: str | None = None
+    vector_processing_status: int | None = None
+
+
+class MediaContentDetail(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    text: str
+    word_count: int = Field(..., ge=0)
+
+
+class MediaUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=500)
+    content: str | None = Field(default=None, max_length=5_000_000)
+    author: str | None = Field(default=None, max_length=255)
+    analysis: str | None = Field(default=None, max_length=100_000)
+    prompt: str | None = Field(default=None, max_length=10_000)
+    keywords: list[str] | None = Field(default=None, max_length=50)
+
+    @field_validator("title", "author", "analysis", "prompt", mode="before")
+    @classmethod
+    def _strip_optional_string(cls, value: Any) -> Any:
+        if value is None:
+            return value
+        if not isinstance(value, str):
+            raise ValueError("value_must_be_string")
+        return value.strip()
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def _normalize_keywords(cls, value: Any) -> Any:
+        if value is None:
+            return value
+        if not isinstance(value, list):
+            raise ValueError("keywords_must_be_list")
+        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+
+
+class MediaKeywordsUpdateRequest(BaseModel):
+    keywords: list[str]
+    mode: MediaKeywordsUpdateMode = "add"
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def _normalize_keywords(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            raise ValueError("keywords_must_be_list")
+        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+
+
+class MediaKeywordsResponse(BaseModel):
+    media_id: int
+    keywords: list[str] = Field(default_factory=list)
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def _normalize_keywords(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("keywords_must_be_list")
+        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
 
 
 class FileArtifactsPurgeRequest(BaseModel):
@@ -614,6 +697,29 @@ class DocumentVersionDetailResponse(BaseModel):
     analysis_content: str | None = None
     safe_metadata: dict[str, Any] | None = None
     content: str | None = None
+
+
+class MediaDetailResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    media_id: int
+    source: MediaSourceDetail
+    processing: MediaProcessingDetail
+    content: MediaContentDetail
+    keywords: list[str] = Field(default_factory=list)
+    timestamps: list[str] = Field(default_factory=list)
+    versions: list[DocumentVersionDetailResponse] = Field(default_factory=list)
+    has_original_file: bool = False
+    original_file_url: str | None = None
+
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def _normalize_keywords(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("keywords_must_be_list")
+        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
 
 
 class ReadingUpdateRequest(BaseModel):

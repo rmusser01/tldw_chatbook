@@ -292,6 +292,58 @@ class FakeServerMediaService:
         self.calls.append(("undelete_media", media_id))
         raise ValueError("Server media undelete is not available yet.")
 
+    async def get_media_item(self, media_id, **kwargs):
+        self.calls.append(("get_media_item", media_id, kwargs))
+        return {
+            "media_id": media_id,
+            "source": {"url": None, "title": "Backing Media", "duration": None, "type": "pdf"},
+            "processing": {},
+            "content": {"metadata": {}, "text": "Body", "word_count": 1},
+            "keywords": ["ai"],
+            "timestamps": [],
+            "versions": [],
+        }
+
+    async def update_media_item(self, media_id, **changes):
+        self.calls.append(("update_media_item", media_id, changes))
+        return {
+            "media_id": media_id,
+            "source": {"url": None, "title": changes.get("title", "Backing Media"), "duration": None, "type": "pdf"},
+            "processing": {},
+            "content": {"metadata": {}, "text": changes.get("content", "Body"), "word_count": 1},
+            "keywords": ["ai"],
+            "timestamps": [],
+            "versions": [],
+        }
+
+    async def trash_media_item(self, media_id):
+        self.calls.append(("trash_media_item", media_id))
+        return {"deleted": True}
+
+    async def restore_media_item(self, media_id, **kwargs):
+        self.calls.append(("restore_media_item", media_id, kwargs))
+        return {
+            "media_id": media_id,
+            "source": {"url": None, "title": "Restored", "duration": None, "type": "pdf"},
+            "processing": {},
+            "content": {"metadata": {}, "text": "Body", "word_count": 1},
+            "keywords": ["ai"],
+            "timestamps": [],
+            "versions": [],
+        }
+
+    async def permanently_delete_media_item(self, media_id):
+        self.calls.append(("permanently_delete_media_item", media_id))
+        return {"deleted": True}
+
+    async def update_media_keywords(self, media_id, *, keywords, mode="add"):
+        self.calls.append(("update_media_keywords", media_id, keywords, mode))
+        return {"media_id": media_id, "keywords": keywords}
+
+    async def download_media_file(self, media_id, *, file_type="original"):
+        self.calls.append(("download_media_file", media_id, file_type))
+        return b"%PDF"
+
     async def get_reading_progress(self, media_id):
         self.calls.append(("get_reading_progress", media_id))
         return {
@@ -961,6 +1013,105 @@ async def test_scope_service_reads_progress_from_record_backing_media_id():
     assert server.calls == [("get_reading_progress", 99)]
     assert progress["backing_media_id"] == 99
     assert progress["percent_complete"] == 25.0
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_backing_media_item_lifecycle_with_policy():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    detail = await scope.get_backing_media_item(
+        mode="server",
+        media_id=99,
+        include_content=False,
+        include_versions=False,
+        include_version_content=True,
+    )
+    updated = await scope.update_backing_media_item(mode="server", media_id=99, title="Renamed")
+    trashed = await scope.trash_backing_media_item(mode="server", media_id=99)
+    restored = await scope.restore_backing_media_item(mode="server", media_id=99)
+    purged = await scope.permanently_delete_backing_media_item(mode="server", media_id=99)
+    keywords = await scope.update_backing_media_keywords(
+        mode="server",
+        media_id=99,
+        keywords=["ai", "ml"],
+        update_mode="set",
+    )
+    downloaded = await scope.download_backing_media_file(mode="server", media_id=99)
+
+    assert policy.calls == [
+        "media.items.detail.server",
+        "media.items.update.server",
+        "media.items.delete.server",
+        "media.items.restore.server",
+        "media.items.permanent_delete.server",
+        "media.items.keywords.update.server",
+        "media.items.file.detail.server",
+    ]
+    assert detail["media_id"] == 99
+    assert updated["source"]["title"] == "Renamed"
+    assert trashed == {"deleted": True}
+    assert restored["media_id"] == 99
+    assert purged == {"deleted": True}
+    assert keywords == {"media_id": 99, "keywords": ["ai", "ml"]}
+    assert downloaded == b"%PDF"
+    assert server.calls[:7] == [
+        (
+            "get_media_item",
+            99,
+            {
+                "include_content": False,
+                "include_versions": False,
+                "include_version_content": True,
+            },
+        ),
+        ("update_media_item", 99, {"title": "Renamed"}),
+        ("trash_media_item", 99),
+        (
+            "restore_media_item",
+            99,
+            {
+                "include_content": True,
+                "include_versions": True,
+                "include_version_content": False,
+            },
+        ),
+        ("permanently_delete_media_item", 99),
+        ("update_media_keywords", 99, ["ai", "ml"], "set"),
+        ("download_media_file", 99, "original"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_local_backing_media_item_lifecycle_before_policy():
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.get_backing_media_item(mode="local", media_id=12)
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.update_backing_media_item(mode="local", media_id=12, title="Nope")
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.trash_backing_media_item(mode="local", media_id=12)
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.restore_backing_media_item(mode="local", media_id=12)
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.permanently_delete_backing_media_item(mode="local", media_id=12)
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.update_backing_media_keywords(mode="local", media_id=12, keywords=["ai"])
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await scope.download_backing_media_file(mode="local", media_id=12)
+
+    assert policy.calls == []
 
 
 @pytest.mark.asyncio

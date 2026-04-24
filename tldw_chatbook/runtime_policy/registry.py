@@ -146,6 +146,8 @@ INSPECT = _action("inspect", "detail")
 REVOKE = _action("revoke", "delete")
 CAPTURE = _action("capture", "launch")
 STATUS = _action("status", "detail")
+RESTORE = _action("restore", "update")
+PERMANENT_DELETE = _action("permanent_delete", "delete")
 
 CRUD_ACTIONS = (LIST, DETAIL, CREATE, UPDATE, DELETE)
 DISCOVER_TRIGGER_OBSERVE_ACTIONS = (LIST, LAUNCH, OBSERVE)
@@ -282,6 +284,13 @@ AUDITED_CAPABILITY_SEEDS = (
                 actions=(LIST, CREATE, UPDATE, DELETE),
                 sources=(SERVER_SOURCE,),
             ),
+            _resource(
+                "media.items",
+                actions=(DETAIL, UPDATE, DELETE, RESTORE, PERMANENT_DELETE),
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource("media.items.keywords", actions=(UPDATE,), sources=(SERVER_SOURCE,)),
+            _resource("media.items.file", actions=(DETAIL,), sources=(SERVER_SOURCE,)),
             _resource("media.ingestion_sources", actions=CRUD_ACTIONS),
             _resource("media.ingestion_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE)),
             _resource("media.web_content_ingest", actions=(LAUNCH,), sources=(SERVER_SOURCE,)),

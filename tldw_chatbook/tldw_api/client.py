@@ -70,10 +70,14 @@ from .media_reading_schemas import (
     IngestionSourceSyncTriggerResponse,
     ItemsBulkRequest,
     ItemsBulkResponse,
+    MediaDetailResponse,
     MediaIngestJobListResponse,
     MediaIngestJobStatus,
     MediaIngestJobStreamEvent,
     MediaIngestJobSubmitRequest,
+    MediaKeywordsResponse,
+    MediaKeywordsUpdateRequest,
+    MediaUpdateRequest,
     ReadingArchiveCreateRequest,
     ReadingArchiveResponse,
     ReadingDigestOutputsListResponse,
@@ -905,6 +909,83 @@ class TLDWAPIClient:
                 "results_per_page": results_per_page,
                 "include_keywords": str(include_keywords).lower(),
             },
+        )
+
+    async def get_media_item(
+        self,
+        media_id: int,
+        *,
+        include_content: bool = True,
+        include_versions: bool = True,
+        include_version_content: bool = False,
+    ) -> MediaDetailResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}",
+            params={
+                "include_content": str(include_content).lower(),
+                "include_versions": str(include_versions).lower(),
+                "include_version_content": str(include_version_content).lower(),
+            },
+        )
+        return MediaDetailResponse.model_validate(response)
+
+    async def update_media_item(
+        self,
+        media_id: int,
+        request_data: MediaUpdateRequest,
+    ) -> MediaDetailResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/media/{media_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return MediaDetailResponse.model_validate(response)
+
+    async def trash_media_item(self, media_id: int) -> Dict[str, Any]:
+        response = await self._request("DELETE", f"/api/v1/media/{media_id}")
+        return {"deleted": True, **response}
+
+    async def restore_media_item(
+        self,
+        media_id: int,
+        *,
+        include_content: bool = True,
+        include_versions: bool = True,
+        include_version_content: bool = False,
+    ) -> MediaDetailResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/restore",
+            params={
+                "include_content": str(include_content).lower(),
+                "include_versions": str(include_versions).lower(),
+                "include_version_content": str(include_version_content).lower(),
+            },
+        )
+        return MediaDetailResponse.model_validate(response)
+
+    async def permanently_delete_media_item(self, media_id: int) -> Dict[str, Any]:
+        response = await self._request("DELETE", f"/api/v1/media/{media_id}/permanent")
+        return {"deleted": True, **response}
+
+    async def update_media_keywords(
+        self,
+        media_id: int,
+        request_data: MediaKeywordsUpdateRequest,
+    ) -> MediaKeywordsResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/media/{media_id}/keywords",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return MediaKeywordsResponse.model_validate(response)
+
+    async def download_media_file(self, media_id: int, *, file_type: str = "original") -> bytes:
+        return await self._request_bytes(
+            "GET",
+            f"/api/v1/media/{media_id}/file",
+            params={"file_type": file_type},
         )
 
     async def create_file_artifact(self, request_data: FileCreateRequest) -> Dict[str, Any]:

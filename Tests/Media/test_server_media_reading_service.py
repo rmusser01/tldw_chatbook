@@ -25,6 +25,72 @@ class FakeClient:
         self.calls.append(("delete_reading_item", item_id, hard))
         return {"status": "deleted", "item_id": item_id, "hard": hard}
 
+    async def get_media_item(
+        self,
+        media_id,
+        *,
+        include_content=True,
+        include_versions=True,
+        include_version_content=False,
+    ):
+        self.calls.append(("get_media_item", media_id, include_content, include_versions, include_version_content))
+        return {
+            "media_id": media_id,
+            "source": {"url": None, "title": "Server Media", "duration": None, "type": "pdf"},
+            "processing": {},
+            "content": {"metadata": {}, "text": "Body", "word_count": 1},
+            "keywords": ["ai"],
+            "timestamps": [],
+            "versions": [],
+        }
+
+    async def update_media_item(self, media_id, request_data):
+        self.calls.append(("update_media_item", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "media_id": media_id,
+            "source": {"url": None, "title": "Renamed", "duration": None, "type": "pdf"},
+            "processing": {},
+            "content": {"metadata": {}, "text": "Body", "word_count": 1},
+            "keywords": ["ai"],
+            "timestamps": [],
+            "versions": [],
+        }
+
+    async def trash_media_item(self, media_id):
+        self.calls.append(("trash_media_item", media_id))
+        return {"deleted": True}
+
+    async def restore_media_item(
+        self,
+        media_id,
+        *,
+        include_content=True,
+        include_versions=True,
+        include_version_content=False,
+    ):
+        self.calls.append(("restore_media_item", media_id, include_content, include_versions, include_version_content))
+        return {
+            "media_id": media_id,
+            "source": {"url": None, "title": "Restored", "duration": None, "type": "pdf"},
+            "processing": {},
+            "content": {"metadata": {}, "text": "Body", "word_count": 1},
+            "keywords": ["ai"],
+            "timestamps": [],
+            "versions": [],
+        }
+
+    async def permanently_delete_media_item(self, media_id):
+        self.calls.append(("permanently_delete_media_item", media_id))
+        return {"deleted": True}
+
+    async def update_media_keywords(self, media_id, request_data):
+        self.calls.append(("update_media_keywords", media_id, request_data.model_dump(mode="json")))
+        return {"media_id": media_id, "keywords": ["ai", "ml"]}
+
+    async def download_media_file(self, media_id, *, file_type="original"):
+        self.calls.append(("download_media_file", media_id, file_type))
+        return b"%PDF"
+
     async def bulk_update_reading_items(self, request_data):
         self.calls.append(("bulk_update_reading_items", request_data.model_dump(exclude_none=True, mode="json")))
         return {
@@ -586,6 +652,67 @@ async def test_server_service_rejects_local_only_metadata_fields():
 
     with pytest.raises(ValueError, match="Unsupported server media metadata fields: author"):
         await service.update_media_metadata(41, author="Ada")
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_media_item_lifecycle_to_true_media_endpoints():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    detail = await service.get_media_item(
+        99,
+        include_content=False,
+        include_versions=False,
+        include_version_content=True,
+    )
+    updated = await service.update_media_item(
+        99,
+        title="Renamed",
+        author="Ada",
+        content="Body",
+        prompt="Prompt",
+        analysis="Analysis",
+    )
+    trashed = await service.trash_media_item(99)
+    restored = await service.restore_media_item(99)
+    purged = await service.permanently_delete_media_item(99)
+    keywords = await service.update_media_keywords(99, keywords=["ai", "ml"], mode="set")
+    downloaded = await service.download_media_file(99, file_type="original")
+
+    assert detail["media_id"] == 99
+    assert updated["source"]["title"] == "Renamed"
+    assert trashed == {"deleted": True}
+    assert restored["media_id"] == 99
+    assert purged == {"deleted": True}
+    assert keywords == {"media_id": 99, "keywords": ["ai", "ml"]}
+    assert downloaded == b"%PDF"
+    assert client.calls == [
+        ("get_media_item", 99, False, False, True),
+        (
+            "update_media_item",
+            99,
+            {
+                "title": "Renamed",
+                "content": "Body",
+                "author": "Ada",
+                "analysis": "Analysis",
+                "prompt": "Prompt",
+            },
+        ),
+        ("trash_media_item", 99),
+        ("restore_media_item", 99, True, True, False),
+        ("permanently_delete_media_item", 99),
+        ("update_media_keywords", 99, {"keywords": ["ai", "ml"], "mode": "set"}),
+        ("download_media_file", 99, "original"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_rejects_media_item_keywords_on_general_update():
+    service = ServerMediaReadingService(client=FakeClient())
+
+    with pytest.raises(ValueError, match="Use update_media_keywords"):
+        await service.update_media_item(99, title="Renamed", keywords=["ai"])
 
 
 @pytest.mark.asyncio
