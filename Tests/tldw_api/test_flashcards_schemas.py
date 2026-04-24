@@ -10,6 +10,10 @@ from tldw_chatbook.tldw_api import (
     FlashcardResponse,
     FlashcardReviewRequest,
     FlashcardReviewResponse,
+    FlashcardTemplateCreateRequest,
+    FlashcardTemplateListResponse,
+    FlashcardTemplateResponse,
+    FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
 )
 
@@ -159,6 +163,53 @@ def test_flashcard_next_review_response_defaults_to_no_card():
     payload = FlashcardNextReviewResponse.model_validate({"card": None, "selection_reason": "none"})
     assert payload.card is None
     assert payload.selection_reason == "none"
+
+
+def test_flashcard_template_models_round_trip_server_shape():
+    create_payload = FlashcardTemplateCreateRequest(
+        name="Cloze Drill",
+        model_type="cloze",
+        front_template="{{statement}}",
+        notes_template="Focus: {{topic}}",
+        placeholder_definitions=[
+            {
+                "key": "statement",
+                "label": "Statement",
+                "required": True,
+                "targets": ["front_template"],
+            }
+        ],
+    )
+    update_payload = FlashcardTemplateUpdateRequest(
+        notes_template="Updated focus: {{topic}}",
+        expected_version=2,
+    )
+    response = FlashcardTemplateResponse.model_validate(
+        {
+            "id": 12,
+            "name": "Cloze Drill",
+            "model_type": "cloze",
+            "front_template": "{{statement}}",
+            "back_template": None,
+            "notes_template": "Focus: {{topic}}",
+            "extra_template": None,
+            "placeholder_definitions": create_payload.placeholder_definitions,
+            "created_at": "2026-04-23T12:00:00Z",
+            "last_modified": "2026-04-23T12:05:00Z",
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 2,
+        }
+    )
+    listed = FlashcardTemplateListResponse.model_validate({"items": [response], "count": 1, "total": 1})
+
+    assert create_payload.model_dump(mode="json", exclude_none=True)["placeholder_definitions"][0]["key"] == "statement"
+    assert update_payload.model_dump(mode="json", exclude_none=True) == {
+        "notes_template": "Updated focus: {{topic}}",
+        "expected_version": 2,
+    }
+    assert response.placeholder_definitions[0].targets == ["front_template"]
+    assert listed.items[0].id == 12
 
 
 def test_flashcard_create_request_preserves_optional_fields():

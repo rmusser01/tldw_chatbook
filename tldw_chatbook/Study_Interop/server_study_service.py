@@ -13,6 +13,8 @@ from ..tldw_api import (
     FlashcardResetSchedulingRequest,
     FlashcardReviewRequest,
     FlashcardTagsUpdateRequest,
+    FlashcardTemplateCreateRequest,
+    FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
     StudyPackCreateJobRequest,
     StudyPackSourceSelection,
@@ -220,6 +222,81 @@ class ServerStudyService:
         payload = self._model_to_dict(response)
         payload["source"] = "server"
         return payload
+
+    async def create_flashcard_template(
+        self,
+        *,
+        name: str,
+        model_type: str = "basic",
+        front_template: str,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().create_flashcard_template(
+            FlashcardTemplateCreateRequest(
+                name=name,
+                model_type=model_type,
+                front_template=front_template,
+                back_template=back_template,
+                notes_template=notes_template,
+                extra_template=extra_template,
+                placeholder_definitions=placeholder_definitions or [],
+            )
+        )
+        return self._model_to_dict(response)
+
+    async def list_flashcard_templates(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().list_flashcard_templates(limit=limit, offset=offset)
+        )
+
+    async def get_flashcard_template(self, template_id: int) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().get_flashcard_template(int(template_id))
+        )
+
+    async def update_flashcard_template(
+        self,
+        template_id: int,
+        *,
+        name: Optional[str] = None,
+        model_type: Optional[str] = None,
+        front_template: Optional[str] = None,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+        expected_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        payload = {
+            key: value
+            for key, value in {
+                "name": name,
+                "model_type": model_type,
+                "front_template": front_template,
+                "back_template": back_template,
+                "notes_template": notes_template,
+                "extra_template": extra_template,
+                "placeholder_definitions": placeholder_definitions,
+                "expected_version": expected_version,
+            }.items()
+            if value is not None
+        }
+        response = await self._require_client().update_flashcard_template(
+            int(template_id),
+            FlashcardTemplateUpdateRequest(**payload),
+        )
+        return self._model_to_dict(response)
+
+    async def delete_flashcard_template(self, template_id: int, *, expected_version: int) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().delete_flashcard_template(
+                int(template_id),
+                expected_version=expected_version,
+            )
+        )
 
     async def delete_deck(
         self,

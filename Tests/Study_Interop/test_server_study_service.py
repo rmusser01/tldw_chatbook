@@ -118,6 +118,74 @@ class FakeClient:
             }
         )
 
+    async def create_flashcard_template(self, request_data):
+        payload = request_data.model_dump(mode="json", exclude_none=True)
+        self.calls.append(("create_flashcard_template", payload))
+        return {
+            "id": 12,
+            "name": payload["name"],
+            "model_type": payload["model_type"],
+            "front_template": payload["front_template"],
+            "back_template": payload.get("back_template"),
+            "notes_template": payload.get("notes_template"),
+            "extra_template": payload.get("extra_template"),
+            "placeholder_definitions": payload.get("placeholder_definitions", []),
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 1,
+        }
+
+    async def list_flashcard_templates(self, *, limit=100, offset=0):
+        self.calls.append(("list_flashcard_templates", limit, offset))
+        return {
+            "items": [
+                {
+                    "id": 12,
+                    "name": "Cloze Drill",
+                    "model_type": "cloze",
+                    "front_template": "{{statement}}",
+                    "placeholder_definitions": [],
+                    "deleted": False,
+                    "client_id": "server-client",
+                    "version": 1,
+                }
+            ],
+            "count": 1,
+            "total": 1,
+        }
+
+    async def get_flashcard_template(self, template_id):
+        self.calls.append(("get_flashcard_template", template_id))
+        return {
+            "id": template_id,
+            "name": "Cloze Drill",
+            "model_type": "cloze",
+            "front_template": "{{statement}}",
+            "placeholder_definitions": [],
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 1,
+        }
+
+    async def update_flashcard_template(self, template_id, request_data):
+        payload = request_data.model_dump(mode="json", exclude_unset=True)
+        self.calls.append(("update_flashcard_template", template_id, payload))
+        return {
+            "id": template_id,
+            "name": "Cloze Drill",
+            "model_type": "cloze",
+            "front_template": "{{statement}}",
+            "notes_template": payload.get("notes_template"),
+            "placeholder_definitions": [],
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 2,
+        }
+
+    async def delete_flashcard_template(self, template_id, *, expected_version):
+        self.calls.append(("delete_flashcard_template", template_id, expected_version))
+        return {"deleted": True}
+
     async def create_study_pack_job(self, request_data):
         self.calls.append(("create_study_pack_job", request_data.model_dump(mode="json", exclude_none=True)))
         return StudyPackJobAcceptedResponse.model_validate(
@@ -330,6 +398,64 @@ async def test_server_study_service_exposes_flashcard_management_routes():
     assert client.calls[-2:] == [
         ("get_flashcard_tags", CARD_UUID),
         ("get_flashcard_analytics_summary", 9, "ws-1", True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_exposes_flashcard_template_routes():
+    client = FakeClient()
+    service = ServerStudyService(client=client)
+
+    created = await service.create_flashcard_template(
+        name="Cloze Drill",
+        model_type="cloze",
+        front_template="{{statement}}",
+        notes_template="Focus: {{topic}}",
+        placeholder_definitions=[
+            {
+                "key": "statement",
+                "label": "Statement",
+                "required": True,
+                "targets": ["front_template"],
+            }
+        ],
+    )
+    listed = await service.list_flashcard_templates(limit=25, offset=5)
+    fetched = await service.get_flashcard_template(12)
+    updated = await service.update_flashcard_template(
+        12,
+        notes_template="Updated focus: {{topic}}",
+        expected_version=1,
+    )
+    deleted = await service.delete_flashcard_template(12, expected_version=2)
+
+    assert created["name"] == "Cloze Drill"
+    assert listed["items"][0]["id"] == 12
+    assert fetched["id"] == 12
+    assert updated["notes_template"] == "Updated focus: {{topic}}"
+    assert deleted == {"deleted": True}
+    assert client.calls == [
+        (
+            "create_flashcard_template",
+            {
+                "name": "Cloze Drill",
+                "model_type": "cloze",
+                "front_template": "{{statement}}",
+                "notes_template": "Focus: {{topic}}",
+                "placeholder_definitions": [
+                    {
+                        "key": "statement",
+                        "label": "Statement",
+                        "required": True,
+                        "targets": ["front_template"],
+                    }
+                ],
+            },
+        ),
+        ("list_flashcard_templates", 25, 5),
+        ("get_flashcard_template", 12),
+        ("update_flashcard_template", 12, {"notes_template": "Updated focus: {{topic}}", "expected_version": 1}),
+        ("delete_flashcard_template", 12, 2),
     ]
 
 

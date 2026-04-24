@@ -15,6 +15,8 @@ except Exception:  # pragma: no cover - pydantic v1 fallback
 DeckSchedulerType = Literal["sm2_plus", "fsrs"]
 ReviewSelectionReason = Literal["learning_due", "review_due", "new", "none"]
 QueueState = Literal["new", "learning", "review", "relearning", "suspended"]
+FlashcardTemplateModelType = Literal["basic", "basic_reverse", "cloze"]
+FlashcardTemplateFieldTarget = Literal["front_template", "back_template", "notes_template", "extra_template"]
 
 
 class FlashcardDeckCreateRequest(BaseModel):
@@ -51,6 +53,64 @@ class FlashcardDeckResponse(BaseModel):
     version: int = 1
     scheduler_type: Optional[DeckSchedulerType] = None
     scheduler_settings: Optional[dict[str, Any]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardTemplatePlaceholderDefinition(BaseModel):
+    key: str = Field(..., min_length=1)
+    label: str = Field(..., min_length=1)
+    help_text: Optional[str] = None
+    default_value: Optional[str] = None
+    required: bool = False
+    targets: list[FlashcardTemplateFieldTarget] = Field(..., min_length=1)
+
+
+class FlashcardTemplateCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    model_type: FlashcardTemplateModelType = "basic"
+    front_template: str = Field(..., min_length=1)
+    back_template: Optional[str] = None
+    notes_template: Optional[str] = None
+    extra_template: Optional[str] = None
+    placeholder_definitions: list[FlashcardTemplatePlaceholderDefinition] = Field(default_factory=list)
+
+
+class FlashcardTemplateUpdateRequest(BaseModel):
+    name: Optional[str] = Field(None, min_length=1)
+    model_type: Optional[FlashcardTemplateModelType] = None
+    front_template: Optional[str] = None
+    back_template: Optional[str] = None
+    notes_template: Optional[str] = None
+    extra_template: Optional[str] = None
+    placeholder_definitions: Optional[list[FlashcardTemplatePlaceholderDefinition]] = None
+    expected_version: Optional[int] = Field(None, ge=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class FlashcardTemplateResponse(BaseModel):
+    id: int
+    name: str
+    model_type: FlashcardTemplateModelType
+    front_template: str
+    back_template: Optional[str] = None
+    notes_template: Optional[str] = None
+    extra_template: Optional[str] = None
+    placeholder_definitions: list[FlashcardTemplatePlaceholderDefinition] = Field(default_factory=list)
+    created_at: Optional[str] = None
+    last_modified: Optional[str] = None
+    deleted: bool
+    client_id: Optional[str] = None
+    version: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardTemplateListResponse(BaseModel):
+    items: list[FlashcardTemplateResponse]
+    count: int
+    total: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 

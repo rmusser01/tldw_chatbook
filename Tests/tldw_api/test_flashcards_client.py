@@ -18,6 +18,10 @@ from tldw_chatbook.tldw_api import (
     FlashcardReviewResponse,
     FlashcardTagsResponse,
     FlashcardTagsUpdateRequest,
+    FlashcardTemplateCreateRequest,
+    FlashcardTemplateListResponse,
+    FlashcardTemplateResponse,
+    FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
     TLDWAPIClient,
 )
@@ -404,3 +408,97 @@ async def test_flashcard_management_routes_wire_and_return_typed_models(monkeypa
     assert deck.review_prompt_side == "back"
     assert tags.items == ["biology", "cell"]
     assert analytics.decks[0].deck_name == "Biology"
+
+
+@pytest.mark.asyncio
+async def test_flashcard_template_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    template_payload = {
+        "id": 12,
+        "name": "Cloze Drill",
+        "model_type": "cloze",
+        "front_template": "{{statement}}",
+        "back_template": None,
+        "notes_template": "Focus: {{topic}}",
+        "extra_template": None,
+        "placeholder_definitions": [
+            {
+                "key": "statement",
+                "label": "Statement",
+                "required": True,
+                "targets": ["front_template"],
+            }
+        ],
+        "created_at": "2026-04-23T12:00:00Z",
+        "last_modified": "2026-04-23T12:05:00Z",
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 2,
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            template_payload,
+            {"items": [template_payload], "count": 1, "total": 1},
+            template_payload,
+            {**template_payload, "notes_template": "Updated focus: {{topic}}", "version": 3},
+            {"deleted": True},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    created = await client.create_flashcard_template(
+        FlashcardTemplateCreateRequest(
+            name="Cloze Drill",
+            model_type="cloze",
+            front_template="{{statement}}",
+            notes_template="Focus: {{topic}}",
+            placeholder_definitions=[
+                {
+                    "key": "statement",
+                    "label": "Statement",
+                    "required": True,
+                    "targets": ["front_template"],
+                }
+            ],
+        )
+    )
+    listed = await client.list_flashcard_templates(limit=25, offset=5)
+    fetched = await client.get_flashcard_template(12)
+    updated = await client.update_flashcard_template(
+        12,
+        FlashcardTemplateUpdateRequest(notes_template="Updated focus: {{topic}}", expected_version=2),
+    )
+    deleted = await client.delete_flashcard_template(12, expected_version=3)
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/flashcards/templates")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "name": "Cloze Drill",
+        "model_type": "cloze",
+        "front_template": "{{statement}}",
+        "notes_template": "Focus: {{topic}}",
+        "placeholder_definitions": [
+            {
+                "key": "statement",
+                "label": "Statement",
+                "required": True,
+                "targets": ["front_template"],
+            }
+        ],
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/flashcards/templates")
+    assert mocked.await_args_list[1].kwargs["params"] == {"limit": 25, "offset": 5}
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/flashcards/templates/12")
+    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/flashcards/templates/12")
+    assert mocked.await_args_list[3].kwargs["json_data"] == {
+        "notes_template": "Updated focus: {{topic}}",
+        "expected_version": 2,
+    }
+    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/flashcards/templates/12")
+    assert mocked.await_args_list[4].kwargs["params"] == {"expected_version": 3}
+
+    assert isinstance(created, FlashcardTemplateResponse)
+    assert isinstance(listed, FlashcardTemplateListResponse)
+    assert isinstance(fetched, FlashcardTemplateResponse)
+    assert isinstance(updated, FlashcardTemplateResponse)
+    assert updated.notes_template == "Updated focus: {{topic}}"
+    assert deleted == {"deleted": True}

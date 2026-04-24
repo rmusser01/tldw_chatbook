@@ -219,6 +219,120 @@ class FakeServerStudyService:
             "decks": [{"deck_id": 7, "deck_name": "Biology"}],
         }
 
+    async def create_flashcard_template(
+        self,
+        *,
+        name,
+        model_type="basic",
+        front_template,
+        back_template=None,
+        notes_template=None,
+        extra_template=None,
+        placeholder_definitions=None,
+    ):
+        self.calls.append(
+            (
+                "create_flashcard_template",
+                name,
+                model_type,
+                front_template,
+                back_template,
+                notes_template,
+                extra_template,
+                placeholder_definitions,
+            )
+        )
+        return {
+            "id": 12,
+            "name": name,
+            "model_type": model_type,
+            "front_template": front_template,
+            "back_template": back_template,
+            "notes_template": notes_template,
+            "extra_template": extra_template,
+            "placeholder_definitions": placeholder_definitions or [],
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 1,
+        }
+
+    async def list_flashcard_templates(self, *, limit=100, offset=0):
+        self.calls.append(("list_flashcard_templates", limit, offset))
+        return {
+            "items": [
+                {
+                    "id": 12,
+                    "name": "Cloze Drill",
+                    "model_type": "cloze",
+                    "front_template": "{{statement}}",
+                    "placeholder_definitions": [],
+                    "deleted": False,
+                    "client_id": "server-client",
+                    "version": 1,
+                }
+            ],
+            "count": 1,
+            "total": 1,
+        }
+
+    async def get_flashcard_template(self, template_id):
+        self.calls.append(("get_flashcard_template", template_id))
+        return {
+            "id": template_id,
+            "name": "Cloze Drill",
+            "model_type": "cloze",
+            "front_template": "{{statement}}",
+            "placeholder_definitions": [],
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 1,
+        }
+
+    async def update_flashcard_template(
+        self,
+        template_id,
+        *,
+        name=None,
+        model_type=None,
+        front_template=None,
+        back_template=None,
+        notes_template=None,
+        extra_template=None,
+        placeholder_definitions=None,
+        expected_version=None,
+    ):
+        self.calls.append(
+            (
+                "update_flashcard_template",
+                template_id,
+                name,
+                model_type,
+                front_template,
+                back_template,
+                notes_template,
+                extra_template,
+                placeholder_definitions,
+                expected_version,
+            )
+        )
+        return {
+            "id": template_id,
+            "name": name or "Cloze Drill",
+            "model_type": model_type or "cloze",
+            "front_template": front_template or "{{statement}}",
+            "back_template": back_template,
+            "notes_template": notes_template,
+            "extra_template": extra_template,
+            "placeholder_definitions": placeholder_definitions or [],
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 2,
+        }
+
+    async def delete_flashcard_template(self, template_id, *, expected_version):
+        self.calls.append(("delete_flashcard_template", template_id, expected_version))
+        return {"deleted": True}
+
     async def end_review_session(self, review_session_id):
         self.calls.append(("end_review_session", review_session_id))
         return {"id": review_session_id, "status": "completed"}
@@ -723,6 +837,46 @@ async def test_scope_service_routes_server_flashcard_management_actions():
 
     with pytest.raises(ValueError, match="server-only"):
         await scope.reset_flashcard_scheduling(mode="local", card_id="card-local-1", expected_version=1)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_flashcard_template_actions():
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+
+    created = await scope.create_flashcard_template(
+        mode="server",
+        name="Cloze Drill",
+        model_type="cloze",
+        front_template="{{statement}}",
+        notes_template="Focus: {{topic}}",
+    )
+    listed = await scope.list_flashcard_templates(mode="server", limit=25, offset=5)
+    fetched = await scope.get_flashcard_template(mode="server", template_id=12)
+    updated = await scope.update_flashcard_template(
+        mode="server",
+        template_id=12,
+        notes_template="Updated focus: {{topic}}",
+        expected_version=1,
+    )
+    deleted = await scope.delete_flashcard_template(mode="server", template_id=12, expected_version=2)
+
+    assert created["record_id"] == "server:flashcard_template:12"
+    assert listed["source"] == "server"
+    assert listed["items"][0]["record_id"] == "server:flashcard_template:12"
+    assert fetched["record_id"] == "server:flashcard_template:12"
+    assert updated["notes_template"] == "Updated focus: {{topic}}"
+    assert deleted is True
+    assert server.calls == [
+        ("create_flashcard_template", "Cloze Drill", "cloze", "{{statement}}", None, "Focus: {{topic}}", None, None),
+        ("list_flashcard_templates", 25, 5),
+        ("get_flashcard_template", 12),
+        ("update_flashcard_template", 12, None, None, None, None, "Updated focus: {{topic}}", None, None, 1),
+        ("delete_flashcard_template", 12, 2),
+    ]
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.list_flashcard_templates(mode="local")
 
 
 @pytest.mark.asyncio

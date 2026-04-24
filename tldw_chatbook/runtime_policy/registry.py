@@ -305,6 +305,12 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=SEPARATED_SOURCES,
         resources=(
             _resource("study.deck", actions=CRUD_ACTIONS, domain_id="study"),
+            _resource(
+                "study.flashcard.template",
+                actions=CRUD_ACTIONS,
+                domain_id="study",
+                sources=(SERVER_SOURCE,),
+            ),
             _resource("quiz", actions=CRUD_ACTIONS, domain_id="quiz"),
             _resource("quiz.question", actions=(LIST, DETAIL), domain_id="quiz"),
             _resource("quiz.attempt", actions=(CREATE, OBSERVE), domain_id="quiz"),

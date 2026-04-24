@@ -267,6 +267,10 @@ from .flashcards_schemas import (
     FlashcardReviewSessionSummary,
     FlashcardTagsResponse,
     FlashcardTagsUpdateRequest,
+    FlashcardTemplateCreateRequest,
+    FlashcardTemplateListResponse,
+    FlashcardTemplateResponse,
+    FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
 )
 from .study_extensions_schemas import (
@@ -2827,6 +2831,53 @@ class TLDWAPIClient:
             },
         )
         return FlashcardAnalyticsSummaryResponse.model_validate(response)
+
+    async def create_flashcard_template(
+        self,
+        request_data: FlashcardTemplateCreateRequest,
+    ) -> FlashcardTemplateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/templates",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardTemplateResponse.model_validate(response)
+
+    async def list_flashcard_templates(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> FlashcardTemplateListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/templates",
+            params={"limit": limit, "offset": offset},
+        )
+        return FlashcardTemplateListResponse.model_validate(response)
+
+    async def get_flashcard_template(self, template_id: int) -> FlashcardTemplateResponse:
+        response = await self._request("GET", f"/api/v1/flashcards/templates/{template_id}")
+        return FlashcardTemplateResponse.model_validate(response)
+
+    async def update_flashcard_template(
+        self,
+        template_id: int,
+        request_data: FlashcardTemplateUpdateRequest,
+    ) -> FlashcardTemplateResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/flashcards/templates/{template_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+        return FlashcardTemplateResponse.model_validate(response)
+
+    async def delete_flashcard_template(self, template_id: int, *, expected_version: int) -> dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/flashcards/templates/{template_id}",
+            params={"expected_version": expected_version},
+        )
 
     async def delete_flashcard(
         self,
