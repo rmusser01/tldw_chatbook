@@ -6,6 +6,8 @@ import logging
 import threading
 import sqlite3  # For exception handling in _get_db
 import time
+import json
+import uuid
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Union
 #
@@ -271,6 +273,134 @@ class NotesInteropService:
     def unlink_note_from_keyword(self, user_id: str, note_id: str, keyword_id: int) -> bool:
         db = self._get_db(user_id)
         return db.unlink_note_from_keyword(note_id=note_id, keyword_id=keyword_id)
+
+    @staticmethod
+    def _ensure_note_link_schema(db: CharactersRAGDB) -> None:
+        conn = db.get_connection()
+        conn.executescript(
+            """
+            PRAGMA foreign_keys = ON;
+
+            CREATE TABLE IF NOT EXISTS LocalNoteGraphLinks (
+                edge_id TEXT PRIMARY KEY,
+                from_note_id TEXT NOT NULL,
+                to_note_id TEXT NOT NULL,
+                directed INTEGER NOT NULL DEFAULT 0,
+                weight REAL NOT NULL DEFAULT 1.0,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                client_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deleted INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (from_note_id) REFERENCES notes(id) ON DELETE CASCADE,
+                FOREIGN KEY (to_note_id) REFERENCES notes(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_local_note_graph_links_from
+            ON LocalNoteGraphLinks(client_id, from_note_id, deleted);
+
+            CREATE INDEX IF NOT EXISTS idx_local_note_graph_links_to
+            ON LocalNoteGraphLinks(client_id, to_note_id, deleted);
+            """
+        )
+        conn.commit()
+
+    @staticmethod
+    def _note_link_record(row: Any) -> Dict[str, Any]:
+        metadata = json.loads(row["metadata_json"] or "{}")
+        return {
+            "id": row["edge_id"],
+            "source": row["from_note_id"],
+            "target": row["to_note_id"],
+            "type": "manual",
+            "directed": bool(row["directed"]),
+            "weight": float(row["weight"]),
+            "metadata": metadata,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def create_note_link(
+        self,
+        user_id: str,
+        note_id: str,
+        to_note_id: str,
+        *,
+        directed: bool = False,
+        weight: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        db = self._get_db(user_id)
+        self._ensure_note_link_schema(db)
+        if not db.get_note_by_id(note_id=note_id):
+            raise ValueError(f"Source note '{note_id}' not found.")
+        if not db.get_note_by_id(note_id=to_note_id):
+            raise ValueError(f"Target note '{to_note_id}' not found.")
+        edge_id = f"local:manual:{uuid.uuid4()}"
+        metadata_json = json.dumps(metadata or {}, sort_keys=True)
+        with db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO LocalNoteGraphLinks
+                    (edge_id, from_note_id, to_note_id, directed, weight, metadata_json, client_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    edge_id,
+                    note_id,
+                    to_note_id,
+                    1 if directed else 0,
+                    1.0 if weight is None else float(weight),
+                    metadata_json,
+                    user_id,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM LocalNoteGraphLinks WHERE edge_id = ?",
+                (edge_id,),
+            ).fetchone()
+        return self._note_link_record(row)
+
+    def list_note_links(
+        self,
+        user_id: str,
+        *,
+        center_note_id: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        db = self._get_db(user_id)
+        self._ensure_note_link_schema(db)
+        params: list[Any] = [user_id]
+        where = "client_id = ? AND deleted = 0"
+        if center_note_id:
+            where += " AND (from_note_id = ? OR to_note_id = ?)"
+            params.extend([center_note_id, center_note_id])
+        params.append(max(0, int(limit)))
+        rows = db.get_connection().execute(
+            f"""
+            SELECT *
+            FROM LocalNoteGraphLinks
+            WHERE {where}
+            ORDER BY created_at ASC, edge_id ASC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+        return [self._note_link_record(row) for row in rows]
+
+    def delete_note_link(self, user_id: str, edge_id: str) -> Dict[str, Any]:
+        db = self._get_db(user_id)
+        self._ensure_note_link_schema(db)
+        with db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE LocalNoteGraphLinks
+                SET deleted = 1, updated_at = CURRENT_TIMESTAMP
+                WHERE client_id = ? AND edge_id = ? AND deleted = 0
+                """,
+                (user_id, edge_id),
+            )
+        return {"deleted": cursor.rowcount > 0, "edge_id": edge_id}
 
     def get_keywords_for_note(self, user_id: str, note_id: str) -> List[Dict[str, Any]]:
         db = self._get_db(user_id)

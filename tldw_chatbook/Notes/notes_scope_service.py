@@ -41,10 +41,6 @@ class NotesScopeService:
         if self._normalize_scope(scope) != ScopeType.SERVER_NOTE:
             raise ValueError("Notes graph requires server note scope.")
 
-    def _require_server_link_scope(self, scope: ScopeType | str) -> None:
-        if self._normalize_scope(scope) != ScopeType.SERVER_NOTE:
-            raise ValueError("Manual note link creation requires server note scope.")
-
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
@@ -143,6 +139,7 @@ class NotesScopeService:
         degree_limit = max(1, int(max_degree or 50))
         edge_type_filter = {str(edge_type) for edge_type in edge_types or []}
         include_tag_edges = not edge_type_filter or "tag_membership" in edge_type_filter
+        include_manual_edges = not edge_type_filter or "manual" in edge_type_filter
 
         nodes: dict[str, dict[str, Any]] = {}
         edges: dict[str, dict[str, Any]] = {}
@@ -171,6 +168,14 @@ class NotesScopeService:
                     "degree": 0,
                 }
             )
+
+        def ensure_note_node(note_id: str) -> bool:
+            if note_id in nodes:
+                return True
+            note = service.get_note_by_id(user_id, note_id)
+            if not isinstance(note, Mapping):
+                return False
+            return add_note_node(note)
 
         def add_tag_node(keyword: Mapping[str, Any]) -> str | None:
             keyword_id = self._keyword_id(keyword)
@@ -261,6 +266,34 @@ class NotesScopeService:
                             "label": self._keyword_label(keyword),
                         }
                     )
+
+        if include_manual_edges and hasattr(service, "list_note_links"):
+            manual_links = service.list_note_links(
+                user_id,
+                center_note_id=center_note_id,
+                limit=edge_limit,
+            )
+            for manual_link in list(manual_links or []):
+                if not isinstance(manual_link, Mapping):
+                    continue
+                source = str(manual_link.get("source") or "")
+                target = str(manual_link.get("target") or "")
+                if not source or not target:
+                    continue
+                if not ensure_note_node(source) or not ensure_note_node(target):
+                    continue
+                add_edge(
+                    {
+                        "id": str(manual_link.get("id") or f"local:manual:{source}:{target}"),
+                        "source": source,
+                        "target": target,
+                        "type": "manual",
+                        "directed": bool(manual_link.get("directed", False)),
+                        "weight": float(manual_link.get("weight", 1.0)),
+                        "label": str((manual_link.get("metadata") or {}).get("label") or "Manual link"),
+                        "metadata": dict(manual_link.get("metadata") or {}),
+                    }
+                )
 
         return {
             "nodes": list(nodes.values()),
@@ -428,6 +461,7 @@ class NotesScopeService:
         normalized_scope = self._normalize_scope(scope)
         if normalized_scope == ScopeType.LOCAL_NOTE:
             local_user_id = self._require_user_id(kwargs.pop("user_id", None))
+            self._enforce_policy("notes.graph.list.local")
             return self._build_local_notes_graph(user_id=local_user_id, **kwargs)
         self._require_server_note_scope(normalized_scope)
         self._enforce_policy("notes.graph.list.server")
@@ -443,6 +477,7 @@ class NotesScopeService:
         normalized_scope = self._normalize_scope(scope)
         if normalized_scope == ScopeType.LOCAL_NOTE:
             local_user_id = self._require_user_id(kwargs.pop("user_id", None))
+            self._enforce_policy("notes.graph.detail.local")
             return self._build_local_notes_graph(
                 user_id=local_user_id,
                 center_note_id=note_id,
@@ -461,8 +496,23 @@ class NotesScopeService:
         directed: bool = False,
         weight: Optional[float] = None,
         metadata: Optional[dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Any:
-        self._require_server_link_scope(scope)
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope == ScopeType.LOCAL_NOTE:
+            local_user_id = self._require_user_id(user_id)
+            self._enforce_policy("notes.graph.create.local")
+            if not hasattr(self.local_notes_service, "create_note_link"):
+                raise ValueError("Local manual note links are unavailable.")
+            return self.local_notes_service.create_note_link(
+                local_user_id,
+                note_id,
+                to_note_id,
+                directed=directed,
+                weight=weight,
+                metadata=metadata,
+            )
+        self._require_server_note_scope(normalized_scope)
         self._enforce_policy("notes.graph.create.server")
         payload: dict[str, Any] = {
             "to_note_id": to_note_id,
@@ -479,7 +529,15 @@ class NotesScopeService:
         *,
         scope: ScopeType | str,
         edge_id: str,
+        user_id: Optional[str] = None,
     ) -> Any:
-        self._require_server_link_scope(scope)
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope == ScopeType.LOCAL_NOTE:
+            local_user_id = self._require_user_id(user_id)
+            self._enforce_policy("notes.graph.delete.local")
+            if not hasattr(self.local_notes_service, "delete_note_link"):
+                raise ValueError("Local manual note links are unavailable.")
+            return self.local_notes_service.delete_note_link(local_user_id, edge_id)
+        self._require_server_note_scope(normalized_scope)
         self._enforce_policy("notes.graph.delete.server")
         return await self.server_service.delete_note_link(edge_id)

@@ -1,5 +1,7 @@
 import pytest
 
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 
 
@@ -29,6 +31,7 @@ class FakeLocalNotes:
             ],
             2: [{"id": "local-1", "title": "Local", "content": "Body", "version": 1}],
         }
+        self.manual_links = []
 
     def add_note(self, user_id, title, content, note_id=None):
         self.add_calls.append(
@@ -119,6 +122,34 @@ class FakeLocalNotes:
             }
         )
         return True
+
+    def create_note_link(self, user_id, note_id, to_note_id, directed=False, weight=None, metadata=None):
+        edge = {
+            "id": f"local:manual:{len(self.manual_links) + 1}",
+            "source": note_id,
+            "target": to_note_id,
+            "type": "manual",
+            "directed": directed,
+            "weight": 1.0 if weight is None else weight,
+            "metadata": metadata or {},
+        }
+        self.manual_links.append(edge)
+        return edge
+
+    def list_note_links(self, user_id, center_note_id=None, limit=200):
+        links = list(self.manual_links)
+        if center_note_id:
+            links = [
+                edge
+                for edge in links
+                if edge["source"] == center_note_id or edge["target"] == center_note_id
+            ]
+        return links[:limit]
+
+    def delete_note_link(self, user_id, edge_id):
+        before = len(self.manual_links)
+        self.manual_links = [edge for edge in self.manual_links if edge["id"] != edge_id]
+        return {"deleted": len(self.manual_links) != before, "edge_id": edge_id}
 
 
 class FakeServerNotes:
@@ -402,8 +433,8 @@ async def test_scope_service_routes_server_note_graph_actions_with_policy():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_builds_local_keyword_note_graph_without_policy():
-    policy = FakePolicyEnforcer.deny()
+async def test_scope_service_builds_local_keyword_note_graph_with_policy():
+    policy = FakePolicyEnforcer()
     scope_service = NotesScopeService(
         local_notes_service=FakeLocalNotes(),
         server_service=FakeServerNotes(),
@@ -440,19 +471,81 @@ async def test_scope_service_builds_local_keyword_note_graph_without_policy():
         ("local-1", "tag:2", "tag_membership", "stale"),
     }
     assert neighbors == graph
-    assert policy.calls == []
+    assert policy.calls == [
+        "notes.graph.list.local",
+        "notes.graph.detail.local",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_scope_service_keeps_local_manual_note_links_unsupported():
+async def test_scope_service_routes_local_manual_note_links_with_policy():
+    local = FakeLocalNotes()
+    policy = FakePolicyEnforcer()
     scope_service = NotesScopeService(
-        local_notes_service=FakeLocalNotes(),
+        local_notes_service=local,
         server_service=FakeServerNotes(),
+        policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="requires server note scope"):
-        await scope_service.create_note_link(
-            scope=ScopeType.LOCAL_NOTE,
-            note_id="local-1",
-            to_note_id="local-2",
-        )
+    created = await scope_service.create_note_link(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        note_id="local-1",
+        to_note_id="local-2",
+        directed=True,
+        weight=0.5,
+        metadata={"reason": "related"},
+    )
+    graph = await scope_service.get_notes_graph(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        edge_types=["manual"],
+        max_nodes=10,
+    )
+    deleted = await scope_service.delete_note_link(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        edge_id=created["id"],
+    )
+
+    assert created["id"].startswith("local:manual:")
+    assert created["source"] == "local-1"
+    assert created["target"] == "local-2"
+    assert created["directed"] is True
+    assert created["weight"] == 0.5
+    assert {
+        (edge["source"], edge["target"], edge["type"], edge["directed"], edge["weight"])
+        for edge in graph["edges"]
+    } == {("local-1", "local-2", "manual", True, 0.5)}
+    assert deleted == {"deleted": True, "edge_id": created["id"]}
+    assert policy.calls == [
+        "notes.graph.create.local",
+        "notes.graph.list.local",
+        "notes.graph.delete.local",
+    ]
+
+
+def test_notes_interop_service_persists_local_manual_note_links(tmp_path):
+    db = CharactersRAGDB(tmp_path / "notes.sqlite", "template")
+    service = NotesInteropService(
+        base_db_directory=tmp_path,
+        api_client_id="app",
+        global_db_to_use=db,
+    )
+    first_id = service.add_note("user-1", "First", "Body")
+    second_id = service.add_note("user-1", "Second", "More")
+
+    created = service.create_note_link(
+        "user-1",
+        first_id,
+        second_id,
+        directed=True,
+        weight=0.75,
+        metadata={"reason": "manual"},
+    )
+    listed = service.list_note_links("user-1", center_note_id=first_id)
+    deleted = service.delete_note_link("user-1", created["id"])
+
+    assert listed == [created]
+    assert deleted == {"deleted": True, "edge_id": created["id"]}
+    assert service.list_note_links("user-1", center_note_id=first_id) == []
