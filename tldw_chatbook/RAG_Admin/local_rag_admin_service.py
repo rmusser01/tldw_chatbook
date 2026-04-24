@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from typing import Any, Optional
+from uuid import uuid4
 
 from ..Chunking.chunking_interop_library import get_chunking_service
 from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
@@ -32,6 +34,7 @@ class LocalRAGAdminService:
         self.user_id = str(user_id or self.app_config.get("USERS_NAME") or "default_user")
         self.chunking_service = chunking_service or (get_chunking_service(media_db) if media_db is not None else None)
         self._chroma_manager = chroma_manager
+        self._local_media_jobs: dict[str, dict[str, Any]] = {}
 
     def _require_chunking_service(self) -> Any:
         if self.chunking_service is None:
@@ -135,6 +138,34 @@ class LocalRAGAdminService:
             return len(candidate)
         except TypeError:
             return None
+
+    def _record_local_media_job(
+        self,
+        *,
+        operation: str,
+        media_id: int,
+        result: Mapping[str, Any],
+        request: Mapping[str, Any] | None = None,
+        status: str = "completed",
+    ) -> dict[str, Any]:
+        prefix = "local-embedding" if operation == "media_embeddings" else "local-reprocess"
+        job_id = f"{prefix}-{media_id}-{uuid4().hex[:12]}"
+        now = datetime.now(timezone.utc).isoformat()
+        record = {
+            "id": job_id,
+            "job_id": job_id,
+            "uuid": job_id,
+            "operation": operation,
+            "media_id": media_id,
+            "status": status,
+            "backend": "local",
+            "created_at": now,
+            "updated_at": now,
+            "request": dict(request or {}),
+            "result": dict(result),
+        }
+        self._local_media_jobs[job_id] = record
+        return record
 
     def list_templates(
         self,
@@ -276,7 +307,7 @@ class LocalRAGAdminService:
             chunk_options=chunk_options,
         )
         status = self.get_media_embeddings_status(normalized_media_id, collection_name=collection_name)
-        return {
+        result = {
             "media_id": normalized_media_id,
             "status": "completed",
             "embeddings_started": True,
@@ -287,6 +318,22 @@ class LocalRAGAdminService:
             "priority": priority,
             "backend": "local",
         }
+        job = self._record_local_media_job(
+            operation="media_embeddings",
+            media_id=normalized_media_id,
+            request={
+                "embedding_model": embedding_model,
+                "embedding_provider": embedding_provider,
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+                "force_regenerate": force_regenerate,
+                "priority": priority,
+                "collection_name": collection_name,
+            },
+            result=result,
+        )
+        result["job_id"] = job["job_id"]
+        return result
 
     def delete_media_embeddings(
         self,
@@ -362,7 +409,7 @@ class LocalRAGAdminService:
                 force_regenerate=force_regenerate_embeddings,
             )
 
-        return {
+        result = {
             "media_id": normalized_media_id,
             "status": "completed",
             "message": "Reprocessed local media item.",
@@ -372,6 +419,54 @@ class LocalRAGAdminService:
             "chunk_method": chunk_method or "words",
             "chunking_template_name": chunking_template_name,
             "auto_apply_template": auto_apply_template,
+            "backend": "local",
+        }
+        job = self._record_local_media_job(
+            operation="media_reprocess",
+            media_id=normalized_media_id,
+            request={
+                "perform_chunking": perform_chunking,
+                "generate_embeddings": generate_embeddings,
+                "chunk_method": chunk_method,
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+                "embedding_model": embedding_model,
+                "embedding_provider": embedding_provider,
+                "force_regenerate_embeddings": force_regenerate_embeddings,
+            },
+            result=result,
+        )
+        result["job_id"] = job["job_id"]
+        return result
+
+    def get_media_embedding_job(self, job_id: str) -> dict[str, Any]:
+        record = self._local_media_jobs.get(str(job_id))
+        if not record:
+            raise ValueError(f"Local media embedding job '{job_id}' was not found.")
+        return dict(record)
+
+    def list_media_embedding_jobs(
+        self,
+        *,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        records = list(reversed(list(self._local_media_jobs.values())))
+        if status:
+            records = [record for record in records if record.get("status") == status]
+        total = len(records)
+        safe_offset = max(0, int(offset))
+        safe_limit = max(1, int(limit))
+        page = [dict(record) for record in records[safe_offset:safe_offset + safe_limit]]
+        return {
+            "data": page,
+            "pagination": {
+                "count": len(page),
+                "total": total,
+                "limit": safe_limit,
+                "offset": safe_offset,
+            },
             "backend": "local",
         }
 

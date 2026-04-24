@@ -29,6 +29,14 @@ class FakeLocalService:
         self.calls.append(("delete_media_embeddings", media_id))
         return {"media_id": media_id, "status": "success", "deleted_count": 2}
 
+    def get_media_embedding_job(self, job_id):
+        self.calls.append(("get_media_embedding_job", job_id))
+        return {"job_id": job_id, "status": "completed", "backend": "local"}
+
+    def list_media_embedding_jobs(self, **kwargs):
+        self.calls.append(("list_media_embedding_jobs", kwargs))
+        return {"data": [{"job_id": "local-job-1", "status": "completed"}], "pagination": {"count": 1}}
+
     def search_media_embeddings(self, **kwargs):
         self.calls.append(("search_media_embeddings", kwargs))
         return {"results": [{"id": "42_chunk_0", "document": "Alpha"}], "count": 1, "backend": "local"}
@@ -164,6 +172,22 @@ async def test_scope_service_routes_server_media_embedding_operations_to_server_
             42,
             {"embedding_model": "nomic", "embedding_provider": "ollama"},
         ),
+        ("list_media_embedding_jobs", {"status": "completed", "limit": 50, "offset": 0}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_media_embedding_job_observation_to_local_backend():
+    local = FakeLocalService()
+    scope = RAGAdminScopeService(local_service=local, server_service=FakeServerService())
+
+    detail = await scope.get_media_embedding_job(mode="local", job_id="local-job-1")
+    jobs = await scope.list_media_embedding_jobs(mode="local", status="completed")
+
+    assert detail == {"job_id": "local-job-1", "status": "completed", "backend": "local"}
+    assert jobs["pagination"]["count"] == 1
+    assert local.calls == [
+        ("get_media_embedding_job", "local-job-1"),
         ("list_media_embedding_jobs", {"status": "completed", "limit": 50, "offset": 0}),
     ]
 

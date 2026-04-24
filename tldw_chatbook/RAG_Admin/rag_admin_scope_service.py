@@ -360,7 +360,7 @@ class RAGAdminScopeService:
         mode: RAGAdminBackend | str | None = None,
         job_id: str,
     ) -> dict[str, Any]:
-        service = self._server_service_for_mode(mode)
+        service = self._service_for_mode(self._normalize_mode(mode))
         return await self._maybe_await(service.get_media_embedding_job(job_id))
 
     async def list_media_embedding_jobs(
@@ -371,7 +371,7 @@ class RAGAdminScopeService:
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
-        service = self._server_service_for_mode(mode)
+        service = self._service_for_mode(self._normalize_mode(mode))
         return await self._maybe_await(
             service.list_media_embedding_jobs(
                 status=status,

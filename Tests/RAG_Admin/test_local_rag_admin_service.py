@@ -103,6 +103,23 @@ def test_local_rag_admin_generates_status_and_deletes_media_embeddings():
     assert chroma.calls[1][1]["chunk_options"] == {"chunk_size": 250, "chunk_overlap": 50}
 
 
+def test_local_rag_admin_records_completed_embedding_jobs_for_observation():
+    chroma = FakeChromaManager()
+    service = LocalRAGAdminService(media_db=FakeMediaDB(), chroma_manager=chroma)
+
+    generated = service.generate_media_embeddings(42, embedding_model="local-embed")
+    jobs = service.list_media_embedding_jobs(status="completed")
+    detail = service.get_media_embedding_job(generated["job_id"])
+
+    assert generated["job_id"].startswith("local-embedding-42-")
+    assert jobs["pagination"]["count"] == 1
+    assert jobs["data"][0]["job_id"] == generated["job_id"]
+    assert jobs["data"][0]["operation"] == "media_embeddings"
+    assert detail["status"] == "completed"
+    assert detail["media_id"] == 42
+    assert detail["result"]["embedding_count"] == 2
+
+
 def test_local_rag_admin_searches_media_embeddings_with_chroma():
     chroma = FakeChromaManager()
     service = LocalRAGAdminService(media_db=FakeMediaDB(), chroma_manager=chroma)
@@ -172,6 +189,19 @@ def test_local_rag_admin_reprocesses_media_chunks_and_embeddings():
     ]
     assert chroma.calls[0] == ("delete_from_collection", [], "local_media_embeddings")
     assert chroma.calls[1][0] == "process_and_store_content"
+
+
+def test_local_rag_admin_records_completed_reprocess_jobs_for_observation():
+    service = LocalRAGAdminService(media_db=FakeMediaDB(), chroma_manager=FakeChromaManager())
+
+    result = service.reprocess_media(42, perform_chunking=True, generate_embeddings=False, chunk_size=2)
+    jobs = service.list_media_embedding_jobs()
+    detail = service.get_media_embedding_job(result["job_id"])
+
+    assert result["job_id"].startswith("local-reprocess-42-")
+    assert jobs["pagination"]["count"] == 1
+    assert jobs["data"][0]["operation"] == "media_reprocess"
+    assert detail["result"]["chunks_created"] == 2
 
 
 def test_local_rag_admin_reprocess_rejects_template_only_options():
