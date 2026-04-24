@@ -127,7 +127,6 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "collections_outputs_templates_artifacts": {
         "expected_domain_ids": {"outputs"},
         "expected_action_kinds_by_source": {
-            "local": FULL_CRUD_AND_LAUNCH_AND_OBSERVE,
             "server": FULL_CRUD_AND_LAUNCH_AND_OBSERVE,
         },
     },
@@ -321,33 +320,19 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         notifications.queue.observe.local
     """),
     "collections_outputs_templates_artifacts": _action_ids("""
-        outputs.artifacts.create.local
         outputs.artifacts.create.server
-        outputs.artifacts.delete.local
         outputs.artifacts.delete.server
-        outputs.artifacts.detail.local
         outputs.artifacts.detail.server
-        outputs.artifacts.list.local
         outputs.artifacts.list.server
-        outputs.artifacts.update.local
         outputs.artifacts.update.server
-        outputs.render_jobs.detail.local
         outputs.render_jobs.detail.server
-        outputs.render_jobs.launch.local
         outputs.render_jobs.launch.server
-        outputs.render_jobs.list.local
         outputs.render_jobs.list.server
-        outputs.render_jobs.observe.local
         outputs.render_jobs.observe.server
-        outputs.templates.create.local
         outputs.templates.create.server
-        outputs.templates.delete.local
         outputs.templates.delete.server
-        outputs.templates.detail.local
         outputs.templates.detail.server
-        outputs.templates.list.local
         outputs.templates.list.server
-        outputs.templates.update.local
         outputs.templates.update.server
     """),
     "collections_reading_list": _action_ids("""

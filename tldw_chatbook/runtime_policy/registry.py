@@ -404,7 +404,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "collections_outputs_templates_artifacts",
         "Collections: Outputs / Templates / Artifacts",
         "outputs",
-        sources=SEPARATED_SOURCES,
+        sources=REMOTE_ONLY_SOURCES,
         resources=(
             _resource("outputs.templates", actions=CRUD_ACTIONS),
             _resource("outputs.artifacts", actions=CRUD_ACTIONS),
