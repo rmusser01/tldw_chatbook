@@ -98,7 +98,7 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 11  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 12  # Define the version this code supports
     
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
@@ -156,6 +156,11 @@ class MediaDatabase:
             'to_version': 11,
             'function': '_apply_migration_v10_to_v11',
             'description': 'Add local reading digest schedules and outputs'
+        },
+        11: {
+            'to_version': 12,
+            'function': '_apply_migration_v11_to_v12',
+            'description': 'Add local document navigation indexes'
         },
         # Future migrations: just add new entries here
         # 5: {
@@ -670,6 +675,23 @@ class MediaDatabase:
         ON LocalReadingDigestOutputs(schedule_id, deleted);
     CREATE INDEX IF NOT EXISTS idx_local_reading_digest_outputs_created
         ON LocalReadingDigestOutputs(created_at, id);
+    """
+
+    _LOCAL_DOCUMENT_NAVIGATION_INDEXES_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS LocalDocumentNavigationIndexes (
+        media_id INTEGER PRIMARY KEY,
+        content_hash TEXT NOT NULL,
+        index_json TEXT NOT NULL,
+        generated_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        deleted BOOLEAN NOT NULL DEFAULT 0,
+        FOREIGN KEY (media_id) REFERENCES Media(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_local_document_navigation_indexes_hash
+        ON LocalDocumentNavigationIndexes(content_hash);
+    CREATE INDEX IF NOT EXISTS idx_local_document_navigation_indexes_updated
+        ON LocalDocumentNavigationIndexes(updated_at);
     """
 
     def __init__(self, db_path: Union[str, Path], client_id: str, 
@@ -1390,6 +1412,26 @@ class MediaDatabase:
             logging.error(f"[Migration v10->v11] Unexpected error during migration: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during migration v10->v11: {e}") from e
 
+    def _apply_migration_v11_to_v12(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 11 to version 12 (adds local document navigation indexes)."""
+        logging.info(f"Applying migration from version 11 to 12 (local document navigation indexes) to DB: {self.db_path_str}...")
+        try:
+            migration_sql = f"""
+            {self._LOCAL_DOCUMENT_NAVIGATION_INDEXES_TABLE_SQL}
+            UPDATE schema_version SET version = 12;
+            """
+
+            with self.transaction():
+                logging.debug("[Migration v11->v12] Creating LocalDocumentNavigationIndexes table...")
+                conn.executescript(migration_sql)
+                logging.info("[Migration v11->v12] LocalDocumentNavigationIndexes migration applied successfully.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v11->v12] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v11->v12 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v11->v12] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v11->v12: {e}") from e
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -1410,7 +1452,8 @@ class MediaDatabase:
                         f"{self._LOCAL_READING_NOTE_LINKS_TABLE_SQL}\n"
                         f"{self._LOCAL_READING_IMPORT_JOBS_TABLE_SQL}\n"
                         f"{self._LOCAL_MEDIA_INGEST_JOBS_TABLE_SQL}\n"
-                        f"{self._LOCAL_READING_DIGESTS_TABLE_SQL}"
+                        f"{self._LOCAL_READING_DIGESTS_TABLE_SQL}\n"
+                        f"{self._LOCAL_DOCUMENT_NAVIGATION_INDEXES_TABLE_SQL}"
                     )
                     conn.commit()
                     logging.debug("Verified FTS and local-only media tables exist.")
@@ -3648,6 +3691,93 @@ class MediaDatabase:
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error listing local reading digest outputs from DB '{self.db_path_str}': {e}")
             raise DatabaseError("Failed to list local reading digest outputs") from e
+
+    @staticmethod
+    def _local_document_navigation_index_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        payload = MediaDatabase._json_object_from_db(row["index_json"])
+        sections = payload.get("sections") if isinstance(payload.get("sections"), list) else []
+        return {
+            "media_id": row["media_id"],
+            "content_hash": row["content_hash"],
+            "sections": sections,
+            "navigation_version": payload.get("navigation_version", "local-generated-v1"),
+            "generated_at": row["generated_at"],
+            "updated_at": row["updated_at"],
+            "deleted": bool(row["deleted"]),
+        }
+
+    def get_local_document_navigation_index(
+        self,
+        media_id: int,
+        *,
+        content_hash: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch a non-deleted local document navigation index, optionally content-hash scoped."""
+        params: list[Any] = [media_id]
+        conditions = ["media_id = ?", "deleted = 0"]
+        if content_hash is not None:
+            conditions.append("content_hash = ?")
+            params.append(str(content_hash))
+        where_sql = " AND ".join(conditions)
+        try:
+            cursor = self.execute_query(
+                f"""
+                SELECT media_id, content_hash, index_json, generated_at, updated_at, deleted
+                FROM LocalDocumentNavigationIndexes
+                WHERE {where_sql}
+                """,
+                tuple(params),
+            )
+            row = cursor.fetchone()
+            return self._local_document_navigation_index_row_to_dict(row) if row else None
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching local document navigation index media_id={media_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to fetch local document navigation index for media {media_id}") from e
+
+    def upsert_local_document_navigation_index(
+        self,
+        media_id: int,
+        *,
+        content_hash: str,
+        sections: List[Dict[str, Any]],
+        navigation_version: str = "local-generated-v1",
+    ) -> Dict[str, Any]:
+        """Persist the generated local document navigation index for a media item."""
+        normalized_hash = str(content_hash or "").strip()
+        if not normalized_hash:
+            raise InputError("content_hash is required for local document navigation indexes.")
+        if not isinstance(sections, list):
+            raise InputError("sections must be a list for local document navigation indexes.")
+
+        current_time = self._get_current_utc_timestamp_str()
+        payload = {
+            "navigation_version": navigation_version,
+            "sections": sections,
+        }
+        index_json = json.dumps(payload, separators=(',', ':'), cls=DateTimeEncoder)
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO LocalDocumentNavigationIndexes (
+                        media_id, content_hash, index_json, generated_at, updated_at, deleted
+                    )
+                    VALUES (?, ?, ?, ?, ?, 0)
+                    ON CONFLICT(media_id) DO UPDATE SET
+                        content_hash = excluded.content_hash,
+                        index_json = excluded.index_json,
+                        updated_at = excluded.updated_at,
+                        deleted = 0
+                    """,
+                    (int(media_id), normalized_hash, index_json, current_time, current_time),
+                )
+            cached = self.get_local_document_navigation_index(int(media_id), content_hash=normalized_hash)
+            if cached is None:
+                raise DatabaseError(f"Failed to fetch upserted local document navigation index for media {media_id}")
+            return cached
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error upserting local document navigation index media_id={media_id} in DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to upsert local document navigation index for media {media_id}") from e
 
     @staticmethod
     def _local_ingestion_source_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:

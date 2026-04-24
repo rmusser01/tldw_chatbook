@@ -870,6 +870,10 @@ def test_local_service_provides_document_workspace_helpers(memory_db_factory):
     assert figures == {"media_id": media_id, "has_figures": False, "figures": [], "total_count": 0}
     assert navigation["available"] is True
     assert navigation["nodes"][0]["id"] == "heading-1"
+    cached_navigation = db.get_local_document_navigation_index(media_id)
+    assert cached_navigation is not None
+    assert cached_navigation["content_hash"] == db.get_media_by_id(media_id)["content_hash"]
+    assert cached_navigation["sections"][0]["id"] == "heading-1"
     assert section["title"] == "Intro"
     assert "Intro body." in section["content"]
     assert references["has_references"] is True

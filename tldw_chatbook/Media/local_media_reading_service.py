@@ -1651,8 +1651,13 @@ class LocalMediaReadingService:
             raise ValueError(f"Local document media item {media_id} not found.")
         return dict(detail)
 
-    def _local_document_sections(self, media_id: Any) -> list[dict[str, Any]]:
-        detail = self._local_document_detail(media_id)
+    def _local_document_content_hash(self, detail: Mapping[str, Any]) -> str:
+        content_hash = str(detail.get("content_hash") or "").strip()
+        if content_hash:
+            return content_hash
+        return hashlib.sha256(str(detail.get("content") or "").encode("utf-8")).hexdigest()
+
+    def _generate_local_document_sections(self, detail: Mapping[str, Any]) -> list[dict[str, Any]]:
         content = str(detail.get("content") or "")
         lines = content.splitlines()
         headings: list[dict[str, Any]] = []
@@ -1689,6 +1694,24 @@ class LocalMediaReadingService:
             end_line = headings[index + 1]["start_line"] if index + 1 < len(headings) else len(lines)
             section_lines = lines[heading["start_line"]:end_line]
             sections.append({**heading, "end_line": end_line, "content": "\n".join(section_lines).strip()})
+        return sections
+
+    def _local_document_sections(self, media_id: Any) -> list[dict[str, Any]]:
+        detail = self._local_document_detail(media_id)
+        media_id_int = self._coerce_media_id(media_id)
+        content_hash = self._local_document_content_hash(detail)
+        db = self._require_db()
+        cached = db.get_local_document_navigation_index(media_id_int, content_hash=content_hash)
+        if cached and cached.get("sections"):
+            return [dict(section) for section in list(cached.get("sections") or [])]
+
+        sections = self._generate_local_document_sections(detail)
+        db.upsert_local_document_navigation_index(
+            media_id_int,
+            content_hash=content_hash,
+            sections=sections,
+            navigation_version="local-generated-v1",
+        )
         return sections
 
     def get_media_navigation(
