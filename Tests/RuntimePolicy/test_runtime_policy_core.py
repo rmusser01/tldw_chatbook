@@ -258,6 +258,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         character.memory.list.server
         character.memory.update.local
         character.memory.update.server
+        character.greetings.list.server
+        character.greetings.update.server
         character.messages.create.local
         character.messages.create.server
         character.messages.delete.local
@@ -268,6 +270,10 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         character.messages.list.server
         character.messages.update.local
         character.messages.update.server
+        character.presets.create.server
+        character.presets.delete.server
+        character.presets.list.server
+        character.presets.update.server
         character.sessions.create.local
         character.sessions.create.server
         character.sessions.delete.local

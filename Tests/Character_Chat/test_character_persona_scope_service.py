@@ -22,6 +22,8 @@ class FakeCharacterPersonaClient:
         self.get_persona_profile_calls = []
         self.create_persona_profile_calls = []
         self.update_persona_profile_calls = []
+        self.delete_persona_profile_calls = []
+        self.restore_persona_profile_calls = []
         self.list_greetings_calls = []
         self.select_greeting_calls = []
         self.list_presets_calls = 0
@@ -111,6 +113,14 @@ class FakeCharacterPersonaClient:
             "system_prompt": payload.get("system_prompt"),
             "version": expected_version or 1,
         }
+
+    async def delete_persona_profile(self, persona_id, expected_version=None):
+        self.delete_persona_profile_calls.append({"persona_id": persona_id, "expected_version": expected_version})
+        return {"deleted": True, "id": persona_id}
+
+    async def restore_persona_profile(self, persona_id, expected_version):
+        self.restore_persona_profile_calls.append({"persona_id": persona_id, "expected_version": expected_version})
+        return {"id": persona_id, "deleted": False, "version": expected_version + 1}
 
     async def list_greetings(self, chat_id):
         self.list_greetings_calls.append(chat_id)
@@ -400,11 +410,15 @@ async def test_scope_service_routes_character_catalog_crud_to_server_with_policy
 
 @pytest.mark.asyncio
 async def test_scope_service_routes_persona_profile_crud_to_server_backend():
+    policy = FakePolicyEnforcer()
+    server_service = FakeCharacterPersonaClient()
     scope_service = CharacterPersonaScopeService(
         local_service=FakeLocalCharacterBackend(),
-        server_service=FakeCharacterPersonaClient(),
+        server_service=server_service,
+        policy_enforcer=policy,
     )
 
+    profiles = await scope_service.list_persona_profiles(mode="server")
     persona = await scope_service.get_persona_profile("persona-1", mode="server")
     created = await scope_service.create_persona_profile(
         Mock(model_dump=lambda mode="json": {"name": "Guide", "mode": "session_scoped"}),
@@ -416,18 +430,55 @@ async def test_scope_service_routes_persona_profile_crud_to_server_backend():
         expected_version=7,
         mode="server",
     )
+    deleted = await scope_service.delete_persona_profile(
+        "persona-1",
+        expected_version=8,
+        mode="server",
+    )
+    restored = await scope_service.restore_persona_profile(
+        "persona-1",
+        expected_version=9,
+        mode="server",
+    )
 
+    assert profiles[0]["id"] == "persona-1"
     assert persona["id"] == "persona-1"
     assert created["name"] == "Guide"
     assert updated["id"] == "persona-1"
+    assert deleted["deleted"] is True
+    assert restored["deleted"] is False
+    assert policy.actions == [
+        "character.persona.list.server",
+        "character.persona.detail.server",
+        "character.persona.create.server",
+        "character.persona.update.server",
+        "character.persona.delete.server",
+        "character.persona.update.server",
+    ]
+    assert server_service.list_persona_profiles_calls == [
+        {
+            "active_only": False,
+            "include_deleted": False,
+            "limit": 100,
+            "offset": 0,
+        }
+    ]
+    assert server_service.delete_persona_profile_calls == [
+        {"persona_id": "persona-1", "expected_version": 8}
+    ]
+    assert server_service.restore_persona_profile_calls == [
+        {"persona_id": "persona-1", "expected_version": 9}
+    ]
 
 
 @pytest.mark.asyncio
 async def test_scope_service_routes_chat_execution_support_to_server_backend():
     server_service = FakeCharacterPersonaClient()
+    policy = FakePolicyEnforcer()
     scope_service = CharacterPersonaScopeService(
         local_service=FakeLocalCharacterBackend(),
         server_service=server_service,
+        policy_enforcer=policy,
     )
 
     greetings = await scope_service.list_chat_greetings("chat.server.alice", mode="server")
@@ -457,6 +508,14 @@ async def test_scope_service_routes_chat_execution_support_to_server_backend():
     assert created["preset_id"] == "custom-alpha"
     assert updated["name"] == "Custom Beta"
     assert deleted["status"] == "deleted"
+    assert policy.actions == [
+        "character.greetings.list.server",
+        "character.greetings.update.server",
+        "character.presets.list.server",
+        "character.presets.create.server",
+        "character.presets.update.server",
+        "character.presets.delete.server",
+    ]
 
 
 @pytest.mark.asyncio
@@ -889,6 +948,24 @@ async def test_server_character_persona_service_delegates_character_catalog_crud
         ("update", 12, {"name": "Ada v2"}, 3),
         ("delete", 12, 4),
         ("restore", 12, 5),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_character_persona_service_delegates_persona_profile_lifecycle_to_client():
+    client = FakeCharacterPersonaClient()
+    service = ServerCharacterPersonaService(client=client)
+
+    deleted = await service.delete_persona_profile("persona-1", expected_version=4)
+    restored = await service.restore_persona_profile("persona-1", expected_version=5)
+
+    assert deleted["deleted"] is True
+    assert restored["deleted"] is False
+    assert client.delete_persona_profile_calls == [
+        {"persona_id": "persona-1", "expected_version": 4}
+    ]
+    assert client.restore_persona_profile_calls == [
+        {"persona_id": "persona-1", "expected_version": 5}
     ]
 
 

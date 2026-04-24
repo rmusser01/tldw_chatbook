@@ -17,6 +17,12 @@ class CharacterPersonaScopeService:
         "character_detail": "character.persona.detail",
         "character_update": "character.persona.update",
         "character_delete": "character.persona.delete",
+        "greeting_list": "character.greetings.list",
+        "greeting_update": "character.greetings.update",
+        "preset_create": "character.presets.create",
+        "preset_list": "character.presets.list",
+        "preset_update": "character.presets.update",
+        "preset_delete": "character.presets.delete",
         "session_create": "character.sessions.create",
         "session_list": "character.sessions.list",
         "session_detail": "character.sessions.detail",
@@ -187,8 +193,10 @@ class CharacterPersonaScopeService:
         limit: int = 100,
         offset: int = 0,
     ) -> Any:
-        backend = self._backend(mode)
-        if mode in {None, "local"} and not hasattr(backend, "list_persona_profiles"):
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "character_list")
+        backend = self._backend(normalized_mode)
+        if normalized_mode == "local" and not hasattr(backend, "list_persona_profiles"):
             raise ValueError("Local persona profiles are not available yet.")
         if not hasattr(backend, "list_persona_profiles"):
             raise ValueError("Character/persona backend does not provide list_persona_profiles().")
@@ -202,10 +210,12 @@ class CharacterPersonaScopeService:
         )
 
     async def get_persona_profile(self, persona_id: str, mode: str = "local") -> Any:
-        backend = self._backend(mode)
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "character_detail")
+        backend = self._backend(normalized_mode)
         missing_message = (
             "Local persona profiles are not available yet."
-            if mode in {None, "local"}
+            if normalized_mode == "local"
             else "Character/persona backend does not provide get_persona_profile()."
         )
         return await self._invoke_backend_method(
@@ -216,10 +226,12 @@ class CharacterPersonaScopeService:
         )
 
     async def create_persona_profile(self, request_data: Any, mode: str = "local") -> Any:
-        backend = self._backend(mode)
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "character_create")
+        backend = self._backend(normalized_mode)
         missing_message = (
             "Local persona profiles are not available yet."
-            if mode in {None, "local"}
+            if normalized_mode == "local"
             else "Character/persona backend does not provide create_persona_profile()."
         )
         return await self._invoke_backend_method(
@@ -236,10 +248,12 @@ class CharacterPersonaScopeService:
         expected_version: int | None = None,
         mode: str = "local",
     ) -> Any:
-        backend = self._backend(mode)
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "character_update")
+        backend = self._backend(normalized_mode)
         missing_message = (
             "Local persona profiles are not available yet."
-            if mode in {None, "local"}
+            if normalized_mode == "local"
             else "Character/persona backend does not provide update_persona_profile()."
         )
         kwargs = {}
@@ -254,11 +268,58 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
+    async def delete_persona_profile(
+        self,
+        persona_id: str,
+        expected_version: int | None = None,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "character_delete")
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona profiles are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide delete_persona_profile()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("delete_persona_profile", "delete_persona"),
+            persona_id,
+            expected_version=expected_version,
+            missing_message=missing_message,
+        )
+
+    async def restore_persona_profile(
+        self,
+        persona_id: str,
+        *,
+        expected_version: int,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "character_update")
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona profiles are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide restore_persona_profile()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("restore_persona_profile", "restore_persona"),
+            persona_id,
+            expected_version=expected_version,
+            missing_message=missing_message,
+        )
+
     async def list_chat_greetings(self, chat_id: str, mode: str = "local") -> Any:
-        backend = self._backend(mode)
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "greeting_list")
+        backend = self._backend(normalized_mode)
         missing_message = (
             "Local chat greetings are not available yet."
-            if mode in {None, "local"}
+            if normalized_mode == "local"
             else "Character/persona backend does not provide list_chat_greetings()."
         )
         return await self._invoke_backend_method(
@@ -269,10 +330,12 @@ class CharacterPersonaScopeService:
         )
 
     async def select_chat_greeting(self, chat_id: str, index: int, mode: str = "local") -> Any:
-        backend = self._backend(mode)
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "greeting_update")
+        backend = self._backend(normalized_mode)
         missing_message = (
             "Local chat greetings are not available yet."
-            if mode in {None, "local"}
+            if normalized_mode == "local"
             else "Character/persona backend does not provide select_chat_greeting()."
         )
         return await self._invoke_backend_method(
@@ -284,10 +347,12 @@ class CharacterPersonaScopeService:
         )
 
     async def list_chat_presets(self, mode: str = "local") -> Any:
-        backend = self._backend(mode)
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "preset_list")
+        backend = self._backend(normalized_mode)
         missing_message = (
             "Local chat presets are not available yet."
-            if mode in {None, "local"}
+            if normalized_mode == "local"
             else "Character/persona backend does not provide list_chat_presets()."
         )
         return await self._invoke_backend_method(
@@ -297,10 +362,12 @@ class CharacterPersonaScopeService:
         )
 
     async def create_chat_preset(self, request_data: Any, mode: str = "local") -> Any:
-        backend = self._backend(mode)
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "preset_create")
+        backend = self._backend(normalized_mode)
         missing_message = (
             "Local chat presets are not available yet."
-            if mode in {None, "local"}
+            if normalized_mode == "local"
             else "Character/persona backend does not provide create_chat_preset()."
         )
         return await self._invoke_backend_method(
@@ -311,10 +378,12 @@ class CharacterPersonaScopeService:
         )
 
     async def update_chat_preset(self, preset_id: str, request_data: Any, mode: str = "local") -> Any:
-        backend = self._backend(mode)
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "preset_update")
+        backend = self._backend(normalized_mode)
         missing_message = (
             "Local chat presets are not available yet."
-            if mode in {None, "local"}
+            if normalized_mode == "local"
             else "Character/persona backend does not provide update_chat_preset()."
         )
         return await self._invoke_backend_method(
@@ -326,10 +395,12 @@ class CharacterPersonaScopeService:
         )
 
     async def delete_chat_preset(self, preset_id: str, mode: str = "local") -> Any:
-        backend = self._backend(mode)
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(normalized_mode, "preset_delete")
+        backend = self._backend(normalized_mode)
         missing_message = (
             "Local chat presets are not available yet."
-            if mode in {None, "local"}
+            if normalized_mode == "local"
             else "Character/persona backend does not provide delete_chat_preset()."
         )
         return await self._invoke_backend_method(
