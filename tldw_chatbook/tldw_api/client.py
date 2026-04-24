@@ -46,6 +46,8 @@ from .notes_workspace_schemas import (
 from .media_reading_schemas import (
     CancelMediaIngestBatchResponse,
     CancelMediaIngestJobResponse,
+    DocumentVersionCreateRequest,
+    DocumentVersionDetailResponse,
     FileCreateRequest,
     IngestWebContentRequest,
     IngestionSourceCreateRequest,
@@ -1950,6 +1952,61 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return WebProcessResponse.model_validate(response)
+
+    async def list_media_document_versions(
+        self,
+        media_id: int,
+        *,
+        include_content: bool = False,
+        limit: int = 10,
+        page: int = 1,
+    ) -> list[DocumentVersionDetailResponse]:
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/versions",
+            params={
+                "include_content": str(include_content).lower(),
+                "limit": limit,
+                "page": page,
+            },
+        )
+        return [DocumentVersionDetailResponse.model_validate(item) for item in response]
+
+    async def get_media_document_version(
+        self,
+        media_id: int,
+        version_number: int,
+        *,
+        include_content: bool = True,
+    ) -> DocumentVersionDetailResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/versions/{version_number}",
+            params={"include_content": str(include_content).lower()},
+        )
+        return DocumentVersionDetailResponse.model_validate(response)
+
+    async def create_media_document_version(
+        self,
+        media_id: int,
+        request_data: DocumentVersionCreateRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/versions",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def delete_media_document_version(
+        self,
+        media_id: int,
+        version_number: int,
+    ) -> Dict[str, Any]:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/media/{media_id}/versions/{version_number}",
+        )
+        return {"deleted": True, **response}
 
     async def list_reading_items(
         self,

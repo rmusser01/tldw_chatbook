@@ -1,6 +1,8 @@
 import pytest
 
 from tldw_chatbook.tldw_api import (
+    DocumentVersionCreateRequest,
+    DocumentVersionDetailResponse,
     FileCreateOptions,
     FileCreateRequest,
     ItemsBulkRequest,
@@ -24,6 +26,35 @@ from tldw_chatbook.tldw_api import (
     ReadingTTSRequest,
     ReadingUpdateRequest,
 )
+
+
+def test_document_version_request_and_response_match_server_contract():
+    request = DocumentVersionCreateRequest(
+        content="Source text",
+        prompt="Analyze this",
+        analysis_content="Analysis",
+        safe_metadata={"kind": "analysis"},
+    )
+    response = DocumentVersionDetailResponse(
+        uuid="version-uuid",
+        media_id=99,
+        version_number=2,
+        created_at="2026-04-23T12:00:00Z",
+        prompt="Analyze this",
+        analysis_content="Analysis",
+        safe_metadata={"kind": "analysis"},
+        content="Source text",
+    )
+
+    assert request.model_dump(exclude_none=True, mode="json") == {
+        "content": "Source text",
+        "prompt": "Analyze this",
+        "analysis_content": "Analysis",
+        "safe_metadata": {"kind": "analysis"},
+    }
+    assert response.uuid == "version-uuid"
+    assert response.media_id == 99
+    assert response.version_number == 2
 
 
 def test_reading_update_request_strips_tag_whitespace():

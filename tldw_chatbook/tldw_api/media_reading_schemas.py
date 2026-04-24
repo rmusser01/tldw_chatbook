@@ -454,6 +454,26 @@ class WebProcessResponse(BaseModel):
     media_ids: list[int | str] | None = None
 
 
+class DocumentVersionCreateRequest(BaseModel):
+    content: str = Field(..., max_length=5_000_000)
+    prompt: str = Field(..., max_length=10_000)
+    analysis_content: str = Field(..., max_length=100_000)
+    safe_metadata: dict[str, Any] | None = None
+
+
+class DocumentVersionDetailResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    uuid: str | None = None
+    media_id: int
+    version_number: int
+    created_at: datetime
+    prompt: str | None = None
+    analysis_content: str | None = None
+    safe_metadata: dict[str, Any] | None = None
+    content: str | None = None
+
+
 class ReadingUpdateRequest(BaseModel):
     status: str | None = None
     favorite: bool | None = None

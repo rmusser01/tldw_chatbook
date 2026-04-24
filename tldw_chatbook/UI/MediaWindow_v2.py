@@ -1430,6 +1430,8 @@ class MediaWindow(Container):
             success = await self._scope_service().delete_analysis_version(
                 mode=self._record_backend(record),
                 version_uuid=event.version_uuid,
+                media_id=self._source_media_id(record, fallback=getattr(event, "media_id", None)),
+                version_number=getattr(event, "version_number", None),
             )
         except ValueError as exc:
             self.app_instance.notify(str(exc), severity="warning")

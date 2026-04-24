@@ -37,6 +37,26 @@ class FakeClient:
             ],
         }
 
+    async def list_media_document_versions(self, media_id, *, include_content=False, limit=10, page=1):
+        self.calls.append(("list_media_document_versions", media_id, include_content, limit, page))
+        return [
+            {
+                "uuid": "version-1",
+                "media_id": media_id,
+                "version_number": 1,
+                "created_at": "2026-04-23T12:00:00Z",
+                "analysis_content": "Analysis",
+            }
+        ]
+
+    async def create_media_document_version(self, media_id, request_data):
+        self.calls.append(("create_media_document_version", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"media_id": media_id, "versions": [{"version_number": 2}]}
+
+    async def delete_media_document_version(self, media_id, version_number):
+        self.calls.append(("delete_media_document_version", media_id, version_number))
+        return {"deleted": True}
+
     async def get_reading_progress(self, media_id):
         self.calls.append(("get_reading_progress", media_id))
         return {"media_id": media_id, "current_page": 4, "total_pages": 10, "percent_complete": 40.0}
@@ -954,19 +974,56 @@ async def test_server_service_delete_routes_to_soft_delete_endpoint_and_undelete
 
 
 @pytest.mark.asyncio
-async def test_server_service_document_version_helpers_fail_explicitly():
+async def test_server_service_document_version_helpers_route_to_server_contract():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    listed = await service.list_document_versions(99)
+    saved = await service.save_analysis_version(
+        99,
+        content="body",
+        analysis_content="analysis",
+    )
+    overwritten = await service.overwrite_analysis_version(
+        99,
+        content="body 2",
+        analysis_content="analysis 2",
+        prompt="Prompt",
+    )
+    deleted = await service.delete_analysis_version(
+        "version-1",
+        media_id=99,
+        version_number=1,
+    )
+
+    assert listed[0]["uuid"] == "version-1"
+    assert saved["versions"] == [{"version_number": 2}]
+    assert overwritten["versions"] == [{"version_number": 2}]
+    assert deleted == {"deleted": True}
+    assert client.calls == [
+        ("list_media_document_versions", 99, False, 100, 1),
+        (
+            "create_media_document_version",
+            99,
+            {"content": "body", "prompt": "", "analysis_content": "analysis"},
+        ),
+        (
+            "create_media_document_version",
+            99,
+            {"content": "body 2", "prompt": "Prompt", "analysis_content": "analysis 2"},
+        ),
+        ("delete_media_document_version", 99, 1),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_document_version_limitations_fail_explicitly():
     service = ServerMediaReadingService(client=FakeClient())
 
-    with pytest.raises(ValueError, match="Server document versions are not available yet."):
-        await service.list_document_versions(99)
+    with pytest.raises(ValueError, match="Server deleted document version listing is not available yet."):
+        await service.list_document_versions(99, include_deleted=True)
 
-    with pytest.raises(ValueError, match="Server document versions are not available yet."):
-        await service.save_analysis_version(99, content="body", analysis_content="analysis")
-
-    with pytest.raises(ValueError, match="Server document versions are not available yet."):
-        await service.overwrite_analysis_version(99, content="body", analysis_content="analysis")
-
-    with pytest.raises(ValueError, match="Server document versions are not available yet."):
+    with pytest.raises(ValueError, match="Server document version delete requires media_id and version_number."):
         await service.delete_analysis_version("version-1")
 
 

@@ -1967,6 +1967,7 @@ class MediaViewerPanel(Container):
                     version_uuid=analysis_uuid,
                     type_slug="",  # Will be set by MediaWindow
                     record_id=self.media_data.get("id"),
+                    version_number=analysis_version,
                 ))
             else:
                 # For unsaved analyses or legacy analyses without UUID

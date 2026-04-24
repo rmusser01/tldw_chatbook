@@ -74,6 +74,8 @@ _EXPORT_GROUPS = (
             "AsyncMode",
             "CancelMediaIngestBatchResponse",
             "CancelMediaIngestJobResponse",
+            "DocumentVersionCreateRequest",
+            "DocumentVersionDetailResponse",
             "ExportFormat",
             "ExportMode",
             "FileArtifact",

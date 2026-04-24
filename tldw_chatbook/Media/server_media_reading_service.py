@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 from ..tldw_api import (
+    DocumentVersionCreateRequest,
     IngestWebContentRequest,
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
@@ -416,7 +417,20 @@ class ServerMediaReadingService:
         return await self._require_client().ingest_web_content(request_data)
 
     async def list_document_versions(self, media_id: Any, *, include_deleted: bool = False) -> Any:
-        raise ValueError("Server document versions are not available yet.")
+        if include_deleted:
+            raise ValueError("Server deleted document version listing is not available yet.")
+        versions = await self._require_client().list_media_document_versions(
+            int(media_id),
+            include_content=False,
+            limit=100,
+            page=1,
+        )
+        return [
+            version.model_dump(exclude_none=True, mode="json")
+            if hasattr(version, "model_dump")
+            else dict(version)
+            for version in versions
+        ]
 
     async def save_analysis_version(
         self,
@@ -426,7 +440,12 @@ class ServerMediaReadingService:
         analysis_content: str,
         prompt: Optional[str] = None,
     ) -> Any:
-        raise ValueError("Server document versions are not available yet.")
+        request_data = DocumentVersionCreateRequest(
+            content=content,
+            prompt=prompt or "",
+            analysis_content=analysis_content,
+        )
+        return await self._require_client().create_media_document_version(int(media_id), request_data)
 
     async def overwrite_analysis_version(
         self,
@@ -436,7 +455,23 @@ class ServerMediaReadingService:
         analysis_content: str,
         prompt: Optional[str] = None,
     ) -> Any:
-        raise ValueError("Server document versions are not available yet.")
+        return await self.save_analysis_version(
+            media_id,
+            content=content,
+            analysis_content=analysis_content,
+            prompt=prompt,
+        )
 
-    async def delete_analysis_version(self, version_uuid: str) -> Any:
-        raise ValueError("Server document versions are not available yet.")
+    async def delete_analysis_version(
+        self,
+        version_uuid: str,
+        *,
+        media_id: Any | None = None,
+        version_number: Any | None = None,
+    ) -> Any:
+        if media_id is None or version_number is None:
+            raise ValueError("Server document version delete requires media_id and version_number.")
+        return await self._require_client().delete_media_document_version(
+            int(media_id),
+            int(version_number),
+        )

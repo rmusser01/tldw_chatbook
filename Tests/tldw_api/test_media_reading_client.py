@@ -6,6 +6,8 @@ import tldw_chatbook.tldw_api as api
 from tldw_chatbook.tldw_api import (
     CancelMediaIngestBatchResponse,
     CancelMediaIngestJobResponse,
+    DocumentVersionCreateRequest,
+    DocumentVersionDetailResponse,
     FileCreateOptions,
     FileCreateRequest,
     ItemsBulkRequest,
@@ -32,6 +34,77 @@ from tldw_chatbook.tldw_api import (
     SubmitMediaIngestJobsResponse,
     TLDWAPIClient,
 )
+
+
+@pytest.mark.asyncio
+async def test_document_version_routes_wire_and_list_is_typed(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            [
+                {
+                    "uuid": "version-1",
+                    "media_id": 99,
+                    "version_number": 1,
+                    "created_at": "2026-04-23T12:00:00Z",
+                    "prompt": "Prompt",
+                    "analysis_content": "Analysis",
+                    "safe_metadata": {"kind": "analysis"},
+                    "content": "Body",
+                }
+            ],
+            {
+                "uuid": "version-1",
+                "media_id": 99,
+                "version_number": 1,
+                "created_at": "2026-04-23T12:00:00Z",
+                "prompt": "Prompt",
+                "analysis_content": "Analysis",
+                "content": "Body",
+            },
+            {"media_id": 99, "versions": []},
+            {},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    listed = await client.list_media_document_versions(
+        99,
+        include_content=True,
+        limit=25,
+        page=2,
+    )
+    got = await client.get_media_document_version(99, 1, include_content=False)
+    created = await client.create_media_document_version(
+        99,
+        DocumentVersionCreateRequest(
+            content="Body",
+            prompt="Prompt",
+            analysis_content="Analysis",
+        ),
+    )
+    deleted = await client.delete_media_document_version(99, 1)
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/media/99/versions")
+    assert mocked.await_args_list[0].kwargs["params"] == {
+        "include_content": "true",
+        "limit": 25,
+        "page": 2,
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/99/versions/1")
+    assert mocked.await_args_list[1].kwargs["params"] == {"include_content": "false"}
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/media/99/versions")
+    assert mocked.await_args_list[2].kwargs["json_data"] == {
+        "content": "Body",
+        "prompt": "Prompt",
+        "analysis_content": "Analysis",
+    }
+    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/media/99/versions/1")
+    assert isinstance(listed, list)
+    assert isinstance(listed[0], DocumentVersionDetailResponse)
+    assert isinstance(got, DocumentVersionDetailResponse)
+    assert created == {"media_id": 99, "versions": []}
+    assert deleted == {"deleted": True}
 
 
 @pytest.mark.asyncio

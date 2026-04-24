@@ -720,16 +720,22 @@ class FakeServerMediaService:
         }
 
     async def list_document_versions(self, media_id, include_deleted=False):
-        raise ValueError("Server document versions are not available yet.")
+        self.calls.append(("list_document_versions", media_id, include_deleted))
+        return [{"uuid": "server-version-1", "media_id": media_id, "version_number": 1}]
 
     async def save_analysis_version(self, media_id, *, content, analysis_content, prompt=None):
-        raise ValueError("Server document versions are not available yet.")
+        self.calls.append(("save_analysis_version", media_id, content, analysis_content, prompt))
+        return {"media_id": media_id, "versions": [{"version_number": 2}]}
 
     async def overwrite_analysis_version(self, media_id, *, content, analysis_content, prompt=None):
-        raise ValueError("Server document versions are not available yet.")
+        self.calls.append(("overwrite_analysis_version", media_id, content, analysis_content, prompt))
+        return {"media_id": media_id, "versions": [{"version_number": 3}]}
 
-    async def delete_analysis_version(self, version_uuid):
-        raise ValueError("Server document versions are not available yet.")
+    async def delete_analysis_version(self, version_uuid, *, media_id=None, version_number=None):
+        self.calls.append(("delete_analysis_version", version_uuid, media_id, version_number))
+        if media_id is None or version_number is None:
+            raise ValueError("Server document version delete requires media_id and version_number.")
+        return {"deleted": True}
 
 
 class FakePolicyEnforcer:
@@ -1683,11 +1689,59 @@ async def test_scope_service_fails_explicitly_for_local_note_links_before_policy
 
 
 @pytest.mark.asyncio
-async def test_scope_service_fails_explicitly_for_server_document_versions():
+async def test_scope_service_routes_server_document_version_helpers_and_preserves_delete_requirements():
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+    )
+
+    versions = await scope_service.list_document_versions(mode="server", media_id=99)
+    saved = await scope_service.save_analysis_version(
+        mode="server",
+        media_id=99,
+        content="body",
+        analysis_content="analysis",
+    )
+    overwritten = await scope_service.overwrite_analysis_version(
+        mode="server",
+        media_id=99,
+        content="body 2",
+        analysis_content="analysis 2",
+        prompt="Prompt",
+    )
+    deleted = await scope_service.delete_analysis_version(
+        mode="server",
+        version_uuid="server-version-1",
+        media_id=99,
+        version_number=1,
+    )
+
+    with pytest.raises(ValueError, match="Server document version delete requires media_id and version_number."):
+        await scope_service.delete_analysis_version(mode="server", version_uuid="server-version-1")
+
+    assert versions == [{"uuid": "server-version-1", "media_id": 99, "version_number": 1}]
+    assert saved["versions"] == [{"version_number": 2}]
+    assert overwritten["versions"] == [{"version_number": 3}]
+    assert deleted == {"deleted": True}
+    assert server.calls == [
+        ("list_document_versions", 99, False),
+        ("save_analysis_version", 99, "body", "analysis", None),
+        ("overwrite_analysis_version", 99, "body 2", "analysis 2", "Prompt"),
+        ("delete_analysis_version", "server-version-1", 99, 1),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_incomplete_server_document_version_delete_before_policy():
+    policy = FakePolicyEnforcer.deny("blocked")
     scope_service = MediaReadingScopeService(
         local_service=FakeLocalMediaService(),
         server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Server document versions are not available yet."):
-        await scope_service.list_document_versions(mode="server", media_id=99)
+    with pytest.raises(ValueError, match="Server document version delete requires media_id and version_number."):
+        await scope_service.delete_analysis_version(mode="server", version_uuid="server-version-1")
+
+    assert policy.calls == []

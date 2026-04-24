@@ -1264,8 +1264,20 @@ class MediaReadingScopeService:
         *,
         mode: MediaReadingBackend | str | None = None,
         version_uuid: str,
+        media_id: Any | None = None,
+        version_number: Any | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.SERVER and (media_id is None or version_number is None):
+            raise ValueError("Server document version delete requires media_id and version_number.")
         self._enforce_policy(self._reading_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
+        if normalized_mode == MediaReadingBackend.SERVER:
+            return await self._maybe_await(
+                service.delete_analysis_version(
+                    version_uuid,
+                    media_id=media_id,
+                    version_number=version_number,
+                )
+            )
         return await self._maybe_await(service.delete_analysis_version(version_uuid))
