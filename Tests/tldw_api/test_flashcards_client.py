@@ -6,6 +6,8 @@ import pytest
 
 from tldw_chatbook.tldw_api import (
     FlashcardAnalyticsSummaryResponse,
+    FlashcardBulkUpdateItemRequest,
+    FlashcardBulkUpdateResponse,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
     FlashcardDeckResponse,
@@ -18,6 +20,7 @@ from tldw_chatbook.tldw_api import (
     FlashcardReviewResponse,
     FlashcardTagsResponse,
     FlashcardTagsUpdateRequest,
+    FlashcardTagSuggestionsResponse,
     FlashcardTemplateCreateRequest,
     FlashcardTemplateListResponse,
     FlashcardTemplateResponse,
@@ -408,6 +411,94 @@ async def test_flashcard_management_routes_wire_and_return_typed_models(monkeypa
     assert deck.review_prompt_side == "back"
     assert tags.items == ["biology", "cell"]
     assert analytics.decks[0].deck_name == "Biology"
+
+
+@pytest.mark.asyncio
+async def test_flashcard_bulk_and_tag_suggestion_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    card_payload = {
+        "uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+        "deck_id": 7,
+        "front": "Question",
+        "back": "Answer",
+        "is_cloze": False,
+        "tags": ["biology"],
+        "ef": 2.5,
+        "interval_days": 0,
+        "repetitions": 0,
+        "lapses": 0,
+        "queue_state": "new",
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 2,
+        "model_type": "basic",
+        "reverse": False,
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            {"items": [card_payload], "count": 1, "total": None},
+            {
+                "results": [
+                    {
+                        "uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+                        "status": "updated",
+                        "flashcard": {**card_payload, "tags": ["biology", "cell"], "version": 3},
+                        "error": None,
+                    }
+                ]
+            },
+            {"items": [{"tag": "biology", "count": 3}], "count": 1},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    created = await client.create_flashcards_bulk(
+        [
+            FlashcardCreateRequest(
+                deck_id=7,
+                front="Question",
+                back="Answer",
+                tags=["biology"],
+            )
+        ]
+    )
+    updated = await client.update_flashcards_bulk(
+        [
+            FlashcardBulkUpdateItemRequest(
+                uuid="87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+                tags=["biology", "cell"],
+                expected_version=2,
+            )
+        ]
+    )
+    suggestions = await client.list_flashcard_tag_suggestions(q="bio", limit=10)
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/flashcards/bulk")
+    assert mocked.await_args_list[0].kwargs["json_data"] == [
+        {
+            "deck_id": 7,
+            "front": "Question",
+            "back": "Answer",
+            "is_cloze": False,
+            "tags": ["biology"],
+            "source_ref_type": "manual",
+        }
+    ]
+    assert mocked.await_args_list[1].args[:2] == ("PATCH", "/api/v1/flashcards/bulk")
+    assert mocked.await_args_list[1].kwargs["json_data"] == [
+        {
+            "tags": ["biology", "cell"],
+            "expected_version": 2,
+            "uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+        }
+    ]
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/flashcards/tags")
+    assert mocked.await_args_list[2].kwargs["params"] == {"q": "bio", "limit": 10}
+    assert isinstance(created, FlashcardListResponse)
+    assert isinstance(updated, FlashcardBulkUpdateResponse)
+    assert isinstance(suggestions, FlashcardTagSuggestionsResponse)
+    assert updated.results[0].flashcard.tags == ["biology", "cell"]
+    assert suggestions.items[0].count == 3
 
 
 @pytest.mark.asyncio

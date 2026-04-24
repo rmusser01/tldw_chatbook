@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
 from ..tldw_api import (
+    FlashcardBulkUpdateItemRequest,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
     FlashcardDeckUpdateRequest,
@@ -144,6 +145,12 @@ class ServerStudyService:
         )
         return self._model_to_dict(response)
 
+    async def create_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
+        response = await self._require_client().create_flashcards_bulk(
+            [FlashcardCreateRequest.model_validate(dict(card)) for card in cards]
+        )
+        return self._model_to_dict(response)
+
     async def get_flashcard(self, card_id: str) -> dict[str, Any]:
         response = await self._require_client().get_flashcard(card_id)
         return self._model_to_dict(response)
@@ -180,6 +187,12 @@ class ServerStudyService:
             expected_version=expected_version,
         )
 
+    async def update_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
+        response = await self._require_client().update_flashcards_bulk(
+            [FlashcardBulkUpdateItemRequest.model_validate(dict(card)) for card in cards]
+        )
+        return self._model_to_dict(response)
+
     async def reset_flashcard_scheduling(
         self,
         card_id: str,
@@ -206,6 +219,16 @@ class ServerStudyService:
 
     async def get_flashcard_tags(self, card_id: str) -> dict[str, Any]:
         return self._model_to_dict(await self._require_client().get_flashcard_tags(card_id))
+
+    async def list_flashcard_tag_suggestions(
+        self,
+        *,
+        q: Optional[str] = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().list_flashcard_tag_suggestions(q=q, limit=limit)
+        )
 
     async def get_flashcard_analytics_summary(
         self,

@@ -2,6 +2,8 @@ import pytest
 from pydantic import ValidationError
 
 from tldw_chatbook.tldw_api import (
+    FlashcardBulkUpdateItemRequest,
+    FlashcardBulkUpdateResponse,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
     FlashcardDeckResponse,
@@ -10,6 +12,7 @@ from tldw_chatbook.tldw_api import (
     FlashcardResponse,
     FlashcardReviewRequest,
     FlashcardReviewResponse,
+    FlashcardTagSuggestionsResponse,
     FlashcardTemplateCreateRequest,
     FlashcardTemplateListResponse,
     FlashcardTemplateResponse,
@@ -210,6 +213,42 @@ def test_flashcard_template_models_round_trip_server_shape():
     }
     assert response.placeholder_definitions[0].targets == ["front_template"]
     assert listed.items[0].id == 12
+
+
+def test_flashcard_bulk_update_and_tag_suggestion_models_round_trip_server_shape():
+    update_item = FlashcardBulkUpdateItemRequest(
+        uuid="87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+        tags=["biology", "cell"],
+        expected_version=2,
+    )
+    bulk_response = FlashcardBulkUpdateResponse.model_validate(
+        {
+            "results": [
+                {
+                    "uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+                    "status": "validation_error",
+                    "flashcard": None,
+                    "error": {
+                        "code": "validation_error",
+                        "message": "Invalid deck",
+                        "invalid_deck_ids": [404],
+                    },
+                }
+            ]
+        }
+    )
+    suggestions = FlashcardTagSuggestionsResponse.model_validate(
+        {"items": [{"tag": "biology", "count": 3}], "count": 1}
+    )
+
+    assert update_item.model_dump(mode="json", exclude_none=True) == {
+        "tags": ["biology", "cell"],
+        "expected_version": 2,
+        "uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+    }
+    assert bulk_response.results[0].status == "validation_error"
+    assert bulk_response.results[0].error.invalid_deck_ids == [404]
+    assert suggestions.items[0].tag == "biology"
 
 
 def test_flashcard_create_request_preserves_optional_fields():

@@ -81,6 +81,33 @@ class StudyScopeService:
         ]
         return result
 
+    @classmethod
+    def _with_server_flashcard_list(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(cls._with_server_source(payload))
+        result.setdefault("entity_kind", "study_flashcard_list")
+        result["items"] = [
+            normalize_study_flashcard_record("server", item)
+            for item in list(result.get("items") or [])
+            if isinstance(item, Mapping)
+        ]
+        return result
+
+    @classmethod
+    def _with_server_bulk_update(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(cls._with_server_source(payload))
+        result.setdefault("entity_kind", "study_flashcard_bulk_update")
+        normalized_results: list[dict[str, Any]] = []
+        for item in list(result.get("results") or []):
+            if not isinstance(item, Mapping):
+                continue
+            normalized = dict(item)
+            flashcard = normalized.get("flashcard")
+            if isinstance(flashcard, Mapping):
+                normalized["flashcard"] = normalize_study_flashcard_record("server", flashcard)
+            normalized_results.append(normalized)
+        result["results"] = normalized_results
+        return result
+
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
             return await value
@@ -285,6 +312,16 @@ class StudyScopeService:
         record = await self._maybe_await(self._service_for_mode(normalized_mode).get_flashcard(card_id))
         return normalize_study_flashcard_record(normalized_mode.value, record)
 
+    async def create_flashcards_bulk(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        cards: list[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard bulk create")
+        payload = await self._maybe_await(service.create_flashcards_bulk(cards))
+        return self._with_server_flashcard_list(payload or {})
+
     async def move_flashcard(
         self,
         *,
@@ -330,6 +367,16 @@ class StudyScopeService:
         )
         return self._coerce_delete_result(result)
 
+    async def update_flashcards_bulk(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        cards: list[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard bulk update")
+        payload = await self._maybe_await(service.update_flashcards_bulk(cards))
+        return self._with_server_bulk_update(payload or {})
+
     async def reset_flashcard_scheduling(
         self,
         *,
@@ -362,6 +409,19 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         service = self._server_only_service(mode, "Flashcard tag list")
         return dict(await self._maybe_await(service.get_flashcard_tags(card_id)) or {})
+
+    async def list_flashcard_tag_suggestions(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        q: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        service = self._server_only_service(mode, "Flashcard tag suggestions")
+        payload = await self._maybe_await(service.list_flashcard_tag_suggestions(q=q, limit=limit))
+        result = dict(self._with_server_source(payload or {}))
+        result.setdefault("entity_kind", "flashcard_tag_suggestions")
+        return result
 
     async def get_flashcard_analytics_summary(
         self,

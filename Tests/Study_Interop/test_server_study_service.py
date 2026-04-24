@@ -118,6 +118,68 @@ class FakeClient:
             }
         )
 
+    async def create_flashcards_bulk(self, request_items):
+        payload = [item.model_dump(mode="json", exclude_none=True) for item in request_items]
+        self.calls.append(("create_flashcards_bulk", payload))
+        return {
+            "items": [
+                {
+                    "uuid": CARD_UUID,
+                    "deck_id": 9,
+                    "front": payload[0]["front"],
+                    "back": payload[0]["back"],
+                    "tags": payload[0].get("tags") or [],
+                    "is_cloze": False,
+                    "ef": 2.5,
+                    "interval_days": 0,
+                    "repetitions": 0,
+                    "lapses": 0,
+                    "queue_state": "new",
+                    "deleted": False,
+                    "client_id": "server-client",
+                    "version": 1,
+                    "model_type": "basic",
+                    "reverse": False,
+                }
+            ],
+            "count": 1,
+        }
+
+    async def update_flashcards_bulk(self, request_items):
+        payload = [item.model_dump(mode="json", exclude_none=True) for item in request_items]
+        self.calls.append(("update_flashcards_bulk", payload))
+        return {
+            "results": [
+                {
+                    "uuid": CARD_UUID,
+                    "status": "updated",
+                    "flashcard": {
+                        "uuid": CARD_UUID,
+                        "deck_id": 9,
+                        "front": "Question",
+                        "back": "Answer",
+                        "tags": payload[0].get("tags") or [],
+                        "is_cloze": False,
+                        "ef": 2.5,
+                        "interval_days": 0,
+                        "repetitions": 0,
+                        "lapses": 0,
+                        "queue_state": "new",
+                        "deleted": False,
+                        "client_id": "server-client",
+                        "version": 2,
+                        "model_type": "basic",
+                        "reverse": False,
+                    },
+                    "error": None,
+                }
+            ]
+        }
+
+    async def list_flashcard_tag_suggestions(self, *, q=None, limit=50):
+        self.calls.append(("list_flashcard_tag_suggestions", q, limit))
+        return {"items": [{"tag": "biology", "count": 3}], "count": 1}
+
     async def create_flashcard_template(self, request_data):
         payload = request_data.model_dump(mode="json", exclude_none=True)
         self.calls.append(("create_flashcard_template", payload))
@@ -456,6 +518,63 @@ async def test_server_study_service_exposes_flashcard_template_routes():
         ("get_flashcard_template", 12),
         ("update_flashcard_template", 12, {"notes_template": "Updated focus: {{topic}}", "expected_version": 1}),
         ("delete_flashcard_template", 12, 2),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_exposes_flashcard_bulk_and_tag_suggestion_routes():
+    client = FakeClient()
+    service = ServerStudyService(client=client)
+
+    created = await service.create_flashcards_bulk(
+        [
+            {
+                "deck_id": 9,
+                "front": "Question",
+                "back": "Answer",
+                "tags": ["biology"],
+            }
+        ]
+    )
+    updated = await service.update_flashcards_bulk(
+        [
+            {
+                "uuid": CARD_UUID,
+                "tags": ["biology", "cell"],
+                "expected_version": 1,
+            }
+        ]
+    )
+    suggestions = await service.list_flashcard_tag_suggestions(q="bio", limit=10)
+
+    assert created["items"][0]["uuid"] == CARD_UUID
+    assert updated["results"][0]["flashcard"]["tags"] == ["biology", "cell"]
+    assert suggestions["items"][0]["tag"] == "biology"
+    assert client.calls == [
+        (
+            "create_flashcards_bulk",
+            [
+                {
+                    "deck_id": 9,
+                    "front": "Question",
+                    "back": "Answer",
+                    "is_cloze": False,
+                    "tags": ["biology"],
+                    "source_ref_type": "manual",
+                }
+            ],
+        ),
+        (
+            "update_flashcards_bulk",
+            [
+                {
+                    "tags": ["biology", "cell"],
+                    "expected_version": 1,
+                    "uuid": CARD_UUID,
+                }
+            ],
+        ),
+        ("list_flashcard_tag_suggestions", "bio", 10),
     ]
 
 

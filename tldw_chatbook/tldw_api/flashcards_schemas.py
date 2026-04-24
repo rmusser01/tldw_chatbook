@@ -144,6 +144,10 @@ class FlashcardUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class FlashcardBulkUpdateItemRequest(FlashcardUpdateRequest):
+    uuid: str
+
+
 class FlashcardResponse(BaseModel):
     uuid: UUID
     deck_id: Optional[int] = None
@@ -197,6 +201,24 @@ class FlashcardResponse(BaseModel):
         else:
             data["tags"] = []
         return data
+
+
+class FlashcardBulkUpdateError(BaseModel):
+    code: Literal["validation_error", "not_found", "conflict"]
+    message: str
+    invalid_fields: list[str] = Field(default_factory=list)
+    invalid_deck_ids: list[int] = Field(default_factory=list)
+
+
+class FlashcardBulkUpdateResult(BaseModel):
+    uuid: str
+    status: Literal["updated", "validation_error", "not_found", "conflict"]
+    flashcard: Optional[FlashcardResponse] = None
+    error: Optional[FlashcardBulkUpdateError] = None
+
+
+class FlashcardBulkUpdateResponse(BaseModel):
+    results: list[FlashcardBulkUpdateResult] = Field(default_factory=list)
 
 
 class FlashcardListResponse(BaseModel):
@@ -263,6 +285,16 @@ class FlashcardTagsUpdateRequest(BaseModel):
 class FlashcardTagsResponse(BaseModel):
     items: list[str] = Field(default_factory=list)
     count: int = 0
+
+
+class FlashcardTagSuggestionItem(BaseModel):
+    tag: str
+    count: int
+
+
+class FlashcardTagSuggestionsResponse(BaseModel):
+    items: list[FlashcardTagSuggestionItem] = Field(default_factory=list)
+    count: int
 
 
 class FlashcardDeckProgress(BaseModel):

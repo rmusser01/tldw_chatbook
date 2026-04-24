@@ -306,6 +306,18 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource("study.deck", actions=CRUD_ACTIONS, domain_id="study"),
             _resource(
+                "study.flashcard.bulk",
+                actions=(CREATE, UPDATE),
+                domain_id="study",
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
+                "study.flashcard.tags",
+                actions=(LIST,),
+                domain_id="study",
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
                 "study.flashcard.template",
                 actions=CRUD_ACTIONS,
                 domain_id="study",

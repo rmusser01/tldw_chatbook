@@ -253,6 +253,8 @@ from .evaluations_schemas import (
 )
 from .flashcards_schemas import (
     FlashcardAnalyticsSummaryResponse,
+    FlashcardBulkUpdateItemRequest,
+    FlashcardBulkUpdateResponse,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
     FlashcardDeckResponse,
@@ -265,6 +267,7 @@ from .flashcards_schemas import (
     FlashcardReviewResponse,
     FlashcardReviewSessionEndRequest,
     FlashcardReviewSessionSummary,
+    FlashcardTagSuggestionsResponse,
     FlashcardTagsResponse,
     FlashcardTagsUpdateRequest,
     FlashcardTemplateCreateRequest,
@@ -2766,6 +2769,20 @@ class TLDWAPIClient:
         )
         return FlashcardResponse.model_validate(response)
 
+    async def create_flashcards_bulk(
+        self,
+        request_data: list[FlashcardCreateRequest],
+    ) -> FlashcardListResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/bulk",
+            json_data=[
+                item.model_dump(exclude_none=True, mode="json")
+                for item in request_data
+            ],
+        )
+        return FlashcardListResponse.model_validate(response)
+
     async def get_flashcard(self, card_uuid: str) -> FlashcardResponse:
         response = await self._request("GET", f"/api/v1/flashcards/id/{card_uuid}")
         return FlashcardResponse.model_validate(response)
@@ -2781,6 +2798,20 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return FlashcardResponse.model_validate(response)
+
+    async def update_flashcards_bulk(
+        self,
+        request_data: list[FlashcardBulkUpdateItemRequest],
+    ) -> FlashcardBulkUpdateResponse:
+        response = await self._request(
+            "PATCH",
+            "/api/v1/flashcards/bulk",
+            json_data=[
+                item.model_dump(exclude_none=True, mode="json")
+                for item in request_data
+            ],
+        )
+        return FlashcardBulkUpdateResponse.model_validate(response)
 
     async def reset_flashcard_scheduling(
         self,
@@ -2809,6 +2840,23 @@ class TLDWAPIClient:
     async def get_flashcard_tags(self, card_uuid: str) -> FlashcardTagsResponse:
         response = await self._request("GET", f"/api/v1/flashcards/{card_uuid}/tags")
         return FlashcardTagsResponse.model_validate(response)
+
+    async def list_flashcard_tag_suggestions(
+        self,
+        *,
+        q: Optional[str] = None,
+        limit: int = 50,
+    ) -> FlashcardTagSuggestionsResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/tags",
+            params={
+                key: value
+                for key, value in {"q": q, "limit": limit}.items()
+                if value is not None
+            },
+        )
+        return FlashcardTagSuggestionsResponse.model_validate(response)
 
     async def get_flashcard_analytics_summary(
         self,

@@ -219,6 +219,66 @@ class FakeServerStudyService:
             "decks": [{"deck_id": 7, "deck_name": "Biology"}],
         }
 
+    async def create_flashcards_bulk(self, cards):
+        self.calls.append(("create_flashcards_bulk", cards))
+        return {
+            "items": [
+                {
+                    "uuid": "card-server-1",
+                    "deck_id": cards[0].get("deck_id"),
+                    "front": cards[0]["front"],
+                    "back": cards[0]["back"],
+                    "tags": cards[0].get("tags") or [],
+                    "is_cloze": False,
+                    "ef": 2.5,
+                    "interval_days": 0,
+                    "repetitions": 0,
+                    "lapses": 0,
+                    "queue_state": "new",
+                    "deleted": False,
+                    "client_id": "server-client",
+                    "version": 1,
+                    "model_type": "basic",
+                    "reverse": False,
+                }
+            ],
+            "count": 1,
+        }
+
+    async def update_flashcards_bulk(self, cards):
+        self.calls.append(("update_flashcards_bulk", cards))
+        return {
+            "results": [
+                {
+                    "uuid": cards[0]["uuid"],
+                    "status": "updated",
+                    "flashcard": {
+                        "uuid": cards[0]["uuid"],
+                        "deck_id": 7,
+                        "front": "Question",
+                        "back": "Answer",
+                        "tags": cards[0].get("tags") or [],
+                        "is_cloze": False,
+                        "ef": 2.5,
+                        "interval_days": 0,
+                        "repetitions": 0,
+                        "lapses": 0,
+                        "queue_state": "new",
+                        "deleted": False,
+                        "client_id": "server-client",
+                        "version": 2,
+                        "model_type": "basic",
+                        "reverse": False,
+                    },
+                    "error": None,
+                }
+            ]
+        }
+
+    async def list_flashcard_tag_suggestions(self, *, q=None, limit=50):
+        self.calls.append(("list_flashcard_tag_suggestions", q, limit))
+        return {"items": [{"tag": "biology", "count": 3}], "count": 1}
+
     async def create_flashcard_template(
         self,
         *,
@@ -877,6 +937,54 @@ async def test_scope_service_routes_server_flashcard_template_actions():
 
     with pytest.raises(ValueError, match="server-only"):
         await scope.list_flashcard_templates(mode="local")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_flashcard_bulk_and_tag_suggestion_actions():
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+
+    created = await scope.create_flashcards_bulk(
+        mode="server",
+        cards=[
+            {
+                "deck_id": 7,
+                "front": "Question",
+                "back": "Answer",
+                "tags": ["biology"],
+            }
+        ],
+    )
+    updated = await scope.update_flashcards_bulk(
+        mode="server",
+        cards=[
+            {
+                "uuid": "card-server-1",
+                "tags": ["biology", "cell"],
+                "expected_version": 1,
+            }
+        ],
+    )
+    suggestions = await scope.list_flashcard_tag_suggestions(mode="server", q="bio", limit=10)
+
+    assert created["source"] == "server"
+    assert created["items"][0]["record_id"] == "server:study_flashcard:card-server-1"
+    assert updated["results"][0]["flashcard"]["record_id"] == "server:study_flashcard:card-server-1"
+    assert suggestions["items"][0]["tag"] == "biology"
+    assert server.calls == [
+        (
+            "create_flashcards_bulk",
+            [{"deck_id": 7, "front": "Question", "back": "Answer", "tags": ["biology"]}],
+        ),
+        (
+            "update_flashcards_bulk",
+            [{"uuid": "card-server-1", "tags": ["biology", "cell"], "expected_version": 1}],
+        ),
+        ("list_flashcard_tag_suggestions", "bio", 10),
+    ]
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.list_flashcard_tag_suggestions(mode="local")
 
 
 @pytest.mark.asyncio
