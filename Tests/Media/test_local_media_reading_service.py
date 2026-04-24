@@ -446,3 +446,39 @@ def test_local_service_uploads_archive_snapshot_source(memory_db_factory, tmp_pa
     assert uploaded["item"]["binding"]["archive_path"] == str(archive_path)
     assert uploaded["item"]["binding"]["size_bytes"] == len(b"archive bytes")
     assert items == [uploaded["item"]]
+
+
+def test_local_service_syncs_local_directory_source(memory_db_factory, tmp_path):
+    source_dir = tmp_path / "library"
+    source_dir.mkdir()
+    (source_dir / "article.md").write_text("Article", encoding="utf-8")
+    nested = source_dir / "nested"
+    nested.mkdir()
+    removed_file = nested / "old.txt"
+    removed_file.write_text("Old", encoding="utf-8")
+
+    db = memory_db_factory()
+    source = db.create_local_ingestion_source(
+        source_type="local_directory",
+        sink_type="media",
+        policy="canonical",
+        config={"path": str(source_dir)},
+    )
+    service = LocalMediaReadingService(db)
+
+    first_sync = service.trigger_ingestion_source_sync(source["id"])
+    removed_file.unlink()
+    second_sync = service.trigger_ingestion_source_sync(source["id"])
+    items = {
+        item["normalized_relative_path"]: item
+        for item in service.list_ingestion_source_items(source["id"])
+    }
+
+    assert first_sync["status"] == "completed"
+    assert first_sync["items_scanned"] == 2
+    assert second_sync["items_scanned"] == 1
+    assert second_sync["items_missing"] == 1
+    assert items["article.md"]["present_in_source"] is True
+    assert items["article.md"]["sync_status"] == "tracked"
+    assert items["nested/old.txt"]["present_in_source"] is False
+    assert items["nested/old.txt"]["sync_status"] == "missing"

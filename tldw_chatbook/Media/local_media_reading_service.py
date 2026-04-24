@@ -48,6 +48,13 @@ class LocalMediaReadingService:
         parsed = urlparse(str(url or ""))
         return parsed.netloc.lower() or None
 
+    def _hash_file(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as file_obj:
+            for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     def _unified_status_from_detail(self, detail: Mapping[str, Any]) -> str:
         return "saved" if detail.get("is_read_it_later") else "local"
 
@@ -521,7 +528,71 @@ class LocalMediaReadingService:
         return self._require_db().list_local_ingestion_source_items(int(source_id))
 
     def trigger_ingestion_source_sync(self, source_id: Any) -> Any:
-        raise self._unsupported_ingestion_jobs()
+        db = self._require_db()
+        normalized_source_id = int(source_id)
+        source = self.get_ingestion_source(normalized_source_id)
+        source_type = source.get("source_type")
+
+        if source_type == "archive_snapshot":
+            items = self.list_ingestion_source_items(normalized_source_id)
+            db.update_local_ingestion_source(normalized_source_id, last_sync_status="synced", last_error=None)
+            return {
+                "status": "completed",
+                "source_id": normalized_source_id,
+                "job_id": None,
+                "items_scanned": len(items),
+                "items_missing": 0,
+            }
+        if source_type != "local_directory":
+            raise ValueError("Local source sync currently supports local_directory and archive_snapshot sources only.")
+
+        root = Path(str((source.get("config") or {}).get("path") or "")).expanduser()
+        if not root.is_dir():
+            raise ValueError(f"Local ingestion source path is not a directory: {root}")
+
+        seen_paths: set[str] = set()
+        for file_path in sorted(path for path in root.rglob("*") if path.is_file()):
+            relative_path = file_path.relative_to(root).as_posix()
+            seen_paths.add(relative_path)
+            content_hash = self._hash_file(file_path)
+            db.upsert_local_ingestion_source_item(
+                normalized_source_id,
+                normalized_relative_path=relative_path,
+                content_hash=content_hash,
+                sync_status="tracked",
+                binding={
+                    "source_path": str(root),
+                    "file_path": str(file_path),
+                    "size_bytes": file_path.stat().st_size,
+                    "mtime": file_path.stat().st_mtime,
+                    "content_hash": content_hash,
+                },
+                present_in_source=True,
+            )
+
+        missing_count = 0
+        for item in db.list_local_ingestion_source_items(normalized_source_id):
+            relative_path = item["normalized_relative_path"]
+            if relative_path in seen_paths or not item.get("present_in_source", True):
+                continue
+            db.upsert_local_ingestion_source_item(
+                normalized_source_id,
+                normalized_relative_path=relative_path,
+                content_hash=item.get("content_hash"),
+                sync_status="missing",
+                binding=item.get("binding"),
+                present_in_source=False,
+            )
+            missing_count += 1
+
+        db.update_local_ingestion_source(normalized_source_id, last_sync_status="synced", last_error=None)
+        return {
+            "status": "completed",
+            "source_id": normalized_source_id,
+            "job_id": None,
+            "items_scanned": len(seen_paths),
+            "items_missing": missing_count,
+        }
 
     def upload_ingestion_source_archive(self, source_id: Any, archive_path: str) -> Any:
         db = self._require_db()
@@ -534,11 +605,7 @@ class LocalMediaReadingService:
         if not path.is_file():
             raise ValueError(f"Local archive path does not exist: {archive_path}")
 
-        digest = hashlib.sha256()
-        with path.open("rb") as archive_file:
-            for chunk in iter(lambda: archive_file.read(1024 * 1024), b""):
-                digest.update(chunk)
-        content_hash = digest.hexdigest()
+        content_hash = self._hash_file(path)
         item = db.upsert_local_ingestion_source_item(
             normalized_source_id,
             normalized_relative_path=path.name,

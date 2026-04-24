@@ -344,7 +344,8 @@ class FakeLocalMediaService:
         return True
 
     def trigger_ingestion_source_sync(self, source_id):
-        raise ValueError("Local ingestion sources are not available yet.")
+        self.calls.append(("trigger_ingestion_source_sync", source_id))
+        return {"status": "completed", "source_id": source_id, "job_id": None, "items_scanned": 2}
 
     def upload_ingestion_source_archive(self, source_id, archive_path):
         self.calls.append(("upload_ingestion_source_archive", source_id, archive_path))
@@ -2606,6 +2607,7 @@ async def test_scope_service_routes_local_ingestion_source_operations_and_policy
     detail = await scope_service.get_ingestion_source(mode="local", source_id=3)
     patched = await scope_service.patch_ingestion_source(mode="local", source_id=3, enabled=False)
     items = await scope_service.list_ingestion_source_items(mode="local", source_id=3)
+    triggered = await scope_service.trigger_ingestion_source_sync(mode="local", source_id=3)
     uploaded = await scope_service.upload_ingestion_source_archive(
         mode="local",
         source_id=3,
@@ -2618,6 +2620,8 @@ async def test_scope_service_routes_local_ingestion_source_operations_and_policy
     assert detail["source_type"] == "local_directory"
     assert patched["enabled"] is False
     assert items == []
+    assert triggered["status"] == "completed"
+    assert triggered["items_scanned"] == 2
     assert uploaded["status"] == "tracked"
     assert uploaded["item"]["normalized_relative_path"] == "archive.zip"
     assert deleted is True
@@ -2627,6 +2631,7 @@ async def test_scope_service_routes_local_ingestion_source_operations_and_policy
         "media.ingestion_sources.detail.local",
         "media.ingestion_sources.update.local",
         "media.ingestion_jobs.observe.local",
+        "media.ingestion_jobs.launch.local",
         "media.ingestion_jobs.launch.local",
         "media.ingestion_sources.delete.local",
     ]
