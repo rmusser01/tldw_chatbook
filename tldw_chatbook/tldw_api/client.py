@@ -46,6 +46,14 @@ from .notes_workspace_schemas import (
 from .media_reading_schemas import (
     CancelMediaIngestBatchResponse,
     CancelMediaIngestJobResponse,
+    DocumentAnnotationCreateRequest,
+    DocumentAnnotationListResponse,
+    DocumentAnnotationResponse,
+    DocumentAnnotationSyncRequest,
+    DocumentAnnotationSyncResponse,
+    DocumentAnnotationUpdateRequest,
+    DocumentFiguresResponse,
+    DocumentOutlineResponse,
     DocumentVersionCreateRequest,
     DocumentVersionDetailResponse,
     FileCreateRequest,
@@ -1952,6 +1960,75 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return WebProcessResponse.model_validate(response)
+
+    async def get_document_outline(self, media_id: int) -> DocumentOutlineResponse:
+        response = await self._request("GET", f"/api/v1/media/{media_id}/outline")
+        return DocumentOutlineResponse.model_validate(response)
+
+    async def get_document_figures(
+        self,
+        media_id: int,
+        *,
+        min_size: int = 50,
+    ) -> DocumentFiguresResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/figures",
+            params={"min_size": min_size},
+        )
+        return DocumentFiguresResponse.model_validate(response)
+
+    async def list_document_annotations(self, media_id: int) -> DocumentAnnotationListResponse:
+        response = await self._request("GET", f"/api/v1/media/{media_id}/annotations")
+        return DocumentAnnotationListResponse.model_validate(response)
+
+    async def create_document_annotation(
+        self,
+        media_id: int,
+        request_data: DocumentAnnotationCreateRequest,
+    ) -> DocumentAnnotationResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/annotations",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return DocumentAnnotationResponse.model_validate(response)
+
+    async def update_document_annotation(
+        self,
+        media_id: int,
+        annotation_id: str,
+        request_data: DocumentAnnotationUpdateRequest,
+    ) -> DocumentAnnotationResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/media/{media_id}/annotations/{annotation_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return DocumentAnnotationResponse.model_validate(response)
+
+    async def delete_document_annotation(
+        self,
+        media_id: int,
+        annotation_id: str,
+    ) -> Dict[str, bool]:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/media/{media_id}/annotations/{annotation_id}",
+        )
+        return {"deleted": True, **response}
+
+    async def sync_document_annotations(
+        self,
+        media_id: int,
+        request_data: DocumentAnnotationSyncRequest,
+    ) -> DocumentAnnotationSyncResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/annotations/sync",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return DocumentAnnotationSyncResponse.model_validate(response)
 
     async def list_media_document_versions(
         self,

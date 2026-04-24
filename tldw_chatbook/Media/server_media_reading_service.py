@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 from ..tldw_api import (
+    DocumentAnnotationCreateRequest,
+    DocumentAnnotationSyncRequest,
+    DocumentAnnotationUpdateRequest,
     DocumentVersionCreateRequest,
     IngestWebContentRequest,
     IngestionSourceCreateRequest,
@@ -415,6 +418,70 @@ class ServerMediaReadingService:
             **{key: value for key, value in options.items() if value is not None},
         )
         return await self._require_client().ingest_web_content(request_data)
+
+    async def get_document_outline(self, media_id: Any) -> Any:
+        response = await self._require_client().get_document_outline(int(media_id))
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
+
+    async def get_document_figures(self, media_id: Any, *, min_size: int = 50) -> Any:
+        response = await self._require_client().get_document_figures(int(media_id), min_size=int(min_size))
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
+
+    async def list_document_annotations(self, media_id: Any) -> Any:
+        response = await self._require_client().list_document_annotations(int(media_id))
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
+
+    async def create_document_annotation(
+        self,
+        media_id: Any,
+        *,
+        location: str,
+        text: str,
+        color: str = "yellow",
+        note: str | None = None,
+        annotation_type: str = "highlight",
+        chapter_title: str | None = None,
+        percentage: float | None = None,
+    ) -> Any:
+        request_data = DocumentAnnotationCreateRequest(
+            location=location,
+            text=text,
+            color=color,
+            note=note,
+            annotation_type=annotation_type,
+            chapter_title=chapter_title,
+            percentage=percentage,
+        )
+        response = await self._require_client().create_document_annotation(int(media_id), request_data)
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
+
+    async def update_document_annotation(self, media_id: Any, annotation_id: str, **changes: Any) -> Any:
+        request_data = DocumentAnnotationUpdateRequest(
+            **{key: value for key, value in changes.items() if value is not None}
+        )
+        response = await self._require_client().update_document_annotation(
+            int(media_id),
+            annotation_id,
+            request_data,
+        )
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
+
+    async def delete_document_annotation(self, media_id: Any, annotation_id: str) -> Any:
+        return await self._require_client().delete_document_annotation(int(media_id), annotation_id)
+
+    async def sync_document_annotations(
+        self,
+        media_id: Any,
+        *,
+        annotations: list[Mapping[str, Any]],
+        client_ids: list[str] | None = None,
+    ) -> Any:
+        request_data = DocumentAnnotationSyncRequest(
+            annotations=[DocumentAnnotationCreateRequest(**dict(annotation)) for annotation in annotations],
+            client_ids=client_ids,
+        )
+        response = await self._require_client().sync_document_annotations(int(media_id), request_data)
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
 
     async def list_document_versions(self, media_id: Any, *, include_deleted: bool = False) -> Any:
         if include_deleted:

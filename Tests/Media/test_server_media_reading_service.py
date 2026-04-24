@@ -57,6 +57,52 @@ class FakeClient:
         self.calls.append(("delete_media_document_version", media_id, version_number))
         return {"deleted": True}
 
+    async def get_document_outline(self, media_id):
+        self.calls.append(("get_document_outline", media_id))
+        return {"media_id": media_id, "has_outline": True, "entries": [], "total_pages": 3}
+
+    async def get_document_figures(self, media_id, *, min_size=50):
+        self.calls.append(("get_document_figures", media_id, min_size))
+        return {"media_id": media_id, "has_figures": False, "figures": [], "total_count": 0}
+
+    async def list_document_annotations(self, media_id):
+        self.calls.append(("list_document_annotations", media_id))
+        return {"media_id": media_id, "annotations": [], "total_count": 0}
+
+    async def create_document_annotation(self, media_id, request_data):
+        self.calls.append(("create_document_annotation", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "id": "ann_1",
+            "media_id": media_id,
+            "location": "page:1",
+            "text": "Quote",
+            "color": "yellow",
+            "annotation_type": "highlight",
+            "created_at": "2026-04-23T12:00:00Z",
+            "updated_at": "2026-04-23T12:00:00Z",
+        }
+
+    async def update_document_annotation(self, media_id, annotation_id, request_data):
+        self.calls.append(("update_document_annotation", media_id, annotation_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "id": annotation_id,
+            "media_id": media_id,
+            "location": "page:1",
+            "text": "Updated",
+            "color": "green",
+            "annotation_type": "highlight",
+            "created_at": "2026-04-23T12:00:00Z",
+            "updated_at": "2026-04-23T12:01:00Z",
+        }
+
+    async def delete_document_annotation(self, media_id, annotation_id):
+        self.calls.append(("delete_document_annotation", media_id, annotation_id))
+        return {"deleted": True}
+
+    async def sync_document_annotations(self, media_id, request_data):
+        self.calls.append(("sync_document_annotations", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"media_id": media_id, "synced_count": 1, "annotations": [], "id_mapping": {"client-1": "ann_1"}}
+
     async def get_reading_progress(self, media_id):
         self.calls.append(("get_reading_progress", media_id))
         return {"media_id": media_id, "current_page": 4, "total_pages": 10, "percent_complete": 40.0}
@@ -1025,6 +1071,50 @@ async def test_server_service_document_version_limitations_fail_explicitly():
 
     with pytest.raises(ValueError, match="Server document version delete requires media_id and version_number."):
         await service.delete_analysis_version("version-1")
+
+
+@pytest.mark.asyncio
+async def test_server_service_document_workspace_helpers_route_to_server_contract():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    outline = await service.get_document_outline(99)
+    figures = await service.get_document_figures(99, min_size=75)
+    annotations = await service.list_document_annotations(99)
+    created = await service.create_document_annotation(
+        99,
+        location="page:1",
+        text="Quote",
+    )
+    updated = await service.update_document_annotation(
+        99,
+        "ann_1",
+        text="Updated",
+        color="green",
+    )
+    deleted = await service.delete_document_annotation(99, "ann_1")
+    synced = await service.sync_document_annotations(
+        99,
+        annotations=[{"location": "page:1", "text": "Quote"}],
+        client_ids=["client-1"],
+    )
+
+    assert outline["has_outline"] is True
+    assert figures["has_figures"] is False
+    assert annotations["total_count"] == 0
+    assert created["id"] == "ann_1"
+    assert updated["text"] == "Updated"
+    assert deleted == {"deleted": True}
+    assert synced["id_mapping"] == {"client-1": "ann_1"}
+    assert client.calls[-7:] == [
+        ("get_document_outline", 99),
+        ("get_document_figures", 99, 75),
+        ("list_document_annotations", 99),
+        ("create_document_annotation", 99, {"location": "page:1", "text": "Quote", "color": "yellow", "annotation_type": "highlight"}),
+        ("update_document_annotation", 99, "ann_1", {"text": "Updated", "color": "green"}),
+        ("delete_document_annotation", 99, "ann_1"),
+        ("sync_document_annotations", 99, {"annotations": [{"location": "page:1", "text": "Quote", "color": "yellow", "annotation_type": "highlight"}], "client_ids": ["client-1"]}),
+    ]
 
 
 def test_server_service_from_config_uses_shared_api_client_builder(monkeypatch):

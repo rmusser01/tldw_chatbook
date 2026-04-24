@@ -6,6 +6,14 @@ import tldw_chatbook.tldw_api as api
 from tldw_chatbook.tldw_api import (
     CancelMediaIngestBatchResponse,
     CancelMediaIngestJobResponse,
+    DocumentAnnotationCreateRequest,
+    DocumentAnnotationListResponse,
+    DocumentAnnotationResponse,
+    DocumentAnnotationSyncRequest,
+    DocumentAnnotationSyncResponse,
+    DocumentAnnotationUpdateRequest,
+    DocumentFiguresResponse,
+    DocumentOutlineResponse,
     DocumentVersionCreateRequest,
     DocumentVersionDetailResponse,
     FileCreateOptions,
@@ -34,6 +42,93 @@ from tldw_chatbook.tldw_api import (
     SubmitMediaIngestJobsResponse,
     TLDWAPIClient,
 )
+
+
+@pytest.mark.asyncio
+async def test_document_workspace_routes_wire_and_return_typed_responses(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    annotation_payload = {
+        "id": "ann_1",
+        "media_id": 99,
+        "location": "page:1",
+        "text": "Quote",
+        "color": "yellow",
+        "annotation_type": "highlight",
+        "created_at": "2026-04-23T12:00:00Z",
+        "updated_at": "2026-04-23T12:00:00Z",
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "media_id": 99,
+                "has_outline": True,
+                "entries": [{"level": 1, "title": "Intro", "page": 1}],
+                "total_pages": 10,
+            },
+            {
+                "media_id": 99,
+                "has_figures": True,
+                "figures": [
+                    {
+                        "id": "fig_1_0",
+                        "page": 1,
+                        "width": 640,
+                        "height": 480,
+                        "format": "png",
+                    }
+                ],
+                "total_count": 1,
+            },
+            {"media_id": 99, "annotations": [annotation_payload], "total_count": 1},
+            annotation_payload,
+            {**annotation_payload, "text": "Updated"},
+            {},
+            {
+                "media_id": 99,
+                "synced_count": 1,
+                "annotations": [annotation_payload],
+                "id_mapping": {"client-1": "ann_1"},
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    outline = await client.get_document_outline(99)
+    figures = await client.get_document_figures(99, min_size=75)
+    annotations = await client.list_document_annotations(99)
+    created = await client.create_document_annotation(
+        99,
+        DocumentAnnotationCreateRequest(location="page:1", text="Quote"),
+    )
+    updated = await client.update_document_annotation(
+        99,
+        "ann_1",
+        DocumentAnnotationUpdateRequest(text="Updated"),
+    )
+    deleted = await client.delete_document_annotation(99, "ann_1")
+    synced = await client.sync_document_annotations(
+        99,
+        DocumentAnnotationSyncRequest(
+            annotations=[DocumentAnnotationCreateRequest(location="page:1", text="Quote")],
+            client_ids=["client-1"],
+        ),
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/media/99/outline")
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/99/figures")
+    assert mocked.await_args_list[1].kwargs["params"] == {"min_size": 75}
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/media/99/annotations")
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/media/99/annotations")
+    assert mocked.await_args_list[4].args[:2] == ("PUT", "/api/v1/media/99/annotations/ann_1")
+    assert mocked.await_args_list[5].args[:2] == ("DELETE", "/api/v1/media/99/annotations/ann_1")
+    assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/media/99/annotations/sync")
+    assert isinstance(outline, DocumentOutlineResponse)
+    assert isinstance(figures, DocumentFiguresResponse)
+    assert isinstance(annotations, DocumentAnnotationListResponse)
+    assert isinstance(created, DocumentAnnotationResponse)
+    assert isinstance(updated, DocumentAnnotationResponse)
+    assert deleted == {"deleted": True}
+    assert isinstance(synced, DocumentAnnotationSyncResponse)
 
 
 @pytest.mark.asyncio

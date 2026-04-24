@@ -36,6 +36,8 @@ ReadingExportFormat = Literal["jsonl", "zip"]
 ReadingDigestFormat = Literal["md", "html"]
 ReadingTTSResponseFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 ReadingTTSTextSource = Literal["text", "summary", "notes"]
+DocumentAnnotationColor = Literal["yellow", "green", "blue", "pink"]
+DocumentAnnotationType = Literal["highlight", "page_note"]
 ItemsBulkAction = Literal[
     "set_status",
     "set_favorite",
@@ -452,6 +454,84 @@ class WebProcessResponse(BaseModel):
     count: int | None = None
     results: list[WebScrapedItemResult] | None = None
     media_ids: list[int | str] | None = None
+
+
+class DocumentOutlineEntry(BaseModel):
+    level: int = Field(..., ge=1, le=6)
+    title: str
+    page: int = Field(..., ge=1)
+
+
+class DocumentOutlineResponse(BaseModel):
+    media_id: int
+    has_outline: bool
+    entries: list[DocumentOutlineEntry] = Field(default_factory=list)
+    total_pages: int = Field(..., ge=0)
+
+
+class DocumentFigure(BaseModel):
+    id: str
+    page: int = Field(..., ge=1)
+    width: int = Field(..., ge=1)
+    height: int = Field(..., ge=1)
+    format: str
+    data_url: str | None = None
+    caption: str | None = None
+
+
+class DocumentFiguresResponse(BaseModel):
+    media_id: int
+    has_figures: bool
+    figures: list[DocumentFigure] = Field(default_factory=list)
+    total_count: int = Field(..., ge=0)
+
+
+class DocumentAnnotationCreateRequest(BaseModel):
+    location: str
+    text: str
+    color: DocumentAnnotationColor = "yellow"
+    note: str | None = None
+    annotation_type: DocumentAnnotationType = "highlight"
+    chapter_title: str | None = None
+    percentage: float | None = Field(default=None, ge=0, le=100)
+
+
+class DocumentAnnotationUpdateRequest(BaseModel):
+    text: str | None = None
+    color: DocumentAnnotationColor | None = None
+    note: str | None = None
+
+
+class DocumentAnnotationResponse(BaseModel):
+    id: str
+    media_id: int
+    location: str
+    text: str
+    color: DocumentAnnotationColor
+    note: str | None = None
+    annotation_type: DocumentAnnotationType = "highlight"
+    chapter_title: str | None = None
+    percentage: float | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocumentAnnotationListResponse(BaseModel):
+    media_id: int
+    annotations: list[DocumentAnnotationResponse] = Field(default_factory=list)
+    total_count: int = Field(..., ge=0)
+
+
+class DocumentAnnotationSyncRequest(BaseModel):
+    annotations: list[DocumentAnnotationCreateRequest]
+    client_ids: list[str] | None = None
+
+
+class DocumentAnnotationSyncResponse(BaseModel):
+    media_id: int
+    synced_count: int = Field(..., ge=0)
+    annotations: list[DocumentAnnotationResponse] = Field(default_factory=list)
+    id_mapping: dict[str, str] | None = None
 
 
 class DocumentVersionCreateRequest(BaseModel):

@@ -435,6 +435,12 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.ingestion_sources.list.server
         media.ingestion_sources.update.local
         media.ingestion_sources.update.server
+        media.document_annotations.create.server
+        media.document_annotations.delete.server
+        media.document_annotations.list.server
+        media.document_annotations.update.server
+        media.document_figures.list.server
+        media.document_outline.detail.server
         media.reading.create.local
         media.reading.create.server
         media.reading.delete.local

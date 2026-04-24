@@ -737,6 +737,34 @@ class FakeServerMediaService:
             raise ValueError("Server document version delete requires media_id and version_number.")
         return {"deleted": True}
 
+    async def get_document_outline(self, media_id):
+        self.calls.append(("get_document_outline", media_id))
+        return {"media_id": media_id, "has_outline": True, "entries": [], "total_pages": 3}
+
+    async def get_document_figures(self, media_id, *, min_size=50):
+        self.calls.append(("get_document_figures", media_id, min_size))
+        return {"media_id": media_id, "has_figures": False, "figures": [], "total_count": 0}
+
+    async def list_document_annotations(self, media_id):
+        self.calls.append(("list_document_annotations", media_id))
+        return {"media_id": media_id, "annotations": [], "total_count": 0}
+
+    async def create_document_annotation(self, media_id, **kwargs):
+        self.calls.append(("create_document_annotation", media_id, kwargs))
+        return {"id": "ann_1", "media_id": media_id, **kwargs}
+
+    async def update_document_annotation(self, media_id, annotation_id, **changes):
+        self.calls.append(("update_document_annotation", media_id, annotation_id, changes))
+        return {"id": annotation_id, "media_id": media_id, **changes}
+
+    async def delete_document_annotation(self, media_id, annotation_id):
+        self.calls.append(("delete_document_annotation", media_id, annotation_id))
+        return {"deleted": True}
+
+    async def sync_document_annotations(self, media_id, *, annotations, client_ids=None):
+        self.calls.append(("sync_document_annotations", media_id, annotations, client_ids))
+        return {"media_id": media_id, "synced_count": len(annotations), "annotations": [], "id_mapping": {"client-1": "ann_1"}}
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
@@ -1743,5 +1771,78 @@ async def test_scope_service_rejects_incomplete_server_document_version_delete_b
 
     with pytest.raises(ValueError, match="Server document version delete requires media_id and version_number."):
         await scope_service.delete_analysis_version(mode="server", version_uuid="server-version-1")
+
+    assert policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_document_workspace_helpers_with_policy_actions():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    outline = await scope_service.get_document_outline(mode="server", media_id=99)
+    figures = await scope_service.get_document_figures(mode="server", media_id=99, min_size=75)
+    annotations = await scope_service.list_document_annotations(mode="server", media_id=99)
+    created = await scope_service.create_document_annotation(
+        mode="server",
+        media_id=99,
+        location="page:1",
+        text="Quote",
+    )
+    updated = await scope_service.update_document_annotation(
+        mode="server",
+        media_id=99,
+        annotation_id="ann_1",
+        text="Updated",
+    )
+    deleted = await scope_service.delete_document_annotation(
+        mode="server",
+        media_id=99,
+        annotation_id="ann_1",
+    )
+    synced = await scope_service.sync_document_annotations(
+        mode="server",
+        media_id=99,
+        annotations=[{"location": "page:1", "text": "Quote"}],
+        client_ids=["client-1"],
+    )
+
+    assert outline["has_outline"] is True
+    assert figures["has_figures"] is False
+    assert annotations["total_count"] == 0
+    assert created["id"] == "ann_1"
+    assert updated["text"] == "Updated"
+    assert deleted == {"deleted": True}
+    assert synced["synced_count"] == 1
+    assert policy.calls == [
+        "media.document_outline.detail.server",
+        "media.document_figures.list.server",
+        "media.document_annotations.list.server",
+        "media.document_annotations.create.server",
+        "media.document_annotations.update.server",
+        "media.document_annotations.delete.server",
+        "media.document_annotations.create.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_local_document_workspace_before_policy():
+    policy = FakePolicyEnforcer.deny("blocked")
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Local document workspace is not available yet."):
+        await scope_service.get_document_outline(mode="local", media_id=99)
+
+    with pytest.raises(ValueError, match="Local document workspace is not available yet."):
+        await scope_service.list_document_annotations(mode="local", media_id=99)
 
     assert policy.calls == []

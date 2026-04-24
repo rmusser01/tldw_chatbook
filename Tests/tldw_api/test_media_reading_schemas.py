@@ -1,6 +1,13 @@
 import pytest
 
 from tldw_chatbook.tldw_api import (
+    DocumentAnnotationCreateRequest,
+    DocumentAnnotationListResponse,
+    DocumentAnnotationSyncRequest,
+    DocumentAnnotationSyncResponse,
+    DocumentAnnotationUpdateRequest,
+    DocumentFiguresResponse,
+    DocumentOutlineResponse,
     DocumentVersionCreateRequest,
     DocumentVersionDetailResponse,
     FileCreateOptions,
@@ -26,6 +33,85 @@ from tldw_chatbook.tldw_api import (
     ReadingTTSRequest,
     ReadingUpdateRequest,
 )
+
+
+def test_document_workspace_read_models_match_server_contracts():
+    outline = DocumentOutlineResponse(
+        media_id=99,
+        has_outline=True,
+        entries=[{"level": 1, "title": "Intro", "page": 1}],
+        total_pages=10,
+    )
+    figures = DocumentFiguresResponse(
+        media_id=99,
+        has_figures=True,
+        figures=[
+            {
+                "id": "fig_1_0",
+                "page": 1,
+                "width": 640,
+                "height": 480,
+                "format": "png",
+                "data_url": "data:image/png;base64,abc",
+            }
+        ],
+        total_count=1,
+    )
+
+    assert outline.entries[0].title == "Intro"
+    assert figures.figures[0].data_url == "data:image/png;base64,abc"
+
+
+def test_document_annotation_requests_and_responses_match_server_contracts():
+    create = DocumentAnnotationCreateRequest(
+        location="page:1",
+        text="Highlighted text",
+        color="blue",
+        note="Important",
+        annotation_type="highlight",
+        percentage=42.5,
+    )
+    update = DocumentAnnotationUpdateRequest(text="Updated", color="green", note="Changed")
+    listed = DocumentAnnotationListResponse(
+        media_id=99,
+        annotations=[
+            {
+                "id": "ann_1",
+                "media_id": 99,
+                "location": "page:1",
+                "text": "Highlighted text",
+                "color": "blue",
+                "annotation_type": "highlight",
+                "created_at": "2026-04-23T12:00:00Z",
+                "updated_at": "2026-04-23T12:00:00Z",
+            }
+        ],
+        total_count=1,
+    )
+    sync = DocumentAnnotationSyncRequest(annotations=[create], client_ids=["client-1"])
+    sync_response = DocumentAnnotationSyncResponse(
+        media_id=99,
+        synced_count=1,
+        annotations=listed.annotations,
+        id_mapping={"client-1": "ann_1"},
+    )
+
+    assert create.model_dump(exclude_none=True, mode="json") == {
+        "location": "page:1",
+        "text": "Highlighted text",
+        "color": "blue",
+        "note": "Important",
+        "annotation_type": "highlight",
+        "percentage": 42.5,
+    }
+    assert update.model_dump(exclude_none=True, mode="json") == {
+        "text": "Updated",
+        "color": "green",
+        "note": "Changed",
+    }
+    assert listed.annotations[0].id == "ann_1"
+    assert sync.model_dump(exclude_none=True, mode="json")["client_ids"] == ["client-1"]
+    assert sync_response.id_mapping == {"client-1": "ann_1"}
 
 
 def test_document_version_request_and_response_match_server_contract():

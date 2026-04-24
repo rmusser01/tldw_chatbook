@@ -168,6 +168,23 @@ class MediaReadingScopeService:
     def _web_content_ingest_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.web_content_ingest.{action}.{mode.value}"
 
+    @staticmethod
+    def _document_outline_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.document_outline.{action}.{mode.value}"
+
+    @staticmethod
+    def _document_figures_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.document_figures.{action}.{mode.value}"
+
+    @staticmethod
+    def _document_annotation_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.document_annotations.{action}.{mode.value}"
+
+    @staticmethod
+    def _require_server_document_workspace(mode: MediaReadingBackend) -> None:
+        if mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local document workspace is not available yet.")
+
     def _service_for_mode(self, mode: MediaReadingBackend) -> Any:
         if mode == MediaReadingBackend.LOCAL:
             if self.local_service is None:
@@ -1200,6 +1217,126 @@ class MediaReadingScopeService:
             service.ingest_web_content(
                 urls=urls,
                 **{key: value for key, value in options.items() if value is not None},
+            )
+        )
+
+    async def get_document_outline(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_document_workspace(normalized_mode)
+        self._enforce_policy(self._document_outline_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.get_document_outline(media_id))
+
+    async def get_document_figures(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        min_size: int = 50,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_document_workspace(normalized_mode)
+        self._enforce_policy(self._document_figures_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.get_document_figures(media_id, min_size=min_size))
+
+    async def list_document_annotations(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_document_workspace(normalized_mode)
+        self._enforce_policy(self._document_annotation_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.list_document_annotations(media_id))
+
+    async def create_document_annotation(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        location: str,
+        text: str,
+        color: str = "yellow",
+        note: str | None = None,
+        annotation_type: str = "highlight",
+        chapter_title: str | None = None,
+        percentage: float | None = None,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_document_workspace(normalized_mode)
+        self._enforce_policy(self._document_annotation_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.create_document_annotation(
+                media_id,
+                location=location,
+                text=text,
+                color=color,
+                note=note,
+                annotation_type=annotation_type,
+                chapter_title=chapter_title,
+                percentage=percentage,
+            )
+        )
+
+    async def update_document_annotation(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        annotation_id: str,
+        **changes: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_document_workspace(normalized_mode)
+        self._enforce_policy(self._document_annotation_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.update_document_annotation(
+                media_id,
+                annotation_id,
+                **{key: value for key, value in changes.items() if value is not None},
+            )
+        )
+
+    async def delete_document_annotation(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        annotation_id: str,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_document_workspace(normalized_mode)
+        self._enforce_policy(self._document_annotation_action_id(normalized_mode, "delete"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.delete_document_annotation(media_id, annotation_id))
+
+    async def sync_document_annotations(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        annotations: list[Mapping[str, Any]],
+        client_ids: list[str] | None = None,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_document_workspace(normalized_mode)
+        self._enforce_policy(self._document_annotation_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.sync_document_annotations(
+                media_id,
+                annotations=annotations,
+                client_ids=client_ids,
             )
         )
 

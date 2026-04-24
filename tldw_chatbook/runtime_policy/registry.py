@@ -273,6 +273,13 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("media.reading_tts", actions=(LAUNCH,), sources=(SERVER_SOURCE,)),
             _resource("media.reading_digest_schedules", actions=CRUD_ACTIONS, sources=(SERVER_SOURCE,)),
             _resource("media.reading_digest_outputs", actions=(LIST,), sources=(SERVER_SOURCE,)),
+            _resource("media.document_outline", actions=(DETAIL,), sources=(SERVER_SOURCE,)),
+            _resource("media.document_figures", actions=(LIST,), sources=(SERVER_SOURCE,)),
+            _resource(
+                "media.document_annotations",
+                actions=(LIST, CREATE, UPDATE, DELETE),
+                sources=(SERVER_SOURCE,),
+            ),
             _resource("media.ingestion_sources", actions=CRUD_ACTIONS),
             _resource("media.ingestion_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE)),
             _resource("media.web_content_ingest", actions=(LAUNCH,), sources=(SERVER_SOURCE,)),
