@@ -518,6 +518,15 @@ _EXPORT_GROUPS = (
         ),
     ),
     (
+        ".research_search_schemas",
+        (
+            "WebSearchAggregateResponse",
+            "WebSearchFinalAnswer",
+            "WebSearchRawResponse",
+            "WebSearchRequest",
+        ),
+    ),
+    (
         ".writing_manuscript_schemas",
         (
             "ProjectStatus",

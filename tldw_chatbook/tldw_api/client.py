@@ -342,6 +342,11 @@ from .research_runs_schemas import (
     ResearchRunResponse,
     ResearchRunStreamEvent,
 )
+from .research_search_schemas import (
+    WebSearchAggregateResponse,
+    WebSearchRawResponse,
+    WebSearchRequest,
+)
 from .writing_manuscript_schemas import (
     ManuscriptChapterCreateRequest,
     ManuscriptChapterResponse,
@@ -1780,6 +1785,19 @@ class TLDWAPIClient:
             event_model=ResearchRunStreamEvent,
         ):
             yield event
+
+    async def run_research_websearch(
+        self,
+        request_data: WebSearchRequest,
+    ) -> WebSearchRawResponse | WebSearchAggregateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/research/websearch",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        if "final_answer" in response or "relevant_results" in response:
+            return WebSearchAggregateResponse.model_validate(response)
+        return WebSearchRawResponse.model_validate(response)
 
     async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
         response = await self._request(
