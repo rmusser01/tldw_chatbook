@@ -83,10 +83,15 @@ class StudyScopeService:
 
     @classmethod
     def _with_server_flashcard_list(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return cls._with_flashcard_list("server", payload)
+
+    @classmethod
+    def _with_flashcard_list(cls, source: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         result = dict(cls._with_server_source(payload))
+        result["source"] = source
         result.setdefault("entity_kind", "study_flashcard_list")
         result["items"] = [
-            normalize_study_flashcard_record("server", item)
+            normalize_study_flashcard_record(source, item)
             for item in list(result.get("items") or [])
             if isinstance(item, Mapping)
         ]
@@ -94,7 +99,12 @@ class StudyScopeService:
 
     @classmethod
     def _with_server_bulk_update(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return cls._with_bulk_update("server", payload)
+
+    @classmethod
+    def _with_bulk_update(cls, source: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         result = dict(cls._with_server_source(payload))
+        result["source"] = source
         result.setdefault("entity_kind", "study_flashcard_bulk_update")
         normalized_results: list[dict[str, Any]] = []
         for item in list(result.get("results") or []):
@@ -103,7 +113,7 @@ class StudyScopeService:
             normalized = dict(item)
             flashcard = normalized.get("flashcard")
             if isinstance(flashcard, Mapping):
-                normalized["flashcard"] = normalize_study_flashcard_record("server", flashcard)
+                normalized["flashcard"] = normalize_study_flashcard_record(source, flashcard)
             normalized_results.append(normalized)
         result["results"] = normalized_results
         return result
@@ -244,7 +254,8 @@ class StudyScopeService:
         scheduler_settings: dict[str, Any] | None = None,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard deck update")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.update_deck(
                 deck_id,
@@ -257,7 +268,7 @@ class StudyScopeService:
                 expected_version=expected_version,
             )
         )
-        return normalize_study_deck_record("server", record)
+        return normalize_study_deck_record(normalized_mode.value, record)
 
     async def list_flashcards(
         self,
@@ -318,9 +329,10 @@ class StudyScopeService:
         mode: StudyBackend | str | None = None,
         cards: list[Mapping[str, Any]],
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard bulk create")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.create_flashcards_bulk(cards))
-        return self._with_server_flashcard_list(payload or {})
+        return self._with_flashcard_list(normalized_mode.value, payload or {})
 
     async def move_flashcard(
         self,
@@ -373,9 +385,10 @@ class StudyScopeService:
         mode: StudyBackend | str | None = None,
         cards: list[Mapping[str, Any]],
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard bulk update")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.update_flashcards_bulk(cards))
-        return self._with_server_bulk_update(payload or {})
+        return self._with_bulk_update(normalized_mode.value, payload or {})
 
     async def reset_flashcard_scheduling(
         self,
@@ -384,11 +397,12 @@ class StudyScopeService:
         card_id: str,
         expected_version: int,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard scheduling reset")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.reset_flashcard_scheduling(card_id, expected_version=expected_version)
         )
-        return normalize_study_flashcard_record("server", record)
+        return normalize_study_flashcard_record(normalized_mode.value, record)
 
     async def set_flashcard_tags(
         self,
@@ -397,9 +411,10 @@ class StudyScopeService:
         card_id: str,
         tags: list[str],
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard tag update")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(service.set_flashcard_tags(card_id, tags=tags))
-        return normalize_study_flashcard_record("server", record)
+        return normalize_study_flashcard_record(normalized_mode.value, record)
 
     async def get_flashcard_tags(
         self,
@@ -407,7 +422,8 @@ class StudyScopeService:
         mode: StudyBackend | str | None = None,
         card_id: str,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard tag list")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         return dict(await self._maybe_await(service.get_flashcard_tags(card_id)) or {})
 
     async def list_flashcard_tag_suggestions(
@@ -417,9 +433,11 @@ class StudyScopeService:
         q: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
-        service = self._server_only_service(mode, "Flashcard tag suggestions")
+        normalized_mode = self._normalize_mode(mode)
+        service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.list_flashcard_tag_suggestions(q=q, limit=limit))
-        result = dict(self._with_server_source(payload or {}))
+        result = dict(payload or {})
+        result.setdefault("source", normalized_mode.value)
         result.setdefault("entity_kind", "flashcard_tag_suggestions")
         return result
 

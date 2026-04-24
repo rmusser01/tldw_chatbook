@@ -1585,11 +1585,13 @@ CREATE TRIGGER IF NOT EXISTS flashcards_ai AFTER INSERT ON flashcards BEGIN
 END;
 
 CREATE TRIGGER IF NOT EXISTS flashcards_ad AFTER DELETE ON flashcards BEGIN
-    DELETE FROM flashcards_fts WHERE rowid = old.rowid;
+    INSERT INTO flashcards_fts(flashcards_fts, rowid, front, back, tags)
+    VALUES('delete', old.rowid, old.front, old.back, old.tags);
 END;
 
 CREATE TRIGGER IF NOT EXISTS flashcards_au AFTER UPDATE ON flashcards BEGIN
-    DELETE FROM flashcards_fts WHERE rowid = old.rowid;
+    INSERT INTO flashcards_fts(flashcards_fts, rowid, front, back, tags)
+    VALUES('delete', old.rowid, old.front, old.back, old.tags);
     INSERT INTO flashcards_fts(rowid, front, back, tags) 
     VALUES (new.rowid, new.front, new.back, new.tags);
 END;
@@ -6735,6 +6737,29 @@ UPDATE db_schema_version
             "UPDATE decks SET card_count = ? WHERE id = ?",
             (total, deck_id),
         )
+
+    def _ensure_flashcard_fts_triggers(self, cursor) -> None:
+        """Repair legacy FTS5 triggers before local flashcard mutations."""
+        cursor.execute("DROP TRIGGER IF EXISTS flashcards_ad")
+        cursor.execute("DROP TRIGGER IF EXISTS flashcards_au")
+        cursor.execute(
+            """
+            CREATE TRIGGER flashcards_ad AFTER DELETE ON flashcards BEGIN
+                INSERT INTO flashcards_fts(flashcards_fts, rowid, front, back, tags)
+                VALUES('delete', old.rowid, old.front, old.back, old.tags);
+            END
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TRIGGER flashcards_au AFTER UPDATE ON flashcards BEGIN
+                INSERT INTO flashcards_fts(flashcards_fts, rowid, front, back, tags)
+                VALUES('delete', old.rowid, old.front, old.back, old.tags);
+                INSERT INTO flashcards_fts(rowid, front, back, tags)
+                VALUES (new.rowid, new.front, new.back, new.tags);
+            END
+            """
+        )
     
     def create_flashcard(self, card_data: Dict[str, Any]) -> str:
         """
@@ -6945,6 +6970,214 @@ UPDATE db_schema_version
             """, (deck_id, name, description, self.client_id, self.client_id))
             
         return deck_id
+
+    def update_deck(
+        self,
+        deck_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        expected_version: Optional[int] = None,
+    ) -> bool:
+        """Update local deck metadata and optimistic-lock version."""
+        try:
+            with self.transaction() as cursor:
+                row = cursor.execute(
+                    "SELECT * FROM decks WHERE id = ? AND is_deleted = 0",
+                    (deck_id,),
+                ).fetchone()
+                if not row:
+                    return False
+
+                current_version = int(row["version"])
+                if expected_version is not None and current_version != expected_version:
+                    raise ConflictError("Version mismatch updating deck", entity="decks", entity_id=deck_id)
+
+                merged_metadata: Dict[str, Any] = {}
+                if row["metadata"]:
+                    try:
+                        merged_metadata.update(json.loads(row["metadata"]) or {})
+                    except json.JSONDecodeError:
+                        merged_metadata["legacy_metadata"] = row["metadata"]
+                if metadata:
+                    merged_metadata.update(metadata)
+
+                cursor.execute(
+                    """
+                    UPDATE decks
+                    SET name = ?,
+                        description = ?,
+                        metadata = ?,
+                        updated_at = CURRENT_TIMESTAMP,
+                        version = version + 1,
+                        last_modified_by = ?
+                    WHERE id = ? AND is_deleted = 0
+                    """,
+                    (
+                        name if name is not None else row["name"],
+                        description if description is not None else row["description"],
+                        json.dumps(merged_metadata) if merged_metadata else None,
+                        self.client_id,
+                        deck_id,
+                    ),
+                )
+                return True
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(f"Failed to update deck: {e}") from e
+
+    def update_flashcard(
+        self,
+        card_id: str,
+        *,
+        deck_id: Optional[str] = None,
+        front: Optional[str] = None,
+        back: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        expected_version: Optional[int] = None,
+        **extra_fields: Any,
+    ) -> bool:
+        """Update local flashcard content, tags, metadata, or deck membership."""
+        try:
+            with self.transaction() as cursor:
+                self._ensure_flashcard_fts_triggers(cursor)
+                row = cursor.execute(
+                    "SELECT * FROM flashcards WHERE id = ? AND is_deleted = 0",
+                    (card_id,),
+                ).fetchone()
+                if not row:
+                    return False
+
+                current_version = int(row["version"])
+                if expected_version is not None and current_version != expected_version:
+                    raise ConflictError("Version mismatch updating flashcard", entity="flashcards", entity_id=card_id)
+
+                target_deck_id = deck_id if deck_id is not None else row["deck_id"]
+                if target_deck_id:
+                    deck_row = cursor.execute(
+                        "SELECT id FROM decks WHERE id = ? AND is_deleted = 0",
+                        (target_deck_id,),
+                    ).fetchone()
+                    if not deck_row:
+                        raise InputError(f"Deck {target_deck_id} not found")
+
+                merged_metadata: Dict[str, Any] = {}
+                if row["metadata"]:
+                    try:
+                        merged_metadata.update(json.loads(row["metadata"]) or {})
+                    except json.JSONDecodeError:
+                        merged_metadata["legacy_metadata"] = row["metadata"]
+                if metadata:
+                    merged_metadata.update(metadata)
+
+                card_type = extra_fields.get("type") or extra_fields.get("model_type")
+                cursor.execute(
+                    """
+                    UPDATE flashcards
+                    SET deck_id = ?,
+                        front = ?,
+                        back = ?,
+                        tags = ?,
+                        type = ?,
+                        metadata = ?,
+                        updated_at = CURRENT_TIMESTAMP,
+                        version = version + 1,
+                        last_modified_by = ?
+                    WHERE id = ? AND is_deleted = 0
+                    """,
+                    (
+                        target_deck_id,
+                        front if front is not None else row["front"],
+                        back if back is not None else row["back"],
+                        " ".join(tags) if tags is not None else row["tags"],
+                        card_type if card_type is not None else row["type"],
+                        json.dumps(merged_metadata) if merged_metadata else None,
+                        self.client_id,
+                        card_id,
+                    ),
+                )
+                if row["deck_id"] != target_deck_id:
+                    if row["deck_id"]:
+                        self._recount_deck_card_count(cursor, row["deck_id"])
+                    if target_deck_id:
+                        self._recount_deck_card_count(cursor, target_deck_id)
+                return True
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(f"Failed to update flashcard: {e}") from e
+
+    def reset_flashcard_scheduling(
+        self,
+        card_id: str,
+        *,
+        expected_version: Optional[int] = None,
+    ) -> bool:
+        """Reset local spaced-repetition state for a flashcard."""
+        try:
+            with self.transaction() as cursor:
+                self._ensure_flashcard_fts_triggers(cursor)
+                row = cursor.execute(
+                    "SELECT version FROM flashcards WHERE id = ? AND is_deleted = 0",
+                    (card_id,),
+                ).fetchone()
+                if not row:
+                    return False
+                if expected_version is not None and int(row["version"]) != expected_version:
+                    raise ConflictError("Version mismatch resetting flashcard", entity="flashcards", entity_id=card_id)
+                cursor.execute(
+                    """
+                    UPDATE flashcards
+                    SET interval = 0,
+                        repetitions = 0,
+                        ease_factor = 2.5,
+                        next_review = NULL,
+                        last_review = NULL,
+                        updated_at = CURRENT_TIMESTAMP,
+                        version = version + 1,
+                        last_modified_by = ?
+                    WHERE id = ? AND is_deleted = 0
+                    """,
+                    (self.client_id, card_id),
+                )
+                return True
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(f"Failed to reset flashcard scheduling: {e}") from e
+
+    def set_flashcard_tags(self, card_id: str, *, tags: List[str]) -> bool:
+        """Replace local flashcard tags."""
+        return self.update_flashcard(card_id, tags=tags)
+
+    def get_flashcard_tags(self, card_id: str) -> List[str]:
+        """Return local flashcard tags as a stable list."""
+        card = self.get_flashcard(card_id)
+        if not card:
+            return []
+        return [tag for tag in str(card.get("tags") or "").split() if tag]
+
+    def list_flashcard_tag_suggestions(
+        self,
+        *,
+        q: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Aggregate local flashcard tags for lightweight autocomplete."""
+        normalized_q = str(q or "").strip().lower()
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT tags FROM flashcards
+            WHERE is_deleted = 0 AND tags IS NOT NULL AND tags != ''
+            """
+        )
+        counts: Dict[str, int] = {}
+        for row in cursor.fetchall():
+            for tag in str(row["tags"] or "").split():
+                if normalized_q and normalized_q not in tag.lower():
+                    continue
+                counts[tag] = counts.get(tag, 0) + 1
+        ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0].lower()))
+        return [{"tag": tag, "count": count} for tag, count in ordered[:limit]]
 
     def delete_flashcard(self, card_id: str, expected_version: Optional[int] = None, hard_delete: bool = False) -> bool:
         """Delete a flashcard and refresh the owning deck count."""

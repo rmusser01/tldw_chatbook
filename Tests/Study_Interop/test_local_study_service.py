@@ -1,3 +1,6 @@
+import json
+
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 
 
@@ -10,6 +13,7 @@ class FakeDB:
                 "deck_id": "deck-local-1",
                 "front": "Question",
                 "back": "Answer",
+                "tags": "science biology",
                 "version": 2,
             }
         }
@@ -26,6 +30,18 @@ class FakeDB:
         self.calls.append(("get_deck", deck_id))
         return {"id": deck_id, "name": "Biology", "description": "Cell review"}
 
+    def update_deck(
+        self,
+        deck_id,
+        *,
+        name=None,
+        description=None,
+        metadata=None,
+        expected_version=None,
+    ):
+        self.calls.append(("update_deck", deck_id, name, description, metadata, expected_version))
+        return True
+
     def list_flashcards(self, *, deck_id=None, q=None, limit=100, offset=0):
         self.calls.append(("list_flashcards", deck_id, q, limit, offset))
         return [{"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer"}]
@@ -37,6 +53,35 @@ class FakeDB:
     def get_flashcard(self, card_id):
         self.calls.append(("get_flashcard", card_id))
         return dict(self.flashcards[card_id])
+
+    def update_flashcard(self, card_id, **kwargs):
+        self.calls.append(("update_flashcard", card_id, kwargs))
+        self.flashcards[card_id] = {**self.flashcards[card_id], **kwargs, "version": 3}
+        return True
+
+    def reset_flashcard_scheduling(self, card_id, *, expected_version=None):
+        self.calls.append(("reset_flashcard_scheduling", card_id, expected_version))
+        self.flashcards[card_id] = {
+            **self.flashcards[card_id],
+            "interval": 0,
+            "repetitions": 0,
+            "ease_factor": 2.5,
+            "version": 3,
+        }
+        return True
+
+    def set_flashcard_tags(self, card_id, *, tags):
+        self.calls.append(("set_flashcard_tags", card_id, tags))
+        self.flashcards[card_id] = {**self.flashcards[card_id], "tags": " ".join(tags), "version": 3}
+        return True
+
+    def get_flashcard_tags(self, card_id):
+        self.calls.append(("get_flashcard_tags", card_id))
+        return ["science", "biology"]
+
+    def list_flashcard_tag_suggestions(self, *, q=None, limit=50):
+        self.calls.append(("list_flashcard_tag_suggestions", q, limit))
+        return [{"tag": "biology", "count": 3}]
 
     def get_due_flashcards(self, *, deck_id=None, limit=20):
         self.calls.append(("get_due_flashcards", deck_id, limit))
@@ -79,6 +124,38 @@ def test_local_study_service_lists_and_creates_decks():
     ]
 
 
+def test_local_study_service_updates_deck_metadata_backed_settings():
+    db = FakeDB()
+    service = LocalStudyService(db=db)
+
+    updated = service.update_deck(
+        "deck-local-1",
+        name="Biology v2",
+        description="Updated",
+        review_prompt_side="back",
+        scheduler_type="sm2",
+        scheduler_settings={"daily_limit": 20},
+        expected_version=2,
+    )
+
+    assert updated["id"] == "deck-local-1"
+    assert db.calls == [
+        (
+            "update_deck",
+            "deck-local-1",
+            "Biology v2",
+            "Updated",
+            {
+                "review_prompt_side": "back",
+                "scheduler_type": "sm2",
+                "scheduler_settings": {"daily_limit": 20},
+            },
+            2,
+        ),
+        ("get_deck", "deck-local-1"),
+    ]
+
+
 def test_local_study_service_normalizes_blank_search_to_list_query():
     db = FakeDB()
     service = LocalStudyService(db=db)
@@ -114,6 +191,96 @@ def test_local_study_service_creates_flashcards_and_fetches_due_review_card():
     assert created["id"] == "card-local-1"
     assert candidate["card"]["id"] == "card-local-1"
     assert candidate["selection_reason"] == "due"
+
+
+def test_local_study_service_bulk_creates_and_updates_flashcards():
+    db = FakeDB()
+    service = LocalStudyService(db=db)
+
+    created = service.create_flashcards_bulk(
+        [
+            {
+                "deck_id": "deck-local-1",
+                "front": "Question",
+                "back": "Answer",
+                "tags": ["science"],
+            }
+        ]
+    )
+    updated = service.update_flashcards_bulk(
+        [
+            {
+                "id": "card-local-1",
+                "front": "Question v2",
+                "tags": ["science", "biology"],
+                "expected_version": 2,
+            }
+        ]
+    )
+
+    assert created["count"] == 1
+    assert created["items"][0]["id"] == "card-local-1"
+    assert updated["count"] == 1
+    assert updated["results"][0]["flashcard"]["version"] == 3
+
+
+def test_local_study_service_resets_scheduling_and_manages_tags():
+    db = FakeDB()
+    service = LocalStudyService(db=db)
+
+    reset = service.reset_flashcard_scheduling("card-local-1", expected_version=2)
+    tagged = service.set_flashcard_tags("card-local-1", tags=["biology", "cell"])
+    tags = service.get_flashcard_tags("card-local-1")
+    suggestions = service.list_flashcard_tag_suggestions(q="bio", limit=10)
+
+    assert reset["interval"] == 0
+    assert tagged["tags"] == "biology cell"
+    assert tags == {"items": ["science", "biology"], "count": 2}
+    assert suggestions == {"items": [{"tag": "biology", "count": 3}], "count": 1}
+
+
+def test_local_study_service_persists_management_helpers_against_chachanotes_db(tmp_path):
+    db = CharactersRAGDB(tmp_path / "study.db", client_id="test_client")
+    service = LocalStudyService(db=db)
+    deck_id = db.create_deck("Biology", "Cell review")
+    card_id = db.create_flashcard(
+        {
+            "deck_id": deck_id,
+            "front": "Question",
+            "back": "Answer",
+            "tags": "science",
+            "type": "basic",
+        }
+    )
+
+    deck = service.update_deck(
+        deck_id,
+        name="Biology v2",
+        review_prompt_side="back",
+        scheduler_type="sm2",
+        expected_version=1,
+    )
+    reset = service.reset_flashcard_scheduling(card_id, expected_version=1)
+    tagged = service.set_flashcard_tags(card_id, tags=["biology", "cell"])
+    tags = service.get_flashcard_tags(card_id)
+    suggestions = service.list_flashcard_tag_suggestions(q="bio", limit=5)
+    bulk = service.update_flashcards_bulk(
+        [
+            {
+                "id": card_id,
+                "front": "Question v2",
+                "expected_version": tagged["version"],
+            }
+        ]
+    )
+
+    assert deck["name"] == "Biology v2"
+    assert json.loads(deck["metadata"])["scheduler_type"] == "sm2"
+    assert reset["interval"] == 0
+    assert tagged["tags"] == "biology cell"
+    assert tags == {"items": ["biology", "cell"], "count": 2}
+    assert suggestions["items"][0] == {"tag": "biology", "count": 1}
+    assert bulk["results"][0]["flashcard"]["front"] == "Question v2"
 
 
 def test_local_study_service_updates_review_and_returns_refetched_card():

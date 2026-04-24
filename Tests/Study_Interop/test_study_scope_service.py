@@ -15,6 +15,43 @@ class FakeLocalStudyService:
         self.calls.append(("create_deck", name, description))
         return {"id": "deck-local-1", "name": name, "description": description}
 
+    def update_deck(
+        self,
+        deck_id,
+        *,
+        name=None,
+        description=None,
+        workspace_id=None,
+        review_prompt_side=None,
+        scheduler_type=None,
+        scheduler_settings=None,
+        expected_version=None,
+    ):
+        self.calls.append(
+            (
+                "update_deck",
+                deck_id,
+                name,
+                description,
+                workspace_id,
+                review_prompt_side,
+                scheduler_type,
+                scheduler_settings,
+                expected_version,
+            )
+        )
+        return {
+            "id": deck_id,
+            "name": name or "Biology",
+            "description": description,
+            "metadata": {
+                "review_prompt_side": review_prompt_side,
+                "scheduler_type": scheduler_type,
+                "scheduler_settings": scheduler_settings,
+            },
+            "version": 3,
+        }
+
     def list_flashcards(self, *, deck_id=None, q=None, limit=100, offset=0):
         self.calls.append(("list_flashcards", deck_id, q, limit, offset))
         return [{"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer", "tags": "science"}]
@@ -31,6 +68,83 @@ class FakeLocalStudyService:
             "extra": extra,
             "type": "basic",
         }
+
+    def create_flashcards_bulk(self, cards):
+        self.calls.append(("create_flashcards_bulk", cards))
+        return {
+            "items": [
+                {
+                    "id": "card-local-1",
+                    "deck_id": cards[0]["deck_id"],
+                    "front": cards[0]["front"],
+                    "back": cards[0]["back"],
+                    "tags": " ".join(cards[0].get("tags") or []),
+                }
+            ],
+            "count": 1,
+        }
+
+    def update_flashcards_bulk(self, cards):
+        self.calls.append(("update_flashcards_bulk", cards))
+        return {
+            "results": [
+                {
+                    "status": "updated",
+                    "flashcard": {
+                        "id": cards[0]["id"],
+                        "deck_id": "deck-local-1",
+                        "front": cards[0].get("front", "Question"),
+                        "back": "Answer",
+                        "tags": " ".join(cards[0].get("tags") or []),
+                        "version": 3,
+                    },
+                }
+            ],
+            "count": 1,
+        }
+
+    def get_flashcard(self, card_id):
+        self.calls.append(("get_flashcard", card_id))
+        return {
+            "id": card_id,
+            "deck_id": "deck-local-1",
+            "front": "Question",
+            "back": "Answer",
+            "tags": "science biology",
+        }
+
+    def reset_flashcard_scheduling(self, card_id, *, expected_version):
+        self.calls.append(("reset_flashcard_scheduling", card_id, expected_version))
+        return {
+            "id": card_id,
+            "deck_id": "deck-local-1",
+            "front": "Question",
+            "back": "Answer",
+            "tags": "science biology",
+            "interval": 0,
+            "repetitions": 0,
+            "ease_factor": 2.5,
+            "version": 3,
+        }
+
+    def set_flashcard_tags(self, card_id, *, tags):
+        self.calls.append(("set_flashcard_tags", card_id, tags))
+        return {
+            "id": card_id,
+            "deck_id": "deck-local-1",
+            "front": "Question",
+            "back": "Answer",
+            "tags": " ".join(tags),
+            "version": 3,
+        }
+
+    def get_flashcard_tags(self, card_id):
+        self.calls.append(("get_flashcard_tags", card_id))
+        return {"items": ["science", "biology"], "count": 2}
+
+    def list_flashcard_tag_suggestions(self, *, q=None, limit=50):
+        self.calls.append(("list_flashcard_tag_suggestions", q, limit))
+        return {"items": [{"tag": "biology", "count": 3}], "count": 1}
 
     def get_next_review_candidate(self, *, deck_id=None):
         self.calls.append(("get_next_review_candidate", deck_id))
@@ -944,6 +1058,96 @@ async def test_scope_service_routes_move_delete_and_local_deck_delete():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_local_flashcard_management_actions():
+    local = FakeLocalStudyService()
+    scope = StudyScopeService(local_service=local, server_service=FakeServerStudyService())
+
+    deck = await scope.update_deck(
+        mode="local",
+        deck_id="deck-local-1",
+        name="Biology v2",
+        description="Updated",
+        review_prompt_side="back",
+        scheduler_type="sm2",
+        scheduler_settings={"daily_limit": 20},
+        expected_version=2,
+    )
+    created = await scope.create_flashcards_bulk(
+        mode="local",
+        cards=[
+            {
+                "deck_id": "deck-local-1",
+                "front": "Question",
+                "back": "Answer",
+                "tags": ["biology"],
+            }
+        ],
+    )
+    updated = await scope.update_flashcards_bulk(
+        mode="local",
+        cards=[
+            {
+                "id": "card-local-1",
+                "front": "Question v2",
+                "tags": ["biology", "cell"],
+                "expected_version": 2,
+            }
+        ],
+    )
+    reset = await scope.reset_flashcard_scheduling(
+        mode="local",
+        card_id="card-local-1",
+        expected_version=2,
+    )
+    tagged = await scope.set_flashcard_tags(
+        mode="local",
+        card_id="card-local-1",
+        tags=["biology", "cell"],
+    )
+    tags = await scope.get_flashcard_tags(mode="local", card_id="card-local-1")
+    suggestions = await scope.list_flashcard_tag_suggestions(mode="local", q="bio", limit=10)
+
+    assert deck["record_id"] == "local:study_deck:deck-local-1"
+    assert created["source"] == "local"
+    assert created["items"][0]["record_id"] == "local:study_flashcard:card-local-1"
+    assert updated["results"][0]["flashcard"]["record_id"] == "local:study_flashcard:card-local-1"
+    assert reset["record_id"] == "local:study_flashcard:card-local-1"
+    assert tagged["tags"] == ["biology", "cell"]
+    assert tags == {"items": ["science", "biology"], "count": 2}
+    assert suggestions == {
+        "source": "local",
+        "entity_kind": "flashcard_tag_suggestions",
+        "items": [{"tag": "biology", "count": 3}],
+        "count": 1,
+    }
+    assert local.calls == [
+        (
+            "update_deck",
+            "deck-local-1",
+            "Biology v2",
+            "Updated",
+            None,
+            "back",
+            "sm2",
+            {"daily_limit": 20},
+            2,
+        ),
+        (
+            "create_flashcards_bulk",
+            [{"deck_id": "deck-local-1", "front": "Question", "back": "Answer", "tags": ["biology"]}],
+        ),
+        (
+            "update_flashcards_bulk",
+            [{"id": "card-local-1", "front": "Question v2", "tags": ["biology", "cell"], "expected_version": 2}],
+        ),
+        ("reset_flashcard_scheduling", "card-local-1", 2),
+        ("set_flashcard_tags", "card-local-1", ["biology", "cell"]),
+        ("get_flashcard_tags", "card-local-1"),
+        ("list_flashcard_tag_suggestions", "bio", 10),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_server_flashcard_management_actions():
     server = FakeServerStudyService()
     scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
@@ -995,9 +1199,6 @@ async def test_scope_service_routes_server_flashcard_management_actions():
         ("get_flashcard_tags", "card-server-1"),
         ("get_flashcard_analytics_summary", 7, "ws-1", True),
     ]
-
-    with pytest.raises(ValueError, match="server-only"):
-        await scope.reset_flashcard_scheduling(mode="local", card_id="card-local-1", expected_version=1)
 
 
 @pytest.mark.asyncio
@@ -1083,9 +1284,6 @@ async def test_scope_service_routes_server_flashcard_bulk_and_tag_suggestion_act
         ),
         ("list_flashcard_tag_suggestions", "bio", 10),
     ]
-
-    with pytest.raises(ValueError, match="server-only"):
-        await scope.list_flashcard_tag_suggestions(mode="local")
 
 
 @pytest.mark.asyncio
