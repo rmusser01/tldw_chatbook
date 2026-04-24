@@ -567,6 +567,20 @@ class MediaReadingScopeService:
         payload = await self._maybe_await(service.reprocess_media(media_id, **options))
         return self._as_mapping_payload(payload)
 
+    async def add_media(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        request_data: Any,
+        file_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_media_item_lifecycle(normalized_mode)
+        self._enforce_policy(self._media_item_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._maybe_await(service.add_media(request_data, file_paths=file_paths))
+        return self._as_mapping_payload(payload)
+
     async def _process_server_media(
         self,
         *,

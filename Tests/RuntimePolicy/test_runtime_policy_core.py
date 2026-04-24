@@ -448,6 +448,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.document_navigation_content.detail.server
         media.document_outline.detail.server
         media.document_references.list.server
+        media.items.create.server
         media.items.delete.server
         media.items.detail.server
         media.items.file.detail.server

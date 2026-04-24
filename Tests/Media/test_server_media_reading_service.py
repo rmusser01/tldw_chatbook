@@ -4,6 +4,7 @@ import pytest
 
 from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
 from tldw_chatbook.tldw_api import (
+    AddMediaRequest,
     ProcessAudioRequest,
     ProcessCodeRequest,
     ProcessDocumentRequest,
@@ -77,6 +78,22 @@ class FakeClient:
             "message": "Reprocessed",
             "chunks_created": 3,
             "embeddings_started": True,
+        }
+
+    async def add_media(self, request_data, file_paths=None):
+        self.calls.append(("add_media", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {
+                    "status": "Success",
+                    "input_ref": "https://example.com/clip",
+                    "media_type": request_data.media_type,
+                    "db_id": 42,
+                }
+            ],
         }
 
     async def process_video(self, request_data, file_paths=None):
@@ -948,6 +965,50 @@ async def test_server_service_routes_media_processing_controls_to_client():
         ("process_document", ProcessDocumentRequest(title="Doc").model_dump(exclude_none=True, mode="json"), ["doc.docx"]),
         ("process_code", ProcessCodeRequest(chunk_method="lines").model_dump(exclude_none=True, mode="json"), ["project.py"]),
         ("process_email", ProcessEmailRequest(title="Inbox").model_dump(exclude_none=True, mode="json"), ["inbox.eml"]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_persistent_add_media():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    result = await service.add_media(
+        AddMediaRequest(
+            media_type="video",
+            urls=["https://example.com/clip"],
+            title="Clip",
+            keywords=["ai", "video"],
+            keep_original_file=True,
+        ),
+        file_paths=["/tmp/clip.mp4"],
+    )
+
+    assert result["processed_count"] == 1
+    assert result["results"][0]["db_id"] == 42
+    assert client.calls == [
+        (
+            "add_media",
+            {
+                "media_type": "video",
+                "urls": ["https://example.com/clip"],
+                "title": "Clip",
+                "keywords": ["ai", "video"],
+                "overwrite_existing": False,
+                "keep_original_file": True,
+                "perform_analysis": True,
+                "use_cookies": False,
+                "perform_rolling_summarization": False,
+                "summarize_recursively": False,
+                "perform_chunking": True,
+                "use_adaptive_chunking": False,
+                "use_multi_level_chunking": False,
+                "chunk_size": 500,
+                "chunk_overlap": 200,
+                "generate_embeddings": False,
+            },
+            ["/tmp/clip.mp4"],
+        )
     ]
 
 

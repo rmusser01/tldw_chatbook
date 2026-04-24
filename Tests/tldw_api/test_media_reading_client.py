@@ -4,6 +4,7 @@ import pytest
 
 import tldw_chatbook.tldw_api as api
 from tldw_chatbook.tldw_api import (
+    AddMediaRequest,
     CancelMediaIngestBatchResponse,
     CancelMediaIngestJobResponse,
     DocumentAnnotationCreateRequest,
@@ -113,6 +114,69 @@ async def test_media_code_and_email_processing_routes_wire_to_server_contract(mo
     assert mocked.await_args_list[1].kwargs["files"] is None
     assert code.processed_count == 1
     assert email.processed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_add_media_route_wires_persistent_ingest_payload(monkeypatch, tmp_path):
+    upload = tmp_path / "clip.mp4"
+    upload.write_bytes(b"video")
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {
+                    "status": "Success",
+                    "input_ref": "https://example.com/clip",
+                    "media_type": "video",
+                    "db_id": 42,
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.add_media(
+        AddMediaRequest(
+            media_type="video",
+            urls=["https://example.com/clip"],
+            title="Clip",
+            keywords=["ai", "video"],
+            keep_original_file=True,
+            generate_embeddings=True,
+            embedding_dispatch_mode="jobs",
+        ),
+        file_paths=[str(upload)],
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/media/add")
+    assert mocked.await_args_list[0].kwargs["data"] == {
+        "media_type": "video",
+        "urls": ["https://example.com/clip"],
+        "title": "Clip",
+        "keywords": "ai,video",
+        "overwrite_existing": "false",
+        "keep_original_file": "true",
+        "perform_analysis": "true",
+        "use_cookies": "false",
+        "perform_rolling_summarization": "false",
+        "summarize_recursively": "false",
+        "perform_chunking": "true",
+        "use_adaptive_chunking": "false",
+        "use_multi_level_chunking": "false",
+        "chunk_size": "500",
+        "chunk_overlap": "200",
+        "generate_embeddings": "true",
+        "embedding_dispatch_mode": "jobs",
+    }
+    files = mocked.await_args_list[0].kwargs["files"]
+    assert [(field, file_info[0], file_info[2]) for field, file_info in files] == [
+        ("files", "clip.mp4", "video/mp4")
+    ]
+    assert isinstance(result, api.BatchMediaProcessResponse)
+    assert result.results[0].db_id == 42
 
 
 @pytest.mark.asyncio

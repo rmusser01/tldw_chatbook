@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 from ..tldw_api import (
+    AddMediaRequest,
     DocumentAnnotationCreateRequest,
     DocumentAnnotationSyncRequest,
     DocumentAnnotationUpdateRequest,
@@ -147,6 +148,10 @@ class ServerMediaReadingService:
     async def reprocess_media(self, media_id: Any, **options: Any) -> Any:
         request_data = ReprocessMediaRequest(**{key: value for key, value in options.items() if value is not None})
         return await self._require_client().reprocess_media(int(media_id), request_data)
+
+    async def add_media(self, request_data: AddMediaRequest, file_paths: list[str] | None = None) -> Any:
+        response = await self._require_client().add_media(request_data, file_paths=file_paths)
+        return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
 
     async def process_video(self, request_data: ProcessVideoRequest, file_paths: list[str] | None = None) -> Any:
         return await self._require_client().process_video(request_data, file_paths=file_paths)

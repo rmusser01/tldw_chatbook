@@ -9,6 +9,7 @@ from tldw_chatbook.Media.media_reading_scope_service import (
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 from tldw_chatbook.tldw_api import (
+    AddMediaRequest,
     ProcessAudioRequest,
     ProcessCodeRequest,
     ProcessDocumentRequest,
@@ -316,6 +317,22 @@ class FakeServerMediaService:
             "message": "Reprocessed",
             "chunks_created": 3,
             "embeddings_started": True,
+        }
+
+    async def add_media(self, request_data, *, file_paths=None):
+        self.calls.append(("add_media", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {
+                    "status": "Success",
+                    "input_ref": "https://example.com/clip",
+                    "media_type": request_data.media_type,
+                    "db_id": 42,
+                }
+            ],
         }
 
     async def process_video(self, request_data, *, file_paths=None):
@@ -1272,6 +1289,70 @@ async def test_scope_service_rejects_local_server_media_listing_adjuncts_before_
         await scope.get_backing_media_by_identifier(mode="local", doi="10/example")
 
     assert policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_persistent_add_media_with_create_policy():
+    server = FakeServerMediaService()
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    result = await scope.add_media(
+        mode="server",
+        request_data=AddMediaRequest(
+            media_type="video",
+            urls=["https://example.com/clip"],
+            title="Clip",
+            keywords=["ai", "video"],
+            keep_original_file=True,
+        ),
+        file_paths=["/tmp/clip.mp4"],
+    )
+
+    assert policy.calls == ["media.items.create.server"]
+    assert result["processed_count"] == 1
+    assert result["results"][0]["db_id"] == 42
+    assert server.calls == [
+        (
+            "add_media",
+            {
+                "media_type": "video",
+                "urls": ["https://example.com/clip"],
+                "title": "Clip",
+                "keywords": ["ai", "video"],
+                "overwrite_existing": False,
+                "keep_original_file": True,
+                "perform_analysis": True,
+                "use_cookies": False,
+                "perform_rolling_summarization": False,
+                "summarize_recursively": False,
+                "perform_chunking": True,
+                "use_adaptive_chunking": False,
+                "use_multi_level_chunking": False,
+                "chunk_size": 500,
+                "chunk_overlap": 200,
+                "generate_embeddings": False,
+            },
+            ["/tmp/clip.mp4"],
+        )
+    ]
+
+    denied_policy = FakePolicyEnforcer()
+    denied_scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=denied_policy,
+    )
+    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+        await denied_scope.add_media(
+            mode="local",
+            request_data=AddMediaRequest(media_type="video", urls=["https://example.com/clip"]),
+        )
+    assert denied_policy.calls == []
 
 
 @pytest.mark.asyncio

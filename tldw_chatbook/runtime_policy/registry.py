@@ -288,7 +288,7 @@ AUDITED_CAPABILITY_SEEDS = (
             ),
             _resource(
                 "media.items",
-                actions=(LIST, DETAIL, UPDATE, DELETE, RESTORE, PERMANENT_DELETE),
+                actions=(LIST, CREATE, DETAIL, UPDATE, DELETE, RESTORE, PERMANENT_DELETE),
                 sources=(SERVER_SOURCE,),
             ),
             _resource("media.items.keywords", actions=(LIST, UPDATE), sources=(SERVER_SOURCE,)),

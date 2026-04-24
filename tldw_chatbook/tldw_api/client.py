@@ -13,6 +13,7 @@ import httpx
 #
 # Local Imports
 from .schemas import (
+    AddMediaRequest,
     ProcessVideoRequest, ProcessAudioRequest, ProcessPDFRequest,
     ProcessEbookRequest, ProcessDocumentRequest, ProcessCodeRequest, ProcessEmailRequest,
     ProcessXMLRequest, ProcessMediaWikiRequest,
@@ -4227,6 +4228,21 @@ class TLDWAPIClient:
             params={"page": page, "results_per_page": results_per_page},
         )
         return ServerMediaListResponse.model_validate(response)
+
+    async def add_media(
+        self,
+        request_data: AddMediaRequest,
+        file_paths: Optional[List[str]] = None,
+    ) -> BatchMediaProcessResponse:
+        form_data = model_to_form_data(request_data)
+        httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
+        try:
+            response_dict = await self._request(
+                "POST", "/api/v1/media/add", data=form_data, files=httpx_files
+            )
+            return BatchMediaProcessResponse(**response_dict)
+        finally:
+            cleanup_file_objects(httpx_files)
 
     async def process_video(self, request_data: ProcessVideoRequest, file_paths: Optional[List[str]] = None) -> BatchMediaProcessResponse:
         form_data = model_to_form_data(request_data)

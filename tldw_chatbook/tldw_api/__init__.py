@@ -18,6 +18,8 @@ _EXPORT_GROUPS = (
     (
         ".schemas",
         (
+            "AddMediaRequest",
+            "AddMediaType",
             "ProcessVideoRequest",
             "ProcessAudioRequest",
             "ProcessPDFRequest",
