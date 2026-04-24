@@ -889,6 +889,10 @@ class FakeServerMediaService:
         self.calls.append(("list_document_versions", media_id, include_deleted))
         return [{"uuid": "server-version-1", "media_id": media_id, "version_number": 1}]
 
+    async def get_analysis_version(self, media_id, *, version_number, include_content=True):
+        self.calls.append(("get_analysis_version", media_id, version_number, include_content))
+        return {"uuid": "server-version-1", "media_id": media_id, "version_number": version_number}
+
     async def save_analysis_version(self, media_id, *, content, analysis_content, prompt=None):
         self.calls.append(("save_analysis_version", media_id, content, analysis_content, prompt))
         return {"media_id": media_id, "versions": [{"version_number": 2}]}
@@ -902,6 +906,32 @@ class FakeServerMediaService:
         if media_id is None or version_number is None:
             raise ValueError("Server document version delete requires media_id and version_number.")
         return {"deleted": True}
+
+    async def rollback_analysis_version(self, media_id, *, version_number):
+        self.calls.append(("rollback_analysis_version", media_id, version_number))
+        return {"media_id": media_id, "versions": [{"version_number": 4}]}
+
+    async def patch_latest_version_metadata(self, media_id, *, safe_metadata, merge=True, new_version=False):
+        self.calls.append(("patch_latest_version_metadata", media_id, safe_metadata, merge, new_version))
+        return {"media_id": media_id, "versions": [{"version_number": 5}]}
+
+    async def update_analysis_version_metadata(self, media_id, *, version_number, safe_metadata, merge=True):
+        self.calls.append(("update_analysis_version_metadata", media_id, version_number, safe_metadata, merge))
+        return {"media_id": media_id, "versions": [{"version_number": 6}]}
+
+    async def upsert_analysis_version(
+        self,
+        media_id,
+        *,
+        content=None,
+        prompt=None,
+        analysis_content=None,
+        safe_metadata=None,
+        merge=True,
+        new_version=True,
+    ):
+        self.calls.append(("upsert_analysis_version", media_id, content, prompt, analysis_content, safe_metadata, merge, new_version))
+        return {"media_id": media_id, "versions": [{"version_number": 7}]}
 
     async def get_document_outline(self, media_id):
         self.calls.append(("get_document_outline", media_id))
@@ -2259,6 +2289,12 @@ async def test_scope_service_routes_server_document_version_helpers_and_preserve
     )
 
     versions = await scope_service.list_document_versions(mode="server", media_id=99)
+    detail = await scope_service.get_analysis_version(
+        mode="server",
+        media_id=99,
+        version_number=1,
+        include_content=False,
+    )
     saved = await scope_service.save_analysis_version(
         mode="server",
         media_id=99,
@@ -2278,19 +2314,50 @@ async def test_scope_service_routes_server_document_version_helpers_and_preserve
         media_id=99,
         version_number=1,
     )
+    rolled_back = await scope_service.rollback_analysis_version(mode="server", media_id=99, version_number=1)
+    latest_metadata = await scope_service.patch_latest_version_metadata(
+        mode="server",
+        media_id=99,
+        safe_metadata={"source": "import"},
+        merge=False,
+        new_version=True,
+    )
+    version_metadata = await scope_service.update_analysis_version_metadata(
+        mode="server",
+        media_id=99,
+        version_number=1,
+        safe_metadata={"reviewed": True},
+    )
+    advanced = await scope_service.upsert_analysis_version(
+        mode="server",
+        media_id=99,
+        content="advanced body",
+        safe_metadata={"kind": "advanced"},
+        new_version=True,
+    )
 
     with pytest.raises(ValueError, match="Server document version delete requires media_id and version_number."):
         await scope_service.delete_analysis_version(mode="server", version_uuid="server-version-1")
 
     assert versions == [{"uuid": "server-version-1", "media_id": 99, "version_number": 1}]
+    assert detail["version_number"] == 1
     assert saved["versions"] == [{"version_number": 2}]
     assert overwritten["versions"] == [{"version_number": 3}]
     assert deleted == {"deleted": True}
+    assert rolled_back["versions"] == [{"version_number": 4}]
+    assert latest_metadata["versions"] == [{"version_number": 5}]
+    assert version_metadata["versions"] == [{"version_number": 6}]
+    assert advanced["versions"] == [{"version_number": 7}]
     assert server.calls == [
         ("list_document_versions", 99, False),
+        ("get_analysis_version", 99, 1, False),
         ("save_analysis_version", 99, "body", "analysis", None),
         ("overwrite_analysis_version", 99, "body 2", "analysis 2", "Prompt"),
         ("delete_analysis_version", "server-version-1", 99, 1),
+        ("rollback_analysis_version", 99, 1),
+        ("patch_latest_version_metadata", 99, {"source": "import"}, False, True),
+        ("update_analysis_version_metadata", 99, 1, {"reviewed": True}, True),
+        ("upsert_analysis_version", 99, "advanced body", None, None, {"kind": "advanced"}, True, True),
     ]
 
 

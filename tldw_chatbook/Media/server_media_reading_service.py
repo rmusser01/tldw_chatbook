@@ -9,7 +9,10 @@ from ..tldw_api import (
     DocumentAnnotationSyncRequest,
     DocumentAnnotationUpdateRequest,
     DocumentInsightsRequest,
+    DocumentVersionAdvancedUpsertRequest,
     DocumentVersionCreateRequest,
+    DocumentVersionMetadataPatchRequest,
+    DocumentVersionRollbackRequest,
     IngestWebContentRequest,
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
@@ -727,6 +730,20 @@ class ServerMediaReadingService:
             for version in versions
         ]
 
+    async def get_analysis_version(
+        self,
+        media_id: Any,
+        *,
+        version_number: Any,
+        include_content: bool = True,
+    ) -> Any:
+        version = await self._require_client().get_media_document_version(
+            int(media_id),
+            int(version_number),
+            include_content=include_content,
+        )
+        return version.model_dump(exclude_none=True, mode="json") if hasattr(version, "model_dump") else version
+
     async def save_analysis_version(
         self,
         media_id: Any,
@@ -770,3 +787,61 @@ class ServerMediaReadingService:
             int(media_id),
             int(version_number),
         )
+
+    async def rollback_analysis_version(self, media_id: Any, *, version_number: Any) -> Any:
+        request_data = DocumentVersionRollbackRequest(version_number=int(version_number))
+        return await self._require_client().rollback_media_document_version(int(media_id), request_data)
+
+    async def patch_latest_version_metadata(
+        self,
+        media_id: Any,
+        *,
+        safe_metadata: Mapping[str, Any],
+        merge: bool = True,
+        new_version: bool = False,
+    ) -> Any:
+        request_data = DocumentVersionMetadataPatchRequest(
+            safe_metadata=dict(safe_metadata),
+            merge=merge,
+            new_version=new_version,
+        )
+        return await self._require_client().patch_media_document_metadata(int(media_id), request_data)
+
+    async def update_analysis_version_metadata(
+        self,
+        media_id: Any,
+        *,
+        version_number: Any,
+        safe_metadata: Mapping[str, Any],
+        merge: bool = True,
+    ) -> Any:
+        request_data = DocumentVersionMetadataPatchRequest(
+            safe_metadata=dict(safe_metadata),
+            merge=merge,
+        )
+        return await self._require_client().update_media_document_version_metadata(
+            int(media_id),
+            int(version_number),
+            request_data,
+        )
+
+    async def upsert_analysis_version(
+        self,
+        media_id: Any,
+        *,
+        content: str | None = None,
+        prompt: str | None = None,
+        analysis_content: str | None = None,
+        safe_metadata: Mapping[str, Any] | None = None,
+        merge: bool = True,
+        new_version: bool = True,
+    ) -> Any:
+        request_data = DocumentVersionAdvancedUpsertRequest(
+            content=content,
+            prompt=prompt,
+            analysis_content=analysis_content,
+            safe_metadata=dict(safe_metadata) if safe_metadata is not None else None,
+            merge=merge,
+            new_version=new_version,
+        )
+        return await self._require_client().upsert_media_document_version(int(media_id), request_data)

@@ -777,6 +777,25 @@ class DocumentVersionCreateRequest(BaseModel):
     safe_metadata: dict[str, Any] | None = None
 
 
+class DocumentVersionRollbackRequest(BaseModel):
+    version_number: int = Field(..., ge=1)
+
+
+class DocumentVersionMetadataPatchRequest(BaseModel):
+    safe_metadata: dict[str, Any] = Field(...)
+    merge: bool = True
+    new_version: bool = False
+
+
+class DocumentVersionAdvancedUpsertRequest(BaseModel):
+    content: str | None = Field(default=None, max_length=5_000_000)
+    prompt: str | None = Field(default=None, max_length=10_000)
+    analysis_content: str | None = Field(default=None, max_length=100_000)
+    safe_metadata: dict[str, Any] | None = None
+    merge: bool = True
+    new_version: bool = True
+
+
 class DocumentVersionDetailResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

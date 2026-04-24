@@ -1885,6 +1885,27 @@ class MediaReadingScopeService:
             service.list_document_versions(media_id, include_deleted=include_deleted)
         )
 
+    async def get_analysis_version(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        version_number: Any,
+        include_content: bool = True,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        if not hasattr(service, "get_analysis_version"):
+            raise ValueError("Document version detail is not available for this media backend.")
+        return await self._maybe_await(
+            service.get_analysis_version(
+                media_id,
+                version_number=version_number,
+                include_content=include_content,
+            )
+        )
+
     async def save_analysis_version(
         self,
         *,
@@ -1949,3 +1970,94 @@ class MediaReadingScopeService:
                 )
             )
         return await self._maybe_await(service.delete_analysis_version(version_uuid))
+
+    async def rollback_analysis_version(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        version_number: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        if not hasattr(service, "rollback_analysis_version"):
+            raise ValueError("Document version rollback is not available for this media backend.")
+        return await self._maybe_await(
+            service.rollback_analysis_version(media_id, version_number=version_number)
+        )
+
+    async def patch_latest_version_metadata(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        safe_metadata: Mapping[str, Any],
+        merge: bool = True,
+        new_version: bool = False,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        if not hasattr(service, "patch_latest_version_metadata"):
+            raise ValueError("Document version metadata update is not available for this media backend.")
+        return await self._maybe_await(
+            service.patch_latest_version_metadata(
+                media_id,
+                safe_metadata=safe_metadata,
+                merge=merge,
+                new_version=new_version,
+            )
+        )
+
+    async def update_analysis_version_metadata(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        version_number: Any,
+        safe_metadata: Mapping[str, Any],
+        merge: bool = True,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        if not hasattr(service, "update_analysis_version_metadata"):
+            raise ValueError("Document version metadata update is not available for this media backend.")
+        return await self._maybe_await(
+            service.update_analysis_version_metadata(
+                media_id,
+                version_number=version_number,
+                safe_metadata=safe_metadata,
+                merge=merge,
+            )
+        )
+
+    async def upsert_analysis_version(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        content: str | None = None,
+        prompt: str | None = None,
+        analysis_content: str | None = None,
+        safe_metadata: Mapping[str, Any] | None = None,
+        merge: bool = True,
+        new_version: bool = True,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        if not hasattr(service, "upsert_analysis_version"):
+            raise ValueError("Document version advanced upsert is not available for this media backend.")
+        return await self._maybe_await(
+            service.upsert_analysis_version(
+                media_id,
+                content=content,
+                prompt=prompt,
+                analysis_content=analysis_content,
+                safe_metadata=safe_metadata,
+                merge=merge,
+                new_version=new_version,
+            )
+        )

@@ -58,8 +58,11 @@ from .media_reading_schemas import (
     DocumentInsightsResponse,
     DocumentOutlineResponse,
     DocumentReferencesResponse,
+    DocumentVersionAdvancedUpsertRequest,
     DocumentVersionCreateRequest,
     DocumentVersionDetailResponse,
+    DocumentVersionMetadataPatchRequest,
+    DocumentVersionRollbackRequest,
     FileCreateRequest,
     IngestWebContentRequest,
     IngestionSourceCreateRequest,
@@ -2374,6 +2377,51 @@ class TLDWAPIClient:
             f"/api/v1/media/{media_id}/versions/{version_number}",
         )
         return {"deleted": True, **response}
+
+    async def rollback_media_document_version(
+        self,
+        media_id: int,
+        request_data: DocumentVersionRollbackRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/versions/rollback",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def patch_media_document_metadata(
+        self,
+        media_id: int,
+        request_data: DocumentVersionMetadataPatchRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/media/{media_id}/metadata",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def update_media_document_version_metadata(
+        self,
+        media_id: int,
+        version_number: int,
+        request_data: DocumentVersionMetadataPatchRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/media/{media_id}/versions/{version_number}/metadata",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def upsert_media_document_version(
+        self,
+        media_id: int,
+        request_data: DocumentVersionAdvancedUpsertRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/versions/advanced",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
 
     async def list_reading_items(
         self,

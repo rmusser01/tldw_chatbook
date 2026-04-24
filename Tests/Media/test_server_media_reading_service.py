@@ -245,6 +245,17 @@ class FakeClient:
             }
         ]
 
+    async def get_media_document_version(self, media_id, version_number, *, include_content=True):
+        self.calls.append(("get_media_document_version", media_id, version_number, include_content))
+        return {
+            "uuid": "version-1",
+            "media_id": media_id,
+            "version_number": version_number,
+            "created_at": "2026-04-23T12:00:00Z",
+            "analysis_content": "Analysis",
+            "content": "Body" if include_content else None,
+        }
+
     async def create_media_document_version(self, media_id, request_data):
         self.calls.append(("create_media_document_version", media_id, request_data.model_dump(exclude_none=True, mode="json")))
         return {"media_id": media_id, "versions": [{"version_number": 2}]}
@@ -252,6 +263,22 @@ class FakeClient:
     async def delete_media_document_version(self, media_id, version_number):
         self.calls.append(("delete_media_document_version", media_id, version_number))
         return {"deleted": True}
+
+    async def rollback_media_document_version(self, media_id, request_data):
+        self.calls.append(("rollback_media_document_version", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"media_id": media_id, "versions": [{"version_number": 3}]}
+
+    async def patch_media_document_metadata(self, media_id, request_data):
+        self.calls.append(("patch_media_document_metadata", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"media_id": media_id, "versions": [{"version_number": 4}]}
+
+    async def update_media_document_version_metadata(self, media_id, version_number, request_data):
+        self.calls.append(("update_media_document_version_metadata", media_id, version_number, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"media_id": media_id, "versions": [{"version_number": 5}]}
+
+    async def upsert_media_document_version(self, media_id, request_data):
+        self.calls.append(("upsert_media_document_version", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"media_id": media_id, "versions": [{"version_number": 6}]}
 
     async def get_document_outline(self, media_id):
         self.calls.append(("get_document_outline", media_id))
@@ -1442,6 +1469,7 @@ async def test_server_service_document_version_helpers_route_to_server_contract(
     service = ServerMediaReadingService(client=client)
 
     listed = await service.list_document_versions(99)
+    detail = await service.get_analysis_version(99, version_number=1, include_content=False)
     saved = await service.save_analysis_version(
         99,
         content="body",
@@ -1458,13 +1486,37 @@ async def test_server_service_document_version_helpers_route_to_server_contract(
         media_id=99,
         version_number=1,
     )
+    rolled_back = await service.rollback_analysis_version(99, version_number=1)
+    latest_metadata = await service.patch_latest_version_metadata(
+        99,
+        safe_metadata={"source": "import"},
+        merge=False,
+        new_version=True,
+    )
+    version_metadata = await service.update_analysis_version_metadata(
+        99,
+        version_number=1,
+        safe_metadata={"reviewed": True},
+    )
+    advanced = await service.upsert_analysis_version(
+        99,
+        content="advanced body",
+        safe_metadata={"kind": "advanced"},
+        new_version=True,
+    )
 
     assert listed[0]["uuid"] == "version-1"
+    assert detail["version_number"] == 1
     assert saved["versions"] == [{"version_number": 2}]
     assert overwritten["versions"] == [{"version_number": 2}]
     assert deleted == {"deleted": True}
+    assert rolled_back["versions"] == [{"version_number": 3}]
+    assert latest_metadata["versions"] == [{"version_number": 4}]
+    assert version_metadata["versions"] == [{"version_number": 5}]
+    assert advanced["versions"] == [{"version_number": 6}]
     assert client.calls == [
         ("list_media_document_versions", 99, False, 100, 1),
+        ("get_media_document_version", 99, 1, False),
         (
             "create_media_document_version",
             99,
@@ -1476,6 +1528,28 @@ async def test_server_service_document_version_helpers_route_to_server_contract(
             {"content": "body 2", "prompt": "Prompt", "analysis_content": "analysis 2"},
         ),
         ("delete_media_document_version", 99, 1),
+        ("rollback_media_document_version", 99, {"version_number": 1}),
+        (
+            "patch_media_document_metadata",
+            99,
+            {"safe_metadata": {"source": "import"}, "merge": False, "new_version": True},
+        ),
+        (
+            "update_media_document_version_metadata",
+            99,
+            1,
+            {"safe_metadata": {"reviewed": True}, "merge": True, "new_version": False},
+        ),
+        (
+            "upsert_media_document_version",
+            99,
+            {
+                "content": "advanced body",
+                "safe_metadata": {"kind": "advanced"},
+                "merge": True,
+                "new_version": True,
+            },
+        ),
     ]
 
 

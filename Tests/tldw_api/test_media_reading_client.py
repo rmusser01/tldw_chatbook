@@ -18,7 +18,10 @@ from tldw_chatbook.tldw_api import (
     DocumentOutlineResponse,
     DocumentReferencesResponse,
     DocumentVersionCreateRequest,
+    DocumentVersionAdvancedUpsertRequest,
     DocumentVersionDetailResponse,
+    DocumentVersionMetadataPatchRequest,
+    DocumentVersionRollbackRequest,
     FileCreateOptions,
     FileCreateRequest,
     ItemsBulkRequest,
@@ -582,6 +585,10 @@ async def test_document_version_routes_wire_and_list_is_typed(monkeypatch):
             },
             {"media_id": 99, "versions": []},
             {},
+            {"media_id": 99, "versions": [{"version_number": 2}]},
+            {"media_id": 99, "versions": [{"version_number": 3}]},
+            {"media_id": 99, "versions": [{"version_number": 4}]},
+            {"media_id": 99, "versions": [{"version_number": 5}]},
         ]
     )
     monkeypatch.setattr(client, "_request", mocked)
@@ -602,6 +609,34 @@ async def test_document_version_routes_wire_and_list_is_typed(monkeypatch):
         ),
     )
     deleted = await client.delete_media_document_version(99, 1)
+    rolled_back = await client.rollback_media_document_version(
+        99,
+        DocumentVersionRollbackRequest(version_number=1),
+    )
+    latest_metadata = await client.patch_media_document_metadata(
+        99,
+        DocumentVersionMetadataPatchRequest(
+            safe_metadata={"source": "import"},
+            merge=False,
+            new_version=True,
+        ),
+    )
+    version_metadata = await client.update_media_document_version_metadata(
+        99,
+        1,
+        DocumentVersionMetadataPatchRequest(
+            safe_metadata={"reviewed": True},
+            merge=True,
+        ),
+    )
+    advanced = await client.upsert_media_document_version(
+        99,
+        DocumentVersionAdvancedUpsertRequest(
+            content="Advanced body",
+            safe_metadata={"kind": "advanced"},
+            new_version=True,
+        ),
+    )
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/media/99/versions")
     assert mocked.await_args_list[0].kwargs["params"] == {
@@ -618,11 +653,36 @@ async def test_document_version_routes_wire_and_list_is_typed(monkeypatch):
         "analysis_content": "Analysis",
     }
     assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/media/99/versions/1")
+    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/media/99/versions/rollback")
+    assert mocked.await_args_list[4].kwargs["json_data"] == {"version_number": 1}
+    assert mocked.await_args_list[5].args[:2] == ("PATCH", "/api/v1/media/99/metadata")
+    assert mocked.await_args_list[5].kwargs["json_data"] == {
+        "safe_metadata": {"source": "import"},
+        "merge": False,
+        "new_version": True,
+    }
+    assert mocked.await_args_list[6].args[:2] == ("PUT", "/api/v1/media/99/versions/1/metadata")
+    assert mocked.await_args_list[6].kwargs["json_data"] == {
+        "safe_metadata": {"reviewed": True},
+        "merge": True,
+        "new_version": False,
+    }
+    assert mocked.await_args_list[7].args[:2] == ("POST", "/api/v1/media/99/versions/advanced")
+    assert mocked.await_args_list[7].kwargs["json_data"] == {
+        "content": "Advanced body",
+        "safe_metadata": {"kind": "advanced"},
+        "merge": True,
+        "new_version": True,
+    }
     assert isinstance(listed, list)
     assert isinstance(listed[0], DocumentVersionDetailResponse)
     assert isinstance(got, DocumentVersionDetailResponse)
     assert created == {"media_id": 99, "versions": []}
     assert deleted == {"deleted": True}
+    assert rolled_back["versions"] == [{"version_number": 2}]
+    assert latest_metadata["versions"] == [{"version_number": 3}]
+    assert version_metadata["versions"] == [{"version_number": 4}]
+    assert advanced["versions"] == [{"version_number": 5}]
 
 
 @pytest.mark.asyncio
