@@ -235,3 +235,31 @@ def test_local_service_ingestion_sources_round_trip(memory_db_factory):
     assert items == []
     assert deleted is True
     assert service.list_ingestion_sources() == []
+
+
+def test_local_service_reading_saved_searches_round_trip(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    created = service.create_reading_saved_search(
+        name="Saved AI Reads",
+        query={"status": ["saved"], "q": "ai"},
+        sort="updated_desc",
+    )
+    listed = service.list_reading_saved_searches(limit=10, offset=0)
+    updated = service.update_reading_saved_search(
+        created["id"],
+        name="Updated AI Reads",
+        query={"status": ["reading"]},
+    )
+    deleted = service.delete_reading_saved_search(created["id"])
+
+    assert created["name"] == "Saved AI Reads"
+    assert created["query"] == {"status": ["saved"], "q": "ai"}
+    assert created["sort"] == "updated_desc"
+    assert listed["items"] == [created]
+    assert listed["total"] == 1
+    assert updated["name"] == "Updated AI Reads"
+    assert updated["query"] == {"status": ["reading"]}
+    assert deleted == {"ok": True}
+    assert service.list_reading_saved_searches()["items"] == []

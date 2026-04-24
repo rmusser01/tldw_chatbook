@@ -98,7 +98,7 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 6  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 7  # Define the version this code supports
     
     # Migration registry - maps from_version to migration details
     _MIGRATIONS = {
@@ -131,6 +131,11 @@ class MediaDatabase:
             'to_version': 6,
             'function': '_apply_migration_v5_to_v6',
             'description': 'Add local ingestion source registry'
+        },
+        6: {
+            'to_version': 7,
+            'function': '_apply_migration_v6_to_v7',
+            'description': 'Add local reading saved searches'
         },
         # Future migrations: just add new entries here
         # 5: {
@@ -517,6 +522,21 @@ class MediaDatabase:
 
     CREATE INDEX IF NOT EXISTS idx_local_ingestion_source_items_source ON LocalIngestionSourceItems(source_id);
     CREATE INDEX IF NOT EXISTS idx_local_ingestion_source_items_status ON LocalIngestionSourceItems(sync_status);
+    """
+
+    _LOCAL_READING_SAVED_SEARCHES_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS LocalReadingSavedSearches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        query_json TEXT NOT NULL DEFAULT '{}',
+        sort TEXT,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        deleted BOOLEAN NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_local_reading_saved_searches_deleted ON LocalReadingSavedSearches(deleted);
+    CREATE INDEX IF NOT EXISTS idx_local_reading_saved_searches_updated ON LocalReadingSavedSearches(updated_at);
     """
 
     def __init__(self, db_path: Union[str, Path], client_id: str, 
@@ -1137,6 +1157,26 @@ class MediaDatabase:
             logging.error(f"[Migration v5->v6] Unexpected error during migration: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during migration v5->v6: {e}") from e
 
+    def _apply_migration_v6_to_v7(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 6 to version 7 (adds local reading saved searches)."""
+        logging.info(f"Applying migration from version 6 to 7 (local reading saved searches) to DB: {self.db_path_str}...")
+        try:
+            migration_sql = f"""
+            {self._LOCAL_READING_SAVED_SEARCHES_TABLE_SQL}
+            UPDATE schema_version SET version = 7;
+            """
+
+            with self.transaction():
+                logging.debug("[Migration v6->v7] Creating LocalReadingSavedSearches table...")
+                conn.executescript(migration_sql)
+                logging.info("[Migration v6->v7] LocalReadingSavedSearches migration applied successfully.")
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v6->v7] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v6->v7 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v6->v7] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v6->v7: {e}") from e
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -1152,7 +1192,8 @@ class MediaDatabase:
                 try:
                     conn.executescript(
                         f"{self._FTS_TABLES_SQL}\n{self._LOCAL_ONLY_TABLES_SQL}\n"
-                        f"{self._READING_HIGHLIGHTS_TABLE_SQL}\n{self._LOCAL_INGESTION_SOURCES_TABLE_SQL}"
+                        f"{self._READING_HIGHLIGHTS_TABLE_SQL}\n{self._LOCAL_INGESTION_SOURCES_TABLE_SQL}\n"
+                        f"{self._LOCAL_READING_SAVED_SEARCHES_TABLE_SQL}"
                     )
                     conn.commit()
                     logging.debug("Verified FTS and local-only media tables exist.")
@@ -2397,6 +2438,171 @@ class MediaDatabase:
         except json.JSONDecodeError:
             return {}
         return decoded if isinstance(decoded, dict) else {}
+
+    @staticmethod
+    def _local_reading_saved_search_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "query": MediaDatabase._json_object_from_db(row["query_json"]),
+            "sort": row["sort"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "deleted": bool(row["deleted"]),
+        }
+
+    def get_local_reading_saved_search(self, search_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a non-deleted local reading saved search by ID."""
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT id, name, query_json, sort, created_at, updated_at, deleted
+                FROM LocalReadingSavedSearches
+                WHERE id = ? AND deleted = 0
+                """,
+                (search_id,),
+            )
+            row = cursor.fetchone()
+            return self._local_reading_saved_search_row_to_dict(row) if row else None
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching local reading saved search id={search_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to fetch local reading saved search {search_id}") from e
+
+    def create_local_reading_saved_search(
+        self,
+        *,
+        name: str,
+        query: Optional[Dict[str, Any]] = None,
+        sort: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a local-only saved search for reading/media browse filters."""
+        normalized_name = str(name or "").strip()
+        if not normalized_name:
+            raise InputError("name is required for local reading saved searches.")
+        if query is not None and not isinstance(query, dict):
+            raise InputError("query must be a dictionary for local reading saved searches.")
+
+        current_time = self._get_current_utc_timestamp_str()
+        query_json = json.dumps(query or {}, separators=(',', ':'), cls=DateTimeEncoder)
+        normalized_sort = str(sort).strip() if sort is not None else None
+
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO LocalReadingSavedSearches (
+                        name, query_json, sort, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (normalized_name, query_json, normalized_sort, current_time, current_time),
+                )
+                search_id = int(cursor.lastrowid)
+            created = self.get_local_reading_saved_search(search_id)
+            if created is None:
+                raise DatabaseError(f"Failed to fetch newly created local reading saved search {search_id}")
+            return created
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error creating local reading saved search in DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to create local reading saved search") from e
+
+    def list_local_reading_saved_searches(self, *, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        """List non-deleted local reading saved searches."""
+        normalized_limit = max(1, int(limit))
+        normalized_offset = max(0, int(offset))
+        try:
+            count_cursor = self.execute_query(
+                "SELECT COUNT(*) FROM LocalReadingSavedSearches WHERE deleted = 0"
+            )
+            total_row = count_cursor.fetchone()
+            total = int(total_row[0]) if total_row else 0
+            cursor = self.execute_query(
+                """
+                SELECT id, name, query_json, sort, created_at, updated_at, deleted
+                FROM LocalReadingSavedSearches
+                WHERE deleted = 0
+                ORDER BY updated_at DESC, id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (normalized_limit, normalized_offset),
+            )
+            return {
+                "items": [self._local_reading_saved_search_row_to_dict(row) for row in cursor.fetchall()],
+                "total": total,
+                "limit": normalized_limit,
+                "offset": normalized_offset,
+            }
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error listing local reading saved searches from DB '{self.db_path_str}': {e}")
+            raise DatabaseError("Failed to list local reading saved searches") from e
+
+    def update_local_reading_saved_search(self, search_id: int, **changes: Any) -> Dict[str, Any]:
+        """Update mutable fields on a local reading saved search."""
+        allowed_fields = {"name", "query", "sort"}
+        unsupported = sorted(key for key in changes if key not in allowed_fields)
+        if unsupported:
+            unsupported_text = ", ".join(unsupported)
+            raise InputError(f"Unsupported local reading saved search update fields: {unsupported_text}")
+
+        current = self.get_local_reading_saved_search(search_id)
+        if current is None:
+            raise InputError(f"Local reading saved search {search_id} not found.")
+        if not changes:
+            return current
+
+        assignments: list[str] = []
+        values: list[Any] = []
+        if "name" in changes:
+            normalized_name = str(changes["name"] or "").strip()
+            if not normalized_name:
+                raise InputError("name cannot be empty for local reading saved searches.")
+            assignments.append("name = ?")
+            values.append(normalized_name)
+        if "query" in changes:
+            query = changes["query"]
+            if query is not None and not isinstance(query, dict):
+                raise InputError("query must be a dictionary for local reading saved searches.")
+            assignments.append("query_json = ?")
+            values.append(json.dumps(query or {}, separators=(',', ':'), cls=DateTimeEncoder))
+        if "sort" in changes:
+            assignments.append("sort = ?")
+            values.append(str(changes["sort"]).strip() if changes["sort"] is not None else None)
+
+        current_time = self._get_current_utc_timestamp_str()
+        assignments.append("updated_at = ?")
+        values.append(current_time)
+        values.append(search_id)
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    f"UPDATE LocalReadingSavedSearches SET {', '.join(assignments)} WHERE id = ? AND deleted = 0",
+                    tuple(values),
+                )
+            updated = self.get_local_reading_saved_search(search_id)
+            if updated is None:
+                raise DatabaseError(f"Failed to fetch updated local reading saved search {search_id}")
+            return updated
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error updating local reading saved search id={search_id} in DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to update local reading saved search {search_id}") from e
+
+    def delete_local_reading_saved_search(self, search_id: int) -> Dict[str, bool]:
+        """Soft-delete a local reading saved search."""
+        current_time = self._get_current_utc_timestamp_str()
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE LocalReadingSavedSearches
+                    SET deleted = 1, updated_at = ?
+                    WHERE id = ? AND deleted = 0
+                    """,
+                    (current_time, search_id),
+                )
+                return {"ok": cursor.rowcount > 0}
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error deleting local reading saved search id={search_id} from DB '{self.db_path_str}': {e}")
+            raise DatabaseError(f"Failed to delete local reading saved search {search_id}") from e
 
     @staticmethod
     def _local_ingestion_source_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:

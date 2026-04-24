@@ -188,6 +188,32 @@ class LocalMediaReadingService:
             "updated_at": current_time,
         }
 
+    def create_reading_saved_search(
+        self,
+        *,
+        name: str,
+        query: Optional[Mapping[str, Any]] = None,
+        sort: Optional[str] = None,
+    ) -> Any:
+        return self._require_db().create_local_reading_saved_search(
+            name=name,
+            query=dict(query or {}),
+            sort=sort,
+        )
+
+    def list_reading_saved_searches(self, *, limit: int = 50, offset: int = 0) -> Any:
+        return self._require_db().list_local_reading_saved_searches(limit=limit, offset=offset)
+
+    def update_reading_saved_search(self, search_id: Any, **changes: Any) -> Any:
+        normalized_changes = {
+            key: (dict(value) if key == "query" and isinstance(value, Mapping) else value)
+            for key, value in changes.items()
+        }
+        return self._require_db().update_local_reading_saved_search(int(search_id), **normalized_changes)
+
+    def delete_reading_saved_search(self, search_id: Any) -> Any:
+        return self._require_db().delete_local_reading_saved_search(int(search_id))
+
     def list_ingestion_sources(self) -> Any:
         return self._require_db().list_local_ingestion_sources()
 

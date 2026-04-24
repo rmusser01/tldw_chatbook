@@ -174,6 +174,50 @@ class FakeLocalMediaService:
         self.calls.append(("delete_reading_highlight", highlight_id))
         return True
 
+    def create_reading_saved_search(self, **kwargs):
+        self.calls.append(("create_reading_saved_search", kwargs))
+        return {
+            "id": 9,
+            "name": kwargs["name"],
+            "query": kwargs.get("query") or {},
+            "sort": kwargs.get("sort"),
+            "created_at": "2026-04-24T12:00:00Z",
+            "updated_at": "2026-04-24T12:00:00Z",
+        }
+
+    def list_reading_saved_searches(self, *, limit=50, offset=0):
+        self.calls.append(("list_reading_saved_searches", limit, offset))
+        return {
+            "items": [
+                {
+                    "id": 9,
+                    "name": "Local saved",
+                    "query": {"status": ["saved"]},
+                    "sort": "updated_desc",
+                    "created_at": "2026-04-24T12:00:00Z",
+                    "updated_at": "2026-04-24T12:00:00Z",
+                }
+            ],
+            "total": 1,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def update_reading_saved_search(self, search_id, **changes):
+        self.calls.append(("update_reading_saved_search", search_id, changes))
+        return {
+            "id": search_id,
+            "name": changes.get("name", "Local saved"),
+            "query": changes.get("query", {"status": ["saved"]}),
+            "sort": changes.get("sort", "updated_desc"),
+            "created_at": "2026-04-24T12:00:00Z",
+            "updated_at": "2026-04-24T12:30:00Z",
+        }
+
+    def delete_reading_saved_search(self, search_id):
+        self.calls.append(("delete_reading_saved_search", search_id))
+        return {"ok": True}
+
     def ingest_web_content(self, **kwargs):
         raise ValueError("Local web-content ingest is not available yet.")
 
@@ -2488,6 +2532,40 @@ async def test_scope_service_routes_server_saved_searches_and_note_links_with_po
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_local_reading_saved_searches_with_policy():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope = MediaReadingScopeService(local_service=local, server_service=None, policy_enforcer=policy)
+
+    created = await scope.create_reading_saved_search(
+        mode="local",
+        name="Local saved",
+        query={"status": ["saved"]},
+        sort="updated_desc",
+    )
+    listed = await scope.list_reading_saved_searches(mode="local", limit=25, offset=5)
+    updated = await scope.update_reading_saved_search(mode="local", search_id=9, name="Updated")
+    deleted = await scope.delete_reading_saved_search(mode="local", search_id=9)
+
+    assert created["id"] == "local:reading_saved_search:9"
+    assert listed["items"][0]["entity_kind"] == "reading_saved_search"
+    assert updated["name"] == "Updated"
+    assert deleted == {"ok": True}
+    assert policy.calls == [
+        "media.reading_saved_searches.create.local",
+        "media.reading_saved_searches.list.local",
+        "media.reading_saved_searches.update.local",
+        "media.reading_saved_searches.delete.local",
+    ]
+    assert local.calls[-4:] == [
+        ("create_reading_saved_search", {"name": "Local saved", "query": {"status": ["saved"]}, "sort": "updated_desc"}),
+        ("list_reading_saved_searches", 25, 5),
+        ("update_reading_saved_search", 9, {"name": "Updated"}),
+        ("delete_reading_saved_search", 9),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_server_reading_import_jobs_and_archive_creation():
     policy = FakePolicyEnforcer()
     server = FakeServerMediaService()
@@ -2673,7 +2751,7 @@ async def test_scope_service_fails_explicitly_for_local_reading_import_before_po
 
 
 @pytest.mark.asyncio
-async def test_scope_service_fails_explicitly_for_local_saved_searches_before_policy_denial():
+async def test_scope_service_enforces_policy_for_local_saved_searches():
     policy = FakePolicyEnforcer.deny("blocked")
     scope = MediaReadingScopeService(
         local_service=FakeLocalMediaService(),
@@ -2681,10 +2759,10 @@ async def test_scope_service_fails_explicitly_for_local_saved_searches_before_po
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local reading saved searches are not available yet."):
+    with pytest.raises(PolicyDeniedError):
         await scope.list_reading_saved_searches(mode="local")
 
-    assert policy.calls == []
+    assert policy.calls == ["media.reading_saved_searches.list.local"]
 
 
 @pytest.mark.asyncio
