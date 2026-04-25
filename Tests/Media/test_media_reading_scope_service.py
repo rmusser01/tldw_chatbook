@@ -153,6 +153,27 @@ class FakeLocalMediaService:
             "filename": "reading_export_local.jsonl",
         }
 
+    def create_reading_archive(self, item_id, **kwargs):
+        self.calls.append(("create_reading_archive", item_id, kwargs))
+        return {
+            "output_id": 12,
+            "title": kwargs.get("title") or "Local Archive",
+            "format": kwargs.get("format", "html"),
+            "storage_path": "local://reading-archives/12/archive.md",
+            "download_url": "local://reading-archives/12/archive.md",
+        }
+
+    def summarize_reading_item(self, item_id, **kwargs):
+        self.calls.append(("summarize_reading_item", item_id, kwargs))
+        return {
+            "item_id": item_id,
+            "summary": "Local summary",
+            "provider": kwargs.get("provider") or "local-extractive",
+            "model": kwargs.get("model") or "first-passages",
+            "citations": [{"item_id": item_id, "source": "reading"}],
+            "generated_at": "2026-04-21T12:00:00Z",
+        }
+
     def import_reading_items(self, import_path, *, source="auto", merge_tags=True):
         self.calls.append(("import_reading_items", import_path, source, merge_tags))
         return {"job_id": 701, "job_uuid": "local-job-uuid", "status": "queued"}
@@ -185,6 +206,15 @@ class FakeLocalMediaService:
     def delete_saved_search(self, search_id):
         self.calls.append(("delete_saved_search", search_id))
         return {"deleted": True, "id": search_id}
+
+    def bulk_update_reading_items(self, **kwargs):
+        self.calls.append(("bulk_update_reading_items", kwargs))
+        return {
+            "total": len(kwargs["item_ids"]),
+            "succeeded": len(kwargs["item_ids"]),
+            "failed": 0,
+            "results": [{"item_id": item_id, "success": True, "error": None} for item_id in kwargs["item_ids"]],
+        }
 
     def link_note(self, item_id, note_id):
         self.calls.append(("link_note", item_id, note_id))
@@ -1222,22 +1252,87 @@ async def test_scope_service_routes_server_bulk_archive_and_summary_actions():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_reports_local_archive_and_summary_as_explicitly_unsupported_after_policy():
+async def test_scope_service_routes_local_bulk_reading_updates_after_policy():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local reading archive snapshots are not available yet."):
-        await scope.create_reading_archive(mode="local", item_id=12)
-    with pytest.raises(ValueError, match="Local reading summary generation is not available yet."):
-        await scope.summarize_reading_item(mode="local", item_id=12)
+    result = await scope.bulk_update_reading_items(
+        mode="local",
+        item_ids=[12],
+        action="replace_tags",
+        tags=["ai"],
+    )
 
+    assert result["succeeded"] == 1
+    assert policy.calls[-1:] == ["media.reading.bulk_update.local"]
+    assert local.calls[-1] == (
+        "bulk_update_reading_items",
+        {
+            "item_ids": [12],
+            "action": "replace_tags",
+            "status": None,
+            "favorite": None,
+            "tags": ["ai"],
+            "hard": False,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_archive_and_summary_after_policy():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    archive = await scope.create_reading_archive(
+        mode="local",
+        item_id=12,
+        format="md",
+        source="text",
+        title="Local Snapshot",
+    )
+    summary = await scope.summarize_reading_item(mode="local", item_id=12)
+
+    assert archive["output_id"] == 12
+    assert summary["summary"] == "Local summary"
     assert policy.calls[-2:] == [
         "media.reading.archive.local",
         "media.reading.summarize.local",
+    ]
+    assert local.calls[-2:] == [
+        (
+        "create_reading_archive",
+        12,
+        {
+            "format": "md",
+            "source": "text",
+            "title": "Local Snapshot",
+            "retention_days": None,
+            "retention_until": None,
+        },
+        ),
+        (
+            "summarize_reading_item",
+            12,
+            {
+                "provider": None,
+                "model": None,
+                "prompt": None,
+                "system_prompt": None,
+                "temperature": None,
+                "recursive": False,
+                "chunked": False,
+            },
+        ),
     ]
 
 

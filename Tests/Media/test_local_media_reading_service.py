@@ -235,6 +235,114 @@ def test_local_service_exports_saved_reading_items(memory_db_factory):
     assert "metadata" not in zipped_rows[0]
 
 
+def test_local_service_creates_durable_reading_archive_snapshot(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Saved",
+        content="Saved text",
+        media_type="article",
+        url="https://example.com/saved",
+        keywords=["ai"],
+    )
+    service = LocalMediaReadingService(db)
+
+    archive = service.create_reading_archive(media_id, format="md", source="text", title="Snapshot")
+
+    assert archive["output_id"] > 0
+    assert archive["title"].startswith("Snapshot (archive ")
+    assert archive["format"] == "md"
+    assert archive["storage_path"].endswith(".md")
+    assert archive["download_url"].startswith("local://reading-archives/")
+
+    row = db.get_connection().execute(
+        "SELECT * FROM local_reading_archives WHERE id = ?",
+        (archive["output_id"],),
+    ).fetchone()
+    assert row is not None
+    assert row["item_id"] == media_id
+    assert row["content"].startswith("# Snapshot\n")
+    assert "Saved text" in row["content"]
+
+
+def test_local_service_bulk_updates_reading_status_and_tags(memory_db_factory):
+    db = memory_db_factory()
+    first_id, _, _ = db.add_media_with_keywords(
+        title="First",
+        content="First text",
+        media_type="article",
+        keywords=["old"],
+    )
+    second_id, _, _ = db.add_media_with_keywords(
+        title="Second",
+        content="Second text",
+        media_type="article",
+        keywords=["old"],
+    )
+    service = LocalMediaReadingService(db)
+
+    saved = service.bulk_update_reading_items(
+        item_ids=[first_id, second_id, first_id],
+        action="set_status",
+        status="saved",
+    )
+    tagged = service.bulk_update_reading_items(
+        item_ids=[first_id],
+        action="replace_tags",
+        tags=["AI", " research "],
+    )
+
+    assert saved == {
+        "total": 2,
+        "succeeded": 2,
+        "failed": 0,
+        "results": [
+            {"item_id": first_id, "success": True, "error": None},
+            {"item_id": second_id, "success": True, "error": None},
+        ],
+    }
+    assert db.get_media_read_it_later_state(first_id)["is_read_it_later"] is True
+    assert db.get_media_read_it_later_state(second_id)["is_read_it_later"] is True
+    assert tagged["succeeded"] == 1
+    assert db.fetch_keywords_for_media_batch([first_id])[first_id] == ["ai", "research"]
+    archived = service.bulk_update_reading_items(
+        item_ids=[first_id],
+        action="set_status",
+        status="archived",
+    )
+    assert archived["succeeded"] == 1
+    assert db.get_media_read_it_later_state(first_id) is None
+    assert db.get_media_read_it_later_state(second_id)["is_read_it_later"] is True
+
+
+def test_local_service_generates_extractive_reading_summary(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Long Read",
+        content="First sentence explains the topic. Second sentence adds context. Third sentence has details.",
+        media_type="article",
+        url="https://example.com/long",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+
+    summary = service.summarize_reading_item(media_id)
+
+    assert summary["item_id"] == media_id
+    assert summary["provider"] == "local-extractive"
+    assert summary["model"] == "first-passages"
+    assert summary["summary"].startswith("First sentence explains the topic.")
+    assert summary["citations"] == [
+        {
+            "item_id": media_id,
+            "url": "https://example.com/long",
+            "canonical_url": "https://example.com/long",
+            "title": "Long Read",
+            "source": "reading",
+        }
+    ]
+    assert summary["generated_at"] is not None
+
+
 def test_local_service_queues_reading_import_jobs(memory_db_factory, tmp_path):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)

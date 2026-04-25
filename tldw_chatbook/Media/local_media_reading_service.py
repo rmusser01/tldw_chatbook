@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import datetime, timedelta, timezone
+from html import escape as html_escape
 import uuid
 import zipfile
 from typing import Any, Mapping, Optional
@@ -165,6 +167,56 @@ class LocalMediaReadingService:
             "updated_at": current_time,
         }
 
+    def bulk_update_reading_items(
+        self,
+        *,
+        item_ids: list[int],
+        action: str,
+        status: str | None = None,
+        favorite: bool | None = None,
+        tags: list[str] | None = None,
+        hard: bool = False,
+    ) -> Any:
+        normalized_ids = self._unique_media_ids(item_ids)
+        if not normalized_ids:
+            raise ValueError("item_ids_required")
+        normalized_action = str(action or "").strip()
+        if normalized_action == "set_status" and not status:
+            raise ValueError("status_required")
+        if normalized_action == "set_favorite" and favorite is None:
+            raise ValueError("favorite_required")
+        if normalized_action in {"add_tags", "remove_tags", "replace_tags"} and not tags:
+            raise ValueError("tags_required")
+
+        results: list[dict[str, Any]] = []
+        succeeded = 0
+        failed = 0
+        for media_id in normalized_ids:
+            try:
+                self._apply_local_bulk_reading_action(
+                    media_id,
+                    action=normalized_action,
+                    status=status,
+                    favorite=favorite,
+                    tags=tags,
+                    hard=hard,
+                )
+            except KeyError:
+                results.append({"item_id": media_id, "success": False, "error": "item_not_found"})
+                failed += 1
+            except ValueError as exc:
+                results.append({"item_id": media_id, "success": False, "error": str(exc)})
+                failed += 1
+            else:
+                results.append({"item_id": media_id, "success": True, "error": None})
+                succeeded += 1
+        return {
+            "total": len(normalized_ids),
+            "succeeded": succeeded,
+            "failed": failed,
+            "results": results,
+        }
+
     def export_reading_items(
         self,
         *,
@@ -240,6 +292,119 @@ class LocalMediaReadingService:
             "job_id": status["job_id"],
             "job_uuid": status["job_uuid"],
             "status": status["status"],
+        }
+
+    def create_reading_archive(
+        self,
+        item_id: Any,
+        *,
+        format: str = "html",
+        source: str = "auto",
+        title: str | None = None,
+        retention_days: int | None = None,
+        retention_until: str | None = None,
+    ) -> Any:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_item_id = self._coerce_media_id(item_id)
+        normalized_format = self._validate_reading_archive_format(format)
+        normalized_source = self._validate_reading_archive_source(source)
+        detail = self.get_media_detail(normalized_item_id)
+        content, extension = self._render_local_reading_archive(
+            detail,
+            format=normalized_format,
+            source=normalized_source,
+            title=title,
+        )
+        base_title = self._archive_base_title(detail, title=title)
+        now = db._get_current_utc_timestamp_str()
+        archive_title = f"{base_title} (archive {now})"
+        filename = self._archive_filename(
+            item_id=normalized_item_id,
+            title=base_title,
+            created_at=now,
+            extension=extension,
+        )
+        storage_path = f"local://reading-archives/{uuid.uuid4().hex}/{filename}"
+        resolved_retention_until = retention_until or self._retention_until_from_days(retention_days)
+        metadata = {
+            "item_id": normalized_item_id,
+            "url": detail.get("url"),
+            "canonical_url": detail.get("canonical_url") or detail.get("url"),
+            "source": normalized_source,
+            "format": normalized_format,
+            "title": detail.get("title"),
+        }
+        with db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO local_reading_archives (
+                    item_id, title, format, source, storage_path, content,
+                    metadata_json, retention_until, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_item_id,
+                    archive_title,
+                    normalized_format,
+                    normalized_source,
+                    storage_path,
+                    content,
+                    self._json_dumps(metadata),
+                    resolved_retention_until,
+                    now,
+                ),
+            )
+            archive_id = cursor.lastrowid
+        return {
+            "output_id": archive_id,
+            "title": archive_title,
+            "format": normalized_format,
+            "storage_path": storage_path,
+            "created_at": now,
+            "retention_until": resolved_retention_until,
+            "download_url": storage_path,
+        }
+
+    def summarize_reading_item(
+        self,
+        item_id: Any,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        prompt: str | None = None,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        recursive: bool = False,
+        chunked: bool = False,
+    ) -> Any:
+        if recursive and chunked:
+            raise ValueError("reading_summary_invalid_strategy")
+        normalized_provider = str(provider or "local-extractive").strip().lower()
+        if normalized_provider not in {"local", "local-extractive"}:
+            raise ValueError("Local reading summaries only support the local-extractive provider.")
+        detail = self.get_media_detail(item_id)
+        text = self._local_text_from_row(detail)
+        if not text or not text.strip():
+            raise ValueError("reading_item_no_content")
+        summary = self._extractive_summary(text)
+        db = self._require_db()
+        return {
+            "item_id": self._coerce_media_id(item_id),
+            "summary": summary,
+            "provider": "local-extractive",
+            "model": model or "first-passages",
+            "citations": [
+                {
+                    "item_id": self._coerce_media_id(item_id),
+                    "url": detail.get("url"),
+                    "canonical_url": detail.get("canonical_url") or detail.get("url"),
+                    "title": detail.get("title"),
+                    "source": "reading",
+                }
+            ],
+            "generated_at": db._get_current_utc_timestamp_str(),
         }
 
     def list_reading_import_jobs(
@@ -839,11 +1004,216 @@ class LocalMediaReadingService:
 
     @staticmethod
     def _local_text_from_row(row: Mapping[str, Any]) -> str | None:
-        for key in ("content", "text", "transcription", "transcript", "content_text"):
+        for key in ("content", "text", "transcription", "transcript", "content_text", "summary", "notes"):
             value = row.get(key)
             if value not in (None, ""):
                 return str(value)
         return None
+
+    def _unique_media_ids(self, media_ids: Any) -> list[int]:
+        seen: set[int] = set()
+        normalized: list[int] = []
+        for media_id in media_ids or []:
+            coerced = self._coerce_media_id(media_id)
+            if coerced in seen:
+                continue
+            seen.add(coerced)
+            normalized.append(coerced)
+        return normalized
+
+    @staticmethod
+    def _normalize_bulk_tags(tags: list[str] | None) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for tag in tags or []:
+            value = str(tag).strip().lower()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            normalized.append(value)
+        return normalized
+
+    def _local_keywords_for_media(self, media_id: int) -> list[str]:
+        db = self._require_db()
+        fetch_batch = getattr(db, "fetch_keywords_for_media_batch", None)
+        if callable(fetch_batch):
+            return [str(value).strip().lower() for value in fetch_batch([media_id]).get(media_id, []) if value]
+        return []
+
+    def _apply_local_bulk_reading_action(
+        self,
+        media_id: int,
+        *,
+        action: str,
+        status: str | None,
+        favorite: bool | None,
+        tags: list[str] | None,
+        hard: bool,
+    ) -> None:
+        if self._require_db().get_media_by_id(media_id) is None:
+            raise KeyError(f"Local media item not found: {media_id}")
+        if action == "set_status":
+            normalized_status = str(status or "").strip().lower()
+            if normalized_status == "saved":
+                self.save_to_read_it_later(media_id)
+            elif normalized_status == "archived":
+                self.remove_from_read_it_later(media_id)
+            else:
+                raise ValueError(f"unsupported_local_status:{normalized_status}")
+            return
+        if action == "delete":
+            if hard:
+                raise ValueError("local_hard_delete_unavailable")
+            self.delete_media(media_id)
+            return
+        if action == "set_favorite":
+            raise ValueError("local_favorite_unavailable")
+        if action in {"add_tags", "remove_tags", "replace_tags"}:
+            incoming = self._normalize_bulk_tags(tags)
+            current = self._local_keywords_for_media(media_id)
+            if action == "replace_tags":
+                next_tags = incoming
+            elif action == "add_tags":
+                next_tags = sorted(set(current + incoming))
+            else:
+                remove_set = set(incoming)
+                next_tags = [tag for tag in current if tag not in remove_set]
+            self.update_media_metadata(media_id, keywords=next_tags)
+            return
+        raise ValueError(f"unsupported_action:{action}")
+
+    @staticmethod
+    def _extractive_summary(text: str, *, max_chars: int = 800) -> str:
+        normalized = " ".join(str(text).split())
+        if len(normalized) <= max_chars:
+            return normalized
+        candidate = normalized[:max_chars].rstrip()
+        sentence_end = max(candidate.rfind("."), candidate.rfind("!"), candidate.rfind("?"))
+        if sentence_end >= max_chars // 3:
+            return candidate[:sentence_end + 1]
+        return candidate.rstrip(" ,;:") + "..."
+
+    @staticmethod
+    def _validate_reading_archive_format(value: Any) -> str:
+        normalized = str(value or "html").strip().lower()
+        if normalized not in {"html", "md"}:
+            raise ValueError("Unsupported local reading archive format.")
+        return normalized
+
+    @staticmethod
+    def _validate_reading_archive_source(value: Any) -> str:
+        normalized = str(value or "auto").strip().lower()
+        if normalized not in {"auto", "clean_html", "text"}:
+            raise ValueError("Unsupported local reading archive source.")
+        return normalized
+
+    @staticmethod
+    def _archive_base_title(row: Mapping[str, Any], *, title: str | None = None) -> str:
+        normalized = str(title or row.get("title") or "Reading Archive").strip()
+        return normalized or "Reading Archive"
+
+    @staticmethod
+    def _safe_archive_filename_part(value: str) -> str:
+        safe = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value.strip())
+        safe = "_".join(part for part in safe.split("_") if part)
+        return (safe[:80] or "reading_archive").lower()
+
+    def _archive_filename(self, *, item_id: int, title: str, created_at: str, extension: str) -> str:
+        safe_title = self._safe_archive_filename_part(title)
+        safe_ts = self._safe_archive_filename_part(created_at)
+        return f"reading_archive_{item_id}_{safe_title}_{safe_ts}.{extension}"
+
+    @staticmethod
+    def _retention_until_from_days(retention_days: int | None) -> str | None:
+        if retention_days is None:
+            return None
+        return (datetime.now(timezone.utc) + timedelta(days=int(retention_days))).isoformat()
+
+    def _render_local_reading_archive(
+        self,
+        row: Mapping[str, Any],
+        *,
+        format: str,
+        source: str,
+        title: str | None = None,
+    ) -> tuple[str, str]:
+        clean_html = row.get("clean_html")
+        body_text = self._local_text_from_row(row)
+        body_html: str | None = None
+        if source == "clean_html":
+            if not clean_html:
+                raise ValueError("Local reading archive has no clean HTML content.")
+            body_html = str(clean_html)
+        elif source == "text":
+            if not body_text:
+                raise ValueError("Local reading archive has no text content.")
+        elif format == "html":
+            if clean_html:
+                body_html = str(clean_html)
+            elif not body_text:
+                raise ValueError("Local reading archive has no content.")
+        elif not body_text:
+            if clean_html:
+                body_text = self._strip_basic_html(str(clean_html))
+            else:
+                raise ValueError("Local reading archive has no content.")
+
+        base_title = self._archive_base_title(row, title=title)
+        url = row.get("canonical_url") or row.get("url")
+        if format == "html":
+            return (
+                self._render_local_archive_html(
+                    title=base_title,
+                    url=str(url) if url else None,
+                    body_html=body_html,
+                    body_text=body_text,
+                ),
+                "html",
+            )
+        parts = [f"# {base_title}"]
+        if url:
+            parts.extend(["", str(url)])
+        if body_text:
+            parts.extend(["", body_text])
+        return "\n".join(parts).strip() + "\n", "md"
+
+    @staticmethod
+    def _strip_basic_html(value: str) -> str:
+        stripped = value.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+        result: list[str] = []
+        in_tag = False
+        for char in stripped:
+            if char == "<":
+                in_tag = True
+                continue
+            if char == ">":
+                in_tag = False
+                continue
+            if not in_tag:
+                result.append(char)
+        return "".join(result).strip()
+
+    @staticmethod
+    def _render_local_archive_html(
+        *,
+        title: str,
+        url: str | None = None,
+        body_html: str | None = None,
+        body_text: str | None = None,
+    ) -> str:
+        body = body_html if body_html is not None else f"<pre>{html_escape(body_text or '')}</pre>"
+        url_html = f'<p><a href="{html_escape(url)}">{html_escape(url)}</a></p>' if url else ""
+        return (
+            "<!doctype html>\n"
+            "<html><head>"
+            '<meta charset="utf-8">'
+            f"<title>{html_escape(title)}</title>"
+            "</head><body>"
+            f"<h1>{html_escape(title)}</h1>"
+            f"{url_html}"
+            f"{body}"
+            "</body></html>\n"
+        )
 
     def _local_export_detail_row(self, row: Mapping[str, Any]) -> dict[str, Any]:
         try:
@@ -961,6 +1331,18 @@ class LocalMediaReadingService:
                     note_id TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (item_id, note_id)
+                );
+                CREATE TABLE IF NOT EXISTS local_reading_archives (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    format TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    storage_path TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    retention_until TEXT,
+                    created_at TEXT NOT NULL
                 );
                 """
             )
