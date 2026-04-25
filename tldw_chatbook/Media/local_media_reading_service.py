@@ -1433,6 +1433,13 @@ class LocalMediaReadingService:
                 "source_type": source_type,
                 **result,
             }
+        if source_type == "git_repository":
+            result = self._sync_git_repository_source_items(int(source_id), config)
+            return {
+                "source_id": int(source_id),
+                "source_type": source_type,
+                **result,
+            }
         if source_type != "local_directory":
             raise ValueError(f"Local ingestion source execution is not implemented for {source_type}.")
         root = Path(str(config.get("path") or "")).expanduser()
@@ -1462,9 +1469,40 @@ class LocalMediaReadingService:
         }
 
     def _sync_local_directory_source_items(self, source_id: int, root: Path) -> dict[str, Any]:
+        return self._sync_filesystem_source_items(source_id, root)
+
+    def _sync_git_repository_source_items(self, source_id: int, config: Mapping[str, Any]) -> dict[str, Any]:
+        repo_url = str(config.get("repo_url") or config.get("path") or "").strip()
+        if not repo_url:
+            raise ValueError("Git repository source is missing repo_url.")
+        local_root = self._local_git_repository_path(repo_url)
+        if local_root is not None and local_root.is_dir():
+            result = self._sync_filesystem_source_items(source_id, local_root, exclude_dirs={".git"})
+            return {"repo_url": repo_url, "repository_path": str(local_root), **result}
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="tldw_git_source_") as checkout_dir:
+            checkout_path = Path(checkout_dir)
+            self._clone_git_repository(repo_url, checkout_path, ref=config.get("branch") or config.get("ref"))
+            result = self._sync_filesystem_source_items(source_id, checkout_path, exclude_dirs={".git"})
+            return {"repo_url": repo_url, "repository_path": str(checkout_path), **result}
+
+    def _sync_filesystem_source_items(
+        self,
+        source_id: int,
+        root: Path,
+        *,
+        exclude_dirs: set[str] | None = None,
+    ) -> dict[str, Any]:
+        excluded = exclude_dirs or set()
         path_hashes = {
             file_path.relative_to(root).as_posix(): self._hash_local_ingestion_file(file_path)
-            for file_path in sorted(path for path in root.rglob("*") if path.is_file())
+            for file_path in sorted(
+                path
+                for path in root.rglob("*")
+                if path.is_file() and not any(part in excluded for part in path.relative_to(root).parts)
+            )
         }
         return self._sync_source_item_hashes(source_id, path_hashes)
 
@@ -1570,6 +1608,30 @@ class LocalMediaReadingService:
         if not parts:
             return None
         return "/".join(parts)
+
+    @staticmethod
+    def _local_git_repository_path(repo_url: str) -> Path | None:
+        from urllib.parse import unquote, urlparse
+
+        parsed = urlparse(repo_url)
+        if parsed.scheme == "file":
+            return Path(unquote(parsed.path)).expanduser()
+        if parsed.scheme:
+            return None
+        return Path(repo_url).expanduser()
+
+    @staticmethod
+    def _clone_git_repository(repo_url: str, checkout_path: Path, *, ref: Any = None) -> None:
+        import subprocess
+
+        command = ["git", "clone", "--depth", "1"]
+        if ref:
+            command.extend(["--branch", str(ref)])
+        command.extend([repo_url, str(checkout_path)])
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        if completed.returncode != 0:
+            message = completed.stderr.strip() or completed.stdout.strip() or "git clone failed"
+            raise RuntimeError(message)
 
     @staticmethod
     def _hash_local_ingestion_file(file_path: Path) -> str:

@@ -866,19 +866,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
             "user_message": "Local direct URL reading-item creation is not available yet; use local ingest jobs instead.",
             "affected_action_ids": ["media.reading.create.local"],
         },
-        {
-            "operation_id": "media.ingestion.execution.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_contract_missing",
-            "user_message": "Local directory source sync, archive snapshot upload/sync, URL article/file ingest, and local file ingest jobs execute locally, but git repository source execution is not implemented yet.",
-            "affected_action_ids": [
-                "media.ingestion_jobs.detail.local",
-                "media.ingestion_jobs.launch.local",
-                "media.ingestion_jobs.list.local",
-                "media.ingestion_jobs.observe.local",
-            ],
-        },
     ]
     assert server_report == [
         {

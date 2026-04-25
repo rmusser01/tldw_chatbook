@@ -563,6 +563,34 @@ def test_local_service_uploads_archive_snapshot_into_source_items(memory_db_fact
     assert all(item["content_hash"] for item in items)
 
 
+def test_local_service_syncs_git_repository_source_items(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / ".git").mkdir()
+    (repo_path / "README.md").write_text("# Repo\n", encoding="utf-8")
+    (repo_path / "docs").mkdir()
+    (repo_path / "docs" / "guide.txt").write_text("Guide\n", encoding="utf-8")
+    source = service.create_ingestion_source(
+        source_type="git_repository",
+        sink_type="media",
+        policy="canonical",
+        config={"repo_url": str(repo_path)},
+    )
+
+    synced = service.trigger_ingestion_source_sync(source["id"])
+    job = service.get_ingest_job(synced["job_id"])
+    items = service.list_ingestion_source_items(source["id"])
+
+    assert synced["status"] == "completed"
+    assert job["status"] == "completed"
+    assert job["result"]["source_type"] == "git_repository"
+    assert job["result"]["scanned"] == 2
+    assert {item["normalized_relative_path"] for item in items} == {"README.md", "docs/guide.txt"}
+    assert all(".git" not in item["normalized_relative_path"] for item in items)
+
+
 def test_local_service_reattaches_detached_ingestion_source_item(memory_db_factory):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
