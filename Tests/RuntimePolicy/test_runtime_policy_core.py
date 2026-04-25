@@ -162,6 +162,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": _action_kinds("browse", "detail", "update", "observe"),
         },
     },
+    "auth_profile_sessions": {
+        "expected_domain_ids": {"auth"},
+        "expected_action_kinds_by_source": {
+            "server": FULL_CRUD_AND_LAUNCH,
+        },
+    },
     "server_reminders_notification_feeds": {
         "expected_domain_ids": {"notifications_server"},
         "expected_action_kinds_by_source": {
@@ -722,6 +728,35 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         llm.catalog.providers.detail.server
         llm.catalog.providers.list.local
         llm.catalog.providers.list.server
+    """),
+    "auth_profile_sessions": _action_ids("""
+        auth.api_keys.create.server
+        auth.api_keys.delete.server
+        auth.api_keys.list.server
+        auth.api_keys.update.server
+        auth.identity.delete.server
+        auth.identity.launch.server
+        auth.identity.update.server
+        auth.profile.detail.server
+        auth.profile.list.server
+        auth.profile.update.server
+        auth.provider_keys.create.server
+        auth.provider_keys.delete.server
+        auth.provider_keys.detail.server
+        auth.provider_keys.list.server
+        auth.provider_keys.update.server
+        auth.provider_keys.validate.server
+        auth.registration.create.server
+        auth.security.launch.server
+        auth.security.update.server
+        auth.sessions.delete.server
+        auth.sessions.list.server
+        auth.storage.create.server
+        auth.storage.delete.server
+        auth.storage.detail.server
+        auth.storage.export.server
+        auth.storage.list.server
+        auth.storage.update.server
     """),
     "user_governance": _action_ids("""
         user_governance.consent.list.server

@@ -3,6 +3,7 @@ import pytest
 from tldw_chatbook.Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat_Grammars_Interop.chat_grammars_scope_service import ChatGrammarsScopeService
+from tldw_chatbook.Auth_Account_Interop.auth_account_scope_service import AuthAccountScopeService
 from tldw_chatbook.Collections_Interop.collections_feeds_scope_service import CollectionsFeedsScopeService
 from tldw_chatbook.Evaluations_Interop.evaluation_scope_service import EvaluationScopeService
 from tldw_chatbook.External_Connectors_Interop.connectors_scope_service import ConnectorsScopeService
@@ -132,6 +133,7 @@ def test_collect_unsupported_capability_reports_labels_each_report_scope():
         (NotificationsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (ServerRuntimeScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (LLMProviderCatalogScopeService(local_service=None, server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (AuthAccountScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (CollectionsFeedsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (ConnectorsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (SkillsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
