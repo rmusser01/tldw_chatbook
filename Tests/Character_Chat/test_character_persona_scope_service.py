@@ -33,6 +33,12 @@ class FakeCharacterPersonaClient:
         self.update_persona_exemplar_calls = []
         self.review_persona_exemplar_calls = []
         self.delete_persona_exemplar_calls = []
+        self.get_character_exemplar_calls = []
+        self.create_character_exemplar_calls = []
+        self.update_character_exemplar_calls = []
+        self.delete_character_exemplar_calls = []
+        self.search_character_exemplars_calls = []
+        self.select_character_exemplars_debug_calls = []
         self.list_greetings_calls = []
         self.select_greeting_calls = []
         self.list_presets_calls = 0
@@ -201,6 +207,36 @@ class FakeCharacterPersonaClient:
     async def delete_persona_exemplar(self, persona_id, exemplar_id):
         self.delete_persona_exemplar_calls.append({"persona_id": persona_id, "exemplar_id": exemplar_id})
         return {"status": "deleted", "persona_id": persona_id, "exemplar_id": exemplar_id}
+
+    async def get_character_exemplar(self, character_id, exemplar_id):
+        self.get_character_exemplar_calls.append({"character_id": character_id, "exemplar_id": exemplar_id})
+        return {"id": exemplar_id, "character_id": character_id, "text": "Use dry wit."}
+
+    async def create_character_exemplar(self, character_id, request_data):
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        self.create_character_exemplar_calls.append({"character_id": character_id, "payload": payload})
+        return {"id": "char-ex-new", "character_id": character_id, **payload}
+
+    async def update_character_exemplar(self, character_id, exemplar_id, request_data):
+        payload = request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json")
+        self.update_character_exemplar_calls.append(
+            {"character_id": character_id, "exemplar_id": exemplar_id, "payload": payload}
+        )
+        return {"id": exemplar_id, "character_id": character_id, **payload}
+
+    async def delete_character_exemplar(self, character_id, exemplar_id):
+        self.delete_character_exemplar_calls.append({"character_id": character_id, "exemplar_id": exemplar_id})
+        return {"status": "deleted", "character_id": character_id, "exemplar_id": exemplar_id}
+
+    async def search_character_exemplars(self, character_id, request_data):
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        self.search_character_exemplars_calls.append({"character_id": character_id, "payload": payload})
+        return {"items": [{"id": "char-ex-1", "character_id": character_id, "text": payload["query"]}]}
+
+    async def select_character_exemplars_debug(self, character_id, request_data):
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        self.select_character_exemplars_debug_calls.append({"character_id": character_id, "payload": payload})
+        return {"selected": [{"id": "char-ex-1", "character_id": character_id}], "coverage": {}}
 
     async def list_greetings(self, chat_id):
         self.list_greetings_calls.append(chat_id)
@@ -652,6 +688,45 @@ async def test_scope_service_routes_persona_exemplar_crud_to_server_backend():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_character_exemplar_crud_to_server_backend():
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterBackend(),
+        server_service=FakeCharacterPersonaClient(),
+    )
+
+    search = await scope_service.search_character_exemplars(
+        12,
+        Mock(model_dump=lambda **_: {"query": "dry wit"}),
+        mode="server",
+    )
+    exemplar = await scope_service.get_character_exemplar(12, "char-ex-1", mode="server")
+    created = await scope_service.create_character_exemplar(
+        12,
+        Mock(model_dump=lambda **_: {"text": "hello"}),
+        mode="server",
+    )
+    updated = await scope_service.update_character_exemplar(
+        12,
+        "char-ex-1",
+        Mock(model_dump=lambda **_: {"text": "updated"}),
+        mode="server",
+    )
+    debug = await scope_service.select_character_exemplars_debug(
+        12,
+        Mock(model_dump=lambda **_: {"user_turn": "why?"}),
+        mode="server",
+    )
+    deleted = await scope_service.delete_character_exemplar(12, "char-ex-1", mode="server")
+
+    assert search["items"][0]["id"] == "char-ex-1"
+    assert exemplar["id"] == "char-ex-1"
+    assert created["id"] == "char-ex-new"
+    assert updated["text"] == "updated"
+    assert debug["selected"][0]["id"] == "char-ex-1"
+    assert deleted == {"status": "deleted", "character_id": 12, "exemplar_id": "char-ex-1"}
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_chat_execution_support_to_server_backend():
     server_service = FakeCharacterPersonaClient()
     scope_service = CharacterPersonaScopeService(
@@ -963,6 +1038,22 @@ def test_scope_service_reports_known_character_persona_capability_gaps():
             ],
         },
         {
+            "operation_id": "character.exemplars.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_scope_missing",
+            "user_message": (
+                "Local character exemplar CRUD is not available through the source-aware character/persona scope yet."
+            ),
+            "affected_action_ids": [
+                "character.persona.create.local",
+                "character.persona.delete.local",
+                "character.persona.detail.local",
+                "character.persona.list.local",
+                "character.persona.update.local",
+            ],
+        },
+        {
             "operation_id": "character.restore.local",
             "source": "local",
             "supported": False,
@@ -1118,6 +1209,40 @@ async def test_server_character_persona_service_delegates_persona_exemplars_to_c
 
 
 @pytest.mark.asyncio
+async def test_server_character_persona_service_delegates_character_exemplars_to_client():
+    client = FakeCharacterPersonaClient()
+    service = ServerCharacterPersonaService(client=client)
+
+    search = await service.search_character_exemplars(
+        12,
+        Mock(model_dump=lambda **_: {"query": "dry wit"}),
+    )
+    exemplar = await service.get_character_exemplar(12, "char-ex-1")
+    created = await service.create_character_exemplar(
+        12,
+        Mock(model_dump=lambda **_: {"text": "hello"}),
+    )
+    updated = await service.update_character_exemplar(
+        12,
+        "char-ex-1",
+        Mock(model_dump=lambda **_: {"text": "updated"}),
+    )
+    debug = await service.select_character_exemplars_debug(
+        12,
+        Mock(model_dump=lambda **_: {"user_turn": "why?"}),
+    )
+    deleted = await service.delete_character_exemplar(12, "char-ex-1")
+
+    assert search["items"][0]["id"] == "char-ex-1"
+    assert exemplar["id"] == "char-ex-1"
+    assert created["id"] == "char-ex-new"
+    assert updated["text"] == "updated"
+    assert debug["selected"][0]["id"] == "char-ex-1"
+    assert deleted == {"status": "deleted", "character_id": 12, "exemplar_id": "char-ex-1"}
+    assert client.search_character_exemplars_calls[0]["payload"] == {"query": "dry wit"}
+
+
+@pytest.mark.asyncio
 async def test_server_character_persona_service_delegates_character_chat_session_admin_to_client():
     client = FakeCharacterPersonaClient()
     service = ServerCharacterPersonaService(client=client)
@@ -1194,6 +1319,12 @@ async def test_server_character_persona_service_enforces_policy_actions():
     await service.update_persona_exemplar("persona-1", "ex-1", Mock(model_dump=lambda **_: {"content": "updated"}))
     await service.review_persona_exemplar("persona-1", "ex-1", Mock(model_dump=lambda **_: {"action": "approve"}))
     await service.delete_persona_exemplar("persona-1", "ex-1")
+    await service.search_character_exemplars(12, Mock(model_dump=lambda **_: {"query": "dry wit"}))
+    await service.get_character_exemplar(12, "char-ex-1")
+    await service.create_character_exemplar(12, Mock(model_dump=lambda **_: {"text": "hello"}))
+    await service.update_character_exemplar(12, "char-ex-1", Mock(model_dump=lambda **_: {"text": "updated"}))
+    await service.select_character_exemplars_debug(12, Mock(model_dump=lambda **_: {"user_turn": "why?"}))
+    await service.delete_character_exemplar(12, "char-ex-1")
     await service.list_chat_greetings("chat.server.alice")
     await service.select_chat_greeting("chat.server.alice", 0)
     await service.list_chat_presets()
@@ -1240,6 +1371,12 @@ async def test_server_character_persona_service_enforces_policy_actions():
         "character.persona.create.server",
         "character.persona.update.server",
         "character.persona.update.server",
+        "character.persona.delete.server",
+        "character.persona.list.server",
+        "character.persona.detail.server",
+        "character.persona.create.server",
+        "character.persona.update.server",
+        "character.persona.list.server",
         "character.persona.delete.server",
         "character.sessions.launch.server",
         "character.sessions.launch.server",

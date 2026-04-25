@@ -197,6 +197,36 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.delete_persona_exemplar(persona_id, exemplar_id)
 
+    async def get_character_exemplar(self, character_id: int, exemplar_id: str) -> Any:
+        self._enforce(self._persona_action_id("detail"))
+        client = self._require_client()
+        return await client.get_character_exemplar(character_id, exemplar_id)
+
+    async def create_character_exemplar(self, character_id: int, request_data: Any) -> Any:
+        self._enforce(self._persona_action_id("create"))
+        client = self._require_client()
+        return await client.create_character_exemplar(character_id, request_data)
+
+    async def update_character_exemplar(self, character_id: int, exemplar_id: str, request_data: Any) -> Any:
+        self._enforce(self._persona_action_id("update"))
+        client = self._require_client()
+        return await client.update_character_exemplar(character_id, exemplar_id, request_data)
+
+    async def delete_character_exemplar(self, character_id: int, exemplar_id: str) -> Any:
+        self._enforce(self._persona_action_id("delete"))
+        client = self._require_client()
+        return await client.delete_character_exemplar(character_id, exemplar_id)
+
+    async def search_character_exemplars(self, character_id: int, request_data: Any) -> Any:
+        self._enforce(self._persona_action_id("list"))
+        client = self._require_client()
+        return await client.search_character_exemplars(character_id, request_data)
+
+    async def select_character_exemplars_debug(self, character_id: int, request_data: Any) -> Any:
+        self._enforce(self._persona_action_id("list"))
+        client = self._require_client()
+        return await client.select_character_exemplars_debug(character_id, request_data)
+
     async def list_chat_greetings(self, chat_id: str) -> Any:
         self._enforce(self._session_action_id())
         client = self._require_client()
