@@ -1052,9 +1052,13 @@ END;
 
 CREATE TRIGGER chat_dictionaries_au
 AFTER UPDATE ON chat_dictionaries BEGIN
-  UPDATE chat_dictionaries_fts 
-  SET name = NEW.name, description = NEW.description, content = NEW.content
-  WHERE rowid = NEW.id;
+  INSERT INTO chat_dictionaries_fts(chat_dictionaries_fts, rowid, name, description, content)
+  SELECT 'delete', OLD.id, OLD.name, OLD.description, OLD.content
+  WHERE OLD.deleted = 0;
+
+  INSERT INTO chat_dictionaries_fts(rowid, name, description, content)
+  SELECT NEW.id, NEW.name, NEW.description, NEW.content
+  WHERE NEW.deleted = 0;
 END;
 
 CREATE TRIGGER chat_dictionaries_ad

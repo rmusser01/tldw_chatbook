@@ -12,6 +12,8 @@ from tldw_chatbook.Chat import (
     ChatConversationScopeService,
     ServerChatConversationService,
 )
+from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
+from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
 from tldw_chatbook.Character_Chat.server_chat_dictionary_service import ServerChatDictionaryService
 from tldw_chatbook.Media import (
     LocalMediaReadingService,
@@ -124,6 +126,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.server_chat_conversation_service, ServerChatConversationService)
     assert isinstance(app.chat_conversation_scope_service, ChatConversationScopeService)
     assert isinstance(app.server_chat_dictionary_service, ServerChatDictionaryService)
+    assert isinstance(app.local_chat_dictionary_service, LocalChatDictionaryService)
+    assert isinstance(app.chat_dictionary_scope_service, ChatDictionaryScopeService)
     assert isinstance(app.local_prompt_service, LocalPromptService)
     assert isinstance(app.server_prompt_service, ServerPromptService)
     assert isinstance(app.local_chatbook_service, LocalChatbookService)

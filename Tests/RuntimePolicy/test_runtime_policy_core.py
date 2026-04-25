@@ -236,23 +236,41 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         character.messages.detail.server
         character.messages.list.server
         character.messages.update.server
+        chat.dictionaries.create.local
         chat.dictionaries.create.server
+        chat.dictionaries.delete.local
         chat.dictionaries.delete.server
+        chat.dictionaries.detail.local
         chat.dictionaries.detail.server
+        chat.dictionaries.export.local
         chat.dictionaries.export.server
+        chat.dictionaries.import.local
         chat.dictionaries.import.server
+        chat.dictionaries.list.local
         chat.dictionaries.list.server
+        chat.dictionaries.process.local
         chat.dictionaries.process.server
+        chat.dictionaries.update.local
         chat.dictionaries.update.server
+        chat.dictionary.activity.list.local
         chat.dictionary.activity.list.server
+        chat.dictionary.entries.create.local
         chat.dictionary.entries.create.server
+        chat.dictionary.entries.delete.local
         chat.dictionary.entries.delete.server
+        chat.dictionary.entries.list.local
         chat.dictionary.entries.list.server
+        chat.dictionary.entries.reorder.local
         chat.dictionary.entries.reorder.server
+        chat.dictionary.entries.update.local
         chat.dictionary.entries.update.server
+        chat.dictionary.statistics.detail.local
         chat.dictionary.statistics.detail.server
+        chat.dictionary.versions.detail.local
         chat.dictionary.versions.detail.server
+        chat.dictionary.versions.list.local
         chat.dictionary.versions.list.server
+        chat.dictionary.versions.restore.local
         chat.dictionary.versions.restore.server
     """),
     "chat": _action_ids("""
