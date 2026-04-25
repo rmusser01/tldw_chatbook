@@ -189,6 +189,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "research_sessions_runs",
         "research_search_provider_surfaces",
         "chat_grammars",
+        "explicit_feedback",
         "client_notifications",
         "server_reminders_notification_feeds",
         "external_connectors",
@@ -439,6 +440,15 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=REMOTE_ONLY_SOURCES,
         resources=(
             _resource("chat.grammars", actions=CRUD_ACTIONS),
+        ),
+    ),
+    _capability(
+        "explicit_feedback",
+        "Explicit Feedback",
+        "feedback",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("feedback", actions=CRUD_ACTIONS),
         ),
     ),
     _capability(

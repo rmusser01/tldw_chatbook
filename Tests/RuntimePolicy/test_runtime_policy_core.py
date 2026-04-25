@@ -137,6 +137,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": FULL_CRUD,
         },
     },
+    "explicit_feedback": {
+        "expected_domain_ids": {"feedback"},
+        "expected_action_kinds_by_source": {
+            "server": FULL_CRUD,
+        },
+    },
     "client_notifications": {
         "expected_domain_ids": {"notifications"},
         "expected_action_kinds_by_source": {
@@ -386,6 +392,13 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         chat.grammars.detail.server
         chat.grammars.list.server
         chat.grammars.update.server
+    """),
+    "explicit_feedback": _action_ids("""
+        feedback.create.server
+        feedback.delete.server
+        feedback.detail.server
+        feedback.list.server
+        feedback.update.server
     """),
     "cross_cutting_runtime_policy": _action_ids("""
         runtime.policy.configure.local

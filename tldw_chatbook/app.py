@@ -210,6 +210,7 @@ from .UI.SearchWindow import SearchWindow
 from tldw_chatbook.Chat_Grammars_Interop import ChatGrammarsScopeService, ServerChatGrammarsService
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
+from tldw_chatbook.Feedback_Interop import FeedbackScopeService, ServerFeedbackService
 from tldw_chatbook.Media import (
     LocalMediaReadingService,
     MediaReadingScopeService,
@@ -1720,6 +1721,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.chat_grammars_scope_service = ChatGrammarsScopeService(
             server_service=self.server_chat_grammars_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_feedback_service = ServerFeedbackService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_feedback_service = ServerFeedbackService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.feedback_scope_service = FeedbackScopeService(
+            server_service=self.server_feedback_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:

@@ -6,6 +6,7 @@ from tldw_chatbook.Chat_Grammars_Interop.chat_grammars_scope_service import Chat
 from tldw_chatbook.Collections_Interop.collections_feeds_scope_service import CollectionsFeedsScopeService
 from tldw_chatbook.Evaluations_Interop.evaluation_scope_service import EvaluationScopeService
 from tldw_chatbook.External_Connectors_Interop.connectors_scope_service import ConnectorsScopeService
+from tldw_chatbook.Feedback_Interop.feedback_scope_service import FeedbackScopeService
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.Notifications.notifications_scope_service import NotificationsScopeService
@@ -123,6 +124,7 @@ def test_collect_unsupported_capability_reports_labels_each_report_scope():
         (ResearchScopeService(local_service=None, server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (ResearchSearchScopeService(local_service=None, server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (ChatGrammarsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (FeedbackScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (NotificationsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (CollectionsFeedsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (ConnectorsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
