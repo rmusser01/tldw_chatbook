@@ -871,7 +871,7 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
             "source": "local",
             "supported": False,
             "reason_code": "local_contract_missing",
-            "user_message": "Local directory source sync, archive snapshot upload/sync, URL article ingest, and local file ingest jobs execute locally, but URL file/download ingest and git repository source execution are not implemented yet.",
+            "user_message": "Local directory source sync, archive snapshot upload/sync, URL article/file ingest, and local file ingest jobs execute locally, but git repository source execution is not implemented yet.",
             "affected_action_ids": [
                 "media.ingestion_jobs.detail.local",
                 "media.ingestion_jobs.launch.local",

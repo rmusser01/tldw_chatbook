@@ -23,10 +23,18 @@ class LocalMediaReadingService:
     _SUPPORTED_INGESTION_SINK_TYPES = {"media", "notes"}
     _SUPPORTED_INGESTION_POLICIES = {"canonical", "import_only"}
 
-    def __init__(self, media_db: Any, *, tts_audio_generator: Any = None, url_article_scraper: Any = None):
+    def __init__(
+        self,
+        media_db: Any,
+        *,
+        tts_audio_generator: Any = None,
+        url_article_scraper: Any = None,
+        url_file_downloader: Any = None,
+    ):
         self.media_db = media_db
         self.tts_audio_generator = tts_audio_generator
         self.url_article_scraper = url_article_scraper
+        self.url_file_downloader = url_file_downloader
 
     def _require_db(self) -> Any:
         if self.media_db is None:
@@ -1130,7 +1138,7 @@ class LocalMediaReadingService:
             elif job.get("job_type") == "ingestion_source_archive":
                 result = self._execute_archive_snapshot_ingest_job(job)
             elif job.get("source_kind") == "url":
-                result = self._execute_url_article_media_ingest_job(job)
+                result = self._execute_url_media_ingest_job(job)
             else:
                 result = self._execute_local_file_media_ingest_job(job)
         except Exception as exc:
@@ -1193,6 +1201,12 @@ class LocalMediaReadingService:
             "errors": [],
         }
 
+    def _execute_url_media_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        media_type = str(job.get("media_type") or "").strip().lower()
+        if media_type in {"article", "web_article", "webpage", "html"}:
+            return self._execute_url_article_media_ingest_job(job)
+        return self._execute_url_file_download_media_ingest_job(job)
+
     def _execute_url_article_media_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
         from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new
 
@@ -1245,6 +1259,62 @@ class LocalMediaReadingService:
             "errors": [],
         }
 
+    def _execute_url_file_download_media_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        from tldw_chatbook.Local_Ingestion.local_file_ingestion import ingest_local_file
+
+        options = dict(job.get("options") or {})
+        source_url = str(job.get("source") or "").strip()
+        if not source_url:
+            raise ValueError("Local URL ingest job is missing a URL.")
+        media_type = str(job.get("media_type") or "").strip().lower()
+        downloader = self.url_file_downloader or self._default_url_file_downloader
+        downloaded = downloader(source_url, media_type=media_type, options=options)
+        if isinstance(downloaded, Mapping):
+            downloaded_path_value = downloaded.get("path")
+            cleanup = bool(downloaded.get("cleanup", False))
+        else:
+            downloaded_path_value = downloaded
+            cleanup = False
+        if not downloaded_path_value:
+            raise ValueError("Local URL file downloader did not return a path.")
+        downloaded_path = Path(str(downloaded_path_value)).expanduser()
+        try:
+            result = ingest_local_file(
+                downloaded_path,
+                self._require_db(),
+                title=options.get("title"),
+                author=options.get("author"),
+                keywords=list(options.get("keywords") or []),
+                custom_prompt=options.get("custom_prompt"),
+                system_prompt=options.get("system_prompt"),
+                perform_analysis=bool(options.get("perform_analysis", False)),
+                api_name=options.get("api_name"),
+                api_key=options.get("api_key"),
+                chunk_options=dict(options.get("chunk_options") or {}),
+            )
+            media_id = result.get("media_id")
+            if media_id is not None:
+                self.update_media_metadata(media_id, url=source_url)
+            return {
+                "source": source_url,
+                "source_kind": "url",
+                "downloaded_path": str(downloaded_path),
+                "media_id": media_id,
+                "title": result.get("title"),
+                "file_type": result.get("file_type"),
+                "content_length": int(result.get("content_length") or 0),
+                "imported": 1 if media_id is not None else 0,
+                "updated": 0,
+                "skipped": 0 if media_id is not None else 1,
+                "errors": [],
+            }
+        finally:
+            if cleanup:
+                try:
+                    downloaded_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
     @staticmethod
     def _default_url_article_scraper(url: str, *, custom_cookies: Any = None) -> Mapping[str, Any]:
         from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article_sync
@@ -1261,6 +1331,68 @@ class LocalMediaReadingService:
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(scrape_article_sync, url, custom_cookies=custom_cookies)
             return future.result()
+
+    @classmethod
+    def _default_url_file_downloader(
+        cls,
+        url: str,
+        *,
+        media_type: str,
+        options: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        import os
+        import tempfile
+        from urllib.parse import urlparse
+
+        import requests
+
+        opts = dict(options or {})
+        timeout = float(opts.get("timeout") or 30)
+        response = requests.get(url, stream=True, timeout=timeout)
+        response.raise_for_status()
+        suffix = cls._download_suffix_for_url(url, media_type=media_type, content_type=response.headers.get("content-type"))
+        fd, path = tempfile.mkstemp(prefix="tldw_url_ingest_", suffix=suffix)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        handle.write(chunk)
+        except Exception:
+            Path(path).unlink(missing_ok=True)
+            raise
+        return {"path": path, "cleanup": True, "source_path": urlparse(url).path}
+
+    @staticmethod
+    def _download_suffix_for_url(url: str, *, media_type: str, content_type: str | None = None) -> str:
+        from urllib.parse import urlparse
+
+        suffix = Path(urlparse(url).path).suffix
+        if suffix:
+            return suffix
+        content_type_suffixes = {
+            "application/pdf": ".pdf",
+            "text/html": ".html",
+            "text/plain": ".txt",
+            "text/markdown": ".md",
+            "application/epub+zip": ".epub",
+            "audio/mpeg": ".mp3",
+            "audio/wav": ".wav",
+            "video/mp4": ".mp4",
+        }
+        normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+        if normalized_content_type in content_type_suffixes:
+            return content_type_suffixes[normalized_content_type]
+        media_type_suffixes = {
+            "pdf": ".pdf",
+            "document": ".txt",
+            "ebook": ".epub",
+            "xml": ".xml",
+            "plaintext": ".txt",
+            "text": ".txt",
+            "audio": ".mp3",
+            "video": ".mp4",
+        }
+        return media_type_suffixes.get(str(media_type or "").strip().lower(), ".bin")
 
     @staticmethod
     def _failed_local_ingest_result(job: Mapping[str, Any], exc: Exception) -> dict[str, Any]:

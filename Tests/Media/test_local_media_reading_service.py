@@ -670,6 +670,36 @@ def test_local_service_executes_url_article_ingest_jobs_with_injected_scraper(me
     assert db.fetch_keywords_for_media_batch([media["id"]])[media["id"]] == ["read later"]
 
 
+def test_local_service_executes_url_file_download_ingest_jobs_with_injected_downloader(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    calls = []
+
+    def fake_downloader(url, *, media_type, options):
+        calls.append((url, media_type, options.get("keywords")))
+        downloaded = tmp_path / "downloaded.txt"
+        downloaded.write_text("Downloaded text body", encoding="utf-8")
+        return {"path": str(downloaded), "cleanup": False}
+
+    service = LocalMediaReadingService(db, url_file_downloader=fake_downloader)
+
+    submitted = service.submit_ingest_jobs(
+        media_type="plaintext",
+        urls=["https://example.com/downloaded.txt"],
+        keywords=["Download"],
+    )
+    job = service.get_ingest_job(submitted["jobs"][0]["id"])
+    media = db.get_media_by_url("https://example.com/downloaded.txt")
+
+    assert calls == [("https://example.com/downloaded.txt", "plaintext", ["Download"])]
+    assert submitted["jobs"][0]["status"] == "completed"
+    assert job["result"]["source_kind"] == "url"
+    assert job["result"]["downloaded_path"] == str(tmp_path / "downloaded.txt")
+    assert job["result"]["media_id"] == media["id"]
+    assert media["url"] == "https://example.com/downloaded.txt"
+    assert media["content"] == "Downloaded text body"
+    assert db.fetch_keywords_for_media_batch([media["id"]])[media["id"]] == ["download"]
+
+
 @pytest.mark.asyncio
 async def test_local_service_default_url_scraper_is_safe_from_async_scope(memory_db_factory, monkeypatch):
     from tldw_chatbook.Web_Scraping import Article_Extractor_Lib
