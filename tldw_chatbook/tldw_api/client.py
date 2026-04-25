@@ -77,7 +77,15 @@ from .media_reading_schemas import (
     ReadingHighlight,
     ReadingHighlightCreateRequest,
     ReadingHighlightUpdateRequest,
+    ReadingNoteLinkCreateRequest,
+    ReadingNoteLinkResponse,
+    ReadingNoteLinksListResponse,
     ReadingProgressUpdate,
+    ReadingSaveRequest,
+    ReadingSavedSearchCreateRequest,
+    ReadingSavedSearchListResponse,
+    ReadingSavedSearchResponse,
+    ReadingSavedSearchUpdateRequest,
     ReadingUpdateRequest,
     ReprocessMediaRequest,
     ReprocessMediaResponse,
@@ -1015,6 +1023,13 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
+    async def save_reading_item(self, request_data: ReadingSaveRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/reading/save",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
     async def list_reading_items(
         self,
         *,
@@ -1069,6 +1084,65 @@ class TLDWAPIClient:
             f"/api/v1/reading/items/{item_id}",
             params={"hard": str(hard).lower()},
         )
+
+    async def create_reading_saved_search(
+        self,
+        request_data: ReadingSavedSearchCreateRequest,
+    ) -> ReadingSavedSearchResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/reading/saved-searches",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReadingSavedSearchResponse.model_validate(response)
+
+    async def list_reading_saved_searches(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> ReadingSavedSearchListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/reading/saved-searches",
+            params={"limit": limit, "offset": offset},
+        )
+        return ReadingSavedSearchListResponse.model_validate(response)
+
+    async def update_reading_saved_search(
+        self,
+        search_id: int,
+        request_data: ReadingSavedSearchUpdateRequest,
+    ) -> ReadingSavedSearchResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/reading/saved-searches/{search_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReadingSavedSearchResponse.model_validate(response)
+
+    async def delete_reading_saved_search(self, search_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/reading/saved-searches/{search_id}")
+
+    async def link_note_to_reading_item(
+        self,
+        item_id: int,
+        note_id: str,
+    ) -> ReadingNoteLinkResponse:
+        request_data = ReadingNoteLinkCreateRequest(note_id=note_id)
+        response = await self._request(
+            "POST",
+            f"/api/v1/reading/items/{item_id}/links/note",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return ReadingNoteLinkResponse.model_validate(response)
+
+    async def list_reading_item_note_links(self, item_id: int) -> ReadingNoteLinksListResponse:
+        response = await self._request("GET", f"/api/v1/reading/items/{item_id}/links")
+        return ReadingNoteLinksListResponse.model_validate(response)
+
+    async def unlink_note_from_reading_item(self, item_id: int, note_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/reading/items/{item_id}/links/note/{note_id}")
 
     async def get_reading_progress(self, media_id: int) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/media/{media_id}/progress")

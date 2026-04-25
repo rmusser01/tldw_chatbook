@@ -391,6 +391,22 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.reading.detail.server
         media.reading.list.local
         media.reading.list.server
+        media.reading.note_links.create.local
+        media.reading.note_links.create.server
+        media.reading.note_links.delete.local
+        media.reading.note_links.delete.server
+        media.reading.note_links.list.local
+        media.reading.note_links.list.server
+        media.reading.saved_searches.create.local
+        media.reading.saved_searches.create.server
+        media.reading.saved_searches.delete.local
+        media.reading.saved_searches.delete.server
+        media.reading.saved_searches.detail.local
+        media.reading.saved_searches.detail.server
+        media.reading.saved_searches.list.local
+        media.reading.saved_searches.list.server
+        media.reading.saved_searches.update.local
+        media.reading.saved_searches.update.server
         media.reading.update.local
         media.reading.update.server
         media.reading_progress.detail.local

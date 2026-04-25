@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 
 class ViewMode(str, Enum):
@@ -270,6 +270,90 @@ class ReadingUpdateRequest(BaseModel):
         if isinstance(value, list):
             return [item.strip() if isinstance(item, str) else item for item in value]
         return value
+
+
+class ReadingSaveRequest(BaseModel):
+    url: HttpUrl
+    title: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    status: str | None = "saved"
+    archive_mode: Literal["use_default", "always", "never"] = "use_default"
+    favorite: bool = False
+    summary: str | None = None
+    notes: str | None = None
+    content: str | None = None
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _strip_tags(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value.strip()]
+        if isinstance(value, list):
+            return [item.strip() if isinstance(item, str) else item for item in value]
+        return value
+
+
+class ReadingSavedSearchCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    query: dict[str, Any] = Field(default_factory=dict)
+    sort: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("name cannot be blank")
+        return normalized
+
+
+class ReadingSavedSearchUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    query: dict[str, Any] | None = None
+    sort: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("name cannot be blank")
+        return normalized
+
+
+class ReadingSavedSearchResponse(BaseModel):
+    id: int
+    name: str
+    query: dict[str, Any] = Field(default_factory=dict)
+    sort: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ReadingSavedSearchListResponse(BaseModel):
+    items: list[ReadingSavedSearchResponse] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
+class ReadingNoteLinkCreateRequest(BaseModel):
+    note_id: str = Field(..., min_length=1, max_length=255)
+
+
+class ReadingNoteLinkResponse(BaseModel):
+    item_id: int
+    note_id: str
+    created_at: str | None = None
+
+
+class ReadingNoteLinksListResponse(BaseModel):
+    item_id: int
+    links: list[ReadingNoteLinkResponse] = Field(default_factory=list)
 
 
 class ReadingItem(BaseModel):
@@ -663,9 +747,17 @@ __all__ = [
     "ReadingItem",
     "ReadingItemDetail",
     "ReadingItemsListResponse",
+    "ReadingNoteLinkCreateRequest",
+    "ReadingNoteLinkResponse",
+    "ReadingNoteLinksListResponse",
     "ReadingProgressNotFound",
     "ReadingProgressResponse",
     "ReadingProgressUpdate",
+    "ReadingSaveRequest",
+    "ReadingSavedSearchCreateRequest",
+    "ReadingSavedSearchListResponse",
+    "ReadingSavedSearchResponse",
+    "ReadingSavedSearchUpdateRequest",
     "ReadingUpdateRequest",
     "ReferenceImageListItem",
     "ReferenceImageListResponse",

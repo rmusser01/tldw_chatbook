@@ -4,6 +4,12 @@ import pytest
 
 from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
+from tldw_chatbook.tldw_api import (
+    ReadingNoteLinkResponse,
+    ReadingNoteLinksListResponse,
+    ReadingSavedSearchListResponse,
+    ReadingSavedSearchResponse,
+)
 
 
 class FakeClient:
@@ -87,6 +93,51 @@ class FakeClient:
     async def delete_media_version(self, media_id, version_number):
         self.calls.append(("delete_media_version", media_id, version_number))
         return {"deleted": True, "media_id": media_id, "version_number": version_number}
+
+    async def save_reading_item(self, request_data):
+        self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+        return {"id": 50, "title": "Saved URL", "url": "https://example.com", "tags": ["ai"]}
+
+    async def create_reading_saved_search(self, request_data):
+        self.calls.append(("create_reading_saved_search", request_data.model_dump(exclude_none=True, mode="json")))
+        return ReadingSavedSearchResponse.model_validate(
+            {"id": 1, "name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"}
+        )
+
+    async def list_reading_saved_searches(self, *, limit=50, offset=0):
+        self.calls.append(("list_reading_saved_searches", limit, offset))
+        return ReadingSavedSearchListResponse.model_validate(
+            {
+                "items": [{"id": 1, "name": "Morning", "query": {"q": "ai"}}],
+                "total": 1,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+
+    async def update_reading_saved_search(self, search_id, request_data):
+        self.calls.append(("update_reading_saved_search", search_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return ReadingSavedSearchResponse.model_validate(
+            {"id": search_id, "name": "Updated", "query": {"q": "ml"}, "sort": "created_desc"}
+        )
+
+    async def delete_reading_saved_search(self, search_id):
+        self.calls.append(("delete_reading_saved_search", search_id))
+        return {"ok": True}
+
+    async def link_note_to_reading_item(self, item_id, note_id):
+        self.calls.append(("link_note_to_reading_item", item_id, note_id))
+        return ReadingNoteLinkResponse.model_validate({"item_id": item_id, "note_id": note_id})
+
+    async def list_reading_item_note_links(self, item_id):
+        self.calls.append(("list_reading_item_note_links", item_id))
+        return ReadingNoteLinksListResponse.model_validate(
+            {"item_id": item_id, "links": [{"item_id": item_id, "note_id": "note-1"}]}
+        )
+
+    async def unlink_note_from_reading_item(self, item_id, note_id):
+        self.calls.append(("unlink_note_from_reading_item", item_id, note_id))
+        return {"ok": True}
 
 
 @pytest.mark.asyncio
@@ -295,6 +346,56 @@ async def test_server_service_routes_document_version_helpers_and_keeps_uuid_del
 
     with pytest.raises(ValueError, match="Server document version deletion requires media_id and version_number."):
         await service.delete_analysis_version("version-1")
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_reading_save_saved_searches_and_note_links():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    saved = await service.save_reading_item(
+        url="https://example.com",
+        title="Saved URL",
+        tags=[" ai "],
+        notes="Read later",
+    )
+    created = await service.create_saved_search(name="Morning", query={"q": "ai"}, sort="updated_desc")
+    listed = await service.list_saved_searches(limit=25, offset=5)
+    updated = await service.update_saved_search(1, name="Updated", query={"q": "ml"}, sort="created_desc")
+    deleted = await service.delete_saved_search(1)
+    linked = await service.link_note(50, "note-1")
+    links = await service.list_note_links(50)
+    unlinked = await service.unlink_note(50, "note-1")
+
+    assert saved["id"] == 50
+    assert created.name == "Morning"
+    assert listed.items[0].name == "Morning"
+    assert updated.name == "Updated"
+    assert deleted == {"ok": True}
+    assert linked.note_id == "note-1"
+    assert links.links[0].note_id == "note-1"
+    assert unlinked == {"ok": True}
+    assert client.calls[-8:] == [
+        (
+            "save_reading_item",
+            {
+                "url": "https://example.com/",
+                "title": "Saved URL",
+                "tags": ["ai"],
+                "status": "saved",
+                "archive_mode": "use_default",
+                "favorite": False,
+                "notes": "Read later",
+            },
+        ),
+        ("create_reading_saved_search", {"name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"}),
+        ("list_reading_saved_searches", 25, 5),
+        ("update_reading_saved_search", 1, {"name": "Updated", "query": {"q": "ml"}, "sort": "created_desc"}),
+        ("delete_reading_saved_search", 1),
+        ("link_note_to_reading_item", 50, "note-1"),
+        ("list_reading_item_note_links", 50),
+        ("unlink_note_from_reading_item", 50, "note-1"),
+    ]
 
 
 @pytest.mark.asyncio

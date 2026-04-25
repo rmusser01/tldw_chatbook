@@ -55,6 +55,14 @@ class MediaReadingScopeService:
         return f"media.reading.{action}.{mode.value}"
 
     @staticmethod
+    def _saved_search_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading.saved_searches.{action}.{mode.value}"
+
+    @staticmethod
+    def _note_link_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading.note_links.{action}.{mode.value}"
+
+    @staticmethod
     def _reading_progress_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.reading_progress.{action}.{mode.value}"
 
@@ -129,6 +137,13 @@ class MediaReadingScopeService:
         if media_id not in (None, ""):
             return media_id
         raise ValueError("A media record or media_id is required for reading progress operations.")
+
+    @staticmethod
+    def _to_plain(value: Any) -> Any:
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return model_dump(mode="json")
+        return value
 
     async def search_media(
         self,
@@ -229,6 +244,143 @@ class MediaReadingScopeService:
         if normalized_mode == MediaReadingBackend.LOCAL:
             return await self._maybe_await(service.remove_from_read_it_later(media_id))
         return await self._maybe_await(service.update_media_metadata(media_id, status="archived"))
+
+    async def save_reading_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        url: str,
+        title: str | None = None,
+        tags: list[str] | None = None,
+        status: str | None = "saved",
+        archive_mode: str = "use_default",
+        favorite: bool = False,
+        summary: str | None = None,
+        notes: str | None = None,
+        content: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "create"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading item creation is not available yet. Use local ingest jobs instead.")
+        service = self._service_for_mode(normalized_mode)
+        item = await self._maybe_await(
+            service.save_reading_item(
+                url=url,
+                title=title,
+                tags=tags,
+                status=status,
+                archive_mode=archive_mode,
+                favorite=favorite,
+                summary=summary,
+                notes=notes,
+                content=content,
+            )
+        )
+        return self._normalize_media_record(normalized_mode, item)
+
+    async def create_saved_search(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        name: str,
+        query: Mapping[str, Any] | None = None,
+        sort: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._saved_search_action_id(normalized_mode, "create"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading saved searches are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(await self._maybe_await(service.create_saved_search(name=name, query=query, sort=sort)))
+
+    async def list_saved_searches(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._saved_search_action_id(normalized_mode, "list"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading saved searches are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(await self._maybe_await(service.list_saved_searches(limit=limit, offset=offset)))
+
+    async def update_saved_search(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        search_id: Any,
+        name: str | None = None,
+        query: Mapping[str, Any] | None = None,
+        sort: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._saved_search_action_id(normalized_mode, "update"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading saved searches are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(
+            await self._maybe_await(
+                service.update_saved_search(search_id, name=name, query=query, sort=sort)
+            )
+        )
+
+    async def delete_saved_search(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        search_id: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._saved_search_action_id(normalized_mode, "delete"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading saved searches are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(await self._maybe_await(service.delete_saved_search(search_id)))
+
+    async def link_note(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_id: Any,
+        note_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._note_link_action_id(normalized_mode, "create"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading note links are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(await self._maybe_await(service.link_note(item_id, note_id)))
+
+    async def list_note_links(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._note_link_action_id(normalized_mode, "list"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading note links are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(await self._maybe_await(service.list_note_links(item_id)))
+
+    async def unlink_note(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_id: Any,
+        note_id: str,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._note_link_action_id(normalized_mode, "delete"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading note links are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(await self._maybe_await(service.unlink_note(item_id, note_id)))
 
     async def update_media_metadata(
         self,

@@ -18,6 +18,9 @@ from ..tldw_api import (
     ReadingHighlightCreateRequest,
     ReadingHighlightUpdateRequest,
     ReadingProgressUpdate,
+    ReadingSaveRequest,
+    ReadingSavedSearchCreateRequest,
+    ReadingSavedSearchUpdateRequest,
     ReadingUpdateRequest,
     ReprocessMediaRequest,
     TLDWAPIClient,
@@ -76,6 +79,14 @@ class ServerMediaReadingService:
         return f"media.reading.{action}.server"
 
     @staticmethod
+    def _saved_search_action_id(action: str) -> str:
+        return f"media.reading.saved_searches.{action}.server"
+
+    @staticmethod
+    def _note_link_action_id(action: str) -> str:
+        return f"media.reading.note_links.{action}.server"
+
+    @staticmethod
     def _reading_progress_action_id(action: str) -> str:
         return f"media.reading_progress.{action}.server"
 
@@ -126,6 +137,84 @@ class ServerMediaReadingService:
     async def undelete_media(self, media_id: Any) -> Any:
         self._enforce(self._reading_action_id("update"))
         raise ValueError("Server media undelete is not available yet.")
+
+    async def save_reading_item(
+        self,
+        *,
+        url: str,
+        title: str | None = None,
+        tags: list[str] | None = None,
+        status: str | None = "saved",
+        archive_mode: str = "use_default",
+        favorite: bool = False,
+        summary: str | None = None,
+        notes: str | None = None,
+        content: str | None = None,
+    ) -> Any:
+        self._enforce(self._reading_action_id("create"))
+        request_data = ReadingSaveRequest(
+            url=url,
+            title=title,
+            tags=tags or [],
+            status=status,
+            archive_mode=archive_mode,  # type: ignore[arg-type]
+            favorite=favorite,
+            summary=summary,
+            notes=notes,
+            content=content,
+        )
+        return await self._require_client().save_reading_item(request_data)
+
+    async def create_saved_search(
+        self,
+        *,
+        name: str,
+        query: Mapping[str, Any] | None = None,
+        sort: str | None = None,
+    ) -> Any:
+        self._enforce(self._saved_search_action_id("create"))
+        request_data = ReadingSavedSearchCreateRequest(
+            name=name,
+            query=dict(query or {}),
+            sort=sort,
+        )
+        return await self._require_client().create_reading_saved_search(request_data)
+
+    async def list_saved_searches(self, *, limit: int = 50, offset: int = 0) -> Any:
+        self._enforce(self._saved_search_action_id("list"))
+        return await self._require_client().list_reading_saved_searches(limit=limit, offset=offset)
+
+    async def update_saved_search(
+        self,
+        search_id: Any,
+        *,
+        name: str | None = None,
+        query: Mapping[str, Any] | None = None,
+        sort: str | None = None,
+    ) -> Any:
+        self._enforce(self._saved_search_action_id("update"))
+        request_data = ReadingSavedSearchUpdateRequest(
+            name=name,
+            query=dict(query) if query is not None else None,
+            sort=sort,
+        )
+        return await self._require_client().update_reading_saved_search(int(search_id), request_data)
+
+    async def delete_saved_search(self, search_id: Any) -> Any:
+        self._enforce(self._saved_search_action_id("delete"))
+        return await self._require_client().delete_reading_saved_search(int(search_id))
+
+    async def link_note(self, item_id: Any, note_id: str) -> Any:
+        self._enforce(self._note_link_action_id("create"))
+        return await self._require_client().link_note_to_reading_item(int(item_id), note_id)
+
+    async def list_note_links(self, item_id: Any) -> Any:
+        self._enforce(self._note_link_action_id("list"))
+        return await self._require_client().list_reading_item_note_links(int(item_id))
+
+    async def unlink_note(self, item_id: Any, note_id: str) -> Any:
+        self._enforce(self._note_link_action_id("delete"))
+        return await self._require_client().unlink_note_from_reading_item(int(item_id), note_id)
 
     async def get_reading_progress(self, media_id: Any) -> Any:
         self._enforce(self._reading_progress_action_id("detail"))

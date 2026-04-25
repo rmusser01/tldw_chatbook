@@ -11,6 +11,10 @@ from tldw_chatbook.tldw_api import (
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
     ReadingProgressUpdate,
+    ReadingSaveRequest,
+    ReadingSavedSearchCreateRequest,
+    ReadingSavedSearchResponse,
+    ReadingSavedSearchUpdateRequest,
     ReadingUpdateRequest,
     TLDWAPIClient,
 )
@@ -168,3 +172,89 @@ async def test_list_reading_items_omits_page_size_when_offset_limit_used(monkeyp
     assert kwargs["params"]["limit"] == 5
     assert "page" not in kwargs["params"]
     assert "size" not in kwargs["params"]
+
+
+@pytest.mark.asyncio
+async def test_reading_save_saved_searches_and_note_links_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {"id": 10, "title": "Saved URL", "url": "https://example.com", "tags": ["ai"]},
+            {
+                "id": 1,
+                "name": "Morning",
+                "query": {"q": "ai", "status": ["saved"]},
+                "sort": "updated_desc",
+            },
+            {
+                "items": [
+                    {
+                        "id": 1,
+                        "name": "Morning",
+                        "query": {"q": "ai", "status": ["saved"]},
+                        "sort": "updated_desc",
+                    }
+                ],
+                "total": 1,
+                "limit": 25,
+                "offset": 5,
+            },
+            {
+                "id": 1,
+                "name": "Updated",
+                "query": {"q": "ml"},
+                "sort": "created_desc",
+            },
+            {"ok": True},
+            {"item_id": 10, "note_id": "note-1"},
+            {"item_id": 10, "links": [{"item_id": 10, "note_id": "note-1"}]},
+            {"ok": True},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    saved = await client.save_reading_item(
+        ReadingSaveRequest(
+            url="https://example.com",
+            title="Saved URL",
+            tags=[" ai "],
+            notes="Read later",
+        )
+    )
+    created_search = await client.create_reading_saved_search(
+        ReadingSavedSearchCreateRequest(
+            name="Morning",
+            query={"q": "ai", "status": ["saved"]},
+            sort="updated_desc",
+        )
+    )
+    searches = await client.list_reading_saved_searches(limit=25, offset=5)
+    updated_search = await client.update_reading_saved_search(
+        1,
+        ReadingSavedSearchUpdateRequest(name="Updated", query={"q": "ml"}, sort="created_desc"),
+    )
+    deleted_search = await client.delete_reading_saved_search(1)
+    linked = await client.link_note_to_reading_item(10, "note-1")
+    links = await client.list_reading_item_note_links(10)
+    unlinked = await client.unlink_note_from_reading_item(10, "note-1")
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/save")
+    assert mocked.await_args_list[0].kwargs["json_data"]["tags"] == ["ai"]
+    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/reading/saved-searches")
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/reading/saved-searches")
+    assert mocked.await_args_list[2].kwargs["params"] == {"limit": 25, "offset": 5}
+    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/reading/saved-searches/1")
+    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/reading/saved-searches/1")
+    assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/reading/items/10/links/note")
+    assert mocked.await_args_list[5].kwargs["json_data"] == {"note_id": "note-1"}
+    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/reading/items/10/links")
+    assert mocked.await_args_list[7].args[:2] == ("DELETE", "/api/v1/reading/items/10/links/note/note-1")
+
+    assert saved["id"] == 10
+    assert isinstance(created_search, ReadingSavedSearchResponse)
+    assert searches.items[0].name == "Morning"
+    assert updated_search.name == "Updated"
+    assert deleted_search == {"ok": True}
+    assert linked.note_id == "note-1"
+    assert links.links[0].note_id == "note-1"
+    assert unlinked == {"ok": True}

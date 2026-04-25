@@ -512,6 +512,45 @@ class FakeServerMediaService:
         self.calls.append(("reprocess_media", media_id, options))
         return {"media_id": media_id, "status": "completed", "message": "ok"}
 
+    async def save_reading_item(self, **kwargs):
+        self.calls.append(("save_reading_item", kwargs))
+        return {
+            "id": 60,
+            "media_id": 101,
+            "title": kwargs.get("title") or "Saved URL",
+            "url": kwargs.get("url"),
+            "status": kwargs.get("status", "saved"),
+            "tags": kwargs.get("tags") or [],
+        }
+
+    async def create_saved_search(self, **kwargs):
+        self.calls.append(("create_saved_search", kwargs))
+        return {"id": 1, "name": kwargs["name"], "query": kwargs.get("query") or {}, "sort": kwargs.get("sort")}
+
+    async def list_saved_searches(self, *, limit=50, offset=0):
+        self.calls.append(("list_saved_searches", limit, offset))
+        return {"items": [{"id": 1, "name": "Morning", "query": {"q": "ai"}}], "total": 1, "limit": limit, "offset": offset}
+
+    async def update_saved_search(self, search_id, **changes):
+        self.calls.append(("update_saved_search", search_id, changes))
+        return {"id": search_id, "name": changes.get("name") or "Updated", "query": changes.get("query") or {}, "sort": changes.get("sort")}
+
+    async def delete_saved_search(self, search_id):
+        self.calls.append(("delete_saved_search", search_id))
+        return {"ok": True}
+
+    async def link_note(self, item_id, note_id):
+        self.calls.append(("link_note", item_id, note_id))
+        return {"item_id": item_id, "note_id": note_id}
+
+    async def list_note_links(self, item_id):
+        self.calls.append(("list_note_links", item_id))
+        return {"item_id": item_id, "links": [{"item_id": item_id, "note_id": "note-1"}]}
+
+    async def unlink_note(self, item_id, note_id):
+        self.calls.append(("unlink_note", item_id, note_id))
+        return {"ok": True}
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
@@ -790,6 +829,93 @@ async def test_scope_service_save_and_remove_use_explicit_reading_list_actions()
     ]
     assert ("update_media_metadata", 41, {"status": "saved"}) in server.calls
     assert ("update_media_metadata", 41, {"status": "archived"}) in server.calls
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_reading_create_saved_searches_and_note_links():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    saved = await scope.save_reading_item(
+        mode="server",
+        url="https://example.com",
+        title="Saved URL",
+        tags=["ai"],
+    )
+    created = await scope.create_saved_search(
+        mode="server",
+        name="Morning",
+        query={"q": "ai"},
+        sort="updated_desc",
+    )
+    listed = await scope.list_saved_searches(mode="server", limit=25, offset=5)
+    updated = await scope.update_saved_search(mode="server", search_id=1, name="Updated", query={"q": "ml"})
+    deleted = await scope.delete_saved_search(mode="server", search_id=1)
+    linked = await scope.link_note(mode="server", item_id=60, note_id="note-1")
+    links = await scope.list_note_links(mode="server", item_id=60)
+    unlinked = await scope.unlink_note(mode="server", item_id=60, note_id="note-1")
+
+    assert saved["id"] == "server:reading_item:60"
+    assert created["name"] == "Morning"
+    assert listed["items"][0]["name"] == "Morning"
+    assert updated["name"] == "Updated"
+    assert deleted == {"ok": True}
+    assert linked["note_id"] == "note-1"
+    assert links["links"][0]["note_id"] == "note-1"
+    assert unlinked == {"ok": True}
+    assert policy.calls[-8:] == [
+        "media.reading.create.server",
+        "media.reading.saved_searches.create.server",
+        "media.reading.saved_searches.list.server",
+        "media.reading.saved_searches.update.server",
+        "media.reading.saved_searches.delete.server",
+        "media.reading.note_links.create.server",
+        "media.reading.note_links.list.server",
+        "media.reading.note_links.delete.server",
+    ]
+    assert server.calls[-8:] == [
+        (
+            "save_reading_item",
+            {
+                "url": "https://example.com",
+                "title": "Saved URL",
+                "tags": ["ai"],
+                "status": "saved",
+                "archive_mode": "use_default",
+                "favorite": False,
+                "summary": None,
+                "notes": None,
+                "content": None,
+            },
+        ),
+        ("create_saved_search", {"name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"}),
+        ("list_saved_searches", 25, 5),
+        ("update_saved_search", 1, {"name": "Updated", "query": {"q": "ml"}, "sort": None}),
+        ("delete_saved_search", 1),
+        ("link_note", 60, "note-1"),
+        ("list_note_links", 60),
+        ("unlink_note", 60, "note-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_reports_local_saved_searches_as_explicitly_unsupported_after_policy():
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Local reading saved searches are not available yet."):
+        await scope.list_saved_searches(mode="local")
+
+    assert policy.calls[-1:] == ["media.reading.saved_searches.list.local"]
 
 
 @pytest.mark.asyncio
