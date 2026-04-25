@@ -212,6 +212,7 @@ from tldw_chatbook.Media import (
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     ClientNotificationsService,
+    NotificationsScopeService,
     NotificationDispatchService,
     ServerNotificationsService,
 )
@@ -1641,6 +1642,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        self.notifications_scope_service = NotificationsScopeService(
+            server_service=self.server_notifications_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         try:
             self.server_outputs_service = ServerOutputsService.from_config(
                 self.app_config,
