@@ -18,6 +18,8 @@ from tldw_chatbook.tldw_api import (
     ManuscriptSceneResponse,
     ManuscriptSceneUpdate,
     ManuscriptStructureResponse,
+    ReorderItem,
+    ReorderRequest,
     TLDWAPIClient,
 )
 
@@ -194,6 +196,7 @@ async def test_writing_hierarchy_routes_wire_and_return_typed_models(monkeypatch
                 "unassigned_chapters": [],
             },
             None,
+            None,
         ]
     )
     monkeypatch.setattr(client, "_request", mocked)
@@ -219,6 +222,13 @@ async def test_writing_hierarchy_routes_wire_and_return_typed_models(monkeypatch
         expected_version=1,
     )
     structure = await client.get_manuscript_structure("project-1")
+    reordered = await client.reorder_manuscript_entities(
+        "project-1",
+        ReorderRequest(
+            entity_type="chapters",
+            items=[ReorderItem(id="chapter-1", sort_order=2.0, version=1, new_parent_id="manuscript-1")],
+        ),
+    )
     deleted_scene = await client.delete_manuscript_scene("scene-1", expected_version=2)
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/writing/manuscripts/projects/project-1/parts")
@@ -231,7 +241,19 @@ async def test_writing_hierarchy_routes_wire_and_return_typed_models(monkeypatch
     assert mocked.await_args_list[6].args[:2] == ("PATCH", "/api/v1/writing/manuscripts/scenes/scene-1")
     assert mocked.await_args_list[6].kwargs["headers"] == {"expected-version": "1"}
     assert mocked.await_args_list[7].args[:2] == ("GET", "/api/v1/writing/manuscripts/projects/project-1/structure")
-    assert mocked.await_args_list[8].args[:2] == ("DELETE", "/api/v1/writing/manuscripts/scenes/scene-1")
+    assert mocked.await_args_list[8].args[:2] == ("POST", "/api/v1/writing/manuscripts/projects/project-1/reorder")
+    assert mocked.await_args_list[8].kwargs["json_data"] == {
+        "entity_type": "chapters",
+        "items": [
+            {
+                "id": "chapter-1",
+                "sort_order": 2.0,
+                "version": 1,
+                "new_parent_id": "manuscript-1",
+            }
+        ],
+    }
+    assert mocked.await_args_list[9].args[:2] == ("DELETE", "/api/v1/writing/manuscripts/scenes/scene-1")
     assert isinstance(manuscript, ManuscriptPartResponse)
     assert isinstance(manuscripts[0], ManuscriptPartResponse)
     assert isinstance(chapter, ManuscriptChapterResponse)
@@ -240,4 +262,5 @@ async def test_writing_hierarchy_routes_wire_and_return_typed_models(monkeypatch
     assert isinstance(scenes[0], ManuscriptSceneResponse)
     assert isinstance(updated_scene, ManuscriptSceneResponse)
     assert isinstance(structure, ManuscriptStructureResponse)
+    assert reordered is True
     assert deleted_scene is True

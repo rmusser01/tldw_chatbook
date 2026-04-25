@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
+from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
@@ -21,17 +22,57 @@ from ..tldw_api import (
 class ServerStudyService:
     """Thin wrapper around server-backed flashcard deck/card/review endpoints."""
 
-    def __init__(self, client: Optional[TLDWAPIClient]):
+    def __init__(self, client: Optional[TLDWAPIClient], *, policy_enforcer: Any | None = None):
         self.client = client
+        self.policy_enforcer = policy_enforcer
 
     @classmethod
-    def from_config(cls, app_config: Mapping[str, Any]) -> "ServerStudyService":
-        return cls(client=build_runtime_api_client_from_config(app_config))
+    def from_config(
+        cls,
+        app_config: Mapping[str, Any],
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerStudyService":
+        return cls(
+            client=build_runtime_api_client_from_config(app_config),
+            policy_enforcer=policy_enforcer,
+        )
 
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:
             raise ValueError("TLDW API client is required for server study operations.")
         return self.client
+
+    def _enforce(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
+        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        if callable(require_allowed):
+            require_allowed(action_id=action_id)
+            return
+        if callable(require_ui_action_allowed):
+            decision = require_ui_action_allowed(action_id=action_id)
+            if decision is not None and getattr(decision, "allowed", True) is False:
+                raise PolicyDeniedError(
+                    action_id=action_id,
+                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    user_message=getattr(decision, "user_message", None) or "Server study action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None) or "server",
+                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                )
+
+    @staticmethod
+    def _deck_action_id(action: str) -> str:
+        return f"study.deck.{action}.server"
+
+    @staticmethod
+    def _study_pack_action_id(action: str) -> str:
+        return f"study.packs.jobs.{action}.server"
+
+    @staticmethod
+    def _study_suggestion_action_id(action: str) -> str:
+        return f"study.suggestions.{action}.server"
 
     @staticmethod
     def _model_to_dict(value: Any) -> Any:
@@ -46,6 +87,7 @@ class ServerStudyService:
         return int(deck_id)
 
     async def list_decks(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        self._enforce(self._deck_action_id("list"))
         response = await self._require_client().list_flashcard_decks(limit=limit, offset=offset)
         return [self._model_to_dict(item) for item in list(response or [])]
 
@@ -57,6 +99,7 @@ class ServerStudyService:
         workspace_id: Optional[str] = None,
         scheduler_type: Optional[str] = None,
     ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("create"))
         response = await self._require_client().create_flashcard_deck(
             FlashcardDeckCreateRequest(
                 name=name,
@@ -75,6 +118,7 @@ class ServerStudyService:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
+        self._enforce(self._deck_action_id("detail"))
         response = await self._require_client().list_flashcards(
             deck_id=self._coerce_deck_id(deck_id),
             q=q,
@@ -94,6 +138,7 @@ class ServerStudyService:
         notes: Optional[str] = None,
         extra: Optional[str] = None,
     ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
         response = await self._require_client().create_flashcard(
             FlashcardCreateRequest(
                 deck_id=self._coerce_deck_id(deck_id),
@@ -114,6 +159,7 @@ class ServerStudyService:
         target_deck_id: int,
         expected_version: Optional[int] = None,
     ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
         return self._model_to_dict(
             await self._require_client().update_flashcard(
                 card_id,
@@ -130,6 +176,7 @@ class ServerStudyService:
         *,
         expected_version: int,
     ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
         if expected_version is None:
             raise ValueError("expected_version is required for server flashcard deletion.")
         if expected_version < 1:
@@ -146,11 +193,13 @@ class ServerStudyService:
         expected_version: Optional[int] = None,
         hard_delete: bool = False,
     ) -> Any:
+        self._enforce(self._deck_action_id("delete"))
         raise NotImplementedError(
             "Flashcard deck deletion is not supported by the current server API."
         )
 
     async def get_next_review_candidate(self, *, deck_id: Optional[int] = None) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("detail"))
         if deck_id is not None:
             response = await self._require_client().get_next_flashcard_review(deck_id=self._coerce_deck_id(deck_id))
         else:
@@ -168,12 +217,14 @@ class ServerStudyService:
         rating: int,
         answer_time_ms: Optional[int] = None,
     ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
         response = await self._require_client().review_flashcard(
             FlashcardReviewRequest(card_uuid=card_id, rating=rating, answer_time_ms=answer_time_ms)
         )
         return self._model_to_dict(response)
 
     async def end_review_session(self, review_session_id: int) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
         response = await self._require_client().end_flashcard_review_session(review_session_id)
         return self._model_to_dict(response)
 
@@ -184,6 +235,7 @@ class ServerStudyService:
         source_items: list[Mapping[str, Any]],
         workspace_id: Optional[str] = None,
     ) -> dict[str, Any]:
+        self._enforce(self._study_pack_action_id("launch"))
         response = await self._require_client().create_study_pack_job(
             StudyPackCreateJobRequest(
                 title=title,
@@ -194,14 +246,17 @@ class ServerStudyService:
         return self._model_to_dict(response)
 
     async def get_study_pack_job_status(self, job_id: int) -> dict[str, Any]:
+        self._enforce(self._study_pack_action_id("observe"))
         response = await self._require_client().get_study_pack_job_status(int(job_id))
         return self._model_to_dict(response)
 
     async def get_study_pack(self, pack_id: int) -> dict[str, Any]:
+        self._enforce(self._study_pack_action_id("observe"))
         response = await self._require_client().get_study_pack(int(pack_id))
         return self._model_to_dict(response)
 
     async def regenerate_study_pack(self, pack_id: int) -> dict[str, Any]:
+        self._enforce(self._study_pack_action_id("launch"))
         response = await self._require_client().regenerate_study_pack(int(pack_id))
         return self._model_to_dict(response)
 
@@ -211,6 +266,7 @@ class ServerStudyService:
         anchor_type: str,
         anchor_id: int,
     ) -> dict[str, Any]:
+        self._enforce(self._study_suggestion_action_id("list"))
         response = await self._require_client().get_study_suggestion_status(
             anchor_type=anchor_type,
             anchor_id=int(anchor_id),
@@ -218,6 +274,7 @@ class ServerStudyService:
         return self._model_to_dict(response)
 
     async def get_study_suggestion_snapshot(self, snapshot_id: int) -> dict[str, Any]:
+        self._enforce(self._study_suggestion_action_id("observe"))
         response = await self._require_client().get_study_suggestion_snapshot(int(snapshot_id))
         return self._model_to_dict(response)
 
@@ -227,6 +284,7 @@ class ServerStudyService:
         *,
         reason: Optional[str] = None,
     ) -> dict[str, Any]:
+        self._enforce(self._study_suggestion_action_id("launch"))
         response = await self._require_client().refresh_study_suggestion_snapshot(
             int(snapshot_id),
             SuggestionRefreshRequest(reason=reason),
@@ -247,6 +305,7 @@ class ServerStudyService:
         generator_version: str = "v1",
         force_regenerate: bool = False,
     ) -> dict[str, Any]:
+        self._enforce(self._study_suggestion_action_id("configure"))
         response = await self._require_client().trigger_study_suggestion_action(
             int(snapshot_id),
             SuggestionActionRequest(

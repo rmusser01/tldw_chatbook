@@ -19,17 +19,17 @@ Additional backend foundations have since landed for media/read-it-later, watchl
 1. `Media / Reading / Ingestion Sources` plus `Collections: Reading List / Read-it-later`
    This is the cleanest next crosswalk because Chatbook already has landed local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, server ingestion-source create for `archive_snapshot` and `git_repository`, and local queued ingestion-source/job persistence; per-media-type server saved views, actual local execution, and sync/mirror semantics remain deferred.
 2. `Watchlists` plus `Client Notifications`
-   Chatbook already has a real local subscriptions stack, source CRUD/run-lifecycle/alert-rule service seams, and toast-like notification plumbing, so the remaining high-value bridge is adoption into the eventual watchlists management UX plus notification delivery alignment.
+   Chatbook already has a real local subscriptions stack, source CRUD/run-lifecycle/alert-rule service seams, durable local notification queue/settings services, and toast-like notification plumbing, so the remaining high-value bridge is adoption into the eventual watchlists management UX plus notification delivery alignment.
 3. `Local MCP Runtime`
    The runtime-policy layer is now in place, and Chatbook already has local MCP modules; the next gap is turning that into a first-class local runtime, approvals, status, and governance surface.
 4. `Writing Suite`
-   This remains a high-value standalone gap with a clear server contract and very little existing product surface in Chatbook, so it should follow once the highest-leverage media/watchlist foundations are stable.
+   This remains a high-value standalone row with a clear server contract. The backend seam now exists for project/manuscript/chapter/scene CRUD, structure retrieval, source routing, local direct manuscript-level scenes, local manual version snapshots/restores, local trash listing/restores, reorder/move helpers, and Markdown-preserving server scene writes, so the next useful work is unsupported-capability reporting and eventual UX adoption.
 5. `Research Sessions / Runs`
    Research is a user-priority local-first domain, but it depends on several adjacent capabilities becoming less fragmented first: local notifications, stronger collection/media seams, and a clearer execution/status model.
 6. `Workflows`, `Scheduler Workflows`, and `Chat Workflows`
    These remain remote-only acceptable, but once the local-first rows above are in place, Chatbook should add discover/trigger/observe support for connected-server workflow surfaces.
 7. `Server Reminders / Notification Feeds`, `Sharing`, and `Web Clipper`
-   These are still worthwhile remote surfaces, but they should follow the higher-value standalone rows and the remote workflow/control surfaces they often depend on.
+   Backend wrappers now exist for these remote surfaces. They should still follow the higher-value standalone rows because the remaining work is UX adoption, offline-unavailable presentation, and producer/browser-extension handoff rather than service construction.
 
 ## Tranche 0: Runtime Policy And Capability Map
 
@@ -64,7 +64,7 @@ Domains in this tranche:
 Execution intent for this tranche:
 
 - Finish the strongest existing local/server seams before building fresh remote-only surfaces.
-- Current implementation note: source-aware backend foundations are now landed for media/reading/ingestion, study/evaluations, research sessions/runs, and prompts/chatbooks. Media ingestion now includes local queued source/job persistence, but still needs actual local execution and source item materialization. Remaining tranche work is primarily UI adoption, broader endpoint coverage, and honest unsupported-boundary reduction rather than first-pass service construction.
+- Current implementation note: source-aware backend foundations are now landed for media/reading/ingestion, watchlists, character/persona, study/evaluations, RAG/admin, research sessions/runs, and prompts/chatbooks. Media ingestion now includes local queued source/job persistence, and direct server adapters for these active parity rows now participate in runtime-policy hard stops. Remaining tranche work is primarily UI adoption, broader endpoint coverage, and honest unsupported-boundary reduction rather than first-pass service construction.
 - Prefer source-separated crosswalks and normalization work over redesigning mature local flows.
 - Use these domains to prove the runtime-policy model in everyday product surfaces before expanding to more ambitious missing capabilities.
 
@@ -83,9 +83,9 @@ Domains in this tranche:
 
 Execution intent for this tranche:
 
-- Crosswalk `Watchlists` onto existing local subscriptions and notification plumbing before inventing a separate remote-first model. Treat source CRUD, run list/detail/launch/observe, and alert-rule CRUD as landed backend seams; focus next on UI adoption, group editing policy, and notification delivery alignment.
+- Crosswalk `Watchlists` onto existing local subscriptions and notification plumbing before inventing a separate remote-first model. Treat source CRUD, run list/detail/launch/observe, alert-rule CRUD, and the local notification queue/settings backend seam as landed foundations; focus next on UI adoption, group editing policy, producer adoption, and notification delivery alignment.
 - Build `Collections: Reading List / Read-it-later` on top of the existing media and reading seams rather than treating it as a disconnected collection system. Treat local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, server ingestion-source create, and local queued ingestion-source/job persistence as landed foundations; keep per-media-type server saved views and any sync/mirror contract out of scope for this tranche.
-- Add `Writing Suite` and `Research Sessions / Runs` as serious standalone surfaces with matching remote contracts, not as thin shells around server-only functionality.
+- Treat the landed `Writing Suite` backend seam as the base for a serious standalone surface, then fill unsupported server capability reporting before UX adoption. Local direct manuscript-level scenes, manual versions, trash restore/listing, and reorder/move helpers are now represented in the backend seam; server direct manuscript-level scenes, version history, and trash restore remain honest unsupported boundaries until the server contract exposes them.
 - Keep `Client Notifications` and `Local MCP Runtime` Chatbook-owned so offline capability remains credible even as remote interop improves.
 
 ## Tranche 3: Remote-Only Surfaces And Convenience Layers
@@ -108,8 +108,8 @@ Domains in this tranche:
 
 Execution intent for this tranche:
 
-- Keep remote-only workflows, sharing, web clipper, and remote MCP governance behind the core standalone-first roadmap rather than letting them pull priority forward.
-- Treat `Study Packs`, `Study Suggestions`, and `Research Search / Provider Surfaces` as contract-maturity-sensitive rows whose client investment should follow clearer evidence.
+- Keep remote-only workflows and remote MCP governance behind the core standalone-first roadmap rather than letting them pull priority forward.
+- Treat `Sharing`, `Web Clipper`, `Study Packs`, `Study Suggestions`, `Collections: Outputs / Templates / Artifacts`, and `Research Search / Provider Surfaces` as backend-seam-present rows whose next work is adoption, offline-unavailable presentation, and edge cleanup rather than first-pass client construction.
 - Reuse the source-labeling, offline fallback, and discover/trigger/observe patterns proven in earlier tranches instead of creating special-case remote UI rules.
 
 ## Follow-On Vertical Plans
@@ -121,4 +121,4 @@ Execution intent for this tranche:
 - `Writing suite parity`: Plan the local-first project, manuscript, chapter, and scene hierarchy together with the server contract and source-separated UI behavior.
 - `Research sessions parity`: Plan the local and remote session lifecycle, run execution, streaming status, and bundle retrieval surface as a standalone-first research vertical.
 - `Remote workflows surface`: Split general workflows, scheduler workflows, and chat workflows into a dedicated remote-only plan that covers discovery, scheduler configuration and scheduling control-plane behavior, launch, run status, and observation after the core parity rows land.
-- `Study packs / study suggestions once contract maturity is confirmed`: Hold the vertical plan until the server-side contract is stable enough to justify a focused client surface.
+- `Study packs / study suggestions adoption`: Build on the existing server wrappers and scope-service routing once the UX layer is ready; keep local generation out of scope unless a separate local execution plan is approved.

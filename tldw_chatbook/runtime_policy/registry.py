@@ -148,6 +148,8 @@ INSPECT = _action("inspect", "detail")
 REVOKE = _action("revoke", "delete")
 CAPTURE = _action("capture", "launch")
 STATUS = _action("status", "detail")
+RESTORE = _action("restore", "update")
+REORDER = _action("reorder", "update")
 
 CRUD_ACTIONS = (LIST, DETAIL, CREATE, UPDATE, DELETE)
 DISCOVER_TRIGGER_OBSERVE_ACTIONS = (LIST, LAUNCH, OBSERVE)
@@ -332,6 +334,9 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("writing.manuscripts", actions=CRUD_ACTIONS),
             _resource("writing.chapters", actions=CRUD_ACTIONS),
             _resource("writing.scenes", actions=CRUD_ACTIONS),
+            _resource("writing.versions", actions=(LIST, DETAIL, CREATE, RESTORE)),
+            _resource("writing.trash", actions=(LIST, RESTORE)),
+            _resource("writing.outline", actions=(REORDER,)),
         ),
     ),
     _capability(
@@ -363,7 +368,7 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=LOCAL_ONLY_SOURCES,
         resources=(
             _resource("notifications.queue", actions=(LIST, UPDATE, OBSERVE)),
-            _resource("notifications.settings", actions=(UPDATE,)),
+            _resource("notifications.settings", actions=(LIST, UPDATE)),
             _resource("notifications.dispatch", actions=(LAUNCH,)),
         ),
     ),

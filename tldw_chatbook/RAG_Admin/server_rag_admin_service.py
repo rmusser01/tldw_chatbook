@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
+from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     ChunkingTemplateApplyRequest,
     ChunkingTemplateCreateRequest,
@@ -17,17 +18,54 @@ from ..tldw_api import (
 class ServerRAGAdminService:
     """Thin wrapper around server chunking-template and collection admin endpoints."""
 
-    def __init__(self, client: Optional[TLDWAPIClient]):
+    def __init__(self, client: Optional[TLDWAPIClient], *, policy_enforcer: Any | None = None):
         self.client = client
+        self.policy_enforcer = policy_enforcer
 
     @classmethod
-    def from_config(cls, app_config: Mapping[str, Any]) -> "ServerRAGAdminService":
-        return cls(client=build_runtime_api_client_from_config(app_config))
+    def from_config(
+        cls,
+        app_config: Mapping[str, Any],
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerRAGAdminService":
+        return cls(
+            client=build_runtime_api_client_from_config(app_config),
+            policy_enforcer=policy_enforcer,
+        )
 
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:
             raise ValueError("TLDW API client is required for server retrieval-admin operations.")
         return self.client
+
+    def _enforce(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
+        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        if callable(require_allowed):
+            require_allowed(action_id=action_id)
+            return
+        if callable(require_ui_action_allowed):
+            decision = require_ui_action_allowed(action_id=action_id)
+            if decision is not None and getattr(decision, "allowed", True) is False:
+                raise PolicyDeniedError(
+                    action_id=action_id,
+                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server retrieval-admin action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None) or "server",
+                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                )
+
+    @staticmethod
+    def _template_action_id(action: str) -> str:
+        return f"rag.template.{action}.server"
+
+    @staticmethod
+    def _admin_action_id(action: str) -> str:
+        return f"rag.admin.{action}.server"
 
     def _dump_model(self, value: Any) -> Any:
         if hasattr(value, "model_dump") and callable(value.model_dump):
@@ -44,6 +82,7 @@ class ServerRAGAdminService:
         tags: Optional[Sequence[str]] = None,
         user_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
+        self._enforce(self._template_action_id("list"))
         response = await self._require_client().list_chunking_templates(
             include_builtin=include_builtin,
             include_custom=include_custom,
@@ -54,6 +93,7 @@ class ServerRAGAdminService:
         return list(payload.get("templates", []))
 
     async def get_template(self, template_name: str) -> dict[str, Any]:
+        self._enforce(self._template_action_id("detail"))
         return self._dump_model(await self._require_client().get_chunking_template(template_name))
 
     async def create_template(
@@ -65,6 +105,7 @@ class ServerRAGAdminService:
         tags: Optional[Sequence[str]] = None,
         user_id: Optional[str] = None,
     ) -> dict[str, Any]:
+        self._enforce(self._template_action_id("create"))
         request = ChunkingTemplateCreateRequest(
             name=name,
             description=description,
@@ -82,6 +123,7 @@ class ServerRAGAdminService:
         template: Optional[Mapping[str, Any]] = None,
         tags: Optional[Sequence[str]] = None,
     ) -> dict[str, Any]:
+        self._enforce(self._template_action_id("update"))
         request = ChunkingTemplateUpdateRequest(
             description=description,
             template=dict(template) if template is not None else None,
@@ -92,6 +134,7 @@ class ServerRAGAdminService:
         )
 
     async def delete_template(self, template_name: str, *, hard_delete: bool = False) -> None:
+        self._enforce(self._template_action_id("delete"))
         await self._require_client().delete_chunking_template(template_name, hard_delete=hard_delete)
 
     async def apply_template(
@@ -102,6 +145,7 @@ class ServerRAGAdminService:
         override_options: Optional[Mapping[str, Any]] = None,
         include_metadata: bool = False,
     ) -> dict[str, Any]:
+        self._enforce(self._admin_action_id("launch"))
         request = ChunkingTemplateApplyRequest(
             template_name=template_name,
             text=text,
@@ -115,13 +159,17 @@ class ServerRAGAdminService:
         )
 
     async def get_template_diagnostics(self) -> dict[str, Any]:
+        self._enforce(self._admin_action_id("observe"))
         return self._dump_model(await self._require_client().get_chunking_template_diagnostics())
 
     async def list_collections(self) -> list[dict[str, Any]]:
+        self._enforce(self._admin_action_id("list"))
         return self._dump_model(await self._require_client().list_embedding_collections())
 
     async def get_collection_detail(self, collection_name: str) -> dict[str, Any]:
+        self._enforce(self._admin_action_id("observe"))
         return self._dump_model(await self._require_client().get_embedding_collection_stats(collection_name))
 
     async def delete_collection(self, collection_name: str) -> None:
+        self._enforce(self._admin_action_id("configure"))
         await self._require_client().delete_embedding_collection(collection_name)

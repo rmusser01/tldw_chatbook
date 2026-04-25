@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 ProjectStatus = Literal["draft", "outlining", "writing", "revising", "complete", "archived"]
@@ -202,3 +202,22 @@ class ManuscriptStructureResponse(BaseModel):
     project_id: str
     parts: list[PartSummary] = Field(default_factory=list)
     unassigned_chapters: list[ChapterSummary] = Field(default_factory=list)
+
+
+class ReorderItem(BaseModel):
+    id: str
+    sort_order: float
+    version: int | None = None
+    new_parent_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_explicit_null_version(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "version" in data and data["version"] is None:
+            raise ValueError("version may be omitted, but explicit null is invalid")
+        return data
+
+
+class ReorderRequest(BaseModel):
+    entity_type: Literal["parts", "chapters", "scenes"]
+    items: list[ReorderItem] = Field(..., min_length=1)

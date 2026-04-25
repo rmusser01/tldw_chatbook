@@ -240,6 +240,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         notifications.queue.list.local
         notifications.queue.observe.local
         notifications.queue.update.local
+        notifications.settings.list.local
         notifications.settings.update.local
     """),
     "collections_outputs_templates_artifacts": _action_ids("""
@@ -609,6 +610,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         writing.manuscripts.list.server
         writing.manuscripts.update.local
         writing.manuscripts.update.server
+        writing.outline.reorder.local
+        writing.outline.reorder.server
         writing.projects.create.local
         writing.projects.create.server
         writing.projects.delete.local
@@ -629,6 +632,18 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         writing.scenes.list.server
         writing.scenes.update.local
         writing.scenes.update.server
+        writing.trash.list.local
+        writing.trash.list.server
+        writing.trash.restore.local
+        writing.trash.restore.server
+        writing.versions.create.local
+        writing.versions.create.server
+        writing.versions.detail.local
+        writing.versions.detail.server
+        writing.versions.list.local
+        writing.versions.list.server
+        writing.versions.restore.local
+        writing.versions.restore.server
     """),
 }
 

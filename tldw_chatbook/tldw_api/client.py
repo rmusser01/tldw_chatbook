@@ -150,6 +150,7 @@ from .writing_manuscript_schemas import (
     ManuscriptSceneResponse,
     ManuscriptSceneUpdate,
     ManuscriptStructureResponse,
+    ReorderRequest,
 )
 from .quizzes_schemas import (
     QuizAttemptListResponse,
@@ -2430,6 +2431,18 @@ class TLDWAPIClient:
     async def get_manuscript_structure(self, project_id: str) -> ManuscriptStructureResponse:
         response = await self._request("GET", f"/api/v1/writing/manuscripts/projects/{project_id}/structure")
         return ManuscriptStructureResponse.model_validate(response)
+
+    async def reorder_manuscript_entities(
+        self,
+        project_id: str,
+        request_data: ReorderRequest,
+    ) -> bool:
+        await self._request(
+            "POST",
+            f"/api/v1/writing/manuscripts/projects/{project_id}/reorder",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return True
 
     async def create_quiz(
         self,

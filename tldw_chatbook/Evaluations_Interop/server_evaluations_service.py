@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
+from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     CreateEvaluationRequest,
     EvaluationDatasetCreateRequest,
@@ -18,17 +19,54 @@ from ..tldw_api import (
 class ServerEvaluationsService:
     """Wrap server evaluation endpoints with plain dict/list payloads."""
 
-    def __init__(self, client: Optional[TLDWAPIClient]):
+    def __init__(self, client: Optional[TLDWAPIClient], *, policy_enforcer: Any | None = None):
         self.client = client
+        self.policy_enforcer = policy_enforcer
 
     @classmethod
-    def from_config(cls, app_config: Mapping[str, Any]) -> "ServerEvaluationsService":
-        return cls(client=build_runtime_api_client_from_config(app_config))
+    def from_config(
+        cls,
+        app_config: Mapping[str, Any],
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerEvaluationsService":
+        return cls(
+            client=build_runtime_api_client_from_config(app_config),
+            policy_enforcer=policy_enforcer,
+        )
 
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:
             raise ValueError("TLDW API client is required for server evaluation operations.")
         return self.client
+
+    def _enforce(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
+        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        if callable(require_allowed):
+            require_allowed(action_id=action_id)
+            return
+        if callable(require_ui_action_allowed):
+            decision = require_ui_action_allowed(action_id=action_id)
+            if decision is not None and getattr(decision, "allowed", True) is False:
+                raise PolicyDeniedError(
+                    action_id=action_id,
+                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server evaluation action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None) or "server",
+                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                )
+
+    @staticmethod
+    def _dataset_action_id(action: str) -> str:
+        return f"evaluations.dataset.{action}.server"
+
+    @staticmethod
+    def _run_action_id(action: str) -> str:
+        return f"evaluations.run.{action}.server"
 
     def _dump_model(self, value: Any) -> Any:
         if hasattr(value, "model_dump") and callable(value.model_dump):
@@ -55,6 +93,7 @@ class ServerEvaluationsService:
         after: str | None = None,
         eval_type: str | None = None,
     ) -> list[dict[str, Any]]:
+        self._enforce(self._dataset_action_id("list"))
         payload = self._dump_model(
             await self._require_client().list_evaluations(
                 limit=limit,
@@ -65,6 +104,7 @@ class ServerEvaluationsService:
         return list(payload.get("data", []))
 
     async def get_evaluation(self, eval_id: str) -> dict[str, Any]:
+        self._enforce(self._dataset_action_id("detail"))
         return self._dump_model(await self._require_client().get_evaluation(eval_id))
 
     async def create_evaluation(
@@ -78,6 +118,7 @@ class ServerEvaluationsService:
         dataset: Any = None,
         metadata: Any = None,
     ) -> dict[str, Any]:
+        self._enforce(self._dataset_action_id("create"))
         request = CreateEvaluationRequest(
             name=name,
             description=description,
@@ -97,6 +138,7 @@ class ServerEvaluationsService:
         eval_spec: Any = None,
         metadata: Any = None,
     ) -> dict[str, Any]:
+        self._enforce(self._dataset_action_id("update"))
         request = UpdateEvaluationRequest(
             description=description,
             eval_spec=eval_spec,
@@ -105,9 +147,11 @@ class ServerEvaluationsService:
         return self._dump_model(await self._require_client().update_evaluation(eval_id, request))
 
     async def delete_evaluation(self, eval_id: str) -> None:
+        self._enforce(self._dataset_action_id("delete"))
         await self._require_client().delete_evaluation(eval_id)
 
     async def list_datasets(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        self._enforce(self._dataset_action_id("list"))
         payload = self._dump_model(
             await self._require_client().list_evaluation_datasets(limit=limit, offset=offset)
         )
@@ -121,6 +165,7 @@ class ServerEvaluationsService:
         limit: int | None = None,
         offset: int = 0,
     ) -> dict[str, Any]:
+        self._enforce(self._dataset_action_id("detail"))
         return self._dump_model(
             await self._require_client().get_evaluation_dataset(
                 dataset_id,
@@ -138,6 +183,7 @@ class ServerEvaluationsService:
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        self._enforce(self._dataset_action_id("create"))
         request = EvaluationDatasetCreateRequest(
             name=name,
             description=description,
@@ -147,6 +193,7 @@ class ServerEvaluationsService:
         return self._dump_model(await self._require_client().create_evaluation_dataset(request))
 
     async def delete_dataset(self, dataset_id: str) -> None:
+        self._enforce(self._dataset_action_id("delete"))
         await self._require_client().delete_evaluation_dataset(dataset_id)
 
     async def list_runs(
@@ -157,6 +204,7 @@ class ServerEvaluationsService:
         after: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
+        self._enforce(self._run_action_id("list"))
         payload = self._dump_model(
             await self._require_client().list_evaluation_runs(
                 eval_id,
@@ -168,6 +216,7 @@ class ServerEvaluationsService:
         return list(payload.get("data", []))
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
+        self._enforce(self._run_action_id("detail"))
         return self._dump_model(await self._require_client().get_evaluation_run(run_id))
 
     async def create_run(
@@ -181,6 +230,7 @@ class ServerEvaluationsService:
         webhook_url: str | None = None,
         run_name: str | None = None,
     ) -> dict[str, Any]:
+        self._enforce(self._run_action_id("launch"))
         del target_id, run_name
         request = EvaluationRunCreateRequest(
             target_model=target_model,
@@ -191,7 +241,8 @@ class ServerEvaluationsService:
         return self._dump_model(await self._require_client().create_evaluation_run(eval_id, request))
 
     async def get_run_artifacts(self, run_id: str) -> dict[str, Any]:
-        run = await self.get_run(run_id)
+        self._enforce(self._run_action_id("observe"))
+        run = self._dump_model(await self._require_client().get_evaluation_run(run_id))
         metrics = self._flatten_metrics(run.get("results"))
         return {
             "run": run,
@@ -201,4 +252,5 @@ class ServerEvaluationsService:
         }
 
     async def cancel_run(self, run_id: str) -> dict[str, Any]:
+        self._enforce(self._run_action_id("update"))
         return self._dump_model(await self._require_client().cancel_evaluation_run(run_id))

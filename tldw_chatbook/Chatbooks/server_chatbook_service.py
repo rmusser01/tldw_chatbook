@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
+from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import ChatbookExportRequest, ChatbookImportRequest, TLDWAPIClient
 from .chatbook_models import ChatbookManifest, ContentType
 
@@ -130,17 +131,49 @@ class ServerChatbookService:
         ContentType.CHARACTER.value,
     }
 
-    def __init__(self, client: Optional[TLDWAPIClient]):
+    def __init__(self, client: Optional[TLDWAPIClient], *, policy_enforcer: Any | None = None):
         self.client = client
+        self.policy_enforcer = policy_enforcer
 
     @classmethod
-    def from_config(cls, app_config: Mapping[str, Any] | None) -> "ServerChatbookService":
-        return cls(build_runtime_api_client_from_config(app_config or {}))
+    def from_config(
+        cls,
+        app_config: Mapping[str, Any] | None,
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerChatbookService":
+        return cls(
+            build_runtime_api_client_from_config(app_config or {}),
+            policy_enforcer=policy_enforcer,
+        )
 
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:
             raise ValueError("TLDW API client is required for server chatbook operations.")
         return self.client
+
+    def _enforce(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
+        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        if callable(require_allowed):
+            require_allowed(action_id=action_id)
+            return
+        if callable(require_ui_action_allowed):
+            decision = require_ui_action_allowed(action_id=action_id)
+            if decision is not None and getattr(decision, "allowed", True) is False:
+                raise PolicyDeniedError(
+                    action_id=action_id,
+                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    user_message=getattr(decision, "user_message", None) or "Server chatbook action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None) or "server",
+                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                )
+
+    @staticmethod
+    def _action_id(action: str) -> str:
+        return f"chatbooks.{action}.server"
 
     def _normalize_selection_key(self, key: SelectionKey) -> str:
         return _normalize_selection_key(key)
@@ -229,10 +262,12 @@ class ServerChatbookService:
         return ChatbookImportRequest(**payload)
 
     async def preview_chatbook(self, chatbook_file_path: Union[str, Path]) -> Dict[str, Any]:
+        self._enforce(self._action_id("detail"))
         client = self._require_client()
         return await client.preview_chatbook(str(chatbook_file_path))
 
     async def export_chatbook(self, request_data: ChatbookExportRequest) -> Dict[str, Any]:
+        self._enforce(self._action_id("export"))
         client = self._require_client()
         return await client.export_chatbook(self._coerce_export_request(request_data))
 
@@ -270,6 +305,7 @@ class ServerChatbookService:
         chatbook_file_path: Union[str, Path],
         request_data: ChatbookImportRequest,
     ) -> Dict[str, Any]:
+        self._enforce(self._action_id("import"))
         client = self._require_client()
         return await client.import_chatbook(str(chatbook_file_path), self._coerce_import_request(request_data))
 
@@ -294,6 +330,7 @@ class ServerChatbookService:
         return await self.import_chatbook(chatbook_file_path, request)
 
     async def get_export_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce(self._action_id("detail"))
         client = self._require_client()
         return await client.get_chatbook_export_job(job_id)
 
@@ -301,6 +338,7 @@ class ServerChatbookService:
         return await self.get_export_job(job_id)
 
     async def get_import_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce(self._action_id("detail"))
         client = self._require_client()
         return await client.get_chatbook_import_job(job_id)
 

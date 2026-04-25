@@ -8,7 +8,7 @@ from tldw_chatbook.Character_Chat.character_persona_scope_service import (
 from tldw_chatbook.Character_Chat.server_character_persona_service import (
     ServerCharacterPersonaService,
 )
-from tldw_chatbook.runtime_policy import PolicyDeniedError
+from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
 
 
 class FakeCharacterPersonaClient:
@@ -434,6 +434,64 @@ async def test_server_character_persona_service_delegates_chat_execution_support
     assert created["preset_id"] == "custom-alpha"
     assert updated["preset_id"] == "custom-alpha"
     assert deleted["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_server_character_persona_service_enforces_policy_actions():
+    client = FakeCharacterPersonaClient()
+    policy = Mock()
+    service = ServerCharacterPersonaService(client=client, policy_enforcer=policy)
+
+    await service.list_characters(limit=13, offset=4)
+    await service.list_persona_profiles(active_only=True)
+    await service.get_persona_profile("persona-1")
+    await service.create_persona_profile(Mock(model_dump=lambda **_: {"name": "Guide"}))
+    await service.update_persona_profile("persona-1", Mock(model_dump=lambda **_: {"name": "Guide v2"}))
+    await service.list_chat_greetings("chat.server.alice")
+    await service.select_chat_greeting("chat.server.alice", 0)
+    await service.list_chat_presets()
+    await service.create_chat_preset(
+        Mock(model_dump=lambda **_: {"preset_id": "custom-alpha", "name": "Custom Alpha"})
+    )
+    await service.update_chat_preset("custom-alpha", Mock(model_dump=lambda **_: {"name": "Custom Beta"}))
+    await service.delete_chat_preset("custom-alpha")
+
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "character.persona.list.server",
+        "character.persona.list.server",
+        "character.persona.detail.server",
+        "character.persona.create.server",
+        "character.persona.update.server",
+        "character.sessions.launch.server",
+        "character.sessions.launch.server",
+        "character.persona.list.server",
+        "character.persona.create.server",
+        "character.persona.update.server",
+        "character.persona.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_character_persona_service_hard_stops_denied_ui_policy_decision():
+    policy = Mock()
+    policy.require_allowed = None
+    policy.require_ui_action_allowed = Mock(
+        return_value=PolicyDecision(
+            allowed=False,
+            reason_code="server_unreachable",
+            user_message="Blocked.",
+            effective_source="server",
+            authority_owner="server",
+        )
+    )
+    client = FakeCharacterPersonaClient()
+    service = ServerCharacterPersonaService(client=client, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await service.list_characters(limit=13, offset=4)
+
+    assert exc.value.reason_code == "server_unreachable"
+    assert client.list_characters_calls == []
 
 
 def test_server_character_persona_service_from_config_uses_api_client(monkeypatch):

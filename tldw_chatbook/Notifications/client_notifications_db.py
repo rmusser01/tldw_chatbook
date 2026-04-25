@@ -11,6 +11,13 @@ from typing import Any, Mapping
 from ..DB.base_db import BaseDB
 
 
+DEFAULT_NOTIFICATION_SETTINGS = {
+    "enabled": True,
+    "toast_enabled": True,
+    "persist_enabled": True,
+}
+
+
 class ClientNotificationsDB(BaseDB):
     """Dedicated local queue/inbox store for client notifications."""
 
@@ -66,6 +73,12 @@ class ClientNotificationsDB(BaseDB):
 
                 CREATE INDEX IF NOT EXISTS idx_client_notifications_source
                     ON client_notifications(source_backend, source_entity_kind, source_entity_id);
+
+                CREATE TABLE IF NOT EXISTS client_notification_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -154,6 +167,32 @@ class ClientNotificationsDB(BaseDB):
             ).fetchall()
         return [self._normalize_row(row) for row in rows]
 
+    def list_notifications_after_id(
+        self,
+        *,
+        after_id: int = 0,
+        limit: int = 100,
+        include_dismissed: bool = False,
+    ) -> list[dict[str, Any]]:
+        """List notifications newer than a known id for poll/observe flows."""
+        clauses = ["id > ?"]
+        params: list[Any] = [int(after_id)]
+        if not include_dismissed:
+            clauses.append("is_dismissed = 0")
+        params.append(max(int(limit), 1))
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM client_notifications
+                WHERE {' AND '.join(clauses)}
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [self._normalize_row(row) for row in rows]
+
     def mark_read(self, notification_id: int, *, is_read: bool) -> bool:
         """Mark a notification read or unread."""
         read_at = self._now_iso() if is_read else None
@@ -171,6 +210,38 @@ class ClientNotificationsDB(BaseDB):
             is_dismissed=int(bool(is_dismissed)),
             dismissed_at=dismissed_at,
         )
+
+    def get_settings(self) -> dict[str, Any]:
+        """Return local notification settings with defaults filled in."""
+        settings = dict(DEFAULT_NOTIFICATION_SETTINGS)
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT key, value FROM client_notification_settings").fetchall()
+        for row in rows:
+            try:
+                value = json.loads(row["value"])
+            except json.JSONDecodeError:
+                continue
+            settings[row["key"]] = value
+        return settings
+
+    def update_settings(self, **settings: Any) -> dict[str, Any]:
+        """Persist known local notification settings and return the effective set."""
+        unknown = set(settings) - set(DEFAULT_NOTIFICATION_SETTINGS)
+        if unknown:
+            raise ValueError(f"Unknown notification settings: {sorted(unknown)}")
+        now = self._now_iso()
+        with self._get_connection() as conn:
+            for key, value in settings.items():
+                conn.execute(
+                    """
+                    INSERT INTO client_notification_settings (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                    """,
+                    (key, json.dumps(value, sort_keys=True), now),
+                )
+            conn.commit()
+        return self.get_settings()
 
     def _update_flags(self, notification_id: int, **fields: Any) -> bool:
         assignments = ", ".join(f"{field} = ?" for field in fields)

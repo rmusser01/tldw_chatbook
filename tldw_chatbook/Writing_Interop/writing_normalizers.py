@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from .writing_markdown_adapter import extract_markdown_from_server_scene
+
 
 _KIND_TO_RECORD_TYPE = {
     "project": "writing_project",
     "manuscript": "writing_manuscript",
     "chapter": "writing_chapter",
     "scene": "writing_scene",
+    "version": "writing_version",
 }
 
 
@@ -26,7 +29,7 @@ def normalize_writing_record(source: str, kind: str, record: Mapping[str, Any]) 
     if kind == "chapter":
         payload["manuscript_id"] = payload.get("manuscript_id", payload.get("part_id"))
     if kind == "scene":
-        payload["content_markdown"] = payload.get("content_markdown", payload.get("content_plain") or "")
+        payload["content_markdown"], payload["content_markdown_fidelity"] = extract_markdown_from_server_scene(payload)
     return payload
 
 
@@ -36,9 +39,21 @@ def normalize_writing_structure(source: str, payload: Mapping[str, Any]) -> dict
     def normalize_scene_summary(scene: Mapping[str, Any]) -> dict[str, Any]:
         return normalize_writing_record(source, "scene", scene)
 
-    def normalize_chapter_summary(chapter: Mapping[str, Any]) -> dict[str, Any]:
+    def normalize_chapter_summary(
+        chapter: Mapping[str, Any],
+        *,
+        outline_bucket: str | None = None,
+        outline_parent_type: str | None = None,
+        outline_parent_id: str | None = None,
+    ) -> dict[str, Any]:
         normalized = normalize_writing_record(source, "chapter", chapter)
         normalized["scenes"] = [normalize_scene_summary(scene) for scene in chapter.get("scenes", [])]
+        if outline_bucket is not None:
+            normalized["outline_bucket"] = outline_bucket
+        if outline_parent_type is not None:
+            normalized["outline_parent_type"] = outline_parent_type
+        if outline_parent_id is not None:
+            normalized["outline_parent_id"] = outline_parent_id
         return normalized
 
     def normalize_manuscript_summary(manuscript: Mapping[str, Any]) -> dict[str, Any]:
@@ -46,6 +61,10 @@ def normalize_writing_structure(source: str, payload: Mapping[str, Any]) -> dict
         normalized["chapters"] = [
             normalize_chapter_summary(chapter)
             for chapter in manuscript.get("chapters", [])
+        ]
+        normalized["scenes"] = [
+            normalize_scene_summary(scene)
+            for scene in manuscript.get("scenes", [])
         ]
         return normalized
 
@@ -55,7 +74,12 @@ def normalize_writing_structure(source: str, payload: Mapping[str, Any]) -> dict
         "project_id": payload.get("project_id"),
         "manuscripts": [normalize_manuscript_summary(item) for item in manuscripts],
         "unassigned_chapters": [
-            normalize_chapter_summary(chapter)
+            normalize_chapter_summary(
+                chapter,
+                outline_bucket="unassigned_chapters",
+                outline_parent_type="project",
+                outline_parent_id=payload.get("project_id"),
+            )
             for chapter in payload.get("unassigned_chapters", [])
         ],
     }

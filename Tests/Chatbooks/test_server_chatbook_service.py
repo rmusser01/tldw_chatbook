@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 
 from tldw_chatbook.Chatbooks.chatbook_models import (
@@ -14,6 +16,7 @@ from tldw_chatbook.Chatbooks.server_chatbook_service import (
     get_server_job_records,
     record_server_job,
 )
+from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
 
 
 def test_service_rejects_server_unsupported_import_content_types():
@@ -151,6 +154,81 @@ async def test_service_accepts_dict_payloads_from_scope_adapter():
 
     assert client.export_request.content_selections == {"conversation": ["1"]}
     assert client.import_request.conflict_resolution == "rename"
+
+
+@pytest.mark.asyncio
+async def test_server_chatbook_service_enforces_policy_actions():
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        async def preview_chatbook(self, chatbook_file_path: str):
+            self.calls.append(("preview_chatbook", chatbook_file_path))
+            return {"success": True, "manifest": {"name": "Preview"}}
+
+        async def export_chatbook(self, request_data):
+            self.calls.append(("export_chatbook", request_data))
+            return {"job_id": "export-job-1", "status": "queued"}
+
+        async def import_chatbook(self, chatbook_file_path: str, request_data):
+            self.calls.append(("import_chatbook", chatbook_file_path, request_data))
+            return {"job_id": "import-job-1", "status": "queued"}
+
+        async def get_chatbook_export_job(self, job_id: str):
+            self.calls.append(("get_chatbook_export_job", job_id))
+            return {"job_id": job_id, "status": "completed"}
+
+        async def get_chatbook_import_job(self, job_id: str):
+            self.calls.append(("get_chatbook_import_job", job_id))
+            return {"job_id": job_id, "status": "completed"}
+
+    policy = Mock()
+    service = ServerChatbookService(client=FakeClient(), policy_enforcer=policy)
+
+    await service.preview_chatbook("/tmp/demo.chatbook.zip")
+    await service.export_chatbook({"name": "Pack", "description": "Desc", "content_selections": {"conversation": ["1"]}})
+    await service.import_chatbook("/tmp/demo.chatbook.zip", {"content_selections": {"conversation": ["1"]}})
+    await service.get_export_job("export-job-1")
+    await service.get_import_job("import-job-1")
+
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "chatbooks.detail.server",
+        "chatbooks.export.server",
+        "chatbooks.import.server",
+        "chatbooks.detail.server",
+        "chatbooks.detail.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_chatbook_service_hard_stops_denied_ui_policy_decision():
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        async def preview_chatbook(self, chatbook_file_path: str):
+            self.calls.append(("preview_chatbook", chatbook_file_path))
+            return {"success": True}
+
+    policy = Mock()
+    policy.require_allowed = None
+    policy.require_ui_action_allowed = Mock(
+        return_value=PolicyDecision(
+            allowed=False,
+            reason_code="server_unreachable",
+            user_message="Blocked.",
+            effective_source="server",
+            authority_owner="server",
+        )
+    )
+    client = FakeClient()
+    service = ServerChatbookService(client=client, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await service.preview_chatbook("/tmp/demo.chatbook.zip")
+
+    assert exc.value.reason_code == "server_unreachable"
+    assert client.calls == []
 
 
 def test_service_builds_server_import_selections_from_manifest():

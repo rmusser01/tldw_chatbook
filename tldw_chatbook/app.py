@@ -204,6 +204,7 @@ from tldw_chatbook.Media import (
 )
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
+    ClientNotificationsService,
     NotificationDispatchService,
     ServerNotificationsService,
 )
@@ -1293,9 +1294,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.media_runtime_state = MediaRuntimeState(runtime_backend=initial_media_runtime_backend)
         self.local_media_reading_service = LocalMediaReadingService(self.media_db)
         try:
-            self.server_media_reading_service = ServerMediaReadingService.from_config(self.app_config)
+            self.server_media_reading_service = ServerMediaReadingService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         except ValueError:
-            self.server_media_reading_service = ServerMediaReadingService(client=None)
+            self.server_media_reading_service = ServerMediaReadingService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         self.media_reading_scope_service = MediaReadingScopeService(
             local_service=self.local_media_reading_service,
             server_service=self.server_media_reading_service,
@@ -1356,9 +1363,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
-            self.server_rag_admin_service = ServerRAGAdminService.from_config(self.app_config)
+            self.server_rag_admin_service = ServerRAGAdminService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         except ValueError:
-            self.server_rag_admin_service = ServerRAGAdminService(client=None)
+            self.server_rag_admin_service = ServerRAGAdminService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         self.local_rag_admin_service = LocalRAGAdminService(
             self.media_db,
             app_config=self.app_config,
@@ -1415,9 +1428,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     def _wire_character_persona_services(self) -> None:
         try:
-            self.server_character_persona_service = ServerCharacterPersonaService.from_config(self.app_config)
+            self.server_character_persona_service = ServerCharacterPersonaService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         except ValueError:
-            self.server_character_persona_service = ServerCharacterPersonaService(client=None)
+            self.server_character_persona_service = ServerCharacterPersonaService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.chachanotes_db,
             server_service=self.server_character_persona_service,
@@ -1434,15 +1453,27 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _wire_prompt_chatbook_services(self) -> None:
         self.local_prompt_service = LocalPromptService(prompts_interop)
         try:
-            self.server_prompt_service = ServerPromptService.from_config(self.app_config)
+            self.server_prompt_service = ServerPromptService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         except ValueError:
-            self.server_prompt_service = ServerPromptService(client=None)
+            self.server_prompt_service = ServerPromptService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+        )
 
         self.local_chatbook_service = LocalChatbookService(self._build_chatbook_db_paths())
         try:
-            self.server_chatbook_service = ServerChatbookService.from_config(self.app_config)
+            self.server_chatbook_service = ServerChatbookService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         except ValueError:
-            self.server_chatbook_service = ServerChatbookService(client=None)
+            self.server_chatbook_service = ServerChatbookService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
 
         self.prompt_chatbook_scope_service = PromptChatbookScopeService(
             local_prompt_service=self.local_prompt_service,
@@ -1462,9 +1493,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.evaluation_orchestrator = None
 
         try:
-            self.server_evaluation_service = ServerEvaluationsService.from_config(self.app_config)
+            self.server_evaluation_service = ServerEvaluationsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         except ValueError:
-            self.server_evaluation_service = ServerEvaluationsService(client=None)
+            self.server_evaluation_service = ServerEvaluationsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
 
         has_local = self.local_evaluation_service is not None
         has_server = getattr(self.server_evaluation_service, "client", None) is not None
@@ -1482,13 +1519,25 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.local_study_service = LocalStudyService(self.chachanotes_db) if self.chachanotes_db is not None else None
         self.local_quiz_service = LocalQuizService(self.chachanotes_db) if self.chachanotes_db is not None else None
         try:
-            self.server_study_service = ServerStudyService.from_config(self.app_config)
+            self.server_study_service = ServerStudyService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         except ValueError:
-            self.server_study_service = ServerStudyService(client=None)
+            self.server_study_service = ServerStudyService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         try:
-            self.server_quiz_service = ServerQuizService.from_config(self.app_config)
+            self.server_quiz_service = ServerQuizService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         except ValueError:
-            self.server_quiz_service = ServerQuizService(client=None)
+            self.server_quiz_service = ServerQuizService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         self.study_scope_service = StudyScopeService(
             local_service=self.local_study_service,
             server_service=self.server_study_service,
@@ -1506,9 +1555,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             db_factory=lambda: SubscriptionsDB(get_subscriptions_db_path(), CLI_APP_CLIENT_ID)
         )
         try:
-            self.server_watchlists_service = ServerWatchlistsService.from_config(self.app_config)
+            self.server_watchlists_service = ServerWatchlistsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         except ValueError:
-            self.server_watchlists_service = ServerWatchlistsService(client=None)
+            self.server_watchlists_service = ServerWatchlistsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         try:
             self.server_notifications_service = ServerNotificationsService.from_config(
                 self.app_config,
@@ -1587,6 +1642,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.client_notifications_db = ClientNotificationsDB(
             get_notifications_db_path(),
             CLI_APP_CLIENT_ID,
+        )
+        self.client_notifications_service = ClientNotificationsService(
+            store=self.client_notifications_db,
+            policy_enforcer=self.service_policy_enforcer,
         )
         self.notification_dispatch_service = NotificationDispatchService(
             store=self.client_notifications_db,

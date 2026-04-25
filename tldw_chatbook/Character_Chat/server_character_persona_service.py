@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
+from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     PersonaProfileCreate,
     PersonaProfileUpdate,
@@ -19,23 +20,61 @@ from ..tldw_api import (
 class ServerCharacterPersonaService:
     """Thin wrapper around the shared TLDW API client for character/persona reads."""
 
-    def __init__(self, client: Optional[TLDWAPIClient]):
+    def __init__(self, client: Optional[TLDWAPIClient], *, policy_enforcer: Any | None = None):
         self.client = client
+        self.policy_enforcer = policy_enforcer
 
     @classmethod
-    def from_config(cls, app_config: Mapping[str, Any]) -> "ServerCharacterPersonaService":
-        return cls(client=build_runtime_api_client_from_config(app_config))
+    def from_config(
+        cls,
+        app_config: Mapping[str, Any],
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerCharacterPersonaService":
+        return cls(
+            client=build_runtime_api_client_from_config(app_config),
+            policy_enforcer=policy_enforcer,
+        )
 
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:
             raise ValueError("TLDW API client is required for server character and persona operations.")
         return self.client
 
+    def _enforce(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
+        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        if callable(require_allowed):
+            require_allowed(action_id=action_id)
+            return
+        if callable(require_ui_action_allowed):
+            decision = require_ui_action_allowed(action_id=action_id)
+            if decision is not None and getattr(decision, "allowed", True) is False:
+                raise PolicyDeniedError(
+                    action_id=action_id,
+                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server character/persona action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None) or "server",
+                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                )
+
+    @staticmethod
+    def _persona_action_id(action: str) -> str:
+        return f"character.persona.{action}.server"
+
+    @staticmethod
+    def _session_action_id() -> str:
+        return "character.sessions.launch.server"
+
     async def list_characters(
         self,
         limit: int = 100,
         offset: int = 0,
     ) -> Any:
+        self._enforce(self._persona_action_id("list"))
         client = self._require_client()
         return await client.list_characters(limit=limit, offset=offset)
 
@@ -46,6 +85,7 @@ class ServerCharacterPersonaService:
         limit: int = 100,
         offset: int = 0,
     ) -> Any:
+        self._enforce(self._persona_action_id("list"))
         client = self._require_client()
         return await client.list_persona_profiles(
             active_only=active_only,
@@ -55,10 +95,12 @@ class ServerCharacterPersonaService:
         )
 
     async def get_persona_profile(self, persona_id: str) -> Any:
+        self._enforce(self._persona_action_id("detail"))
         client = self._require_client()
         return await client.get_persona_profile(persona_id)
 
     async def create_persona_profile(self, request_data: PersonaProfileCreate) -> Any:
+        self._enforce(self._persona_action_id("create"))
         client = self._require_client()
         return await client.create_persona_profile(request_data)
 
@@ -68,6 +110,7 @@ class ServerCharacterPersonaService:
         request_data: PersonaProfileUpdate,
         expected_version: Optional[int] = None,
     ) -> Any:
+        self._enforce(self._persona_action_id("update"))
         client = self._require_client()
         return await client.update_persona_profile(
             persona_id,
@@ -76,25 +119,31 @@ class ServerCharacterPersonaService:
         )
 
     async def list_chat_greetings(self, chat_id: str) -> Any:
+        self._enforce(self._session_action_id())
         client = self._require_client()
         return await client.list_greetings(chat_id)
 
     async def select_chat_greeting(self, chat_id: str, index: int) -> Any:
+        self._enforce(self._session_action_id())
         client = self._require_client()
         return await client.select_greeting(chat_id, index)
 
     async def list_chat_presets(self) -> Any:
+        self._enforce(self._persona_action_id("list"))
         client = self._require_client()
         return await client.list_presets()
 
     async def create_chat_preset(self, request_data: PresetCreate) -> Any:
+        self._enforce(self._persona_action_id("create"))
         client = self._require_client()
         return await client.create_preset(request_data)
 
     async def update_chat_preset(self, preset_id: str, request_data: PresetUpdate) -> Any:
+        self._enforce(self._persona_action_id("update"))
         client = self._require_client()
         return await client.update_preset(preset_id, request_data)
 
     async def delete_chat_preset(self, preset_id: str) -> Any:
+        self._enforce(self._persona_action_id("delete"))
         client = self._require_client()
         return await client.delete_preset(preset_id)

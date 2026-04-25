@@ -1,6 +1,9 @@
+from unittest.mock import Mock
+
 import pytest
 
 from tldw_chatbook.Subscriptions import ServerWatchlistsService
+from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
 
 class FakeWatchlistsClient:
@@ -339,3 +342,65 @@ async def test_server_watchlists_service_routes_alert_rule_crud_and_normalizes_r
         ),
         ("delete_watchlist_alert_rule", 12),
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_watchlists_service_enforces_policy_actions():
+    client = FakeWatchlistsClient()
+    policy = Mock()
+    service = ServerWatchlistsService(client=client, policy_enforcer=policy)
+
+    await service.list_sources(q="ai")
+    await service.get_source(17)
+    await service.create_source(name="Docs", url="https://example.com/docs", source_type="site")
+    await service.update_source(17, name="Renamed")
+    await service.delete_source(17)
+    await service.launch_run(job_id=7)
+    await service.list_runs(job_id=7)
+    await service.get_run(101)
+    await service.get_run_detail(101)
+    await service.list_alert_rules(job_id=7)
+    await service.get_alert_rule(11)
+    await service.create_alert_rule(name="Too many", condition_type="items_above", job_id=7)
+    await service.update_alert_rule(12, enabled=False)
+    await service.delete_alert_rule(12)
+
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "watchlists.list.server",
+        "watchlists.detail.server",
+        "watchlists.create.server",
+        "watchlists.update.server",
+        "watchlists.delete.server",
+        "watchlists.runs.launch.server",
+        "watchlists.runs.list.server",
+        "watchlists.runs.detail.server",
+        "watchlists.runs.observe.server",
+        "watchlists.alert_rules.list.server",
+        "watchlists.alert_rules.detail.server",
+        "watchlists.alert_rules.create.server",
+        "watchlists.alert_rules.update.server",
+        "watchlists.alert_rules.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_watchlists_service_hard_stops_denied_ui_policy_decision():
+    policy = Mock()
+    policy.require_allowed = None
+    policy.require_ui_action_allowed = Mock(
+        return_value=PolicyDecision(
+            allowed=False,
+            reason_code="server_unreachable",
+            user_message="Blocked.",
+            effective_source="server",
+            authority_owner="server",
+        )
+    )
+    client = FakeWatchlistsClient()
+    service = ServerWatchlistsService(client=client, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await service.list_sources(q="ai")
+
+    assert exc.value.reason_code == "server_unreachable"
+    assert client.calls == []

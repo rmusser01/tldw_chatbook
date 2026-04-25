@@ -318,7 +318,8 @@ class WritingScopeService:
         self,
         *,
         mode: WritingBackend | str | None = None,
-        chapter_id: str,
+        chapter_id: str | None,
+        manuscript_id: str | None = None,
         title: str,
         content_markdown: str = "",
         **kwargs: Any,
@@ -328,6 +329,7 @@ class WritingScopeService:
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).create_scene(
                 chapter_id,
+                manuscript_id=manuscript_id,
                 title=title,
                 content_markdown=content_markdown,
                 **kwargs,
@@ -339,12 +341,16 @@ class WritingScopeService:
         self,
         *,
         mode: WritingBackend | str | None = None,
-        chapter_id: str,
+        chapter_id: str | None = None,
+        manuscript_id: str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("scenes", "list", normalized_mode))
         result = await self._maybe_await(
-            self._service_for_mode(normalized_mode).list_scenes(chapter_id)
+            self._service_for_mode(normalized_mode).list_scenes(
+                chapter_id,
+                manuscript_id=manuscript_id,
+            )
         )
         return self._normalize_result(normalized_mode, "scene", result)
 
@@ -394,6 +400,133 @@ class WritingScopeService:
                 self._service_for_mode(normalized_mode).delete_scene(
                     scene_id,
                     expected_version=expected_version,
+                )
+            )
+        )
+
+    async def create_version(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        entity_type: str,
+        entity_id: str,
+        label: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("versions", "create", normalized_mode))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).create_version(
+                entity_type,
+                entity_id,
+                label=label,
+            )
+        )
+        return self._normalize_result(normalized_mode, "version", result)
+
+    async def list_versions(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        entity_type: str,
+        entity_id: str,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("versions", "list", normalized_mode))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).list_versions(entity_type, entity_id)
+        )
+        return self._normalize_result(normalized_mode, "version", result)
+
+    async def get_version(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        entity_type: str,
+        entity_id: str,
+        version_number: int,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("versions", "detail", normalized_mode))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_version(
+                entity_type,
+                entity_id,
+                version_number,
+            )
+        )
+        return self._normalize_result(normalized_mode, "version", result)
+
+    async def restore_version(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        entity_type: str,
+        entity_id: str,
+        version_number: int,
+        expected_version: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("versions", "restore", normalized_mode))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).restore_version(
+                entity_type,
+                entity_id,
+                version_number,
+                expected_version=expected_version,
+            )
+        )
+        return self._normalize_result(normalized_mode, entity_type, result)
+
+    async def list_trash(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        entity_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("trash", "list", normalized_mode))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).list_trash(entity_type=entity_type)
+        )
+        if entity_type is None:
+            return result
+        return self._normalize_result(normalized_mode, entity_type, result)
+
+    async def restore_trash(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        entity_type: str,
+        entity_id: str,
+        expected_version: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("trash", "restore", normalized_mode))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).restore_trash(
+                entity_type,
+                entity_id,
+                expected_version=expected_version,
+            )
+        )
+        return self._normalize_result(normalized_mode, entity_type, result)
+
+    async def reorder_entities(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        entity_type: str,
+        items: list[dict[str, Any]],
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("outline", "reorder", normalized_mode))
+        return bool(
+            await self._maybe_await(
+                self._service_for_mode(normalized_mode).reorder_entities(
+                    project_id,
+                    entity_type,
+                    items,
                 )
             )
         )

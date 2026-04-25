@@ -15,6 +15,7 @@ from tldw_chatbook.Media import (
 )
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
+    ClientNotificationsService,
     NotificationDispatchService,
     ServerNotificationsService,
 )
@@ -91,6 +92,7 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.server_watchlists_service, ServerWatchlistsService)
     assert isinstance(app.watchlist_scope_service, WatchlistScopeService)
     assert isinstance(app.client_notifications_db, ClientNotificationsDB)
+    assert isinstance(app.client_notifications_service, ClientNotificationsService)
     assert isinstance(app.notification_dispatch_service, NotificationDispatchService)
     assert isinstance(app.server_notifications_service, ServerNotificationsService)
     assert isinstance(app.server_outputs_service, ServerOutputsService)

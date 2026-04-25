@@ -85,6 +85,72 @@ class FakeWritingService:
         self.calls.append(("delete_scene", scene_id, expected_version))
         return True
 
+    async def create_version(self, entity_type, entity_id, *, label=None):
+        self.calls.append(("create_version", entity_type, entity_id, label))
+        return {
+            "id": f"{self.source}-version-1",
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "version_number": 1,
+            "label": label,
+            "payload": {"title": "Snapshot"},
+        }
+
+    async def list_versions(self, entity_type, entity_id):
+        self.calls.append(("list_versions", entity_type, entity_id))
+        return [
+            {
+                "id": f"{self.source}-version-1",
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "version_number": 1,
+                "payload": {"title": "Snapshot"},
+            }
+        ]
+
+    async def get_version(self, entity_type, entity_id, version_number):
+        self.calls.append(("get_version", entity_type, entity_id, version_number))
+        return {
+            "id": f"{self.source}-version-1",
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "version_number": version_number,
+            "payload": {"title": "Snapshot"},
+        }
+
+    async def restore_version(self, entity_type, entity_id, version_number, *, expected_version=None):
+        self.calls.append(("restore_version", entity_type, entity_id, version_number, expected_version))
+        return {
+            "id": entity_id,
+            "title": "Snapshot",
+            "version": 2,
+        }
+
+    async def list_trash(self, *, entity_type=None):
+        self.calls.append(("list_trash", entity_type))
+        return [
+            {
+                "id": f"{self.source}-scene-1",
+                "title": "Deleted Scene",
+                "content_markdown": "Draft",
+                "deleted": 1,
+            }
+        ]
+
+    async def restore_trash(self, entity_type, entity_id, *, expected_version=None):
+        self.calls.append(("restore_trash", entity_type, entity_id, expected_version))
+        return {
+            "id": entity_id,
+            "title": "Deleted Scene",
+            "content_markdown": "Draft",
+            "deleted": 0,
+            "version": 2,
+        }
+
+    async def reorder_entities(self, project_id, entity_type, items):
+        self.calls.append(("reorder_entities", project_id, entity_type, items))
+        return True
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
@@ -201,3 +267,106 @@ async def test_writing_scope_service_routes_update_and_delete_crud_actions():
         "writing.scenes.update.server",
         "writing.scenes.delete.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_writing_scope_service_routes_manual_version_actions():
+    local = FakeWritingService("local")
+    policy = FakePolicyEnforcer()
+    scope = WritingScopeService(
+        local_service=local,
+        server_service=FakeWritingService("server"),
+        policy_enforcer=policy,
+    )
+
+    version = await scope.create_version(
+        mode="local",
+        entity_type="scene",
+        entity_id="scene-1",
+        label="First draft",
+    )
+    versions = await scope.list_versions(mode="local", entity_type="scene", entity_id="scene-1")
+    fetched = await scope.get_version(mode="local", entity_type="scene", entity_id="scene-1", version_number=1)
+    restored = await scope.restore_version(
+        mode="local",
+        entity_type="scene",
+        entity_id="scene-1",
+        version_number=1,
+        expected_version=1,
+    )
+
+    assert version["record_id"] == "local:writing_version:local-version-1"
+    assert versions[0]["record_id"] == "local:writing_version:local-version-1"
+    assert fetched["version_number"] == 1
+    assert restored["record_id"] == "local:writing_scene:scene-1"
+    assert local.calls == [
+        ("create_version", "scene", "scene-1", "First draft"),
+        ("list_versions", "scene", "scene-1"),
+        ("get_version", "scene", "scene-1", 1),
+        ("restore_version", "scene", "scene-1", 1, 1),
+    ]
+    assert policy.calls == [
+        "writing.versions.create.local",
+        "writing.versions.list.local",
+        "writing.versions.detail.local",
+        "writing.versions.restore.local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_writing_scope_service_routes_trash_actions():
+    local = FakeWritingService("local")
+    policy = FakePolicyEnforcer()
+    scope = WritingScopeService(
+        local_service=local,
+        server_service=FakeWritingService("server"),
+        policy_enforcer=policy,
+    )
+
+    trash = await scope.list_trash(mode="local", entity_type="scene")
+    restored = await scope.restore_trash(
+        mode="local",
+        entity_type="scene",
+        entity_id="local-scene-1",
+        expected_version=1,
+    )
+
+    assert trash[0]["record_id"] == "local:writing_scene:local-scene-1"
+    assert restored["record_id"] == "local:writing_scene:local-scene-1"
+    assert local.calls == [
+        ("list_trash", "scene"),
+        ("restore_trash", "scene", "local-scene-1", 1),
+    ]
+    assert policy.calls == [
+        "writing.trash.list.local",
+        "writing.trash.restore.local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_writing_scope_service_routes_reorder_actions():
+    server = FakeWritingService("server")
+    policy = FakePolicyEnforcer()
+    scope = WritingScopeService(
+        local_service=FakeWritingService("local"),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    reordered = await scope.reorder_entities(
+        mode="server",
+        project_id="project-1",
+        entity_type="chapters",
+        items=[{"id": "chapter-1", "sort_order": 2.0, "version": 1, "new_parent_id": "manuscript-1"}],
+    )
+
+    assert reordered is True
+    assert server.calls == [
+        (
+            "reorder_entities",
+            "project-1",
+            "chapters",
+            [{"id": "chapter-1", "sort_order": 2.0, "version": 1, "new_parent_id": "manuscript-1"}],
+        )
+    ]
+    assert policy.calls == ["writing.outline.reorder.server"]

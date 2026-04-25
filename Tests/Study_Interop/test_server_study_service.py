@@ -1,5 +1,8 @@
+from unittest.mock import Mock
+
 import pytest
 
+from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.Study_Interop.server_study_service import ServerStudyService
 from tldw_chatbook.tldw_api.flashcards_schemas import (
     FlashcardResponse,
@@ -309,3 +312,67 @@ async def test_server_study_service_wraps_study_suggestion_endpoints():
             },
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_enforces_remote_study_pack_and_suggestion_actions():
+    client = FakeClient()
+    policy = Mock()
+    service = ServerStudyService(client=client, policy_enforcer=policy)
+
+    await service.create_study_pack_job(
+        title="Cell biology pack",
+        workspace_id="ws-1",
+        source_items=[{"source_type": "note", "source_id": "note-1", "label": "Notes"}],
+    )
+    await service.get_study_pack_job_status(42)
+    await service.get_study_pack(9)
+    await service.regenerate_study_pack(9)
+    await service.get_study_suggestion_status(anchor_type="deck", anchor_id=7)
+    await service.get_study_suggestion_snapshot(11)
+    await service.refresh_study_suggestion_snapshot(11, reason="user_requested")
+    await service.trigger_study_suggestion_action(
+        11,
+        target_service="quiz",
+        target_type="quiz",
+        action_kind="generate",
+        selected_topic_ids=["mitosis"],
+        has_explicit_selection=True,
+    )
+
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "study.packs.jobs.launch.server",
+        "study.packs.jobs.observe.server",
+        "study.packs.jobs.observe.server",
+        "study.packs.jobs.launch.server",
+        "study.suggestions.list.server",
+        "study.suggestions.observe.server",
+        "study.suggestions.launch.server",
+        "study.suggestions.configure.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_hard_stops_denied_ui_policy_decision():
+    policy = Mock()
+    policy.require_allowed = None
+    policy.require_ui_action_allowed = Mock(
+        return_value=PolicyDecision(
+            allowed=False,
+            reason_code="server_unreachable",
+            user_message="Blocked.",
+            effective_source="server",
+            authority_owner="server",
+        )
+    )
+    client = FakeClient()
+    service = ServerStudyService(client=client, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await service.create_study_pack_job(
+            title="Cell biology pack",
+            source_items=[{"source_type": "note", "source_id": "note-1"}],
+        )
+
+    assert exc.value.reason_code == "server_unreachable"
+    assert client.calls == []

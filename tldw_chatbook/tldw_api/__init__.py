@@ -195,6 +195,8 @@ from .writing_manuscript_schemas import (
     ManuscriptSceneUpdate,
     ManuscriptStructureResponse,
     PartSummary,
+    ReorderItem,
+    ReorderRequest,
     SceneSummary,
 )
 from .quizzes_schemas import (

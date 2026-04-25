@@ -543,7 +543,7 @@ def test_generated_prompt(api_endpoint, api_key, generated_prompt, variable_valu
     for i, var_name in enumerate(variable_names):
         if i < len(provided_values):
             # Replace the full placeholder {$variable_name} with the value
-            placeholder = f"{{{${var_name}}}"
+            placeholder = f"{{${var_name}}}"
             prompt_with_values = prompt_with_values.replace(placeholder, provided_values[i])
 
     # Send the filled-in prompt to the chat API
@@ -555,4 +555,3 @@ def test_generated_prompt(api_endpoint, api_key, generated_prompt, variable_valu
 #
 # End of Function Definitions
 ########################################################################################################################
-

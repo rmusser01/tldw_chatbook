@@ -1,6 +1,9 @@
+from unittest.mock import Mock
+
 import pytest
 
 from tldw_chatbook.RAG_Admin.server_rag_admin_service import ServerRAGAdminService
+from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api import (
     ChunkingTemplateCreateRequest,
     ChunkingTemplateDiagnosticsResponse,
@@ -145,3 +148,62 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     assert diagnostics["capability"] == "native"
     assert collections[0]["name"] == "demo_collection"
     assert stats["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_server_rag_admin_service_enforces_policy_actions():
+    client = FakeClient()
+    policy = Mock()
+    service = ServerRAGAdminService(client=client, policy_enforcer=policy)
+
+    await service.list_templates(include_builtin=False, include_custom=True, tags=["rag"], user_id="u1")
+    await service.create_template(
+        name="created",
+        description="Created template",
+        tags=["notes"],
+        template={"chunking": {"method": "words", "config": {"max_size": 512}}},
+        user_id="u1",
+    )
+    await service.update_template(
+        "created",
+        description="Updated template",
+        tags=["notes", "updated"],
+        template={"chunking": {"method": "sentences", "config": {"max_size": 8}}},
+    )
+    await service.get_template_diagnostics()
+    await service.list_collections()
+    await service.get_collection_detail("demo_collection")
+    await service.delete_collection("demo_collection")
+
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "rag.template.list.server",
+        "rag.template.create.server",
+        "rag.template.update.server",
+        "rag.admin.observe.server",
+        "rag.admin.list.server",
+        "rag.admin.observe.server",
+        "rag.admin.configure.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_rag_admin_service_hard_stops_denied_ui_policy_decision():
+    policy = Mock()
+    policy.require_allowed = None
+    policy.require_ui_action_allowed = Mock(
+        return_value=PolicyDecision(
+            allowed=False,
+            reason_code="server_unreachable",
+            user_message="Blocked.",
+            effective_source="server",
+            authority_owner="server",
+        )
+    )
+    client = FakeClient()
+    service = ServerRAGAdminService(client=client, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await service.list_templates()
+
+    assert exc.value.reason_code == "server_unreachable"
+    assert client.calls == []

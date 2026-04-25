@@ -3,6 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
+from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
 
 class FakeClient:
@@ -294,6 +295,74 @@ async def test_server_service_routes_document_version_helpers_and_keeps_uuid_del
 
     with pytest.raises(ValueError, match="Server document version deletion requires media_id and version_number."):
         await service.delete_analysis_version("version-1")
+
+
+@pytest.mark.asyncio
+async def test_server_service_enforces_media_reading_and_ingestion_policy_actions():
+    client = FakeClient()
+    policy = Mock()
+    service = ServerMediaReadingService(client=client, policy_enforcer=policy)
+
+    await service.search_media(query="rag")
+    await service.get_media_detail(41)
+    await service.update_media_metadata(41, title="Renamed")
+    await service.delete_media(41)
+    await service.get_reading_progress(99)
+    await service.update_reading_progress(99, {"current_page": 5, "total_pages": 10})
+    await service.delete_reading_progress(99)
+    await service.list_ingestion_sources()
+    await service.create_ingestion_source(source_type="git_repository", sink_type="media")
+    await service.get_ingestion_source(7)
+    await service.patch_ingestion_source(7, enabled=False)
+    await service.list_ingestion_source_items(7)
+    await service.trigger_ingestion_source_sync(7)
+    await service.upload_ingestion_source_archive(7, "/tmp/archive.zip")
+    await service.list_document_versions(99)
+    await service.save_analysis_version(99, content="body", analysis_content="analysis")
+    await service.delete_document_version(99, 2)
+
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "media.reading.list.server",
+        "media.reading.detail.server",
+        "media.reading.update.server",
+        "media.reading.delete.server",
+        "media.reading_progress.detail.server",
+        "media.reading_progress.update.server",
+        "media.reading_progress.update.server",
+        "media.ingestion_sources.list.server",
+        "media.ingestion_sources.create.server",
+        "media.ingestion_sources.detail.server",
+        "media.ingestion_sources.update.server",
+        "media.ingestion_jobs.observe.server",
+        "media.ingestion_jobs.launch.server",
+        "media.ingestion_jobs.launch.server",
+        "media.reading.detail.server",
+        "media.reading.update.server",
+        "media.reading.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_hard_stops_denied_ui_policy_decision():
+    policy = Mock()
+    policy.require_allowed = None
+    policy.require_ui_action_allowed = Mock(
+        return_value=PolicyDecision(
+            allowed=False,
+            reason_code="server_unreachable",
+            user_message="Blocked.",
+            effective_source="server",
+            authority_owner="server",
+        )
+    )
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await service.search_media(query="rag")
+
+    assert exc.value.reason_code == "server_unreachable"
+    assert client.calls == []
 
 
 def test_server_service_from_config_uses_shared_api_client_builder(monkeypatch):
