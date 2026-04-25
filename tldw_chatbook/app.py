@@ -1381,6 +1381,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.local_rag_admin_service = LocalRAGAdminService(
             self.media_db,
             app_config=self.app_config,
+            media_service=self.local_media_reading_service,
         )
         self.rag_admin_scope_service = RAGAdminScopeService(
             local_service=self.local_rag_admin_service,

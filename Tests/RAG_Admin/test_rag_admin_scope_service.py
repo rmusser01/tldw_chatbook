@@ -18,6 +18,10 @@ class FakeLocalService:
         self.calls.append(("get_collection_detail", collection_name))
         return dict(self.collection_detail[collection_name])
 
+    def reprocess_media(self, media_id, **options):
+        self.calls.append(("reprocess_media", media_id, options))
+        return {"backend": "local", "media_id": media_id, "status": "queued", "options": options}
+
 
 class FakeServerService:
     def __init__(self, templates=None, collection_detail=None):
@@ -32,6 +36,10 @@ class FakeServerService:
     async def get_collection_detail(self, collection_name):
         self.calls.append(("get_collection_detail", collection_name))
         return dict(self.collection_detail[collection_name])
+
+    async def reprocess_media(self, media_id, **options):
+        self.calls.append(("reprocess_media", media_id, options))
+        return {"backend": "server", "media_id": media_id, "status": "queued", "options": options}
 
 
 class FakePolicyEnforcer:
@@ -132,3 +140,35 @@ async def test_scope_service_uses_stats_endpoint_for_server_collection_detail():
     assert detail["name"] == "demo"
     assert detail["count"] == 3
     assert server.calls == [("get_collection_detail", "demo")]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_reprocess_media_as_rag_admin_launch():
+    local = FakeLocalService()
+    server = FakeServerService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = RAGAdminScopeService(
+        local_service=local,
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    local_result = await scope.reprocess_media(
+        mode="local",
+        media_id=7,
+        generate_embeddings=True,
+    )
+    server_result = await scope.reprocess_media(
+        mode="server",
+        media_id=8,
+        chunking_template_name="server-demo",
+    )
+
+    assert local_result["backend"] == "local"
+    assert server_result["backend"] == "server"
+    assert local.calls == [("reprocess_media", 7, {"generate_embeddings": True})]
+    assert server.calls == [("reprocess_media", 8, {"chunking_template_name": "server-demo"})]
+    assert policy_enforcer.calls == [
+        "rag.admin.launch.local",
+        "rag.admin.launch.server",
+    ]

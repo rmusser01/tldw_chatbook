@@ -11,6 +11,7 @@ from ..tldw_api import (
     ChunkingTemplateApplyRequest,
     ChunkingTemplateCreateRequest,
     ChunkingTemplateUpdateRequest,
+    ReprocessMediaRequest,
     TLDWAPIClient,
 )
 
@@ -173,3 +174,25 @@ class ServerRAGAdminService:
     async def delete_collection(self, collection_name: str) -> None:
         self._enforce(self._admin_action_id("configure"))
         await self._require_client().delete_embedding_collection(collection_name)
+
+    async def reprocess_media(
+        self,
+        media_id: Any,
+        *,
+        perform_chunking: bool = True,
+        generate_embeddings: bool = False,
+        chunk_size: int = 500,
+        chunk_overlap: int = 200,
+        force_regenerate_embeddings: bool = False,
+        **options: Any,
+    ) -> dict[str, Any]:
+        self._enforce(self._admin_action_id("launch"))
+        request = ReprocessMediaRequest(
+            perform_chunking=perform_chunking,
+            generate_embeddings=generate_embeddings,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            force_regenerate_embeddings=force_regenerate_embeddings,
+            **options,
+        )
+        return self._dump_model(await self._require_client().reprocess_media(int(media_id), request))

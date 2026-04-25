@@ -25,12 +25,14 @@ class LocalRAGAdminService:
         user_id: Optional[str] = None,
         chunking_service: Any = None,
         chroma_manager: Any = None,
+        media_service: Any = None,
     ):
         self.media_db = media_db
         self.app_config = dict(app_config or {})
         self.user_id = str(user_id or self.app_config.get("USERS_NAME") or "default_user")
         self.chunking_service = chunking_service or (get_chunking_service(media_db) if media_db is not None else None)
         self._chroma_manager = chroma_manager
+        self.media_service = media_service
 
     def _require_chunking_service(self) -> Any:
         if self.chunking_service is None:
@@ -168,3 +170,11 @@ class LocalRAGAdminService:
 
     def delete_collection(self, collection_name: str) -> None:
         self._build_chroma_manager().delete_collection(collection_name)
+
+    def reprocess_media(self, media_id: Any, **options: Any) -> Any:
+        if self.media_service is None:
+            raise ValueError("Local media reprocess backend is unavailable.")
+        method = getattr(self.media_service, "reprocess_media", None)
+        if not callable(method):
+            raise ValueError("Local media reprocess backend is unavailable.")
+        return method(media_id, **options)

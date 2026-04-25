@@ -12,6 +12,8 @@ from tldw_chatbook.tldw_api import (
     ChunkingTemplateUpdateRequest,
     EmbeddingCollectionResponse,
     EmbeddingCollectionStatsResponse,
+    ReprocessMediaRequest,
+    ReprocessMediaResponse,
 )
 
 
@@ -104,6 +106,17 @@ class FakeClient:
         self.calls.append(("delete_embedding_collection", collection_name))
         return None
 
+    async def reprocess_media(self, media_id, request_data):
+        self.calls.append(("reprocess_media", media_id, request_data))
+        return ReprocessMediaResponse(
+            media_id=media_id,
+            status="queued",
+            message="Reprocess queued",
+            chunks_created=0,
+            embeddings_started=True,
+            job_id="job-7",
+        )
+
 
 @pytest.mark.asyncio
 async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
@@ -128,6 +141,13 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     collections = await service.list_collections()
     stats = await service.get_collection_detail("demo_collection")
     await service.delete_collection("demo_collection")
+    reprocessed = await service.reprocess_media(
+        7,
+        perform_chunking=True,
+        generate_embeddings=True,
+        force_regenerate_embeddings=True,
+        chunking_template_name="server-demo",
+    )
 
     assert client.calls[0] == (
         "list_chunking_templates",
@@ -141,6 +161,11 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     assert client.calls[4] == ("list_embedding_collections",)
     assert client.calls[5] == ("get_embedding_collection_stats", "demo_collection")
     assert client.calls[6] == ("delete_embedding_collection", "demo_collection")
+    assert client.calls[7][0] == "reprocess_media"
+    assert client.calls[7][1] == 7
+    assert isinstance(client.calls[7][2], ReprocessMediaRequest)
+    assert client.calls[7][2].generate_embeddings is True
+    assert client.calls[7][2].chunking_template_name == "server-demo"
 
     assert listed[0]["name"] == "server-demo"
     assert created["name"] == "created"
@@ -148,6 +173,8 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     assert diagnostics["capability"] == "native"
     assert collections[0]["name"] == "demo_collection"
     assert stats["count"] == 3
+    assert reprocessed["status"] == "queued"
+    assert reprocessed["job_id"] == "job-7"
 
 
 @pytest.mark.asyncio
@@ -174,6 +201,7 @@ async def test_server_rag_admin_service_enforces_policy_actions():
     await service.list_collections()
     await service.get_collection_detail("demo_collection")
     await service.delete_collection("demo_collection")
+    await service.reprocess_media(7, generate_embeddings=True)
 
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "rag.template.list.server",
@@ -183,6 +211,7 @@ async def test_server_rag_admin_service_enforces_policy_actions():
         "rag.admin.list.server",
         "rag.admin.observe.server",
         "rag.admin.configure.server",
+        "rag.admin.launch.server",
     ]
 
 

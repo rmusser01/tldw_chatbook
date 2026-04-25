@@ -227,3 +227,19 @@ class RAGAdminScopeService:
         self._enforce_policy(self._admin_action_id(normalized_mode, "configure"))
         service = self._service_for_mode(normalized_mode)
         await self._maybe_await(service.delete_collection(collection_name))
+
+    async def reprocess_media(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        media_id: Any,
+        **options: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._admin_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        method = getattr(service, "reprocess_media", None)
+        if not callable(method):
+            raise ValueError(f"{normalized_mode.value.title()} media reprocess is not available yet.")
+        result = await self._maybe_await(method(media_id, **options))
+        return dict(result or {})
