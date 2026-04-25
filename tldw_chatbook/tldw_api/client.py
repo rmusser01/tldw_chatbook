@@ -136,6 +136,22 @@ from .data_tables_schemas import (
     DataTableSummary,
     DataTableUpdateRequest,
 )
+from .meetings_schemas import (
+    MeetingArtifactCreate,
+    MeetingArtifactResponse,
+    MeetingFinalizeRequest,
+    MeetingFinalizeResponse,
+    MeetingHealthResponse,
+    MeetingSessionCreate,
+    MeetingSessionResponse,
+    MeetingSessionStatus,
+    MeetingSessionStatusUpdate,
+    MeetingShareRequest,
+    MeetingShareResponse,
+    MeetingTemplateCreate,
+    MeetingTemplateResponse,
+    MeetingTemplateScope,
+)
 from .rag_admin_schemas import (
     ChunkingTemplateApplyRequest,
     ChunkingTemplateApplyResponse,
@@ -1099,6 +1115,137 @@ class TLDWAPIClient:
             params={key: value for key, value in {"reason": reason}.items() if value is not None},
         )
         return DataTableJobCancelResponse.model_validate(response)
+
+    async def get_meetings_health(self) -> MeetingHealthResponse:
+        response = await self._request("GET", "/api/v1/meetings/health")
+        return MeetingHealthResponse.model_validate(response)
+
+    async def create_meeting_session(self, request_data: MeetingSessionCreate) -> MeetingSessionResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/meetings/sessions",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return MeetingSessionResponse.model_validate(response)
+
+    async def list_meeting_sessions(
+        self,
+        *,
+        status_filter: MeetingSessionStatus | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[MeetingSessionResponse]:
+        params = {"status": status_filter, "limit": limit, "offset": offset}
+        response = await self._request(
+            "GET",
+            "/api/v1/meetings/sessions",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return [MeetingSessionResponse.model_validate(item) for item in response]
+
+    async def get_meeting_session(self, session_id: str) -> MeetingSessionResponse:
+        response = await self._request("GET", f"/api/v1/meetings/sessions/{session_id}")
+        return MeetingSessionResponse.model_validate(response)
+
+    async def update_meeting_session_status(
+        self,
+        session_id: str,
+        request_data: MeetingSessionStatusUpdate,
+    ) -> MeetingSessionResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/meetings/sessions/{session_id}/status",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return MeetingSessionResponse.model_validate(response)
+
+    async def create_meeting_template(self, request_data: MeetingTemplateCreate) -> MeetingTemplateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/meetings/templates",
+            json_data=request_data.model_dump(mode="json", by_alias=True),
+        )
+        return MeetingTemplateResponse.model_validate(response)
+
+    async def list_meeting_templates(
+        self,
+        *,
+        scope: MeetingTemplateScope | None = None,
+        include_disabled: bool = False,
+    ) -> list[MeetingTemplateResponse]:
+        params = {"scope": scope, "include_disabled": str(include_disabled).lower()}
+        response = await self._request(
+            "GET",
+            "/api/v1/meetings/templates",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return [MeetingTemplateResponse.model_validate(item) for item in response]
+
+    async def get_meeting_template(self, template_id: str) -> MeetingTemplateResponse:
+        response = await self._request("GET", f"/api/v1/meetings/templates/{template_id}")
+        return MeetingTemplateResponse.model_validate(response)
+
+    async def create_meeting_artifact(
+        self,
+        session_id: str,
+        request_data: MeetingArtifactCreate,
+    ) -> MeetingArtifactResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/meetings/sessions/{session_id}/artifacts",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return MeetingArtifactResponse.model_validate(response)
+
+    async def list_meeting_artifacts(self, session_id: str) -> list[MeetingArtifactResponse]:
+        response = await self._request("GET", f"/api/v1/meetings/sessions/{session_id}/artifacts")
+        return [MeetingArtifactResponse.model_validate(item) for item in response]
+
+    async def finalize_meeting_session(
+        self,
+        session_id: str,
+        request_data: MeetingFinalizeRequest,
+    ) -> MeetingFinalizeResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/meetings/sessions/{session_id}/commit",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return MeetingFinalizeResponse.model_validate(response)
+
+    async def share_meeting_session_to_slack(
+        self,
+        session_id: str,
+        request_data: MeetingShareRequest,
+    ) -> MeetingShareResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/meetings/sessions/{session_id}/share/slack",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return MeetingShareResponse.model_validate(response)
+
+    async def share_meeting_session_to_webhook(
+        self,
+        session_id: str,
+        request_data: MeetingShareRequest,
+    ) -> MeetingShareResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/meetings/sessions/{session_id}/share/webhook",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return MeetingShareResponse.model_validate(response)
+
+    async def stream_meeting_session_events(
+        self,
+        session_id: str,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        async for event in self._sse_request(
+            "GET",
+            f"/api/v1/meetings/sessions/{session_id}/events",
+        ):
+            yield event
 
     async def submit_media_ingest_jobs(
         self,

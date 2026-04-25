@@ -506,6 +506,25 @@ from .data_tables_schemas import (
     DataTableUpdateRequest,
     SourceType,
 )
+from .meetings_schemas import (
+    MeetingArtifactCreate,
+    MeetingArtifactKind,
+    MeetingArtifactResponse,
+    MeetingFinalizeRequest,
+    MeetingFinalizeResponse,
+    MeetingHealthResponse,
+    MeetingIntegrationType,
+    MeetingSessionCreate,
+    MeetingSessionResponse,
+    MeetingSessionStatus,
+    MeetingSessionStatusUpdate,
+    MeetingShareRequest,
+    MeetingShareResponse,
+    MeetingSourceType,
+    MeetingTemplateCreate,
+    MeetingTemplateResponse,
+    MeetingTemplateScope,
+)
 
 __all__ = [
     "TLDWAPIClient",
@@ -650,4 +669,10 @@ __all__ = [
     "DataTableGenerateResponse", "DataTableJobCancelResponse", "DataTableJobStatus",
     "DataTableRegenerateRequest", "DataTableRow", "DataTableRowData", "DataTablesListResponse",
     "DataTableSource", "DataTableSourceInput", "DataTableSummary", "DataTableUpdateRequest", "SourceType",
+    "MeetingArtifactCreate", "MeetingArtifactKind", "MeetingArtifactResponse",
+    "MeetingFinalizeRequest", "MeetingFinalizeResponse", "MeetingHealthResponse",
+    "MeetingIntegrationType", "MeetingSessionCreate", "MeetingSessionResponse",
+    "MeetingSessionStatus", "MeetingSessionStatusUpdate", "MeetingShareRequest",
+    "MeetingShareResponse", "MeetingSourceType", "MeetingTemplateCreate",
+    "MeetingTemplateResponse", "MeetingTemplateScope",
 ]

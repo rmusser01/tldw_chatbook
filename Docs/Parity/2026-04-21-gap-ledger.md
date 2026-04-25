@@ -189,6 +189,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 3
 - Notes: Priority 45. This is now a remote-client backend/adoption gap rather than an absent client wrapper.
 
+### Meetings: Meeting sessions, templates, artifacts, finalization, sharing, and event stream
+- Requirement class: Remote-only acceptable
+- Client obligation: Full CRUD + Observe
+- Current state: Chatbook now has typed direct API-client wrappers for meeting health, session create/list/detail/status transition, template create/list/detail, artifact create/list, session finalization, Slack/webhook share dispatch, and session event SSE streaming.
+- Gap: Dedicated meetings UX/adoption, local meeting-store parity, websocket live transcript ingestion, and any offline meeting workflow remain pending. The current Chatbook surface is a server client contract only.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/meetings.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/meetings_schemas.py`; Verification: `Tests/tldw_api/test_meetings_client.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 34. This is useful connected-client coverage but stays below local-first reading, writing, chat, research, and notification work.
+
 ### Workflows: General workflow definitions and run lifecycle
 - Requirement class: Remote-only acceptable
 - Client obligation: Discover / Trigger / Observe
