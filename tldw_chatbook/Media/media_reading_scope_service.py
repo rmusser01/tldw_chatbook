@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping, Optional
 
@@ -50,6 +51,15 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
 class MediaReadingBackend(str, Enum):
     LOCAL = "local"
     SERVER = "server"
+
+
+@dataclass(frozen=True)
+class ReadItLaterContextCapability:
+    """Source-aware read-it-later browse capability for the current UI context."""
+
+    available: bool
+    aggregate_only: bool
+    reason: str | None = None
 
 
 class MediaReadingScopeService:
@@ -126,19 +136,48 @@ class MediaReadingScopeService:
     def _ingestion_source_item_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.ingestion_source_items.{action}.{mode.value}"
 
+    def get_read_it_later_context_capability(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_type_slug: str | None = None,
+    ) -> ReadItLaterContextCapability:
+        """Return the authoritative read-it-later browse capability for a context."""
+        normalized_mode = self._normalize_mode(mode)
+        normalized_media_type = str(media_type_slug or "all-media").strip().lower() or "all-media"
+
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            return ReadItLaterContextCapability(
+                available=True,
+                aggregate_only=False,
+                reason=None,
+            )
+
+        if normalized_media_type == "all-media":
+            return ReadItLaterContextCapability(
+                available=True,
+                aggregate_only=True,
+                reason=None,
+            )
+
+        return ReadItLaterContextCapability(
+            available=False,
+            aggregate_only=True,
+            reason="Read-it-later is only available in server mode from All Media.",
+        )
+
     def read_it_later_browse_capability(
         self,
         *,
         mode: MediaReadingBackend | str | None = None,
         media_type_context: str | None = None,
     ) -> dict[str, Any]:
-        """Return whether the read-it-later browse view is valid in a UI context."""
-        normalized_mode = self._normalize_mode(mode)
-        normalized_media_type = str(media_type_context or "all-media").strip() or "all-media"
-        if normalized_mode == MediaReadingBackend.SERVER and normalized_media_type != "all-media":
-            reason = "Read-it-later is only available in server mode from All Media."
-            return {"available": False, "reason": reason}
-        return {"available": True, "reason": ""}
+        """Compatibility adapter for older UI code that expects a dict payload."""
+        capability = self.get_read_it_later_context_capability(
+            mode=mode,
+            media_type_slug=media_type_context,
+        )
+        return {"available": capability.available, "reason": capability.reason or ""}
 
     def _service_for_mode(self, mode: MediaReadingBackend) -> Any:
         if mode == MediaReadingBackend.LOCAL:

@@ -173,21 +173,41 @@ class MediaWindow(Container):
         mode = self._runtime_backend()
         media_type_context = self.active_media_type or "all-media"
         scope_service = self._scope_service()
-        capability_getter = getattr(scope_service, "read_it_later_browse_capability", None)
+        capability_getter = getattr(scope_service, "get_read_it_later_context_capability", None)
         if callable(capability_getter):
-            capability = capability_getter(mode=mode, media_type_context=media_type_context)
-            if isinstance(capability, dict):
-                return {
-                    "available": bool(capability.get("available", True)),
-                    "reason": str(capability.get("reason") or ""),
-                }
+            capability = capability_getter(mode=mode, media_type_slug=media_type_context)
+            normalized = self._normalize_saved_view_capability(capability)
+            if normalized is not None:
+                return normalized
 
-        if mode == "server" and media_type_context != "all-media":
+        legacy_getter = getattr(scope_service, "read_it_later_browse_capability", None)
+        if callable(legacy_getter):
+            capability = legacy_getter(mode=mode, media_type_context=media_type_context)
+            normalized = self._normalize_saved_view_capability(capability)
+            if normalized is not None:
+                return normalized
+
+        return {"available": True, "aggregate_only": False, "reason": ""}
+
+    @staticmethod
+    def _normalize_saved_view_capability(capability: Any) -> Optional[Dict[str, Any]]:
+        """Normalize scope-service capability objects while ignoring bare mocks."""
+        if isinstance(capability, dict):
             return {
-                "available": False,
-                "reason": "Read-it-later is only available in server mode from All Media.",
+                "available": bool(capability.get("available", True)),
+                "aggregate_only": bool(capability.get("aggregate_only", False)),
+                "reason": str(capability.get("reason") or ""),
             }
-        return {"available": True, "reason": ""}
+
+        available = getattr(capability, "available", None)
+        if not isinstance(available, bool):
+            return None
+
+        return {
+            "available": available,
+            "aggregate_only": bool(getattr(capability, "aggregate_only", False)),
+            "reason": str(getattr(capability, "reason", None) or ""),
+        }
 
     def _saved_view_available_for_context(self) -> bool:
         """Return whether saved-view browsing is available for the current context."""
@@ -583,6 +603,7 @@ class MediaWindow(Container):
         logger.info("MediaWindow v2 mounted")
         
         # Don't activate initial view here - let activate_initial_view handle it
+        self._reset_invalid_saved_view_for_context()
         
         # Check initial size for responsiveness
         self.call_after_refresh(self.check_responsive_layout)

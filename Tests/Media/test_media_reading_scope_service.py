@@ -848,6 +848,36 @@ def test_scope_service_reports_server_read_it_later_as_aggregate_only():
     assert local_article == {"available": True, "reason": ""}
 
 
+def test_scope_service_read_it_later_context_capability_exposes_aggregate_metadata():
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+    )
+
+    local_article = scope_service.get_read_it_later_context_capability(
+        mode="local",
+        media_type_slug="article",
+    )
+    server_all = scope_service.get_read_it_later_context_capability(
+        mode="server",
+        media_type_slug="all-media",
+    )
+    server_article = scope_service.get_read_it_later_context_capability(
+        mode="server",
+        media_type_slug="article",
+    )
+
+    assert local_article.available is True
+    assert local_article.aggregate_only is False
+    assert local_article.reason is None
+    assert server_all.available is True
+    assert server_all.aggregate_only is True
+    assert server_all.reason is None
+    assert server_article.available is False
+    assert server_article.aggregate_only is True
+    assert server_article.reason == "Read-it-later is only available in server mode from All Media."
+
+
 def test_scope_service_reports_known_media_reading_capability_gaps():
     scope_service = MediaReadingScopeService(
         local_service=FakeLocalMediaService(),

@@ -323,6 +323,99 @@ async def test_media_window_uses_explicit_saved_view_search_for_read_it_later_su
     scope_service.search_media.assert_not_awaited()
 
 
+def test_media_window_uses_scope_saved_view_capability_as_authority():
+    scope_service = SimpleNamespace(
+        search_media=AsyncMock(return_value={"items": [], "total": 0}),
+        get_read_it_later_context_capability=Mock(
+            return_value=SimpleNamespace(
+                available=False,
+                aggregate_only=True,
+                reason="Scope-owned reason.",
+            )
+        ),
+    )
+    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window.active_media_type = "all-media"
+
+    capability = window._saved_view_capability_for_context()
+
+    assert capability == {
+        "available": False,
+        "aggregate_only": True,
+        "reason": "Scope-owned reason.",
+    }
+    scope_service.get_read_it_later_context_capability.assert_called_once_with(
+        mode="server",
+        media_type_slug="all-media",
+    )
+
+
+def test_media_window_mount_normalizes_invalid_restored_server_saved_context():
+    scope_service = SimpleNamespace(
+        search_media=AsyncMock(return_value={"items": [], "total": 0}),
+        get_read_it_later_context_capability=Mock(
+            return_value=SimpleNamespace(
+                available=False,
+                aggregate_only=True,
+                reason="Scope-owned reason.",
+            )
+        ),
+    )
+    window, app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window.call_after_refresh = Mock()
+    window.active_media_type = "article"
+    window.runtime_state.active_browse_subview = "read-it-later"
+    window.runtime_state.selected_record_id = "server:reading_item:41"
+    window.runtime_state.browse_items = [{"id": "server:reading_item:41", "title": "Stale"}]
+    window.runtime_state.detail_by_record_id = {"server:reading_item:41": {"id": "server:reading_item:41"}}
+
+    window.on_mount()
+
+    assert window.runtime_state.active_browse_subview == "all"
+    assert window.runtime_state.selected_record_id is None
+    assert window.runtime_state.browse_items == []
+    assert window.runtime_state.detail_by_record_id == {}
+    app.notify.assert_called_once_with("Scope-owned reason.", severity="warning")
+
+
+@pytest.mark.asyncio
+async def test_media_window_prequery_normalizes_invalid_server_saved_context_and_requeries_clean_state():
+    scope_service = SimpleNamespace(
+        search_media=AsyncMock(
+            return_value={
+                "items": [{"id": "server:reading_item:200", "title": "Corrected", "media_type": "article"}],
+                "total": 1,
+            }
+        ),
+        get_read_it_later_context_capability=Mock(
+            return_value=SimpleNamespace(
+                available=False,
+                aggregate_only=True,
+                reason="Scope-owned reason.",
+            )
+        ),
+    )
+    window, app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window.active_media_type = "article"
+    window.runtime_state.active_browse_subview = "read-it-later"
+    window.runtime_state.selected_record_id = "server:reading_item:41"
+    window.runtime_state.browse_items = [{"id": "server:reading_item:41", "title": "Stale"}]
+    window.runtime_state.detail_by_record_id = {"server:reading_item:41": {"id": "server:reading_item:41"}}
+
+    tasks = []
+    window.run_worker = lambda coro, exclusive=True: tasks.append(asyncio.create_task(coro))
+
+    window._perform_search("article", "", "")
+    await asyncio.gather(*tasks)
+
+    assert window.runtime_state.active_browse_subview == "all"
+    assert window.runtime_state.selected_record_id is None
+    assert window.runtime_state.detail_by_record_id == {}
+    assert [item["id"] for item in window.runtime_state.browse_items] == ["server:reading_item:200"]
+    app.notify.assert_called_once_with("Scope-owned reason.", severity="warning")
+    scope_service.search_media.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_media_window_remove_from_saved_view_clears_selection_when_filtered_out():
     scope_service = Mock()
@@ -476,7 +569,17 @@ async def test_media_window_server_toggle_keeps_selection_when_off_page_in_non_s
 
 @pytest.mark.asyncio
 async def test_media_window_forces_server_saved_view_back_to_all_media_when_type_is_not_all_media():
-    window, app = _build_media_window(runtime_backend="server", scope_service=Mock())
+    scope_service = SimpleNamespace(
+        search_media=AsyncMock(return_value={"items": [], "total": 0}),
+        get_read_it_later_context_capability=Mock(
+            return_value=SimpleNamespace(
+                available=False,
+                aggregate_only=True,
+                reason="Read-it-later is only available in server mode from All Media.",
+            )
+        ),
+    )
+    window, app = _build_media_window(runtime_backend="server", scope_service=scope_service)
     window.runtime_state.active_browse_subview = "read-it-later"
 
     window.activate_media_type("article", "Article")
