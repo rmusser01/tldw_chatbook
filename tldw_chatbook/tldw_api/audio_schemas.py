@@ -60,6 +60,65 @@ class TTSVoicesResponse(RootModel[dict[str, Any]]):
     pass
 
 
+class VoiceEncodeRequest(BaseModel):
+    voice_id: str
+    provider: str = "neutts"
+    reference_text: str | None = None
+    force: bool = False
+
+
+class VoiceEncodeResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    voice_id: str
+    provider: str
+    cached: bool = False
+    ref_codes_len: int | None = None
+    reference_text: str | None = None
+
+
+class CustomVoiceResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    voice_id: str | None = None
+    id: str | None = None
+    name: str | None = None
+    provider: str | None = None
+    status: str | None = None
+
+
+class CustomVoiceListResponse(BaseModel):
+    voices: list[CustomVoiceResponse] = Field(default_factory=list)
+    count: int = 0
+
+
+class CustomVoiceDeleteResponse(BaseModel):
+    message: str
+    voice_id: str
+
+
+class AudioTokenizerEncodeRequest(BaseModel):
+    audio_base64: str
+    tokenizer_model: str | None = None
+    sample_rate: int | None = None
+    token_format: Literal["list", "base64"] = "list"
+
+
+class AudioTokenizerEncodeResponse(BaseModel):
+    tokens: Any
+    token_format: Literal["list", "base64"]
+    sample_rate: int
+    frame_rate: float | None = None
+    tokenizer_model: str
+    duration_seconds: float
+
+
+class AudioTokenizerDecodeRequest(BaseModel):
+    tokens: Any
+    tokenizer_model: str | None = None
+    response_format: Literal["wav", "pcm"] = "wav"
+
+
 class AudioSpeechJobCreateResponse(BaseModel):
     job_id: int
     status: str
@@ -210,9 +269,15 @@ __all__ = [
     "AudioSpeechArtifact",
     "AudioSpeechJobArtifactsResponse",
     "AudioSpeechJobCreateResponse",
+    "AudioTokenizerDecodeRequest",
+    "AudioTokenizerEncodeRequest",
+    "AudioTokenizerEncodeResponse",
     "AudioTranscriptionRequest",
     "AudioTranscriptionResponse",
     "AudioTranslationRequest",
+    "CustomVoiceDeleteResponse",
+    "CustomVoiceListResponse",
+    "CustomVoiceResponse",
     "NormalizationOptions",
     "OpenAISpeechRequest",
     "SubmitAudioJobRequest",
@@ -225,4 +290,6 @@ __all__ = [
     "TTSHistoryListResponse",
     "TTSProvidersResponse",
     "TTSVoicesResponse",
+    "VoiceEncodeRequest",
+    "VoiceEncodeResponse",
 ]

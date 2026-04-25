@@ -6,9 +6,15 @@ from tldw_chatbook.tldw_api import (
     AudioJobResponse,
     AudioSpeechJobArtifactsResponse,
     AudioSpeechJobCreateResponse,
+    AudioTokenizerDecodeRequest,
+    AudioTokenizerEncodeRequest,
+    AudioTokenizerEncodeResponse,
     AudioTranscriptionRequest,
     AudioTranscriptionResponse,
     AudioTranslationRequest,
+    CustomVoiceDeleteResponse,
+    CustomVoiceListResponse,
+    CustomVoiceResponse,
     OpenAISpeechRequest,
     ReadingExportResponse,
     SubmitAudioJobRequest,
@@ -19,6 +25,8 @@ from tldw_chatbook.tldw_api import (
     TTSHistoryListResponse,
     TTSProvidersResponse,
     TTSVoicesResponse,
+    VoiceEncodeRequest,
+    VoiceEncodeResponse,
 )
 
 
@@ -212,3 +220,124 @@ async def test_audio_routes_wire_speech_jobs_history_and_transcription(monkeypat
     assert isinstance(transcription, AudioTranscriptionResponse)
     assert isinstance(translation, AudioTranscriptionResponse)
     assert translation.text == "Translated"
+
+
+@pytest.mark.asyncio
+async def test_audio_tokenizer_and_custom_voice_routes(monkeypatch, tmp_path):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "tokens": [1, 2, 3],
+                "token_format": "list",
+                "sample_rate": 24000,
+                "frame_rate": 50.0,
+                "tokenizer_model": "qwen3",
+                "duration_seconds": 1.0,
+            },
+            {
+                "tokens": "AQID",
+                "token_format": "base64",
+                "sample_rate": 24000,
+                "tokenizer_model": "qwen3",
+                "duration_seconds": 1.0,
+            },
+            {"voice_id": "voice-1", "name": "Narrator", "provider": "vibevoice", "status": "ready"},
+            {"voice_id": "voice-1", "provider": "neutts", "cached": False, "ref_codes_len": 128},
+            {"voices": [{"voice_id": "voice-1", "name": "Narrator"}], "count": 1},
+            {"voice_id": "voice-1", "name": "Narrator", "provider": "vibevoice"},
+            {"message": "Voice deleted successfully", "voice_id": "voice-1"},
+        ]
+    )
+    decoded_audio = ReadingExportResponse(
+        content=b"RIFF",
+        content_type="audio/wav",
+        content_disposition=None,
+        filename=None,
+    )
+    preview_audio = ReadingExportResponse(
+        content=b"mp3",
+        content_type="audio/mpeg",
+        content_disposition='inline; filename="preview_voice-1.mp3"',
+        filename="preview_voice-1.mp3",
+    )
+    binary = AsyncMock(side_effect=[decoded_audio, preview_audio])
+    monkeypatch.setattr(client, "_request", mocked)
+    monkeypatch.setattr(client, "_binary_request", binary)
+
+    voice_file = tmp_path / "voice.wav"
+    voice_file.write_bytes(b"RIFF")
+    tokenizer_file = tmp_path / "sample.wav"
+    tokenizer_file.write_bytes(b"RIF2")
+
+    encoded = await client.encode_audio_tokenizer(
+        AudioTokenizerEncodeRequest(audio_base64="UklGRg==", tokenizer_model="qwen3", token_format="list")
+    )
+    encoded_file = await client.encode_audio_tokenizer_file(
+        str(tokenizer_file),
+        tokenizer_model="qwen3",
+        token_format="base64",
+        sample_rate=24000,
+    )
+    decoded = await client.decode_audio_tokenizer(
+        AudioTokenizerDecodeRequest(tokens=[1, 2, 3], tokenizer_model="qwen3", response_format="wav")
+    )
+    uploaded = await client.upload_custom_voice(
+        str(voice_file),
+        name="Narrator",
+        description="Calm",
+        provider="vibevoice",
+        reference_text="hello",
+    )
+    voice_encoded = await client.encode_custom_voice_reference(
+        VoiceEncodeRequest(voice_id="voice-1", provider="neutts", reference_text="hello", force=True)
+    )
+    voices = await client.list_custom_voices()
+    voice = await client.get_custom_voice("voice-1")
+    preview = await client.preview_custom_voice("voice-1", text="Preview")
+    deleted = await client.delete_custom_voice("voice-1")
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/audio/tokenizer/encode")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "audio_base64": "UklGRg==",
+        "tokenizer_model": "qwen3",
+        "token_format": "list",
+    }
+    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/audio/tokenizer/encode")
+    assert mocked.await_args_list[1].kwargs["data"] == {
+        "tokenizer_model": "qwen3",
+        "token_format": "base64",
+        "sample_rate": "24000",
+    }
+    assert mocked.await_args_list[1].kwargs["files"][0][0] == "file"
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/audio/voices/upload")
+    assert mocked.await_args_list[2].kwargs["data"] == {
+        "name": "Narrator",
+        "description": "Calm",
+        "provider": "vibevoice",
+        "reference_text": "hello",
+    }
+    assert mocked.await_args_list[2].kwargs["files"][0][0] == "file"
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/audio/voices/encode")
+    assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/audio/voices")
+    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/audio/voices/voice-1")
+    assert mocked.await_args_list[6].args[:2] == ("DELETE", "/api/v1/audio/voices/voice-1")
+    assert binary.await_args_list[0].args[:2] == ("POST", "/api/v1/audio/tokenizer/decode")
+    assert binary.await_args_list[0].kwargs["json_data"] == {
+        "tokens": [1, 2, 3],
+        "tokenizer_model": "qwen3",
+        "response_format": "wav",
+    }
+    assert binary.await_args_list[1].args[:2] == ("POST", "/api/v1/audio/voices/voice-1/preview")
+    assert binary.await_args_list[1].kwargs["data"] == {"text": "Preview"}
+    assert isinstance(encoded, AudioTokenizerEncodeResponse)
+    assert encoded.tokens == [1, 2, 3]
+    assert encoded_file.token_format == "base64"
+    assert decoded.content == b"RIFF"
+    assert isinstance(uploaded, CustomVoiceResponse)
+    assert isinstance(voice_encoded, VoiceEncodeResponse)
+    assert isinstance(voices, CustomVoiceListResponse)
+    assert voices.count == 1
+    assert voice.voice_id == "voice-1"
+    assert preview.filename == "preview_voice-1.mp3"
+    assert isinstance(deleted, CustomVoiceDeleteResponse)

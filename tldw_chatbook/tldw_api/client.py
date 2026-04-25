@@ -414,9 +414,15 @@ from .audio_schemas import (
     AudioJobResponse,
     AudioSpeechJobArtifactsResponse,
     AudioSpeechJobCreateResponse,
+    AudioTokenizerDecodeRequest,
+    AudioTokenizerEncodeRequest,
+    AudioTokenizerEncodeResponse,
     AudioTranscriptionRequest,
     AudioTranscriptionResponse,
     AudioTranslationRequest,
+    CustomVoiceDeleteResponse,
+    CustomVoiceListResponse,
+    CustomVoiceResponse,
     OpenAISpeechRequest,
     SubmitAudioJobRequest,
     SubmitAudioJobResponse,
@@ -426,6 +432,8 @@ from .audio_schemas import (
     TTSHistoryListResponse,
     TTSProvidersResponse,
     TTSVoicesResponse,
+    VoiceEncodeRequest,
+    VoiceEncodeResponse,
 )
 from .rag_admin_schemas import (
     ChunkingTemplateApplyRequest,
@@ -3070,6 +3078,122 @@ class TLDWAPIClient:
             params={"after_id": after_id},
         ):
             yield event
+
+    async def encode_audio_tokenizer(
+        self,
+        request_data: AudioTokenizerEncodeRequest,
+    ) -> AudioTokenizerEncodeResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/audio/tokenizer/encode",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return AudioTokenizerEncodeResponse.model_validate(response)
+
+    async def encode_audio_tokenizer_file(
+        self,
+        file_path: str,
+        *,
+        tokenizer_model: str | None = None,
+        token_format: Literal["list", "base64"] = "list",
+        sample_rate: int | None = None,
+    ) -> AudioTokenizerEncodeResponse:
+        httpx_files = prepare_files_for_httpx([file_path], upload_field_name="file")
+        form_data = {
+            key: value
+            for key, value in {
+                "tokenizer_model": tokenizer_model,
+                "token_format": token_format,
+                "sample_rate": str(sample_rate) if sample_rate is not None else None,
+            }.items()
+            if value is not None
+        }
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/audio/tokenizer/encode",
+                data=form_data,
+                files=httpx_files,
+            )
+            return AudioTokenizerEncodeResponse.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def decode_audio_tokenizer(
+        self,
+        request_data: AudioTokenizerDecodeRequest,
+    ) -> ReadingExportResponse:
+        return await self._binary_request(
+            "POST",
+            "/api/v1/audio/tokenizer/decode",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def upload_custom_voice(
+        self,
+        file_path: str,
+        *,
+        name: str,
+        description: str | None = None,
+        provider: str = "vibevoice",
+        reference_text: str | None = None,
+    ) -> CustomVoiceResponse:
+        httpx_files = prepare_files_for_httpx([file_path], upload_field_name="file")
+        form_data = {
+            key: value
+            for key, value in {
+                "name": name,
+                "description": description,
+                "provider": provider,
+                "reference_text": reference_text,
+            }.items()
+            if value is not None
+        }
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/audio/voices/upload",
+                data=form_data,
+                files=httpx_files,
+            )
+            return CustomVoiceResponse.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def encode_custom_voice_reference(
+        self,
+        request_data: VoiceEncodeRequest,
+    ) -> VoiceEncodeResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/audio/voices/encode",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return VoiceEncodeResponse.model_validate(response)
+
+    async def list_custom_voices(self) -> CustomVoiceListResponse:
+        response = await self._request("GET", "/api/v1/audio/voices")
+        return CustomVoiceListResponse.model_validate(response)
+
+    async def get_custom_voice(self, voice_id: str) -> CustomVoiceResponse:
+        response = await self._request("GET", f"/api/v1/audio/voices/{voice_id}")
+        return CustomVoiceResponse.model_validate(response)
+
+    async def delete_custom_voice(self, voice_id: str) -> CustomVoiceDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/audio/voices/{voice_id}")
+        return CustomVoiceDeleteResponse.model_validate(response)
+
+    async def preview_custom_voice(
+        self,
+        voice_id: str,
+        *,
+        text: str = "Hello, this is a preview of your custom voice.",
+    ) -> ReadingExportResponse:
+        return await self._binary_request(
+            "POST",
+            f"/api/v1/audio/voices/{voice_id}/preview",
+            data={"text": text},
+        )
 
     async def list_tts_history(
         self,
