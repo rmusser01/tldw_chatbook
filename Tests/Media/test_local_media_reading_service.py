@@ -535,6 +535,34 @@ def test_local_service_syncs_local_directory_ingestion_source_items(memory_db_fa
     assert detail["last_sync_completed_at"] is not None
 
 
+def test_local_service_uploads_archive_snapshot_into_source_items(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    archive_path = tmp_path / "snapshot.zip"
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("alpha.md", "# Alpha\n")
+        archive.writestr("nested/beta.txt", "Beta\n")
+    source = service.create_ingestion_source(
+        source_type="archive_snapshot",
+        sink_type="media",
+        policy="canonical",
+        config={},
+    )
+
+    uploaded = service.upload_ingestion_source_archive(source["id"], str(archive_path))
+    job = service.get_ingest_job(uploaded["job_id"])
+    items = service.list_ingestion_source_items(source["id"])
+
+    assert uploaded["status"] == "completed"
+    assert uploaded["snapshot_status"] == "materialized"
+    assert job["status"] == "completed"
+    assert job["result"]["source_type"] == "archive_snapshot"
+    assert job["result"]["scanned"] == 2
+    assert {item["normalized_relative_path"] for item in items} == {"alpha.md", "nested/beta.txt"}
+    assert {item["sync_status"] for item in items} == {"pending"}
+    assert all(item["content_hash"] for item in items)
+
+
 def test_local_service_reattaches_detached_ingestion_source_item(memory_db_factory):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)

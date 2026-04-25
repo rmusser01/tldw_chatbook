@@ -1052,11 +1052,13 @@ class LocalMediaReadingService:
             source_id=int(source_id),
         )
         self._set_ingestion_source_active_job(source_id, job["id"], status="queued")
+        executed = self.execute_ingest_job(job["id"])
         return {
-            "status": "queued",
+            "status": executed.get("status"),
             "source_id": int(source_id),
             "job_id": job["id"],
-            "snapshot_status": "staged",
+            "snapshot_status": "materialized" if executed.get("status") == "completed" else "failed",
+            "result": executed.get("result"),
         }
 
     def submit_ingest_jobs(self, **kwargs: Any) -> Any:
@@ -1106,6 +1108,7 @@ class LocalMediaReadingService:
             return job
         supported_job = (
             job.get("job_type") == "ingestion_source_sync"
+            or job.get("job_type") == "ingestion_source_archive"
             or (job.get("job_type") == "media_ingest" and job.get("source_kind") == "file")
             or (job.get("job_type") == "media_ingest" and job.get("source_kind") == "url")
         )
@@ -1114,6 +1117,8 @@ class LocalMediaReadingService:
 
         if job.get("job_type") == "ingestion_source_sync":
             progress_message = "Syncing ingestion source"
+        elif job.get("job_type") == "ingestion_source_archive":
+            progress_message = "Importing archive snapshot"
         elif job.get("source_kind") == "url":
             progress_message = "Ingesting URL"
         else:
@@ -1122,6 +1127,8 @@ class LocalMediaReadingService:
         try:
             if job.get("job_type") == "ingestion_source_sync":
                 result = self._execute_ingestion_source_sync_job(job)
+            elif job.get("job_type") == "ingestion_source_archive":
+                result = self._execute_archive_snapshot_ingest_job(job)
             elif job.get("source_kind") == "url":
                 result = self._execute_url_article_media_ingest_job(job)
             else:
@@ -1283,9 +1290,19 @@ class LocalMediaReadingService:
             raise ValueError("Local ingestion source sync job is missing source_id.")
         source = self.get_ingestion_source(source_id)
         source_type = str(source.get("source_type") or "")
+        config = dict(source.get("config") or {})
+        if source_type == "archive_snapshot":
+            archive_path = config.get("archive_path") or config.get("path") or config.get("last_archive_path")
+            if not archive_path:
+                raise ValueError("Archive snapshot source is missing archive_path.")
+            result = self._sync_archive_snapshot_source_items(int(source_id), Path(str(archive_path)).expanduser())
+            return {
+                "source_id": int(source_id),
+                "source_type": source_type,
+                **result,
+            }
         if source_type != "local_directory":
             raise ValueError(f"Local ingestion source execution is not implemented for {source_type}.")
-        config = dict(source.get("config") or {})
         root = Path(str(config.get("path") or "")).expanduser()
         if not root.is_dir():
             raise FileNotFoundError(f"Local ingestion source path is not a directory: {root}")
@@ -1296,18 +1313,54 @@ class LocalMediaReadingService:
             **result,
         }
 
+    def _execute_archive_snapshot_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        source_id = job.get("source_id")
+        if source_id is None:
+            raise ValueError("Local archive snapshot job is missing source_id.")
+        source = self.get_ingestion_source(source_id)
+        source_type = str(source.get("source_type") or "")
+        if source_type != "archive_snapshot":
+            raise ValueError("Archive snapshot jobs require an archive_snapshot source.")
+        archive_path = Path(str(job.get("source") or "")).expanduser()
+        result = self._sync_archive_snapshot_source_items(int(source_id), archive_path)
+        return {
+            "source_id": int(source_id),
+            "source_type": source_type,
+            **result,
+        }
+
     def _sync_local_directory_source_items(self, source_id: int, root: Path) -> dict[str, Any]:
+        path_hashes = {
+            file_path.relative_to(root).as_posix(): self._hash_local_ingestion_file(file_path)
+            for file_path in sorted(path for path in root.rglob("*") if path.is_file())
+        }
+        return self._sync_source_item_hashes(source_id, path_hashes)
+
+    def _sync_archive_snapshot_source_items(self, source_id: int, archive_path: Path) -> dict[str, Any]:
+        if not archive_path.is_file():
+            raise FileNotFoundError(f"Archive snapshot file not found: {archive_path}")
+        path_hashes: dict[str, str] = {}
+        with zipfile.ZipFile(archive_path) as archive:
+            for member in archive.infolist():
+                if member.is_dir():
+                    continue
+                normalized_path = self._normalize_archive_member_path(member.filename)
+                if normalized_path is None:
+                    continue
+                with archive.open(member) as handle:
+                    path_hashes[normalized_path] = self._hash_binary_stream(handle)
+        result = self._sync_source_item_hashes(source_id, path_hashes)
+        return {"archive_path": str(archive_path), **result}
+
+    def _sync_source_item_hashes(self, source_id: int, path_hashes: Mapping[str, str]) -> dict[str, Any]:
         db = self._require_db()
         self._ensure_local_ingestion_schema(db)
         now = db._get_current_utc_timestamp_str()
         created = 0
         updated = 0
-        seen_paths: set[str] = set()
+        seen_paths = set(path_hashes)
         with db.transaction() as conn:
-            for file_path in sorted(path for path in root.rglob("*") if path.is_file()):
-                relative_path = file_path.relative_to(root).as_posix()
-                seen_paths.add(relative_path)
-                content_hash = self._hash_local_ingestion_file(file_path)
+            for relative_path, content_hash in sorted(path_hashes.items()):
                 row = conn.execute(
                     """
                     SELECT id, content_hash, present_in_source
@@ -1365,7 +1418,7 @@ class LocalMediaReadingService:
                 )
 
         return {
-            "scanned": len(seen_paths),
+            "scanned": len(path_hashes),
             "created": created,
             "updated": updated,
             "missing": len(missing_ids),
@@ -1373,11 +1426,29 @@ class LocalMediaReadingService:
         }
 
     @staticmethod
+    def _normalize_archive_member_path(name: str) -> str | None:
+        normalized = str(name or "").replace("\\", "/").lstrip("/")
+        parts: list[str] = []
+        for part in normalized.split("/"):
+            if part in {"", "."}:
+                continue
+            if part == "..":
+                return None
+            parts.append(part)
+        if not parts:
+            return None
+        return "/".join(parts)
+
+    @staticmethod
     def _hash_local_ingestion_file(file_path: Path) -> str:
-        digest = hashlib.sha256()
         with file_path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
+            return LocalMediaReadingService._hash_binary_stream(handle)
+
+    @staticmethod
+    def _hash_binary_stream(handle: Any) -> str:
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
         return digest.hexdigest()
 
     def list_ingest_jobs(self, batch_id: str, *, limit: int = 100) -> Any:
