@@ -183,3 +183,42 @@ async def test_scope_service_routes_create_delete_and_requires_local_or_server_m
 
     with pytest.raises(ValueError, match="mode must be 'local' or 'server'"):
         await service.list_conversations(mode="mixed")
+
+
+def test_scope_service_reports_known_chat_conversation_capability_gaps():
+    service = ChatConversationScopeService(
+        local_service=FakeConversationService(),
+        server_service=FakeServerConversationService(),
+    )
+
+    local_report = service.list_unsupported_capabilities(mode="local")
+    server_report = service.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "chat.rag_context.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local chat history does not expose server-style RAG context or citation adjuncts yet.",
+            "affected_action_ids": ["chat.detail.local"],
+        }
+    ]
+    assert server_report == [
+        {
+            "operation_id": "chat.conversation.create.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server chat conversation contract does not expose first-class conversation creation outside chat launch/persist flows.",
+            "affected_action_ids": ["chat.create.server"],
+        },
+        {
+            "operation_id": "chat.conversation.delete.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server chat conversation contract does not expose conversation deletion.",
+            "affected_action_ids": ["chat.delete.server"],
+        },
+    ]
