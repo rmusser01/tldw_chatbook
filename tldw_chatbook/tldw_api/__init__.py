@@ -671,6 +671,14 @@ from .chat_grammar_schemas import (
     ChatGrammarUpdate,
     ChatGrammarValidationStatus,
 )
+from .feedback_schemas import (
+    ExplicitFeedbackRequest,
+    ExplicitFeedbackResponse,
+    FeedbackDeleteResponse,
+    FeedbackListResponse,
+    FeedbackRecord,
+    FeedbackUpdateRequest,
+)
 from .skills_schemas import (
     SkillBase,
     SkillContextPayload,

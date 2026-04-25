@@ -97,6 +97,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 3
 - Notes: Priority 32. This is chat-adjacent interoperability work, but it should not disrupt the existing chat UI until the UX layer adopts grammar selection deliberately.
 
+### Explicit Feedback: Chat and RAG feedback submission, listing, update, and deletion
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Full CRUD
+- Current state: Chatbook now has typed direct API-client wrappers for server explicit feedback submission, conversation feedback listing, feedback issue/note update, and feedback deletion.
+- Gap: Dedicated UX adoption, local/offline feedback persistence, offline-unavailable presentation, analytics/reporting surfaces, and local/server feedback sync semantics remain pending. Feedback writes should stay source-aware because server feedback records are tied to server conversation/message/RAG identifiers.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/feedback.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/feedback_schemas.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/feedback_schemas.py`; Verification: `Tests/tldw_api/test_feedback_client.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 34. This is useful for server-client quality loops, but it remains below core standalone chat persistence and source-mode UX adoption.
+
 ### Characters / Personas / CCP: Character catalog, persona profiles, chat sessions, and character messages
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD

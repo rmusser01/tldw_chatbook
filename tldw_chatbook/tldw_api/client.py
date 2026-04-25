@@ -222,6 +222,13 @@ from .chat_grammar_schemas import (
     ChatGrammarResponse,
     ChatGrammarUpdate,
 )
+from .feedback_schemas import (
+    ExplicitFeedbackRequest,
+    ExplicitFeedbackResponse,
+    FeedbackDeleteResponse,
+    FeedbackListResponse,
+    FeedbackUpdateRequest,
+)
 from .skills_schemas import (
     SkillContextPayload,
     SkillCreate,
@@ -6852,6 +6859,38 @@ class TLDWAPIClient:
             params={"hard_delete": hard_delete},
         )
         return True
+
+    async def submit_explicit_feedback(self, request_data: ExplicitFeedbackRequest) -> ExplicitFeedbackResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/feedback/explicit",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ExplicitFeedbackResponse.model_validate(response)
+
+    async def list_feedback(self, conversation_id: str) -> FeedbackListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/feedback",
+            params={"conversation_id": conversation_id},
+        )
+        return FeedbackListResponse.model_validate(response)
+
+    async def update_feedback(
+        self,
+        feedback_id: str,
+        request_data: FeedbackUpdateRequest,
+    ) -> ExplicitFeedbackResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/feedback/{feedback_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ExplicitFeedbackResponse.model_validate(response)
+
+    async def delete_feedback(self, feedback_id: str) -> FeedbackDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/feedback/{feedback_id}")
+        return FeedbackDeleteResponse.model_validate(response)
 
     async def list_skills(
         self,
