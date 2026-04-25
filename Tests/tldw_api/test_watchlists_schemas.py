@@ -30,13 +30,14 @@ def test_source_create_request_allows_first_slice_types_and_strips_tags():
     }
 
 
-def test_source_create_request_rejects_deferred_forum_type():
-    with pytest.raises(ValidationError):
-        SourceCreateRequest(
-            name="Forum",
-            url="https://example.com/forum",
-            source_type="forum",
-        )
+def test_source_create_request_allows_forum_type():
+    request = SourceCreateRequest(
+        name="Forum",
+        url="https://example.com/forum",
+        source_type="forum",
+    )
+
+    assert request.source_type == "forum"
 
 
 def test_source_update_request_forbids_group_ids_in_first_slice():

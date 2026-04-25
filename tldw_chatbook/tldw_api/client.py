@@ -156,6 +156,48 @@ from .auth_user_schemas import (
     UserProfileUpdateRequest,
     UserProfileUpdateResponse,
 )
+from .account_security_schemas import (
+    APIKeyCreateRequest,
+    APIKeyCreateResponse,
+    APIKeyMetadata,
+    APIKeyRotateRequest,
+    MFASetupResponse,
+    PasswordChangeRequest,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    StorageQuotaResponse,
+    VirtualAPIKeyCreateRequest,
+)
+from .user_keys_schemas import (
+    OpenAICredentialSourceSwitchRequest,
+    OpenAICredentialSourceSwitchResponse,
+    OpenAIOAuthAuthorizeRequest,
+    OpenAIOAuthAuthorizeResponse,
+    OpenAIOAuthCallbackResponse,
+    OpenAIOAuthRefreshResponse,
+    OpenAIOAuthStatusResponse,
+    ProviderKeyTestRequest,
+    ProviderKeyTestResponse,
+    UserProviderKeyResponse,
+    UserProviderKeysResponse,
+    UserProviderKeyUpsertRequest,
+)
+from .storage_schemas import (
+    BulkDeleteRequest,
+    BulkDeleteResponse,
+    BulkMoveRequest,
+    BulkMoveResponse,
+    FileCategory,
+    FolderListResponse,
+    GeneratedFileResponse,
+    GeneratedFilesListResponse,
+    GeneratedFileUpdate,
+    RestoreResponse,
+    SourceFeature,
+    StorageUsageResponse,
+    TrashListResponse,
+    UsageBreakdownResponse,
+)
 from .prompt_studio_schemas import (
     PromptStudioCompareStrategiesRequest,
     PromptStudioDeleteMessage,
@@ -1194,6 +1236,342 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return RegistrationResponse.model_validate(response)
+
+    async def change_password(self, request_data: PasswordChangeRequest) -> MessageResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/users/change-password",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return MessageResponse.model_validate(response)
+
+    async def request_password_reset(self, request_data: PasswordResetRequest) -> MessageResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/forgot-password",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return MessageResponse.model_validate(response)
+
+    async def reset_password(self, request_data: PasswordResetConfirm) -> MessageResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/reset-password",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return MessageResponse.model_validate(response)
+
+    async def verify_email(self, token: str) -> MessageResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/auth/verify-email",
+            params={"token": token},
+        )
+        return MessageResponse.model_validate(response)
+
+    async def resend_verification(self, email: str) -> MessageResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/resend-verification",
+            json_data={"email": email},
+        )
+        return MessageResponse.model_validate(response)
+
+    async def request_magic_link(self, email: str) -> MessageResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/magic-link/request",
+            json_data={"email": email},
+        )
+        return MessageResponse.model_validate(response)
+
+    async def verify_magic_link(self, token: str, *, set_bearer_token: bool = True) -> AuthTokenResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/magic-link/verify",
+            json_data={"token": token},
+        )
+        token_response = AuthTokenResponse.model_validate(response)
+        if set_bearer_token:
+            self.set_bearer_token(token_response.access_token)
+        return token_response
+
+    async def setup_mfa(self) -> MFASetupResponse:
+        response = await self._request("POST", "/api/v1/auth/mfa/setup")
+        return MFASetupResponse.model_validate(response)
+
+    async def verify_mfa_setup(self, token: str) -> MessageResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/mfa/verify",
+            json_data={"token": token},
+        )
+        if isinstance(response, dict) and "backup_codes" in response and "details" not in response:
+            response = dict(response)
+            response["details"] = {"backup_codes": response.pop("backup_codes")}
+        return MessageResponse.model_validate(response)
+
+    async def disable_mfa(self, password: str) -> MessageResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/mfa/disable",
+            data={"password": password},
+        )
+        return MessageResponse.model_validate(response)
+
+    async def complete_mfa_login(
+        self,
+        *,
+        session_token: str,
+        mfa_token: str,
+        set_bearer_token: bool = True,
+    ) -> AuthTokenResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/mfa/login",
+            json_data={"session_token": session_token, "mfa_token": mfa_token},
+        )
+        token_response = AuthTokenResponse.model_validate(response)
+        if set_bearer_token:
+            self.set_bearer_token(token_response.access_token)
+        return token_response
+
+    async def list_user_api_keys(self) -> list[APIKeyMetadata]:
+        response = await self._request("GET", "/api/v1/users/api-keys")
+        return [APIKeyMetadata.model_validate(item) for item in response]
+
+    async def create_user_api_key(self, request_data: APIKeyCreateRequest) -> APIKeyCreateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/users/api-keys",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return APIKeyCreateResponse.model_validate(response)
+
+    async def create_virtual_api_key(
+        self,
+        request_data: VirtualAPIKeyCreateRequest | None = None,
+        **kwargs: Any,
+    ) -> APIKeyCreateResponse:
+        payload = request_data or VirtualAPIKeyCreateRequest(**kwargs)
+        response = await self._request(
+            "POST",
+            "/api/v1/users/api-keys/virtual",
+            json_data=payload.model_dump(exclude_none=True, mode="json"),
+        )
+        return APIKeyCreateResponse.model_validate(response)
+
+    async def rotate_user_api_key(
+        self,
+        key_id: int,
+        request_data: APIKeyRotateRequest | None = None,
+    ) -> APIKeyCreateResponse:
+        payload = request_data or APIKeyRotateRequest()
+        response = await self._request(
+            "POST",
+            f"/api/v1/users/api-keys/{key_id}/rotate",
+            json_data=payload.model_dump(exclude_none=True, mode="json"),
+        )
+        return APIKeyCreateResponse.model_validate(response)
+
+    async def revoke_user_api_key(self, key_id: int) -> MessageResponse:
+        response = await self._request("DELETE", f"/api/v1/users/api-keys/{key_id}")
+        return MessageResponse.model_validate(response)
+
+    async def get_user_storage_quota(self) -> StorageQuotaResponse:
+        response = await self._request("GET", "/api/v1/users/storage")
+        return StorageQuotaResponse.model_validate(response)
+
+    async def recalculate_user_storage_quota(self) -> StorageQuotaResponse:
+        response = await self._request("POST", "/api/v1/users/storage/recalculate")
+        return StorageQuotaResponse.model_validate(response)
+
+    async def upsert_user_provider_key(
+        self,
+        request_data: UserProviderKeyUpsertRequest,
+    ) -> UserProviderKeyResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/users/keys",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return UserProviderKeyResponse.model_validate(response)
+
+    async def list_user_provider_keys(self) -> UserProviderKeysResponse:
+        response = await self._request("GET", "/api/v1/users/keys")
+        return UserProviderKeysResponse.model_validate(response)
+
+    async def test_user_provider_key(self, request_data: ProviderKeyTestRequest) -> ProviderKeyTestResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/users/keys/test",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ProviderKeyTestResponse.model_validate(response)
+
+    async def authorize_openai_oauth(
+        self,
+        request_data: OpenAIOAuthAuthorizeRequest | None = None,
+    ) -> OpenAIOAuthAuthorizeResponse:
+        payload = request_data or OpenAIOAuthAuthorizeRequest()
+        response = await self._request(
+            "POST",
+            "/api/v1/users/keys/openai/oauth/authorize",
+            json_data=payload.model_dump(exclude_none=True, mode="json"),
+        )
+        return OpenAIOAuthAuthorizeResponse.model_validate(response)
+
+    async def complete_openai_oauth_callback(
+        self,
+        *,
+        code: str,
+        state: str,
+        redirect: bool = False,
+    ) -> OpenAIOAuthCallbackResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/users/keys/openai/oauth/callback",
+            params={"code": code, "state": state, "redirect": str(redirect).lower()},
+        )
+        return OpenAIOAuthCallbackResponse.model_validate(response)
+
+    async def get_openai_oauth_status(self) -> OpenAIOAuthStatusResponse:
+        response = await self._request("GET", "/api/v1/users/keys/openai/oauth/status")
+        return OpenAIOAuthStatusResponse.model_validate(response)
+
+    async def refresh_openai_oauth(self) -> OpenAIOAuthRefreshResponse:
+        response = await self._request("POST", "/api/v1/users/keys/openai/oauth/refresh")
+        return OpenAIOAuthRefreshResponse.model_validate(response)
+
+    async def disconnect_openai_oauth(self) -> bool:
+        await self._request("DELETE", "/api/v1/users/keys/openai/oauth")
+        return True
+
+    async def switch_openai_credential_source(
+        self,
+        request_data: OpenAICredentialSourceSwitchRequest,
+    ) -> OpenAICredentialSourceSwitchResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/users/keys/openai/source",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return OpenAICredentialSourceSwitchResponse.model_validate(response)
+
+    async def delete_user_provider_key(self, provider: str) -> bool:
+        await self._request("DELETE", f"/api/v1/users/keys/{provider}")
+        return True
+
+    async def list_storage_files(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        file_category: FileCategory | None = None,
+        source_feature: SourceFeature | None = None,
+        folder_tag: str | None = None,
+        search: str | None = None,
+        include_deleted: bool = False,
+    ) -> GeneratedFilesListResponse:
+        params: Dict[str, Any] = {
+            "offset": offset,
+            "limit": limit,
+            "file_category": file_category,
+            "source_feature": source_feature,
+            "folder_tag": folder_tag,
+            "search": search,
+            "include_deleted": str(include_deleted).lower(),
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/storage/files",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return GeneratedFilesListResponse.model_validate(response)
+
+    async def get_storage_file(self, file_id: int) -> GeneratedFileResponse:
+        response = await self._request("GET", f"/api/v1/storage/files/{file_id}")
+        return GeneratedFileResponse.model_validate(response)
+
+    async def download_storage_file(self, file_id: int) -> ReadingExportResponse:
+        return await self._binary_request("GET", f"/api/v1/storage/files/{file_id}/download")
+
+    async def update_storage_file(
+        self,
+        file_id: int,
+        request_data: GeneratedFileUpdate,
+    ) -> GeneratedFileResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/storage/files/{file_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return GeneratedFileResponse.model_validate(response)
+
+    async def delete_storage_file(self, file_id: int, *, hard_delete: bool = False) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/storage/files/{file_id}",
+            params={"hard_delete": str(hard_delete).lower()},
+        )
+
+    async def bulk_delete_storage_files(self, request_data: BulkDeleteRequest) -> BulkDeleteResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/storage/files/bulk-delete",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return BulkDeleteResponse.model_validate(response)
+
+    async def bulk_move_storage_files(self, request_data: BulkMoveRequest) -> BulkMoveResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/storage/files/bulk-move",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return BulkMoveResponse.model_validate(response)
+
+    async def list_storage_folders(self) -> FolderListResponse:
+        response = await self._request("GET", "/api/v1/storage/folders")
+        return FolderListResponse.model_validate(response)
+
+    async def create_storage_folder(self, name: str) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/storage/folders",
+            json_data={"name": name},
+        )
+
+    async def list_least_accessed_storage_files(self, *, limit: int = 20) -> GeneratedFilesListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/storage/files/least-accessed",
+            params={"limit": limit},
+        )
+        return GeneratedFilesListResponse.model_validate(response)
+
+    async def get_storage_usage(self) -> StorageUsageResponse:
+        response = await self._request("GET", "/api/v1/storage/usage")
+        return StorageUsageResponse.model_validate(response)
+
+    async def get_storage_usage_breakdown(self) -> UsageBreakdownResponse:
+        response = await self._request("GET", "/api/v1/storage/usage/breakdown")
+        return UsageBreakdownResponse.model_validate(response)
+
+    async def list_storage_trash(self, *, offset: int = 0, limit: int = 50) -> TrashListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/storage/trash",
+            params={"offset": offset, "limit": limit},
+        )
+        return TrashListResponse.model_validate(response)
+
+    async def restore_storage_file(self, file_id: int) -> RestoreResponse:
+        response = await self._request("POST", f"/api/v1/storage/trash/restore/{file_id}")
+        return RestoreResponse.model_validate(response)
+
+    async def permanently_delete_storage_file(self, file_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/storage/trash/{file_id}")
 
     async def get_server_health(self) -> ServerHealthResponse:
         response = await self._request("GET", "/api/v1/health")
