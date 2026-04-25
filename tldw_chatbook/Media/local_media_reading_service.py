@@ -218,6 +218,73 @@ class LocalMediaReadingService:
         ]
         return self._build_reading_export_response(export_rows, format=format)
 
+    def import_reading_items(
+        self,
+        import_path: str,
+        *,
+        source: str = "auto",
+        merge_tags: bool = True,
+    ) -> Any:
+        job = self._create_ingest_job(
+            job_type="reading_import",
+            media_type="reading",
+            source=str(import_path),
+            source_kind=str(source or "auto"),
+            options={
+                "source": source,
+                "merge_tags": bool(merge_tags),
+            },
+        )
+        status = self._reading_import_job_status_from_ingest_job(job)
+        return {
+            "job_id": status["job_id"],
+            "job_uuid": status["job_uuid"],
+            "status": status["status"],
+        }
+
+    def list_reading_import_jobs(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Any:
+        db = self._require_db()
+        self._ensure_local_ingestion_schema(db)
+        where = "job_type = ?"
+        params: list[Any] = ["reading_import"]
+        if status is not None:
+            where += " AND status = ?"
+            params.append(str(status))
+        total = db.get_connection().execute(
+            f"SELECT COUNT(*) FROM local_ingestion_jobs WHERE {where}",
+            params,
+        ).fetchone()[0]
+        rows = db.get_connection().execute(
+            f"""
+            SELECT * FROM local_ingestion_jobs
+            WHERE {where}
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+            """,
+            params + [int(limit), int(offset)],
+        ).fetchall()
+        return {
+            "jobs": [
+                self._reading_import_job_status_from_ingest_job(self._ingest_job_row_to_dict(row))
+                for row in rows
+            ],
+            "total": total,
+            "limit": int(limit),
+            "offset": int(offset),
+        }
+
+    def get_reading_import_job(self, job_id: Any) -> Any:
+        job = self.get_ingest_job(job_id)
+        if job.get("job_type") != "reading_import":
+            raise KeyError(f"Local reading import job not found: {job_id}")
+        return self._reading_import_job_status_from_ingest_job(job)
+
     def create_saved_search(
         self,
         *,
@@ -1058,6 +1125,33 @@ class LocalMediaReadingService:
             "progress_message": payload.get("progress_message"),
             "result": self._json_loads(payload.get("result_json")),
             "error_message": payload.get("error_message"),
+        }
+
+    @staticmethod
+    def _reading_import_result_from_ingest_job(job: Mapping[str, Any]) -> dict[str, Any] | None:
+        result = job.get("result")
+        if not isinstance(result, Mapping):
+            return None
+        return {
+            "source": str(result.get("source") or "local"),
+            "imported": int(result.get("imported") or 0),
+            "updated": int(result.get("updated") or 0),
+            "skipped": int(result.get("skipped") or 0),
+            "errors": list(result.get("errors") or []),
+        }
+
+    def _reading_import_job_status_from_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "job_id": job.get("id"),
+            "job_uuid": job.get("uuid"),
+            "status": job.get("status"),
+            "created_at": job.get("created_at"),
+            "started_at": job.get("started_at"),
+            "completed_at": job.get("completed_at"),
+            "progress_percent": job.get("progress_percent"),
+            "progress_message": job.get("progress_message"),
+            "error_message": job.get("error_message"),
+            "result": self._reading_import_result_from_ingest_job(job),
         }
 
     def _create_ingest_job(

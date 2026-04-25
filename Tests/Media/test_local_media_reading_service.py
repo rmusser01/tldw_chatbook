@@ -235,6 +235,26 @@ def test_local_service_exports_saved_reading_items(memory_db_factory):
     assert "metadata" not in zipped_rows[0]
 
 
+def test_local_service_queues_reading_import_jobs(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    import_path = tmp_path / "pocket.csv"
+    import_path.write_text("title,url\nSaved,https://example.com\n", encoding="utf-8")
+
+    submitted = service.import_reading_items(str(import_path), source="pocket", merge_tags=False)
+    listed = service.list_reading_import_jobs(status="queued", limit=25, offset=0)
+    detail = service.get_reading_import_job(submitted["job_id"])
+
+    assert submitted["job_id"] == detail["job_id"]
+    assert submitted["status"] == "queued"
+    assert submitted["job_uuid"]
+    assert listed["total"] == 1
+    assert listed["jobs"][0]["job_id"] == submitted["job_id"]
+    assert detail["status"] == "queued"
+    assert detail["progress_percent"] == 0
+    assert detail["progress_message"] == "Queued"
+
+
 def test_local_service_persists_ingestion_sources_and_sync_jobs(memory_db_factory, tmp_path):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)

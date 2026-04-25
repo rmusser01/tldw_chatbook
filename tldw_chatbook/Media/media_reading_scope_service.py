@@ -510,8 +510,6 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_action_id(normalized_mode, "import"))
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            raise ValueError("Local reading import jobs are not available yet.")
         service = self._service_for_mode(normalized_mode)
         return self._to_plain(
             await self._maybe_await(
@@ -574,8 +572,6 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_import_job_action_id(normalized_mode, "list"))
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            raise ValueError("Local reading import jobs are not available yet.")
         service = self._service_for_mode(normalized_mode)
         return self._to_plain(
             await self._maybe_await(
@@ -591,8 +587,6 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_import_job_action_id(normalized_mode, "detail"))
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            raise ValueError("Local reading import jobs are not available yet.")
         service = self._service_for_mode(normalized_mode)
         return self._to_plain(await self._maybe_await(service.get_reading_import_job(job_id)))
 

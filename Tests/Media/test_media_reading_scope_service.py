@@ -153,6 +153,18 @@ class FakeLocalMediaService:
             "filename": "reading_export_local.jsonl",
         }
 
+    def import_reading_items(self, import_path, *, source="auto", merge_tags=True):
+        self.calls.append(("import_reading_items", import_path, source, merge_tags))
+        return {"job_id": 701, "job_uuid": "local-job-uuid", "status": "queued"}
+
+    def list_reading_import_jobs(self, *, status=None, limit=50, offset=0):
+        self.calls.append(("list_reading_import_jobs", status, limit, offset))
+        return {"jobs": [{"job_id": 701, "job_uuid": "local-job-uuid", "status": "queued"}], "total": 1, "limit": limit, "offset": offset}
+
+    def get_reading_import_job(self, job_id):
+        self.calls.append(("get_reading_import_job", job_id))
+        return {"job_id": job_id, "job_uuid": "local-job-uuid", "status": "queued"}
+
     def create_saved_search(self, **kwargs):
         self.calls.append(("create_saved_search", kwargs))
         return {"id": 1, "created_at": "2026-04-21T12:00:00Z", "updated_at": "2026-04-21T12:00:00Z", **kwargs}
@@ -1264,25 +1276,36 @@ async def test_scope_service_routes_server_reading_import_jobs_with_policy():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_reports_local_reading_import_jobs_as_explicitly_unsupported_after_policy():
+async def test_scope_service_routes_local_reading_import_jobs_with_policy():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local reading import jobs are not available yet."):
-        await scope.import_reading_items(mode="local", import_path="/tmp/pocket.csv")
-    with pytest.raises(ValueError, match="Local reading import jobs are not available yet."):
-        await scope.list_reading_import_jobs(mode="local")
-    with pytest.raises(ValueError, match="Local reading import jobs are not available yet."):
-        await scope.get_reading_import_job(mode="local", job_id=701)
+    submitted = await scope.import_reading_items(
+        mode="local",
+        import_path="/tmp/pocket.csv",
+        source="pocket",
+        merge_tags=False,
+    )
+    listed = await scope.list_reading_import_jobs(mode="local", status="queued", limit=25, offset=5)
+    detail = await scope.get_reading_import_job(mode="local", job_id=701)
 
+    assert submitted["job_id"] == 701
+    assert listed["jobs"][0]["status"] == "queued"
+    assert detail["job_id"] == 701
     assert policy.calls[-3:] == [
         "media.reading.import.local",
         "media.reading_import_jobs.list.local",
         "media.reading_import_jobs.detail.local",
+    ]
+    assert local.calls[-3:] == [
+        ("import_reading_items", "/tmp/pocket.csv", "pocket", False),
+        ("list_reading_import_jobs", "queued", 25, 5),
+        ("get_reading_import_job", 701),
     ]
 
 
