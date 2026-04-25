@@ -382,6 +382,97 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         return self._to_plain(await self._maybe_await(service.unlink_note(item_id, note_id)))
 
+    async def bulk_update_reading_items(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_ids: list[int],
+        action: str,
+        status: str | None = None,
+        favorite: bool | None = None,
+        tags: list[str] | None = None,
+        hard: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "bulk_update"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading bulk updates are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(
+            await self._maybe_await(
+                service.bulk_update_reading_items(
+                    item_ids=item_ids,
+                    action=action,
+                    status=status,
+                    favorite=favorite,
+                    tags=tags,
+                    hard=hard,
+                )
+            )
+        )
+
+    async def create_reading_archive(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_id: Any,
+        format: str = "html",
+        source: str = "auto",
+        title: str | None = None,
+        retention_days: int | None = None,
+        retention_until: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "archive"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading archive snapshots are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(
+            await self._maybe_await(
+                service.create_reading_archive(
+                    item_id,
+                    format=format,
+                    source=source,
+                    title=title,
+                    retention_days=retention_days,
+                    retention_until=retention_until,
+                )
+            )
+        )
+
+    async def summarize_reading_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_id: Any,
+        provider: str | None = None,
+        model: str | None = None,
+        prompt: str | None = None,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        recursive: bool = False,
+        chunked: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "summarize"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading summary generation is not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(
+            await self._maybe_await(
+                service.summarize_reading_item(
+                    item_id,
+                    provider=provider,
+                    model=model,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    temperature=temperature,
+                    recursive=recursive,
+                    chunked=chunked,
+                )
+            )
+        )
+
     async def update_media_metadata(
         self,
         *,

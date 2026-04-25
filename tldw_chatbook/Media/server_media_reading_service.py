@@ -12,15 +12,18 @@ from ..tldw_api import (
     DocumentInsightsRequest,
     IngestionSourceCreateRequest,
     IngestionSourcePatchRequest,
+    ItemsBulkRequest,
     MediaIngestSubmitRequest,
     MediaSearchRequest,
     MediaVersionCreateRequest,
+    ReadingArchiveCreateRequest,
     ReadingHighlightCreateRequest,
     ReadingHighlightUpdateRequest,
     ReadingProgressUpdate,
     ReadingSaveRequest,
     ReadingSavedSearchCreateRequest,
     ReadingSavedSearchUpdateRequest,
+    ReadingSummarizeRequest,
     ReadingUpdateRequest,
     ReprocessMediaRequest,
     TLDWAPIClient,
@@ -215,6 +218,71 @@ class ServerMediaReadingService:
     async def unlink_note(self, item_id: Any, note_id: str) -> Any:
         self._enforce(self._note_link_action_id("delete"))
         return await self._require_client().unlink_note_from_reading_item(int(item_id), note_id)
+
+    async def bulk_update_reading_items(
+        self,
+        *,
+        item_ids: list[int],
+        action: str,
+        status: str | None = None,
+        favorite: bool | None = None,
+        tags: list[str] | None = None,
+        hard: bool = False,
+    ) -> Any:
+        self._enforce(self._reading_action_id("bulk_update"))
+        request_data = ItemsBulkRequest(
+            item_ids=item_ids,
+            action=action,  # type: ignore[arg-type]
+            status=status,
+            favorite=favorite,
+            tags=tags,
+            hard=hard,
+        )
+        return await self._require_client().bulk_update_reading_items(request_data)
+
+    async def create_reading_archive(
+        self,
+        item_id: Any,
+        *,
+        format: str = "html",
+        source: str = "auto",
+        title: str | None = None,
+        retention_days: int | None = None,
+        retention_until: str | None = None,
+    ) -> Any:
+        self._enforce(self._reading_action_id("archive"))
+        request_data = ReadingArchiveCreateRequest(
+            format=format,  # type: ignore[arg-type]
+            source=source,  # type: ignore[arg-type]
+            title=title,
+            retention_days=retention_days,
+            retention_until=retention_until,
+        )
+        return await self._require_client().create_reading_archive(int(item_id), request_data)
+
+    async def summarize_reading_item(
+        self,
+        item_id: Any,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        prompt: str | None = None,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        recursive: bool = False,
+        chunked: bool = False,
+    ) -> Any:
+        self._enforce(self._reading_action_id("summarize"))
+        request_data = ReadingSummarizeRequest(
+            provider=provider,
+            model=model,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            recursive=recursive,
+            chunked=chunked,
+        )
+        return await self._require_client().summarize_reading_item(int(item_id), request_data)
 
     async def get_reading_progress(self, media_id: Any) -> Any:
         self._enforce(self._reading_progress_action_id("detail"))

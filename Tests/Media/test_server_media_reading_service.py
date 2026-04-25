@@ -9,7 +9,10 @@ from tldw_chatbook.tldw_api import (
     ReadingNoteLinksListResponse,
     ReadingSavedSearchListResponse,
     ReadingSavedSearchResponse,
+    ReadingArchiveResponse,
+    ReadingSummaryResponse,
 )
+from tldw_chatbook.tldw_api.media_reading_schemas import ItemsBulkResponse
 
 
 class FakeClient:
@@ -138,6 +141,36 @@ class FakeClient:
     async def unlink_note_from_reading_item(self, item_id, note_id):
         self.calls.append(("unlink_note_from_reading_item", item_id, note_id))
         return {"ok": True}
+
+    async def bulk_update_reading_items(self, request_data):
+        self.calls.append(("bulk_update_reading_items", request_data.model_dump(exclude_none=True, mode="json")))
+        return ItemsBulkResponse.model_validate(
+            {"total": 2, "succeeded": 2, "failed": 0, "results": [{"item_id": 50, "success": True}]}
+        )
+
+    async def create_reading_archive(self, item_id, request_data):
+        self.calls.append(("create_reading_archive", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return ReadingArchiveResponse.model_validate(
+            {
+                "output_id": 99,
+                "title": "Archive",
+                "format": "md",
+                "storage_path": "outputs/archive.md",
+                "download_url": "/api/v1/outputs/99/download",
+            }
+        )
+
+    async def summarize_reading_item(self, item_id, request_data):
+        self.calls.append(("summarize_reading_item", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return ReadingSummaryResponse.model_validate(
+            {
+                "item_id": item_id,
+                "summary": "Short summary",
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "citations": [{"item_id": item_id, "source": "reading"}],
+            }
+        )
 
 
 @pytest.mark.asyncio
@@ -399,6 +432,47 @@ async def test_server_service_routes_reading_save_saved_searches_and_note_links(
 
 
 @pytest.mark.asyncio
+async def test_server_service_routes_reading_bulk_archive_and_summary_actions():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    bulk = await service.bulk_update_reading_items(item_ids=[50, 51], action="set_status", status="read")
+    archive = await service.create_reading_archive(50, format="md", source="text", title="Archive")
+    summary = await service.summarize_reading_item(
+        50,
+        provider="openai",
+        model="gpt-4o-mini",
+        prompt="Summarize",
+    )
+
+    assert bulk.succeeded == 2
+    assert archive.output_id == 99
+    assert summary.summary == "Short summary"
+    assert client.calls[-3:] == [
+        (
+            "bulk_update_reading_items",
+            {"item_ids": [50, 51], "action": "set_status", "status": "read", "hard": False},
+        ),
+        (
+            "create_reading_archive",
+            50,
+            {"format": "md", "source": "text", "title": "Archive"},
+        ),
+        (
+            "summarize_reading_item",
+            50,
+            {
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "prompt": "Summarize",
+                "recursive": False,
+                "chunked": False,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_server_service_enforces_media_reading_and_ingestion_policy_actions():
     client = FakeClient()
     policy = Mock()
@@ -418,6 +492,9 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
     await service.list_ingestion_source_items(7)
     await service.trigger_ingestion_source_sync(7)
     await service.upload_ingestion_source_archive(7, "/tmp/archive.zip")
+    await service.bulk_update_reading_items(item_ids=[41], action="set_status", status="read")
+    await service.create_reading_archive(41, format="md")
+    await service.summarize_reading_item(41, prompt="Summarize")
     await service.list_document_versions(99)
     await service.save_analysis_version(99, content="body", analysis_content="analysis")
     await service.delete_document_version(99, 2)
@@ -437,6 +514,9 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
         "media.ingestion_jobs.observe.server",
         "media.ingestion_jobs.launch.server",
         "media.ingestion_jobs.launch.server",
+        "media.reading.bulk_update.server",
+        "media.reading.archive.server",
+        "media.reading.summarize.server",
         "media.reading.detail.server",
         "media.reading.update.server",
         "media.reading.delete.server",

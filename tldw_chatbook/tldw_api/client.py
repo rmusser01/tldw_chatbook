@@ -63,6 +63,8 @@ from .media_reading_schemas import (
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
     IngestionSourceSyncTriggerResponse,
+    ItemsBulkRequest,
+    ItemsBulkResponse,
     MediaIngestBatchCancelResponse,
     MediaIngestJobCancelResponse,
     MediaIngestJobListResponse,
@@ -80,12 +82,16 @@ from .media_reading_schemas import (
     ReadingNoteLinkCreateRequest,
     ReadingNoteLinkResponse,
     ReadingNoteLinksListResponse,
+    ReadingArchiveCreateRequest,
+    ReadingArchiveResponse,
     ReadingProgressUpdate,
     ReadingSaveRequest,
     ReadingSavedSearchCreateRequest,
     ReadingSavedSearchListResponse,
     ReadingSavedSearchResponse,
     ReadingSavedSearchUpdateRequest,
+    ReadingSummarizeRequest,
+    ReadingSummaryResponse,
     ReadingUpdateRequest,
     ReprocessMediaRequest,
     ReprocessMediaResponse,
@@ -1143,6 +1149,40 @@ class TLDWAPIClient:
 
     async def unlink_note_from_reading_item(self, item_id: int, note_id: str) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/reading/items/{item_id}/links/note/{note_id}")
+
+    async def bulk_update_reading_items(self, request_data: ItemsBulkRequest) -> ItemsBulkResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/reading/items/bulk",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ItemsBulkResponse.model_validate(response)
+
+    async def create_reading_archive(
+        self,
+        item_id: int,
+        request_data: ReadingArchiveCreateRequest | None = None,
+    ) -> ReadingArchiveResponse:
+        payload = (request_data or ReadingArchiveCreateRequest()).model_dump(exclude_none=True, mode="json")
+        response = await self._request(
+            "POST",
+            f"/api/v1/reading/items/{item_id}/archive",
+            json_data=payload,
+        )
+        return ReadingArchiveResponse.model_validate(response)
+
+    async def summarize_reading_item(
+        self,
+        item_id: int,
+        request_data: ReadingSummarizeRequest | None = None,
+    ) -> ReadingSummaryResponse:
+        payload = (request_data or ReadingSummarizeRequest()).model_dump(exclude_none=True, mode="json")
+        response = await self._request(
+            "POST",
+            f"/api/v1/reading/items/{item_id}/summarize",
+            json_data=payload,
+        )
+        return ReadingSummaryResponse.model_validate(response)
 
     async def get_reading_progress(self, media_id: int) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/media/{media_id}/progress")

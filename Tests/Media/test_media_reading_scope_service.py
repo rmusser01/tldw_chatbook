@@ -551,6 +551,35 @@ class FakeServerMediaService:
         self.calls.append(("unlink_note", item_id, note_id))
         return {"ok": True}
 
+    async def bulk_update_reading_items(self, **kwargs):
+        self.calls.append(("bulk_update_reading_items", kwargs))
+        return {
+            "total": len(kwargs["item_ids"]),
+            "succeeded": len(kwargs["item_ids"]),
+            "failed": 0,
+            "results": [{"item_id": item_id, "success": True} for item_id in kwargs["item_ids"]],
+        }
+
+    async def create_reading_archive(self, item_id, **kwargs):
+        self.calls.append(("create_reading_archive", item_id, kwargs))
+        return {
+            "output_id": 99,
+            "title": kwargs.get("title") or "Archive",
+            "format": kwargs.get("format", "html"),
+            "storage_path": "outputs/archive.md",
+            "download_url": "/api/v1/outputs/99/download",
+        }
+
+    async def summarize_reading_item(self, item_id, **kwargs):
+        self.calls.append(("summarize_reading_item", item_id, kwargs))
+        return {
+            "item_id": item_id,
+            "summary": "Short summary",
+            "provider": kwargs.get("provider") or "openai",
+            "model": kwargs.get("model"),
+            "citations": [{"item_id": item_id, "source": "reading"}],
+        }
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
@@ -916,6 +945,104 @@ async def test_scope_service_reports_local_saved_searches_as_explicitly_unsuppor
         await scope.list_saved_searches(mode="local")
 
     assert policy.calls[-1:] == ["media.reading.saved_searches.list.local"]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_bulk_archive_and_summary_actions():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    bulk = await scope.bulk_update_reading_items(
+        mode="server",
+        item_ids=[60, 61],
+        action="set_status",
+        status="read",
+    )
+    archive = await scope.create_reading_archive(
+        mode="server",
+        item_id=60,
+        format="md",
+        source="text",
+        title="Archive",
+    )
+    summary = await scope.summarize_reading_item(
+        mode="server",
+        item_id=60,
+        provider="openai",
+        model="gpt-4o-mini",
+        prompt="Summarize",
+    )
+
+    assert bulk["succeeded"] == 2
+    assert archive["output_id"] == 99
+    assert summary["summary"] == "Short summary"
+    assert policy.calls[-3:] == [
+        "media.reading.bulk_update.server",
+        "media.reading.archive.server",
+        "media.reading.summarize.server",
+    ]
+    assert server.calls[-3:] == [
+        (
+            "bulk_update_reading_items",
+            {
+                "item_ids": [60, 61],
+                "action": "set_status",
+                "status": "read",
+                "favorite": None,
+                "tags": None,
+                "hard": False,
+            },
+        ),
+        (
+            "create_reading_archive",
+            60,
+            {
+                "format": "md",
+                "source": "text",
+                "title": "Archive",
+                "retention_days": None,
+                "retention_until": None,
+            },
+        ),
+        (
+            "summarize_reading_item",
+            60,
+            {
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "prompt": "Summarize",
+                "system_prompt": None,
+                "temperature": None,
+                "recursive": False,
+                "chunked": False,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_reports_local_archive_and_summary_as_explicitly_unsupported_after_policy():
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Local reading archive snapshots are not available yet."):
+        await scope.create_reading_archive(mode="local", item_id=12)
+    with pytest.raises(ValueError, match="Local reading summary generation is not available yet."):
+        await scope.summarize_reading_item(mode="local", item_id=12)
+
+    assert policy.calls[-2:] == [
+        "media.reading.archive.local",
+        "media.reading.summarize.local",
+    ]
 
 
 @pytest.mark.asyncio

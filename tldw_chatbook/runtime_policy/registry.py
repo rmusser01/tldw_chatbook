@@ -151,6 +151,9 @@ CAPTURE = _action("capture", "launch")
 STATUS = _action("status", "detail")
 RESTORE = _action("restore", "update")
 REORDER = _action("reorder", "update")
+BULK_UPDATE = _action("bulk_update", "update")
+ARCHIVE = _action("archive", "create")
+SUMMARIZE = _action("summarize", "launch")
 
 CRUD_ACTIONS = (LIST, DETAIL, CREATE, UPDATE, DELETE)
 DISCOVER_TRIGGER_OBSERVE_ACTIONS = (LIST, LAUNCH, OBSERVE)
@@ -273,7 +276,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "media",
         sources=SEPARATED_SOURCES,
         resources=(
-            _resource("media.reading", actions=CRUD_ACTIONS),
+            _resource("media.reading", actions=_combine_action_sets(CRUD_ACTIONS, (BULK_UPDATE, ARCHIVE, SUMMARIZE))),
             _resource("media.reading.saved_searches", actions=CRUD_ACTIONS),
             _resource("media.reading.note_links", actions=(LIST, CREATE, DELETE)),
             _resource("media.reading_progress", actions=(DETAIL, UPDATE)),

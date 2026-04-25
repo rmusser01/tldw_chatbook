@@ -21,6 +21,14 @@ ExportMode = Literal["url", "inline"]
 AsyncMode = Literal["auto", "sync", "async"]
 ReadingHighlightAnchorStrategy = Literal["fuzzy_quote", "exact_offset"]
 ReadingHighlightState = Literal["active", "stale"]
+ItemsBulkAction = Literal[
+    "set_status",
+    "set_favorite",
+    "add_tags",
+    "remove_tags",
+    "replace_tags",
+    "delete",
+]
 
 
 class FileExportRequest(BaseModel):
@@ -354,6 +362,84 @@ class ReadingNoteLinkResponse(BaseModel):
 class ReadingNoteLinksListResponse(BaseModel):
     item_id: int
     links: list[ReadingNoteLinkResponse] = Field(default_factory=list)
+
+
+class ItemsBulkRequest(BaseModel):
+    item_ids: list[int]
+    action: ItemsBulkAction
+    status: str | None = None
+    favorite: bool | None = None
+    tags: list[str] | None = None
+    hard: bool = False
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _strip_tags(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return [value.strip()]
+        if isinstance(value, list):
+            return [item.strip() if isinstance(item, str) else item for item in value]
+        return value
+
+
+class ItemsBulkResult(BaseModel):
+    item_id: int
+    success: bool
+    error: str | None = None
+
+
+class ItemsBulkResponse(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    results: list[ItemsBulkResult] = Field(default_factory=list)
+
+
+class ReadingArchiveCreateRequest(BaseModel):
+    format: Literal["html", "md"] = "html"
+    source: Literal["auto", "clean_html", "text"] = "auto"
+    title: str | None = Field(default=None, max_length=200)
+    retention_days: int | None = Field(default=None, ge=0, le=3650)
+    retention_until: str | None = None
+
+
+class ReadingArchiveResponse(BaseModel):
+    output_id: int
+    title: str
+    format: Literal["html", "md"]
+    storage_path: str
+    created_at: str | None = None
+    retention_until: str | None = None
+    download_url: str
+
+
+class ReadingCitation(BaseModel):
+    item_id: int
+    url: str | None = None
+    canonical_url: str | None = None
+    title: str | None = None
+    source: str = "reading"
+
+
+class ReadingSummarizeRequest(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    prompt: str | None = None
+    system_prompt: str | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    recursive: bool = False
+    chunked: bool = False
+
+
+class ReadingSummaryResponse(BaseModel):
+    item_id: int
+    summary: str
+    provider: str
+    model: str | None = None
+    citations: list[ReadingCitation] = Field(default_factory=list)
+    generated_at: str | None = None
 
 
 class ReadingItem(BaseModel):
@@ -726,6 +812,10 @@ __all__ = [
     "IngestionSourcePatchRequest",
     "IngestionSourceResponse",
     "IngestionSourceSyncTriggerResponse",
+    "ItemsBulkAction",
+    "ItemsBulkRequest",
+    "ItemsBulkResponse",
+    "ItemsBulkResult",
     "MediaIngestBatchCancelResponse",
     "MediaIngestJobCancelResponse",
     "MediaIngestJobItem",
@@ -739,6 +829,9 @@ __all__ = [
     "MediaVersionDetail",
     "MediaVersionRollbackRequest",
     "ReadingDeleteResponse",
+    "ReadingArchiveCreateRequest",
+    "ReadingArchiveResponse",
+    "ReadingCitation",
     "ReadingHighlight",
     "ReadingHighlightAnchorStrategy",
     "ReadingHighlightCreateRequest",
@@ -758,6 +851,8 @@ __all__ = [
     "ReadingSavedSearchListResponse",
     "ReadingSavedSearchResponse",
     "ReadingSavedSearchUpdateRequest",
+    "ReadingSummarizeRequest",
+    "ReadingSummaryResponse",
     "ReadingUpdateRequest",
     "ReferenceImageListItem",
     "ReferenceImageListResponse",

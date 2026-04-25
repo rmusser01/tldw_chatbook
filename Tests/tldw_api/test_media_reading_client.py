@@ -11,13 +11,18 @@ from tldw_chatbook.tldw_api import (
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
     ReadingProgressUpdate,
+    ReadingArchiveCreateRequest,
+    ReadingArchiveResponse,
     ReadingSaveRequest,
     ReadingSavedSearchCreateRequest,
     ReadingSavedSearchResponse,
     ReadingSavedSearchUpdateRequest,
+    ReadingSummarizeRequest,
+    ReadingSummaryResponse,
     ReadingUpdateRequest,
     TLDWAPIClient,
 )
+from tldw_chatbook.tldw_api.media_reading_schemas import ItemsBulkRequest, ItemsBulkResponse
 
 
 @pytest.mark.asyncio
@@ -258,3 +263,76 @@ async def test_reading_save_saved_searches_and_note_links_routes_wire(monkeypatc
     assert linked.note_id == "note-1"
     assert links.links[0].note_id == "note-1"
     assert unlinked == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_reading_bulk_archive_and_summary_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "total": 2,
+                "succeeded": 2,
+                "failed": 0,
+                "results": [
+                    {"item_id": 10, "success": True},
+                    {"item_id": 11, "success": True},
+                ],
+            },
+            {
+                "output_id": 99,
+                "title": "Archive",
+                "format": "md",
+                "storage_path": "outputs/archive.md",
+                "download_url": "/api/v1/outputs/99/download",
+            },
+            {
+                "item_id": 10,
+                "summary": "Short summary",
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "citations": [{"item_id": 10, "title": "Article", "source": "reading"}],
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    bulk = await client.bulk_update_reading_items(
+        ItemsBulkRequest(item_ids=[10, 11], action="set_status", status="read")
+    )
+    archive = await client.create_reading_archive(
+        10,
+        ReadingArchiveCreateRequest(format="md", source="text", title="Archive"),
+    )
+    summary = await client.summarize_reading_item(
+        10,
+        ReadingSummarizeRequest(provider="openai", model="gpt-4o-mini", prompt="Summarize"),
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/items/bulk")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "item_ids": [10, 11],
+        "action": "set_status",
+        "status": "read",
+        "hard": False,
+    }
+    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/reading/items/10/archive")
+    assert mocked.await_args_list[1].kwargs["json_data"] == {
+        "format": "md",
+        "source": "text",
+        "title": "Archive",
+    }
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/reading/items/10/summarize")
+    assert mocked.await_args_list[2].kwargs["json_data"] == {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "prompt": "Summarize",
+        "recursive": False,
+        "chunked": False,
+    }
+    assert isinstance(bulk, ItemsBulkResponse)
+    assert bulk.succeeded == 2
+    assert isinstance(archive, ReadingArchiveResponse)
+    assert archive.output_id == 99
+    assert isinstance(summary, ReadingSummaryResponse)
+    assert summary.citations[0].source == "reading"
