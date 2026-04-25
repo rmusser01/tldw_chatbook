@@ -635,6 +635,16 @@ from .storage_schemas import (
     TrashListResponse,
     UsageBreakdownResponse,
 )
+from .user_governance_schemas import (
+    ConsentPreferencesResponse,
+    ConsentRecordResponse,
+    PrivilegeDependency,
+    PrivilegeDetailItem,
+    PrivilegeDetailResponse,
+    PrivilegeRecommendedAction,
+    PrivilegeSelfItem,
+    PrivilegeSelfResponse,
+)
 from .data_tables_schemas import (
     ColumnType,
     DataTableColumn,

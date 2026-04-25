@@ -151,6 +151,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 2
 - Notes: Priority 56. This row is required for Chatbook-as-standalone-client access to multi-user servers, but server identity must stay remote-owned and separate from Chatbook's local single-user identity.
 
+### User Governance / Consent: Consent preferences and self privilege-map introspection
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Discover / Configure / Observe
+- Current state: Chatbook now has typed direct API-client wrappers for authenticated-user consent preference read/grant/withdraw and self privilege-map discovery. A user-detail privilege-map helper is also available for the server route that permits self or authorized administrative inspection, but org/team maps and snapshot administration remain outside this slice.
+- Gap: Dedicated UX adoption, offline-unavailable presentation, org/team privilege maps, privilege snapshots/exports, resource-governor policy admin, and broader consent/governance sync semantics remain pending or intentionally out of scope. Chatbook should treat this as active-server policy state rather than local identity state.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/consent.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/privileges.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/user_governance_schemas.py`; Verification: `Tests/tldw_api/test_user_governance_client.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 31. This is needed for Chatbook-as-client transparency against a multi-user server, but it should not outrank local-first content and task surfaces.
+
 ### Prompts / Chatbooks: Prompt library, prompt workflows, and chatbook import/export jobs
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD

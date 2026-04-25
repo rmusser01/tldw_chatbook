@@ -198,6 +198,12 @@ from .storage_schemas import (
     TrashListResponse,
     UsageBreakdownResponse,
 )
+from .user_governance_schemas import (
+    ConsentPreferencesResponse,
+    ConsentRecordResponse,
+    PrivilegeDetailResponse,
+    PrivilegeSelfResponse,
+)
 from .prompt_studio_schemas import (
     PromptStudioCompareStrategiesRequest,
     PromptStudioDeleteMessage,
@@ -1412,6 +1418,49 @@ class TLDWAPIClient:
     async def recalculate_user_storage_quota(self) -> StorageQuotaResponse:
         response = await self._request("POST", "/api/v1/users/storage/recalculate")
         return StorageQuotaResponse.model_validate(response)
+
+    async def get_consent_preferences(self) -> ConsentPreferencesResponse:
+        response = await self._request("GET", "/api/v1/consent/preferences")
+        return ConsentPreferencesResponse.model_validate(response)
+
+    async def grant_consent(self, purpose: str) -> ConsentRecordResponse:
+        response = await self._request("POST", f"/api/v1/consent/preferences/{purpose}")
+        return ConsentRecordResponse.model_validate(response)
+
+    async def withdraw_consent(self, purpose: str) -> ConsentRecordResponse:
+        response = await self._request("DELETE", f"/api/v1/consent/preferences/{purpose}")
+        return ConsentRecordResponse.model_validate(response)
+
+    async def get_self_privilege_map(self, *, resource: str | None = None) -> PrivilegeSelfResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/privileges/self",
+            params={key: value for key, value in {"resource": resource}.items() if value is not None},
+        )
+        return PrivilegeSelfResponse.model_validate(response)
+
+    async def get_user_privilege_map(
+        self,
+        user_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 100,
+        resource: str | None = None,
+    ) -> PrivilegeDetailResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/privileges/users/{user_id}",
+            params={
+                key: value
+                for key, value in {
+                    "page": page,
+                    "page_size": page_size,
+                    "resource": resource,
+                }.items()
+                if value is not None
+            },
+        )
+        return PrivilegeDetailResponse.model_validate(response)
 
     async def upsert_user_provider_key(
         self,
