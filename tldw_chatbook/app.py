@@ -207,6 +207,7 @@ from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
 from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
 from .UI.SearchWindow import SearchWindow
+from tldw_chatbook.Chat_Grammars_Interop import ChatGrammarsScopeService, ServerChatGrammarsService
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Media import (
@@ -1705,6 +1706,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.research_search_scope_service = ResearchSearchScopeService(
             local_service=self.local_research_search_service,
             server_service=self.server_research_search_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_chat_grammars_service = ServerChatGrammarsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_chat_grammars_service = ServerChatGrammarsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.chat_grammars_scope_service = ChatGrammarsScopeService(
+            server_service=self.server_chat_grammars_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:

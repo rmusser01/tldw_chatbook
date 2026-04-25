@@ -131,6 +131,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": DISCOVER_CONFIGURE_TRIGGER_OBSERVE,
         },
     },
+    "chat_grammars": {
+        "expected_domain_ids": {"chat_grammars"},
+        "expected_action_kinds_by_source": {
+            "server": FULL_CRUD,
+        },
+    },
     "client_notifications": {
         "expected_domain_ids": {"notifications"},
         "expected_action_kinds_by_source": {
@@ -373,6 +379,13 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         connectors.sources.list.server
         connectors.sources.observe.server
         connectors.sources.update.server
+    """),
+    "chat_grammars": _action_ids("""
+        chat.grammars.create.server
+        chat.grammars.delete.server
+        chat.grammars.detail.server
+        chat.grammars.list.server
+        chat.grammars.update.server
     """),
     "cross_cutting_runtime_policy": _action_ids("""
         runtime.policy.configure.local

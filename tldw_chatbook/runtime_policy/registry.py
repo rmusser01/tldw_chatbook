@@ -188,6 +188,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "writing_suite",
         "research_sessions_runs",
         "research_search_provider_surfaces",
+        "chat_grammars",
         "client_notifications",
         "server_reminders_notification_feeds",
         "external_connectors",
@@ -429,6 +430,15 @@ AUDITED_CAPABILITY_SEEDS = (
                 "research.search.providers",
                 actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS,
             ),
+        ),
+    ),
+    _capability(
+        "chat_grammars",
+        "Chat Grammars",
+        "chat_grammars",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("chat.grammars", actions=CRUD_ACTIONS),
         ),
     ),
     _capability(
