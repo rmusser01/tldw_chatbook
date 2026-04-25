@@ -596,6 +596,15 @@ class FakeServerMediaService:
         self.calls.append(("import_reading_items", import_path, source, merge_tags))
         return {"job_id": 701, "job_uuid": "job-uuid", "status": "queued"}
 
+    async def export_reading_items(self, **kwargs):
+        self.calls.append(("export_reading_items", kwargs))
+        return {
+            "content": b'{"id": 1}\n',
+            "content_type": "application/x-ndjson",
+            "content_disposition": "attachment; filename=reading_export.jsonl",
+            "filename": "reading_export.jsonl",
+        }
+
     async def list_reading_import_jobs(self, *, status=None, limit=50, offset=0):
         self.calls.append(("list_reading_import_jobs", status, limit, offset))
         return {
@@ -1177,6 +1186,70 @@ async def test_scope_service_reports_local_reading_import_jobs_as_explicitly_uns
         "media.reading_import_jobs.list.local",
         "media.reading_import_jobs.detail.local",
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_reading_export_with_policy():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    exported = await scope.export_reading_items(
+        mode="server",
+        status=["saved"],
+        tags=["ai"],
+        favorite=True,
+        q="rag",
+        domain="example.com",
+        page=2,
+        size=100,
+        include_metadata=False,
+        include_clean_html=True,
+        include_text=True,
+        include_highlights=True,
+        include_notes=False,
+        format="zip",
+    )
+
+    assert exported["filename"] == "reading_export.jsonl"
+    assert policy.calls[-1:] == ["media.reading.export.server"]
+    assert server.calls[-1] == (
+        "export_reading_items",
+        {
+            "status": ["saved"],
+            "tags": ["ai"],
+            "favorite": True,
+            "q": "rag",
+            "domain": "example.com",
+            "page": 2,
+            "size": 100,
+            "include_metadata": False,
+            "include_clean_html": True,
+            "include_text": True,
+            "include_highlights": True,
+            "include_notes": False,
+            "format": "zip",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_scope_service_reports_local_reading_export_as_explicitly_unsupported_after_policy():
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Local reading export is not available yet."):
+        await scope.export_reading_items(mode="local")
+
+    assert policy.calls[-1:] == ["media.reading.export.local"]
 
 
 @pytest.mark.asyncio

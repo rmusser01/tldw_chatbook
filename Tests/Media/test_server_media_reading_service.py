@@ -10,6 +10,7 @@ from tldw_chatbook.tldw_api import (
     ReadingSavedSearchListResponse,
     ReadingSavedSearchResponse,
     ReadingArchiveResponse,
+    ReadingExportResponse,
     ReadingImportJobResponse,
     ReadingImportJobsListResponse,
     ReadingImportJobStatus,
@@ -187,6 +188,15 @@ class FakeClient:
     async def import_reading_items(self, import_path, *, source="auto", merge_tags=True):
         self.calls.append(("import_reading_items", import_path, source, merge_tags))
         return ReadingImportJobResponse.model_validate({"job_id": 701, "job_uuid": "job-uuid", "status": "queued"})
+
+    async def export_reading_items(self, **kwargs):
+        self.calls.append(("export_reading_items", kwargs))
+        return ReadingExportResponse(
+            content=b'{"id": 1}\n',
+            content_type="application/x-ndjson",
+            content_disposition="attachment; filename=reading_export.jsonl",
+            filename="reading_export.jsonl",
+        )
 
     async def list_reading_import_jobs(self, *, status=None, limit=50, offset=0):
         self.calls.append(("list_reading_import_jobs", status, limit, offset))
@@ -540,6 +550,52 @@ async def test_server_service_routes_reading_import_jobs_with_policy_actions():
 
 
 @pytest.mark.asyncio
+async def test_server_service_routes_reading_export_with_policy_action():
+    client = FakeClient()
+    policy = Mock()
+    service = ServerMediaReadingService(client=client, policy_enforcer=policy)
+
+    exported = await service.export_reading_items(
+        status=["saved"],
+        tags=["ai"],
+        favorite=True,
+        q="rag",
+        domain="example.com",
+        page=2,
+        size=100,
+        include_metadata=False,
+        include_clean_html=True,
+        include_text=True,
+        include_highlights=True,
+        include_notes=False,
+        format="zip",
+    )
+
+    assert exported.filename == "reading_export.jsonl"
+    assert client.calls[-1] == (
+        "export_reading_items",
+        {
+            "status": ["saved"],
+            "tags": ["ai"],
+            "favorite": True,
+            "q": "rag",
+            "domain": "example.com",
+            "page": 2,
+            "size": 100,
+            "include_metadata": False,
+            "include_clean_html": True,
+            "include_text": True,
+            "include_highlights": True,
+            "include_notes": False,
+            "format": "zip",
+        },
+    )
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "media.reading.export.server"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_server_service_enforces_media_reading_and_ingestion_policy_actions():
     client = FakeClient()
     policy = Mock()
@@ -564,6 +620,7 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
     await service.create_reading_archive(41, format="md")
     await service.summarize_reading_item(41, prompt="Summarize")
     await service.import_reading_items("/tmp/pocket.csv")
+    await service.export_reading_items()
     await service.list_reading_import_jobs()
     await service.get_reading_import_job(701)
     await service.list_document_versions(99)
@@ -590,6 +647,7 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
         "media.reading.archive.server",
         "media.reading.summarize.server",
         "media.reading.import.server",
+        "media.reading.export.server",
         "media.reading_import_jobs.list.server",
         "media.reading_import_jobs.detail.server",
         "media.reading.detail.server",

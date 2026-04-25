@@ -76,6 +76,7 @@ from .media_reading_schemas import (
     MediaVersionCreateRequest,
     MediaVersionDetail,
     MediaVersionRollbackRequest,
+    ReadingExportResponse,
     ReadingHighlight,
     ReadingHighlightCreateRequest,
     ReadingHighlightUpdateRequest,
@@ -436,6 +437,67 @@ class TLDWAPIClient:
         except json.JSONDecodeError:
             raise APIResponseError(response.status_code, "Failed to decode JSON response", response_data={"raw_text": response.text})
 
+    @staticmethod
+    def _filename_from_content_disposition(content_disposition: str | None) -> str | None:
+        if not content_disposition:
+            return None
+        for part in content_disposition.split(";"):
+            key, _, raw_value = part.strip().partition("=")
+            if key.lower() != "filename" or not raw_value:
+                continue
+            return raw_value.strip().strip('"')
+        return None
+
+    async def _binary_request(
+        self,
+        method: str,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        files: Optional[List[tuple]] = None,
+        json_data: Optional[Union[Dict[str, Any], List[Any]]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> ReadingExportResponse:
+        client = await self._get_client()
+        url = f"{self.base_url}{endpoint}"
+
+        try:
+            response = await client.request(
+                method,
+                endpoint,
+                data=data,
+                files=files,
+                json=json_data,
+                params=params,
+                headers=headers,
+            )
+            response.raise_for_status()
+            content_disposition = response.headers.get("content-disposition")
+            return ReadingExportResponse(
+                content=response.content,
+                content_type=response.headers.get("content-type"),
+                content_disposition=content_disposition,
+                filename=self._filename_from_content_disposition(content_disposition),
+            )
+        except httpx.HTTPStatusError as e:
+            error_detail = str(e)
+            response_data = None
+            try:
+                response_data = e.response.json()
+                if isinstance(response_data, dict) and isinstance(response_data.get("detail"), str):
+                    error_detail = response_data["detail"]
+            except Exception:
+                response_data = {"raw_text": e.response.text}
+            if e.response.status_code == 401:
+                raise AuthenticationError(
+                    f"Authentication failed: {error_detail}",
+                    response_data=response_data,
+                )
+            elif e.response.status_code == 422:
+                raise APIRequestError(f"Validation Error: {error_detail}", response_data=response_data)
+            raise APIResponseError(e.response.status_code, error_detail, response_data=response_data)
+        except httpx.RequestError as e:
+            raise APIConnectionError(f"Connection error to {url}: {e}")
 
     async def _stream_request(
         self,
@@ -1212,6 +1274,44 @@ class TLDWAPIClient:
             return ReadingImportJobResponse.model_validate(response)
         finally:
             cleanup_file_objects(httpx_files)
+
+    async def export_reading_items(
+        self,
+        *,
+        status: list[str] | None = None,
+        tags: list[str] | None = None,
+        favorite: bool | None = None,
+        q: str | None = None,
+        domain: str | None = None,
+        page: int = 1,
+        size: int = 1000,
+        include_metadata: bool = True,
+        include_clean_html: bool = False,
+        include_text: bool = False,
+        include_highlights: bool = False,
+        include_notes: bool = True,
+        format: str = "jsonl",
+    ) -> ReadingExportResponse:
+        params: dict[str, Any] = {
+            "status": status,
+            "tags": tags,
+            "favorite": str(favorite).lower() if favorite is not None else None,
+            "q": q,
+            "domain": domain,
+            "page": page,
+            "size": size,
+            "include_metadata": str(include_metadata).lower(),
+            "include_clean_html": str(include_clean_html).lower(),
+            "include_text": str(include_text).lower(),
+            "include_highlights": str(include_highlights).lower(),
+            "include_notes": str(include_notes).lower(),
+            "format": format,
+        }
+        return await self._binary_request(
+            "GET",
+            "/api/v1/reading/export",
+            params={key: value for key, value in params.items() if value is not None},
+        )
 
     async def list_reading_import_jobs(
         self,

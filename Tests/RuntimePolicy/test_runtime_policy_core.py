@@ -395,6 +395,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.reading.delete.server
         media.reading.detail.local
         media.reading.detail.server
+        media.reading.export.local
+        media.reading.export.server
         media.reading.import.local
         media.reading.import.server
         media.reading.list.local

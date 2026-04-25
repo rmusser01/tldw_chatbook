@@ -450,6 +450,13 @@ class ReadingSummaryResponse(BaseModel):
     generated_at: str | None = None
 
 
+class ReadingExportResponse(BaseModel):
+    content: bytes
+    content_type: str | None = None
+    content_disposition: str | None = None
+    filename: str | None = None
+
+
 class ReadingImportResponse(BaseModel):
     source: str
     imported: int
@@ -874,6 +881,7 @@ __all__ = [
     "ReadingArchiveCreateRequest",
     "ReadingArchiveResponse",
     "ReadingCitation",
+    "ReadingExportResponse",
     "ReadingHighlight",
     "ReadingHighlightAnchorStrategy",
     "ReadingHighlightCreateRequest",

@@ -504,6 +504,49 @@ class MediaReadingScopeService:
             )
         )
 
+    async def export_reading_items(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        status: list[str] | None = None,
+        tags: list[str] | None = None,
+        favorite: bool | None = None,
+        q: str | None = None,
+        domain: str | None = None,
+        page: int = 1,
+        size: int = 1000,
+        include_metadata: bool = True,
+        include_clean_html: bool = False,
+        include_text: bool = False,
+        include_highlights: bool = False,
+        include_notes: bool = True,
+        format: str = "jsonl",
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "export"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading export is not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(
+            await self._maybe_await(
+                service.export_reading_items(
+                    status=status,
+                    tags=tags,
+                    favorite=favorite,
+                    q=q,
+                    domain=domain,
+                    page=page,
+                    size=size,
+                    include_metadata=include_metadata,
+                    include_clean_html=include_clean_html,
+                    include_text=include_text,
+                    include_highlights=include_highlights,
+                    include_notes=include_notes,
+                    format=format,
+                )
+            )
+        )
+
     async def list_reading_import_jobs(
         self,
         *,

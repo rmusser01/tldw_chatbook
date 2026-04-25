@@ -306,6 +306,40 @@ class ServerMediaReadingService:
             merge_tags=merge_tags,
         )
 
+    async def export_reading_items(
+        self,
+        *,
+        status: list[str] | None = None,
+        tags: list[str] | None = None,
+        favorite: bool | None = None,
+        q: str | None = None,
+        domain: str | None = None,
+        page: int = 1,
+        size: int = 1000,
+        include_metadata: bool = True,
+        include_clean_html: bool = False,
+        include_text: bool = False,
+        include_highlights: bool = False,
+        include_notes: bool = True,
+        format: str = "jsonl",
+    ) -> Any:
+        self._enforce(self._reading_action_id("export"))
+        return await self._require_client().export_reading_items(
+            status=status,
+            tags=tags,
+            favorite=favorite,
+            q=q,
+            domain=domain,
+            page=page,
+            size=size,
+            include_metadata=include_metadata,
+            include_clean_html=include_clean_html,
+            include_text=include_text,
+            include_highlights=include_highlights,
+            include_notes=include_notes,
+            format=format,
+        )
+
     async def list_reading_import_jobs(
         self,
         *,

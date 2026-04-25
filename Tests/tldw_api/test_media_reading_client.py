@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from tldw_chatbook.tldw_api import (
@@ -13,6 +14,7 @@ from tldw_chatbook.tldw_api import (
     ReadingProgressUpdate,
     ReadingArchiveCreateRequest,
     ReadingArchiveResponse,
+    ReadingExportResponse,
     ReadingImportJobResponse,
     ReadingImportJobStatus,
     ReadingImportJobsListResponse,
@@ -26,6 +28,16 @@ from tldw_chatbook.tldw_api import (
     TLDWAPIClient,
 )
 from tldw_chatbook.tldw_api.media_reading_schemas import ItemsBulkRequest, ItemsBulkResponse
+
+
+class _FakeHTTPClient:
+    def __init__(self, response):
+        self.response = response
+        self.request_calls = []
+
+    async def request(self, *args, **kwargs):
+        self.request_calls.append((args, kwargs))
+        return self.response
 
 
 @pytest.mark.asyncio
@@ -147,6 +159,83 @@ async def test_ingestion_source_routes_wire_and_list_methods_are_typed_as_lists(
     assert synced.status == "queued"
     assert archived.status == "queued"
     assert reattached.sync_status == "sync_managed"
+
+
+@pytest.mark.asyncio
+async def test_binary_request_returns_content_headers_and_filename(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    request = httpx.Request("GET", "http://localhost:8000/api/v1/reading/export")
+    response = httpx.Response(
+        200,
+        request=request,
+        content=b'{"id": 1}\n',
+        headers={
+            "content-type": "application/x-ndjson",
+            "content-disposition": 'attachment; filename="reading_export.jsonl"',
+        },
+    )
+    fake_http = _FakeHTTPClient(response)
+    monkeypatch.setattr(client, "_get_client", AsyncMock(return_value=fake_http))
+
+    payload = await client._binary_request("GET", "/api/v1/reading/export", params={"format": "jsonl"})
+
+    assert payload == ReadingExportResponse(
+        content=b'{"id": 1}\n',
+        content_type="application/x-ndjson",
+        content_disposition='attachment; filename="reading_export.jsonl"',
+        filename="reading_export.jsonl",
+    )
+    assert fake_http.request_calls[0][0][:2] == ("GET", "/api/v1/reading/export")
+    assert fake_http.request_calls[0][1]["params"] == {"format": "jsonl"}
+
+
+@pytest.mark.asyncio
+async def test_reading_export_route_returns_binary_payload(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value=ReadingExportResponse(
+            content=b'{"id": 1}\n',
+            content_type="application/x-ndjson",
+            content_disposition="attachment; filename=reading_export.jsonl",
+            filename="reading_export.jsonl",
+        )
+    )
+    monkeypatch.setattr(client, "_binary_request", mocked)
+
+    exported = await client.export_reading_items(
+        status=["saved"],
+        tags=["ai"],
+        favorite=True,
+        q="rag",
+        domain="example.com",
+        page=2,
+        size=100,
+        include_metadata=False,
+        include_clean_html=True,
+        include_text=True,
+        include_highlights=True,
+        include_notes=False,
+        format="zip",
+    )
+
+    assert mocked.await_args.args[:2] == ("GET", "/api/v1/reading/export")
+    assert mocked.await_args.kwargs["params"] == {
+        "status": ["saved"],
+        "tags": ["ai"],
+        "favorite": "true",
+        "q": "rag",
+        "domain": "example.com",
+        "page": 2,
+        "size": 100,
+        "include_metadata": "false",
+        "include_clean_html": "true",
+        "include_text": "true",
+        "include_highlights": "true",
+        "include_notes": "false",
+        "format": "zip",
+    }
+    assert isinstance(exported, ReadingExportResponse)
+    assert exported.filename == "reading_export.jsonl"
 
 
 @pytest.mark.asyncio
