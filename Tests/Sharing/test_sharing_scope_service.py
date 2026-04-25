@@ -104,3 +104,31 @@ async def test_sharing_scope_service_blocks_denied_server_action_before_dispatch
 
     assert exc.value.reason_code == "server_auth_required"
     assert server.calls == []
+
+
+def test_sharing_scope_service_reports_known_unsupported_capabilities():
+    scope = SharingScopeService(server_service=FakeSharingService())
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "sharing.remote_only.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "remote_only_surface",
+            "user_message": "Sharing is unavailable in local/offline mode.",
+            "affected_action_ids": [],
+        }
+    ]
+    assert server_report == [
+        {
+            "operation_id": "sharing.links.observe.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server sharing API does not expose share-link observation events.",
+            "affected_action_ids": ["sharing.links.observe.server"],
+        }
+    ]

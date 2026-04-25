@@ -12,6 +12,29 @@ class SharingBackend(str, Enum):
     SERVER = "server"
 
 
+_LOCAL_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "sharing.remote_only.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "remote_only_surface",
+        "user_message": "Sharing is unavailable in local/offline mode.",
+        "affected_action_ids": [],
+    }
+]
+
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "sharing.links.observe.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server sharing API does not expose share-link observation events.",
+        "affected_action_ids": ["sharing.links.observe.server"],
+    }
+]
+
+
 class SharingScopeService:
     """Route sharing actions through the selected source boundary.
 
@@ -123,6 +146,16 @@ class SharingScopeService:
         record = dict(item)
         record.setdefault("backend", mode.value)
         return record
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        mode: SharingBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == SharingBackend.LOCAL:
+            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def _call(
         self,

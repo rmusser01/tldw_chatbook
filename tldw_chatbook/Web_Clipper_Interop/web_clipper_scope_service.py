@@ -12,6 +12,37 @@ class WebClipperBackend(str, Enum):
     SERVER = "server"
 
 
+_LOCAL_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "web_clipper.remote_only.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "remote_only_surface",
+        "user_message": "Web clipper capture is unavailable in local/offline mode.",
+        "affected_action_ids": [],
+    }
+]
+
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "web_clipper.list.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server web-clipper API does not expose a clip listing endpoint.",
+        "affected_action_ids": ["web_clipper.list.server"],
+    },
+    {
+        "operation_id": "web_clipper.observe.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server web-clipper API supports clip status by ID, but not a clip event stream.",
+        "affected_action_ids": ["web_clipper.observe.server"],
+    },
+]
+
+
 class WebClipperScopeService:
     """Route web-clipper actions through a source-aware seam.
 
@@ -68,6 +99,16 @@ class WebClipperScopeService:
         elif clip_id is not None:
             payload.setdefault("record_id", f"{mode.value}:web_clip:{clip_id}")
         return payload
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        mode: WebClipperBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == WebClipperBackend.LOCAL:
+            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def _call(
         self,

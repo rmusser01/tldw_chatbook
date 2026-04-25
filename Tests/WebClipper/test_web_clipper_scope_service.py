@@ -124,3 +124,39 @@ async def test_web_clipper_scope_service_blocks_denied_server_action_before_disp
 
     assert exc.value.reason_code == "server_unreachable"
     assert server.calls == []
+
+
+def test_web_clipper_scope_service_reports_known_unsupported_capabilities():
+    scope = WebClipperScopeService(server_service=FakeWebClipperService())
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "web_clipper.remote_only.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "remote_only_surface",
+            "user_message": "Web clipper capture is unavailable in local/offline mode.",
+            "affected_action_ids": [],
+        }
+    ]
+    assert server_report == [
+        {
+            "operation_id": "web_clipper.list.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server web-clipper API does not expose a clip listing endpoint.",
+            "affected_action_ids": ["web_clipper.list.server"],
+        },
+        {
+            "operation_id": "web_clipper.observe.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server web-clipper API supports clip status by ID, but not a clip event stream.",
+            "affected_action_ids": ["web_clipper.observe.server"],
+        },
+    ]
