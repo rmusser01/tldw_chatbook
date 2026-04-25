@@ -20,6 +20,13 @@ class FakeCharacterPersonaClient:
         self.update_persona_profile_calls = []
         self.delete_persona_profile_calls = []
         self.restore_persona_profile_calls = []
+        self.list_persona_exemplars_calls = []
+        self.get_persona_exemplar_calls = []
+        self.create_persona_exemplar_calls = []
+        self.import_persona_exemplars_calls = []
+        self.update_persona_exemplar_calls = []
+        self.review_persona_exemplar_calls = []
+        self.delete_persona_exemplar_calls = []
         self.list_greetings_calls = []
         self.select_greeting_calls = []
         self.list_presets_calls = 0
@@ -107,6 +114,59 @@ class FakeCharacterPersonaClient:
             {"persona_id": persona_id, "expected_version": expected_version}
         )
         return {"id": persona_id, "name": "Guide", "version": expected_version + 1}
+
+    async def list_persona_exemplars(
+        self,
+        persona_id,
+        include_disabled=False,
+        include_deleted=False,
+        include_deleted_personas=False,
+        limit=100,
+        offset=0,
+    ):
+        self.list_persona_exemplars_calls.append(
+            {
+                "persona_id": persona_id,
+                "include_disabled": include_disabled,
+                "include_deleted": include_deleted,
+                "include_deleted_personas": include_deleted_personas,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+        return [{"id": "ex-1", "persona_id": persona_id, "content": "Use concise answers."}]
+
+    async def get_persona_exemplar(self, persona_id, exemplar_id):
+        self.get_persona_exemplar_calls.append({"persona_id": persona_id, "exemplar_id": exemplar_id})
+        return {"id": exemplar_id, "persona_id": persona_id, "content": "Use concise answers."}
+
+    async def create_persona_exemplar(self, persona_id, request_data):
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        self.create_persona_exemplar_calls.append({"persona_id": persona_id, "payload": payload})
+        return {"id": "ex-new", "persona_id": persona_id, **payload}
+
+    async def import_persona_exemplars(self, persona_id, request_data):
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        self.import_persona_exemplars_calls.append({"persona_id": persona_id, "payload": payload})
+        return {"persona_id": persona_id, "created": 2}
+
+    async def update_persona_exemplar(self, persona_id, exemplar_id, request_data):
+        payload = request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json")
+        self.update_persona_exemplar_calls.append(
+            {"persona_id": persona_id, "exemplar_id": exemplar_id, "payload": payload}
+        )
+        return {"id": exemplar_id, "persona_id": persona_id, **payload}
+
+    async def review_persona_exemplar(self, persona_id, exemplar_id, request_data):
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        self.review_persona_exemplar_calls.append(
+            {"persona_id": persona_id, "exemplar_id": exemplar_id, "payload": payload}
+        )
+        return {"id": exemplar_id, "persona_id": persona_id, "review": payload}
+
+    async def delete_persona_exemplar(self, persona_id, exemplar_id):
+        self.delete_persona_exemplar_calls.append({"persona_id": persona_id, "exemplar_id": exemplar_id})
+        return {"status": "deleted", "persona_id": persona_id, "exemplar_id": exemplar_id}
 
     async def list_greetings(self, chat_id):
         self.list_greetings_calls.append(chat_id)
@@ -432,6 +492,56 @@ async def test_scope_service_routes_persona_profile_crud_to_server_backend():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_persona_exemplar_crud_to_server_backend():
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterBackend(),
+        server_service=FakeCharacterPersonaClient(),
+    )
+
+    exemplars = await scope_service.list_persona_exemplars(
+        "persona-1",
+        mode="server",
+        include_disabled=True,
+        include_deleted=True,
+        include_deleted_personas=True,
+        limit=5,
+        offset=2,
+    )
+    exemplar = await scope_service.get_persona_exemplar("persona-1", "ex-1", mode="server")
+    created = await scope_service.create_persona_exemplar(
+        "persona-1",
+        Mock(model_dump=lambda **_: {"content": "hello"}),
+        mode="server",
+    )
+    imported = await scope_service.import_persona_exemplars(
+        "persona-1",
+        Mock(model_dump=lambda **_: {"transcript": "hello world"}),
+        mode="server",
+    )
+    updated = await scope_service.update_persona_exemplar(
+        "persona-1",
+        "ex-1",
+        Mock(model_dump=lambda **_: {"content": "updated"}),
+        mode="server",
+    )
+    reviewed = await scope_service.review_persona_exemplar(
+        "persona-1",
+        "ex-1",
+        Mock(model_dump=lambda **_: {"action": "approve"}),
+        mode="server",
+    )
+    deleted = await scope_service.delete_persona_exemplar("persona-1", "ex-1", mode="server")
+
+    assert exemplars[0]["id"] == "ex-1"
+    assert exemplar["id"] == "ex-1"
+    assert created["id"] == "ex-new"
+    assert imported["created"] == 2
+    assert updated["content"] == "updated"
+    assert reviewed["review"] == {"action": "approve"}
+    assert deleted == {"status": "deleted", "persona_id": "persona-1", "exemplar_id": "ex-1"}
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_chat_execution_support_to_server_backend():
     server_service = FakeCharacterPersonaClient()
     scope_service = CharacterPersonaScopeService(
@@ -726,6 +836,22 @@ def test_scope_service_reports_known_character_persona_capability_gaps():
                 "character.sessions.update.local",
             ],
         },
+        {
+            "operation_id": "character.persona.exemplars.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_scope_missing",
+            "user_message": (
+                "Local persona exemplar CRUD is not available through the source-aware character/persona scope yet."
+            ),
+            "affected_action_ids": [
+                "character.persona.create.local",
+                "character.persona.delete.local",
+                "character.persona.detail.local",
+                "character.persona.list.local",
+                "character.persona.update.local",
+            ],
+        },
     ]
     assert server_report == []
 
@@ -815,6 +941,43 @@ async def test_server_character_persona_service_delegates_chat_execution_support
 
 
 @pytest.mark.asyncio
+async def test_server_character_persona_service_delegates_persona_exemplars_to_client():
+    client = FakeCharacterPersonaClient()
+    service = ServerCharacterPersonaService(client=client)
+
+    exemplars = await service.list_persona_exemplars("persona-1", include_disabled=True, limit=5, offset=2)
+    exemplar = await service.get_persona_exemplar("persona-1", "ex-1")
+    created = await service.create_persona_exemplar(
+        "persona-1",
+        Mock(model_dump=lambda **_: {"content": "hello"}),
+    )
+    imported = await service.import_persona_exemplars(
+        "persona-1",
+        Mock(model_dump=lambda **_: {"transcript": "hello world"}),
+    )
+    updated = await service.update_persona_exemplar(
+        "persona-1",
+        "ex-1",
+        Mock(model_dump=lambda **_: {"content": "updated"}),
+    )
+    reviewed = await service.review_persona_exemplar(
+        "persona-1",
+        "ex-1",
+        Mock(model_dump=lambda **_: {"action": "approve"}),
+    )
+    deleted = await service.delete_persona_exemplar("persona-1", "ex-1")
+
+    assert exemplars[0]["id"] == "ex-1"
+    assert exemplar["id"] == "ex-1"
+    assert created["id"] == "ex-new"
+    assert imported["created"] == 2
+    assert updated["content"] == "updated"
+    assert reviewed["review"] == {"action": "approve"}
+    assert deleted == {"status": "deleted", "persona_id": "persona-1", "exemplar_id": "ex-1"}
+    assert client.list_persona_exemplars_calls[0]["include_disabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_server_character_persona_service_delegates_character_chat_session_admin_to_client():
     client = FakeCharacterPersonaClient()
     service = ServerCharacterPersonaService(client=client)
@@ -878,6 +1041,13 @@ async def test_server_character_persona_service_enforces_policy_actions():
     await service.update_persona_profile("persona-1", Mock(model_dump=lambda **_: {"name": "Guide v2"}))
     await service.delete_persona_profile("persona-1", expected_version=8)
     await service.restore_persona_profile("persona-1", expected_version=9)
+    await service.list_persona_exemplars("persona-1")
+    await service.get_persona_exemplar("persona-1", "ex-1")
+    await service.create_persona_exemplar("persona-1", Mock(model_dump=lambda **_: {"content": "hello"}))
+    await service.import_persona_exemplars("persona-1", Mock(model_dump=lambda **_: {"transcript": "hello"}))
+    await service.update_persona_exemplar("persona-1", "ex-1", Mock(model_dump=lambda **_: {"content": "updated"}))
+    await service.review_persona_exemplar("persona-1", "ex-1", Mock(model_dump=lambda **_: {"action": "approve"}))
+    await service.delete_persona_exemplar("persona-1", "ex-1")
     await service.list_chat_greetings("chat.server.alice")
     await service.select_chat_greeting("chat.server.alice", 0)
     await service.list_chat_presets()
@@ -912,6 +1082,13 @@ async def test_server_character_persona_service_enforces_policy_actions():
         "character.persona.update.server",
         "character.persona.delete.server",
         "character.persona.update.server",
+        "character.persona.list.server",
+        "character.persona.detail.server",
+        "character.persona.create.server",
+        "character.persona.create.server",
+        "character.persona.update.server",
+        "character.persona.update.server",
+        "character.persona.delete.server",
         "character.sessions.launch.server",
         "character.sessions.launch.server",
         "character.persona.list.server",

@@ -132,6 +132,41 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.restore_persona_profile(persona_id, expected_version=expected_version)
 
+    async def list_persona_exemplars(self, persona_id: str, **kwargs: Any) -> Any:
+        self._enforce(self._persona_action_id("list"))
+        client = self._require_client()
+        return await client.list_persona_exemplars(persona_id, **kwargs)
+
+    async def get_persona_exemplar(self, persona_id: str, exemplar_id: str) -> Any:
+        self._enforce(self._persona_action_id("detail"))
+        client = self._require_client()
+        return await client.get_persona_exemplar(persona_id, exemplar_id)
+
+    async def create_persona_exemplar(self, persona_id: str, request_data: Any) -> Any:
+        self._enforce(self._persona_action_id("create"))
+        client = self._require_client()
+        return await client.create_persona_exemplar(persona_id, request_data)
+
+    async def import_persona_exemplars(self, persona_id: str, request_data: Any) -> Any:
+        self._enforce(self._persona_action_id("create"))
+        client = self._require_client()
+        return await client.import_persona_exemplars(persona_id, request_data)
+
+    async def update_persona_exemplar(self, persona_id: str, exemplar_id: str, request_data: Any) -> Any:
+        self._enforce(self._persona_action_id("update"))
+        client = self._require_client()
+        return await client.update_persona_exemplar(persona_id, exemplar_id, request_data)
+
+    async def review_persona_exemplar(self, persona_id: str, exemplar_id: str, request_data: Any) -> Any:
+        self._enforce(self._persona_action_id("update"))
+        client = self._require_client()
+        return await client.review_persona_exemplar(persona_id, exemplar_id, request_data)
+
+    async def delete_persona_exemplar(self, persona_id: str, exemplar_id: str) -> Any:
+        self._enforce(self._persona_action_id("delete"))
+        client = self._require_client()
+        return await client.delete_persona_exemplar(persona_id, exemplar_id)
+
     async def list_chat_greetings(self, chat_id: str) -> Any:
         self._enforce(self._session_action_id())
         client = self._require_client()

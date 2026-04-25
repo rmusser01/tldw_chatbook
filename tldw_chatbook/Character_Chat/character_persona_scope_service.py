@@ -42,6 +42,22 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
             "character.sessions.update.local",
         ],
     },
+    {
+        "operation_id": "character.persona.exemplars.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_scope_missing",
+        "user_message": (
+            "Local persona exemplar CRUD is not available through the source-aware character/persona scope yet."
+        ),
+        "affected_action_ids": [
+            "character.persona.create.local",
+            "character.persona.delete.local",
+            "character.persona.detail.local",
+            "character.persona.list.local",
+            "character.persona.update.local",
+        ],
+    },
 ]
 
 _SERVER_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
@@ -264,6 +280,152 @@ class CharacterPersonaScopeService:
             ("restore_persona_profile", "restore_persona"),
             persona_id,
             expected_version,
+            missing_message=missing_message,
+        )
+
+    async def list_persona_exemplars(
+        self,
+        persona_id: str,
+        mode: str = "local",
+        include_disabled: bool = False,
+        include_deleted: bool = False,
+        include_deleted_personas: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "list"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona exemplars are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide list_persona_exemplars()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("list_persona_exemplars",),
+            persona_id,
+            include_disabled=include_disabled,
+            include_deleted=include_deleted,
+            include_deleted_personas=include_deleted_personas,
+            limit=limit,
+            offset=offset,
+            missing_message=missing_message,
+        )
+
+    async def get_persona_exemplar(self, persona_id: str, exemplar_id: str, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "detail"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona exemplars are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide get_persona_exemplar()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("get_persona_exemplar",),
+            persona_id,
+            exemplar_id,
+            missing_message=missing_message,
+        )
+
+    async def create_persona_exemplar(self, persona_id: str, request_data: Any, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "create"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona exemplars are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide create_persona_exemplar()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("create_persona_exemplar",),
+            persona_id,
+            request_data,
+            missing_message=missing_message,
+        )
+
+    async def import_persona_exemplars(self, persona_id: str, request_data: Any, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "create"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona exemplars are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide import_persona_exemplars()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("import_persona_exemplars",),
+            persona_id,
+            request_data,
+            missing_message=missing_message,
+        )
+
+    async def update_persona_exemplar(
+        self,
+        persona_id: str,
+        exemplar_id: str,
+        request_data: Any,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "update"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona exemplars are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide update_persona_exemplar()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("update_persona_exemplar",),
+            persona_id,
+            exemplar_id,
+            request_data,
+            missing_message=missing_message,
+        )
+
+    async def review_persona_exemplar(
+        self,
+        persona_id: str,
+        exemplar_id: str,
+        request_data: Any,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "update"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona exemplars are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide review_persona_exemplar()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("review_persona_exemplar",),
+            persona_id,
+            exemplar_id,
+            request_data,
+            missing_message=missing_message,
+        )
+
+    async def delete_persona_exemplar(self, persona_id: str, exemplar_id: str, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "delete"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona exemplars are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide delete_persona_exemplar()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("delete_persona_exemplar",),
+            persona_id,
+            exemplar_id,
             missing_message=missing_message,
         )
 
