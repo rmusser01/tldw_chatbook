@@ -21,6 +21,14 @@ ExportMode = Literal["url", "inline"]
 AsyncMode = Literal["auto", "sync", "async"]
 ReadingHighlightAnchorStrategy = Literal["fuzzy_quote", "exact_offset"]
 ReadingHighlightState = Literal["active", "stale"]
+ReadingImportJobState = Literal[
+    "queued",
+    "processing",
+    "completed",
+    "failed",
+    "cancelled",
+    "quarantined",
+]
 ItemsBulkAction = Literal[
     "set_status",
     "set_favorite",
@@ -442,6 +450,40 @@ class ReadingSummaryResponse(BaseModel):
     generated_at: str | None = None
 
 
+class ReadingImportResponse(BaseModel):
+    source: str
+    imported: int
+    updated: int
+    skipped: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class ReadingImportJobResponse(BaseModel):
+    job_id: int
+    job_uuid: str | None = None
+    status: ReadingImportJobState
+
+
+class ReadingImportJobStatus(BaseModel):
+    job_id: int
+    job_uuid: str | None = None
+    status: ReadingImportJobState
+    created_at: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    progress_percent: float | None = None
+    progress_message: str | None = None
+    error_message: str | None = None
+    result: ReadingImportResponse | None = None
+
+
+class ReadingImportJobsListResponse(BaseModel):
+    jobs: list[ReadingImportJobStatus] = Field(default_factory=list)
+    total: int
+    limit: int | None = None
+    offset: int | None = None
+
+
 class ReadingItem(BaseModel):
     id: int
     media_id: int | None = None
@@ -837,6 +879,11 @@ __all__ = [
     "ReadingHighlightCreateRequest",
     "ReadingHighlightState",
     "ReadingHighlightUpdateRequest",
+    "ReadingImportJobResponse",
+    "ReadingImportJobState",
+    "ReadingImportJobStatus",
+    "ReadingImportJobsListResponse",
+    "ReadingImportResponse",
     "ReadingItem",
     "ReadingItemDetail",
     "ReadingItemsListResponse",

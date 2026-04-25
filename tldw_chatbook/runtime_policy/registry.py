@@ -277,7 +277,8 @@ AUDITED_CAPABILITY_SEEDS = (
         "media",
         sources=SEPARATED_SOURCES,
         resources=(
-            _resource("media.reading", actions=_combine_action_sets(CRUD_ACTIONS, (BULK_UPDATE, ARCHIVE, SUMMARIZE))),
+            _resource("media.reading", actions=_combine_action_sets(CRUD_ACTIONS, (BULK_UPDATE, ARCHIVE, SUMMARIZE, IMPORT))),
+            _resource("media.reading_import_jobs", actions=(LIST, DETAIL)),
             _resource("media.reading.saved_searches", actions=CRUD_ACTIONS),
             _resource("media.reading.note_links", actions=(LIST, CREATE, DELETE)),
             _resource("media.reading_progress", actions=(DETAIL, UPDATE)),

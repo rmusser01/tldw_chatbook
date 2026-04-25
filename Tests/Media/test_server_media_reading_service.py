@@ -10,6 +10,9 @@ from tldw_chatbook.tldw_api import (
     ReadingSavedSearchListResponse,
     ReadingSavedSearchResponse,
     ReadingArchiveResponse,
+    ReadingImportJobResponse,
+    ReadingImportJobsListResponse,
+    ReadingImportJobStatus,
     ReadingSummaryResponse,
 )
 from tldw_chatbook.tldw_api.media_reading_schemas import ItemsBulkResponse
@@ -178,6 +181,39 @@ class FakeClient:
                 "provider": "openai",
                 "model": "gpt-4o-mini",
                 "citations": [{"item_id": item_id, "source": "reading"}],
+            }
+        )
+
+    async def import_reading_items(self, import_path, *, source="auto", merge_tags=True):
+        self.calls.append(("import_reading_items", import_path, source, merge_tags))
+        return ReadingImportJobResponse.model_validate({"job_id": 701, "job_uuid": "job-uuid", "status": "queued"})
+
+    async def list_reading_import_jobs(self, *, status=None, limit=50, offset=0):
+        self.calls.append(("list_reading_import_jobs", status, limit, offset))
+        return ReadingImportJobsListResponse.model_validate(
+            {
+                "jobs": [
+                    {
+                        "job_id": 701,
+                        "job_uuid": "job-uuid",
+                        "status": "completed",
+                        "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
+                    }
+                ],
+                "total": 1,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+
+    async def get_reading_import_job(self, job_id):
+        self.calls.append(("get_reading_import_job", job_id))
+        return ReadingImportJobStatus.model_validate(
+            {
+                "job_id": job_id,
+                "job_uuid": "job-uuid",
+                "status": "completed",
+                "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
             }
         )
 
@@ -485,6 +521,25 @@ async def test_server_service_routes_reading_bulk_archive_and_summary_actions():
 
 
 @pytest.mark.asyncio
+async def test_server_service_routes_reading_import_jobs_with_policy_actions():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    submitted = await service.import_reading_items("/tmp/pocket.csv", source="pocket", merge_tags=False)
+    listed = await service.list_reading_import_jobs(status="completed", limit=25, offset=5)
+    detail = await service.get_reading_import_job(701)
+
+    assert submitted.job_id == 701
+    assert listed.jobs[0].result.imported == 2
+    assert detail.result.updated == 1
+    assert client.calls[-3:] == [
+        ("import_reading_items", "/tmp/pocket.csv", "pocket", False),
+        ("list_reading_import_jobs", "completed", 25, 5),
+        ("get_reading_import_job", 701),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_server_service_enforces_media_reading_and_ingestion_policy_actions():
     client = FakeClient()
     policy = Mock()
@@ -508,6 +563,9 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
     await service.bulk_update_reading_items(item_ids=[41], action="set_status", status="read")
     await service.create_reading_archive(41, format="md")
     await service.summarize_reading_item(41, prompt="Summarize")
+    await service.import_reading_items("/tmp/pocket.csv")
+    await service.list_reading_import_jobs()
+    await service.get_reading_import_job(701)
     await service.list_document_versions(99)
     await service.save_analysis_version(99, content="body", analysis_content="analysis")
     await service.delete_document_version(99, 2)
@@ -531,6 +589,9 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
         "media.reading.bulk_update.server",
         "media.reading.archive.server",
         "media.reading.summarize.server",
+        "media.reading.import.server",
+        "media.reading_import_jobs.list.server",
+        "media.reading_import_jobs.detail.server",
         "media.reading.detail.server",
         "media.reading.update.server",
         "media.reading.delete.server",

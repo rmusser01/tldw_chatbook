@@ -79,6 +79,9 @@ from .media_reading_schemas import (
     ReadingHighlight,
     ReadingHighlightCreateRequest,
     ReadingHighlightUpdateRequest,
+    ReadingImportJobResponse,
+    ReadingImportJobStatus,
+    ReadingImportJobsListResponse,
     ReadingNoteLinkCreateRequest,
     ReadingNoteLinkResponse,
     ReadingNoteLinksListResponse,
@@ -1190,6 +1193,43 @@ class TLDWAPIClient:
             json_data=payload,
         )
         return ReadingSummaryResponse.model_validate(response)
+
+    async def import_reading_items(
+        self,
+        import_path: str,
+        *,
+        source: str = "auto",
+        merge_tags: bool = True,
+    ) -> ReadingImportJobResponse:
+        httpx_files = prepare_files_for_httpx([import_path], upload_field_name="file")
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/reading/import",
+                data={"source": source, "merge_tags": str(merge_tags).lower()},
+                files=httpx_files,
+            )
+            return ReadingImportJobResponse.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def list_reading_import_jobs(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> ReadingImportJobsListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/reading/import/jobs",
+            params={key: value for key, value in {"status": status, "limit": limit, "offset": offset}.items() if value is not None},
+        )
+        return ReadingImportJobsListResponse.model_validate(response)
+
+    async def get_reading_import_job(self, job_id: int) -> ReadingImportJobStatus:
+        response = await self._request("GET", f"/api/v1/reading/import/jobs/{job_id}")
+        return ReadingImportJobStatus.model_validate(response)
 
     async def get_reading_progress(self, media_id: int) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/media/{media_id}/progress")

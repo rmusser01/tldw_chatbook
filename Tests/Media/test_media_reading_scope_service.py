@@ -592,6 +592,35 @@ class FakeServerMediaService:
             "citations": [{"item_id": item_id, "source": "reading"}],
         }
 
+    async def import_reading_items(self, import_path, *, source="auto", merge_tags=True):
+        self.calls.append(("import_reading_items", import_path, source, merge_tags))
+        return {"job_id": 701, "job_uuid": "job-uuid", "status": "queued"}
+
+    async def list_reading_import_jobs(self, *, status=None, limit=50, offset=0):
+        self.calls.append(("list_reading_import_jobs", status, limit, offset))
+        return {
+            "jobs": [
+                {
+                    "job_id": 701,
+                    "job_uuid": "job-uuid",
+                    "status": "completed",
+                    "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
+                }
+            ],
+            "total": 1,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def get_reading_import_job(self, job_id):
+        self.calls.append(("get_reading_import_job", job_id))
+        return {
+            "job_id": job_id,
+            "job_uuid": "job-uuid",
+            "status": "completed",
+            "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
+        }
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
@@ -1090,6 +1119,63 @@ async def test_scope_service_reports_local_archive_and_summary_as_explicitly_uns
     assert policy.calls[-2:] == [
         "media.reading.archive.local",
         "media.reading.summarize.local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_reading_import_jobs_with_policy():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    submitted = await scope.import_reading_items(
+        mode="server",
+        import_path="/tmp/pocket.csv",
+        source="pocket",
+        merge_tags=False,
+    )
+    listed = await scope.list_reading_import_jobs(mode="server", status="completed", limit=25, offset=5)
+    detail = await scope.get_reading_import_job(mode="server", job_id=701)
+
+    assert submitted["job_id"] == 701
+    assert listed["jobs"][0]["result"]["imported"] == 2
+    assert detail["result"]["updated"] == 1
+    assert policy.calls[-3:] == [
+        "media.reading.import.server",
+        "media.reading_import_jobs.list.server",
+        "media.reading_import_jobs.detail.server",
+    ]
+    assert server.calls[-3:] == [
+        ("import_reading_items", "/tmp/pocket.csv", "pocket", False),
+        ("list_reading_import_jobs", "completed", 25, 5),
+        ("get_reading_import_job", 701),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_reports_local_reading_import_jobs_as_explicitly_unsupported_after_policy():
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Local reading import jobs are not available yet."):
+        await scope.import_reading_items(mode="local", import_path="/tmp/pocket.csv")
+    with pytest.raises(ValueError, match="Local reading import jobs are not available yet."):
+        await scope.list_reading_import_jobs(mode="local")
+    with pytest.raises(ValueError, match="Local reading import jobs are not available yet."):
+        await scope.get_reading_import_job(mode="local", job_id=701)
+
+    assert policy.calls[-3:] == [
+        "media.reading.import.local",
+        "media.reading_import_jobs.list.local",
+        "media.reading_import_jobs.detail.local",
     ]
 
 

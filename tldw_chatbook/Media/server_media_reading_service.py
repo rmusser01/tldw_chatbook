@@ -94,6 +94,10 @@ class ServerMediaReadingService:
         return f"media.reading_progress.{action}.server"
 
     @staticmethod
+    def _reading_import_job_action_id(action: str) -> str:
+        return f"media.reading_import_jobs.{action}.server"
+
+    @staticmethod
     def _ingestion_source_action_id(action: str) -> str:
         return f"media.ingestion_sources.{action}.server"
 
@@ -287,6 +291,34 @@ class ServerMediaReadingService:
             chunked=chunked,
         )
         return await self._require_client().summarize_reading_item(int(item_id), request_data)
+
+    async def import_reading_items(
+        self,
+        import_path: str,
+        *,
+        source: str = "auto",
+        merge_tags: bool = True,
+    ) -> Any:
+        self._enforce(self._reading_action_id("import"))
+        return await self._require_client().import_reading_items(
+            import_path,
+            source=source,
+            merge_tags=merge_tags,
+        )
+
+    async def list_reading_import_jobs(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Any:
+        self._enforce(self._reading_import_job_action_id("list"))
+        return await self._require_client().list_reading_import_jobs(status=status, limit=limit, offset=offset)
+
+    async def get_reading_import_job(self, job_id: Any) -> Any:
+        self._enforce(self._reading_import_job_action_id("detail"))
+        return await self._require_client().get_reading_import_job(int(job_id))
 
     async def get_reading_progress(self, media_id: Any) -> Any:
         self._enforce(self._reading_progress_action_id("detail"))

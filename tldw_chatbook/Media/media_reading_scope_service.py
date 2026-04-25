@@ -67,6 +67,10 @@ class MediaReadingScopeService:
         return f"media.reading_progress.{action}.{mode.value}"
 
     @staticmethod
+    def _reading_import_job_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading_import_jobs.{action}.{mode.value}"
+
+    @staticmethod
     def _reading_list_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"collections.reading_list.{action}.{mode.value}"
 
@@ -476,6 +480,61 @@ class MediaReadingScopeService:
                 )
             )
         )
+
+    async def import_reading_items(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        import_path: str,
+        source: str = "auto",
+        merge_tags: bool = True,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "import"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading import jobs are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(
+            await self._maybe_await(
+                service.import_reading_items(
+                    import_path,
+                    source=source,
+                    merge_tags=merge_tags,
+                )
+            )
+        )
+
+    async def list_reading_import_jobs(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_import_job_action_id(normalized_mode, "list"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading import jobs are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(
+            await self._maybe_await(
+                service.list_reading_import_jobs(status=status, limit=limit, offset=offset)
+            )
+        )
+
+    async def get_reading_import_job(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        job_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_import_job_action_id(normalized_mode, "detail"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading import jobs are not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(await self._maybe_await(service.get_reading_import_job(job_id)))
 
     async def update_media_metadata(
         self,

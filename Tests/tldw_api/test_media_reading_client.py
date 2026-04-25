@@ -13,6 +13,9 @@ from tldw_chatbook.tldw_api import (
     ReadingProgressUpdate,
     ReadingArchiveCreateRequest,
     ReadingArchiveResponse,
+    ReadingImportJobResponse,
+    ReadingImportJobStatus,
+    ReadingImportJobsListResponse,
     ReadingSaveRequest,
     ReadingSavedSearchCreateRequest,
     ReadingSavedSearchResponse,
@@ -346,3 +349,52 @@ async def test_reading_bulk_archive_and_summary_routes_wire(monkeypatch):
     assert archive.output_id == 99
     assert isinstance(summary, ReadingSummaryResponse)
     assert summary.citations[0].source == "reading"
+
+
+@pytest.mark.asyncio
+async def test_reading_import_job_routes_wire(monkeypatch, tmp_path):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {"job_id": 701, "job_uuid": "job-uuid", "status": "queued"},
+            {
+                "jobs": [
+                    {
+                        "job_id": 701,
+                        "job_uuid": "job-uuid",
+                        "status": "completed",
+                        "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
+                    }
+                ],
+                "total": 1,
+                "limit": 25,
+                "offset": 5,
+            },
+            {
+                "job_id": 701,
+                "job_uuid": "job-uuid",
+                "status": "completed",
+                "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+    import_path = tmp_path / "pocket.csv"
+    import_path.write_text("title,url\nExample,https://example.com\n", encoding="utf-8")
+
+    submitted = await client.import_reading_items(str(import_path), source="pocket", merge_tags=False)
+    listed = await client.list_reading_import_jobs(status="completed", limit=25, offset=5)
+    detail = await client.get_reading_import_job(701)
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/import")
+    assert mocked.await_args_list[0].kwargs["data"] == {"source": "pocket", "merge_tags": "false"}
+    assert mocked.await_args_list[0].kwargs["files"][0][0] == "file"
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/import/jobs")
+    assert mocked.await_args_list[1].kwargs["params"] == {"status": "completed", "limit": 25, "offset": 5}
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/reading/import/jobs/701")
+    assert isinstance(submitted, ReadingImportJobResponse)
+    assert submitted.job_id == 701
+    assert isinstance(listed, ReadingImportJobsListResponse)
+    assert listed.jobs[0].result.imported == 2
+    assert isinstance(detail, ReadingImportJobStatus)
+    assert detail.result.updated == 1
