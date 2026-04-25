@@ -12,6 +12,53 @@ class ResearchSearchBackend(str, Enum):
     SERVER = "server"
 
 
+_LOCAL_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "research.search.paper.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local paper-search providers are not implemented; use server mode for arXiv and Semantic Scholar search.",
+        "affected_action_ids": ["research.search.providers.launch.local"],
+    },
+    {
+        "operation_id": "research.search.providers.configure.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local provider configuration CRUD is not exposed by the current research search seam.",
+        "affected_action_ids": ["research.search.providers.configure.local"],
+    },
+    {
+        "operation_id": "research.search.providers.observe.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local research search launches are synchronous and do not expose provider observation events.",
+        "affected_action_ids": ["research.search.providers.observe.local"],
+    },
+]
+
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "research.search.providers.configure.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server research search API does not expose provider configuration CRUD.",
+        "affected_action_ids": ["research.search.providers.configure.server"],
+    },
+    {
+        "operation_id": "research.search.providers.observe.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server research search API is synchronous and does not expose provider observation events.",
+        "affected_action_ids": ["research.search.providers.observe.server"],
+    },
+]
+
+
 class ResearchSearchScopeService:
     """Route research search provider actions to local or server backends."""
 
@@ -93,6 +140,16 @@ class ResearchSearchScopeService:
             payload.setdefault("backend", mode.value)
             return payload
         return result
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == ResearchSearchBackend.LOCAL:
+            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def list_supported_websearch_engines(
         self,

@@ -108,3 +108,58 @@ async def test_research_search_scope_service_blocks_denied_launch_before_dispatc
 
     assert exc.value.reason_code == "wrong_source"
     assert server.calls == []
+
+
+def test_research_search_scope_service_reports_known_unsupported_capabilities():
+    scope = ResearchSearchScopeService(
+        local_service=FakeSearchService("local"),
+        server_service=FakeSearchService("server"),
+    )
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "research.search.paper.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local paper-search providers are not implemented; use server mode for arXiv and Semantic Scholar search.",
+            "affected_action_ids": ["research.search.providers.launch.local"],
+        },
+        {
+            "operation_id": "research.search.providers.configure.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local provider configuration CRUD is not exposed by the current research search seam.",
+            "affected_action_ids": ["research.search.providers.configure.local"],
+        },
+        {
+            "operation_id": "research.search.providers.observe.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local research search launches are synchronous and do not expose provider observation events.",
+            "affected_action_ids": ["research.search.providers.observe.local"],
+        },
+    ]
+    assert server_report == [
+        {
+            "operation_id": "research.search.providers.configure.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server research search API does not expose provider configuration CRUD.",
+            "affected_action_ids": ["research.search.providers.configure.server"],
+        },
+        {
+            "operation_id": "research.search.providers.observe.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server research search API is synchronous and does not expose provider observation events.",
+            "affected_action_ids": ["research.search.providers.observe.server"],
+        },
+    ]
