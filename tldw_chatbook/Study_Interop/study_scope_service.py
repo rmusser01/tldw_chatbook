@@ -62,6 +62,11 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
             "study.flashcard.review_sessions.list.local",
             "study.flashcard.tags.list.local",
             "study.flashcard.tags.update.local",
+            "study.flashcard.templates.create.local",
+            "study.flashcard.templates.delete.local",
+            "study.flashcard.templates.detail.local",
+            "study.flashcard.templates.list.local",
+            "study.flashcard.templates.update.local",
         ],
     },
 ]
@@ -151,6 +156,10 @@ class StudyScopeService:
     @staticmethod
     def _study_flashcard_generation_action_id(mode: StudyBackend, action: str) -> str:
         return f"study.flashcard.generation.{action}.{mode.value}"
+
+    @staticmethod
+    def _study_flashcard_template_action_id(mode: StudyBackend, action: str) -> str:
+        return f"study.flashcard.templates.{action}.{mode.value}"
 
     @staticmethod
     def _study_pack_action_id(action: str) -> str:
@@ -384,6 +393,45 @@ class StudyScopeService:
             kind="study_flashcard_generation",
             payload=record,
             source_id="transient",
+        )
+
+    def _normalize_template_payload(
+        self,
+        *,
+        backend: StudyBackend,
+        payload: Any,
+    ) -> dict[str, Any]:
+        record = dict(payload or {}) if isinstance(payload, Mapping) else {"payload": payload}
+        return self._with_backend_record(
+            backend=backend,
+            kind="study_flashcard_template",
+            payload=record,
+            source_id=record.get("id"),
+        )
+
+    def _normalize_template_list_payload(
+        self,
+        *,
+        backend: StudyBackend,
+        payload: Any,
+        limit: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        if isinstance(payload, Mapping):
+            record = dict(payload)
+            items = list(record.get("items") or [])
+        else:
+            items = list(payload or [])
+            record = {"items": items, "count": len(items)}
+        record["items"] = [
+            self._normalize_template_payload(backend=backend, payload=item)
+            for item in items
+        ]
+        return self._with_backend_record(
+            backend=backend,
+            kind="study_flashcard_template_list",
+            payload=record,
+            source_id=f"{limit}:{offset}",
         )
 
     def list_unsupported_capabilities(
@@ -776,6 +824,118 @@ class StudyScopeService:
             )
         )
         return self._normalize_generation_payload(backend=normalized_mode, payload=result)
+
+    async def create_flashcard_template(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        name: str,
+        front_template: str,
+        model_type: str = "basic",
+        back_template: str | None = None,
+        notes_template: str | None = None,
+        extra_template: str | None = None,
+        placeholder_definitions: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard templates")
+        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "create"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).create_flashcard_template(
+                name=name,
+                model_type=model_type,
+                front_template=front_template,
+                back_template=back_template,
+                notes_template=notes_template,
+                extra_template=extra_template,
+                placeholder_definitions=placeholder_definitions or [],
+            )
+        )
+        return self._normalize_template_payload(backend=normalized_mode, payload=result)
+
+    async def list_flashcard_templates(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard templates")
+        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "list"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).list_flashcard_templates(limit=limit, offset=offset)
+        )
+        return self._normalize_template_list_payload(
+            backend=normalized_mode,
+            payload=result,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def get_flashcard_template(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        template_id: int,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard templates")
+        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "detail"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_flashcard_template(template_id)
+        )
+        return self._normalize_template_payload(backend=normalized_mode, payload=result)
+
+    async def update_flashcard_template(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        template_id: int,
+        name: str | None = None,
+        model_type: str | None = None,
+        front_template: str | None = None,
+        back_template: str | None = None,
+        notes_template: str | None = None,
+        extra_template: str | None = None,
+        placeholder_definitions: list[dict[str, Any]] | None = None,
+        expected_version: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard templates")
+        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "update"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).update_flashcard_template(
+                template_id,
+                name=name,
+                model_type=model_type,
+                front_template=front_template,
+                back_template=back_template,
+                notes_template=notes_template,
+                extra_template=extra_template,
+                placeholder_definitions=placeholder_definitions,
+                expected_version=expected_version,
+            )
+        )
+        return self._normalize_template_payload(backend=normalized_mode, payload=result)
+
+    async def delete_flashcard_template(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        template_id: int,
+        expected_version: int,
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard templates")
+        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "delete"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).delete_flashcard_template(
+                template_id,
+                expected_version=expected_version,
+            )
+        )
+        return self._coerce_delete_result(result)
 
     async def move_flashcard(
         self,

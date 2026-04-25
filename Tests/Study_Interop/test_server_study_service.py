@@ -10,6 +10,8 @@ from tldw_chatbook.tldw_api.flashcards_schemas import (
     FlashcardGenerateResponse,
     FlashcardResponse,
     FlashcardReviewSessionSummary,
+    FlashcardTemplateListResponse,
+    FlashcardTemplateResponse,
     StudyPackJobAcceptedResponse,
     StudyPackJobStatusResponse,
     StudyPackSummaryResponse,
@@ -197,6 +199,76 @@ class FakeClient:
                 "count": 1,
             }
         )
+
+    async def create_flashcard_template(self, request_data):
+        self.calls.append(("create_flashcard_template", request_data.model_dump(mode="json", exclude_none=True)))
+        return FlashcardTemplateResponse.model_validate(
+            {
+                "id": 3,
+                "name": "Basic science",
+                "model_type": "basic",
+                "front_template": "{{question}}",
+                "back_template": "{{answer}}",
+                "deleted": False,
+                "client_id": "server-client",
+                "version": 1,
+            }
+        )
+
+    async def list_flashcard_templates(self, *, limit=100, offset=0):
+        self.calls.append(("list_flashcard_templates", limit, offset))
+        return FlashcardTemplateListResponse.model_validate(
+            {
+                "items": [
+                    {
+                        "id": 3,
+                        "name": "Basic science",
+                        "model_type": "basic",
+                        "front_template": "{{question}}",
+                        "back_template": "{{answer}}",
+                        "deleted": False,
+                        "client_id": "server-client",
+                        "version": 1,
+                    }
+                ],
+                "count": 1,
+                "total": 1,
+            }
+        )
+
+    async def get_flashcard_template(self, template_id):
+        self.calls.append(("get_flashcard_template", template_id))
+        return FlashcardTemplateResponse.model_validate(
+            {
+                "id": template_id,
+                "name": "Basic science",
+                "model_type": "basic",
+                "front_template": "{{question}}",
+                "back_template": "{{answer}}",
+                "deleted": False,
+                "client_id": "server-client",
+                "version": 1,
+            }
+        )
+
+    async def update_flashcard_template(self, template_id, request_data):
+        self.calls.append(("update_flashcard_template", template_id, request_data.model_dump(mode="json", exclude_none=True)))
+        return FlashcardTemplateResponse.model_validate(
+            {
+                "id": template_id,
+                "name": "Updated science",
+                "model_type": "basic",
+                "front_template": "{{question}}",
+                "back_template": "{{answer}}",
+                "deleted": False,
+                "client_id": "server-client",
+                "version": 2,
+            }
+        )
+
+    async def delete_flashcard_template(self, template_id, *, expected_version):
+        self.calls.append(("delete_flashcard_template", template_id, expected_version))
+        return {"deleted": True}
 
     async def update_flashcard(self, card_uuid, request_data):
         self.calls.append(("update_flashcard", card_uuid, request_data.model_dump(mode="json", exclude_none=True)))
@@ -440,6 +512,59 @@ async def test_server_study_service_wraps_broad_flashcard_helper_endpoints():
                 "focus_topics": ["mitosis"],
             },
         ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_wraps_flashcard_template_endpoints():
+    client = FakeClient()
+    service = ServerStudyService(client=client)
+
+    created = await service.create_flashcard_template(
+        name="Basic science",
+        front_template="{{question}}",
+        back_template="{{answer}}",
+        placeholder_definitions=[
+            {
+                "key": "question",
+                "label": "Question",
+                "required": True,
+                "targets": ["front_template"],
+            }
+        ],
+    )
+    listed = await service.list_flashcard_templates(limit=5, offset=1)
+    fetched = await service.get_flashcard_template(3)
+    updated = await service.update_flashcard_template(3, name="Updated science", expected_version=1)
+    deleted = await service.delete_flashcard_template(3, expected_version=2)
+
+    assert created["id"] == 3
+    assert listed["items"][0]["id"] == 3
+    assert fetched["id"] == 3
+    assert updated["version"] == 2
+    assert deleted == {"deleted": True}
+    assert client.calls == [
+        (
+            "create_flashcard_template",
+            {
+                "name": "Basic science",
+                "model_type": "basic",
+                "front_template": "{{question}}",
+                "back_template": "{{answer}}",
+                "placeholder_definitions": [
+                    {
+                        "key": "question",
+                        "label": "Question",
+                        "required": True,
+                        "targets": ["front_template"],
+                    }
+                ],
+            },
+        ),
+        ("list_flashcard_templates", 5, 1),
+        ("get_flashcard_template", 3),
+        ("update_flashcard_template", 3, {"name": "Updated science", "expected_version": 1}),
+        ("delete_flashcard_template", 3, 2),
     ]
 
 

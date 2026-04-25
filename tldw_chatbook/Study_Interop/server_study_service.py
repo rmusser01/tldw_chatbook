@@ -15,6 +15,8 @@ from ..tldw_api import (
     FlashcardReviewRequest,
     FlashcardResetSchedulingRequest,
     FlashcardTagsUpdate,
+    FlashcardTemplateCreateRequest,
+    FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
     StudyAssistantRespondRequest,
     StudyPackCreateJobRequest,
@@ -94,6 +96,10 @@ class ServerStudyService:
     @staticmethod
     def _flashcard_generation_action_id(action: str) -> str:
         return f"study.flashcard.generation.{action}.server"
+
+    @staticmethod
+    def _flashcard_template_action_id(action: str) -> str:
+        return f"study.flashcard.templates.{action}.server"
 
     @staticmethod
     def _study_pack_action_id(action: str) -> str:
@@ -339,6 +345,77 @@ class ServerStudyService:
             )
         )
         return self._model_to_dict(response)
+
+    async def create_flashcard_template(
+        self,
+        *,
+        name: str,
+        front_template: str,
+        model_type: str = "basic",
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_template_action_id("create"))
+        response = await self._require_client().create_flashcard_template(
+            FlashcardTemplateCreateRequest(
+                name=name,
+                model_type=model_type,
+                front_template=front_template,
+                back_template=back_template,
+                notes_template=notes_template,
+                extra_template=extra_template,
+                placeholder_definitions=placeholder_definitions or [],
+            )
+        )
+        return self._model_to_dict(response)
+
+    async def list_flashcard_templates(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        self._enforce(self._flashcard_template_action_id("list"))
+        response = await self._require_client().list_flashcard_templates(limit=limit, offset=offset)
+        return self._model_to_dict(response)
+
+    async def get_flashcard_template(self, template_id: int) -> dict[str, Any]:
+        self._enforce(self._flashcard_template_action_id("detail"))
+        response = await self._require_client().get_flashcard_template(int(template_id))
+        return self._model_to_dict(response)
+
+    async def update_flashcard_template(
+        self,
+        template_id: int,
+        *,
+        name: Optional[str] = None,
+        model_type: Optional[str] = None,
+        front_template: Optional[str] = None,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+        expected_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_template_action_id("update"))
+        response = await self._require_client().update_flashcard_template(
+            int(template_id),
+            FlashcardTemplateUpdateRequest(
+                name=name,
+                model_type=model_type,
+                front_template=front_template,
+                back_template=back_template,
+                notes_template=notes_template,
+                extra_template=extra_template,
+                placeholder_definitions=placeholder_definitions,
+                expected_version=expected_version,
+            ),
+        )
+        return self._model_to_dict(response)
+
+    async def delete_flashcard_template(self, template_id: int, *, expected_version: int) -> dict[str, Any]:
+        self._enforce(self._flashcard_template_action_id("delete"))
+        return await self._require_client().delete_flashcard_template(
+            int(template_id),
+            expected_version=expected_version,
+        )
 
     async def move_flashcard(
         self,

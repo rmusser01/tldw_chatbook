@@ -1093,6 +1093,16 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         study.flashcard.tags.list.server
         study.flashcard.tags.update.local
         study.flashcard.tags.update.server
+        study.flashcard.templates.create.local
+        study.flashcard.templates.create.server
+        study.flashcard.templates.delete.local
+        study.flashcard.templates.delete.server
+        study.flashcard.templates.detail.local
+        study.flashcard.templates.detail.server
+        study.flashcard.templates.list.local
+        study.flashcard.templates.list.server
+        study.flashcard.templates.update.local
+        study.flashcard.templates.update.server
         study.flashcard.update.local
         study.flashcard.update.server
         study.guides.launch.local

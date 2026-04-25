@@ -194,6 +194,68 @@ class FakeServerStudyService:
             "count": 1,
         }
 
+    async def create_flashcard_template(self, **request):
+        self.calls.append(("create_flashcard_template", request))
+        return {
+            "id": 3,
+            "name": request["name"],
+            "model_type": request.get("model_type", "basic"),
+            "front_template": request["front_template"],
+            "back_template": request.get("back_template"),
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 1,
+        }
+
+    async def list_flashcard_templates(self, *, limit=100, offset=0):
+        self.calls.append(("list_flashcard_templates", limit, offset))
+        return {
+            "items": [
+                {
+                    "id": 3,
+                    "name": "Basic science",
+                    "model_type": "basic",
+                    "front_template": "{{question}}",
+                    "back_template": "{{answer}}",
+                    "deleted": False,
+                    "client_id": "server-client",
+                    "version": 1,
+                }
+            ],
+            "count": 1,
+            "total": 1,
+        }
+
+    async def get_flashcard_template(self, template_id):
+        self.calls.append(("get_flashcard_template", template_id))
+        return {
+            "id": template_id,
+            "name": "Basic science",
+            "model_type": "basic",
+            "front_template": "{{question}}",
+            "back_template": "{{answer}}",
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 1,
+        }
+
+    async def update_flashcard_template(self, template_id, **request):
+        self.calls.append(("update_flashcard_template", template_id, request))
+        return {
+            "id": template_id,
+            "name": request.get("name", "Basic science"),
+            "model_type": request.get("model_type", "basic"),
+            "front_template": request.get("front_template", "{{question}}"),
+            "back_template": request.get("back_template", "{{answer}}"),
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 2,
+        }
+
+    async def delete_flashcard_template(self, template_id, *, expected_version):
+        self.calls.append(("delete_flashcard_template", template_id, expected_version))
+        return {"deleted": True}
+
     async def get_next_review_candidate(self, *, deck_id=None):
         self.calls.append(("get_next_review_candidate", deck_id))
         return {
@@ -498,6 +560,47 @@ async def test_scope_service_routes_server_flashcard_helper_methods_and_normaliz
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_server_flashcard_template_crud_and_normalizes_payloads():
+    server = FakeServerStudyService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    created = await scope.create_flashcard_template(
+        mode="server",
+        name="Basic science",
+        front_template="{{question}}",
+        back_template="{{answer}}",
+    )
+    listed = await scope.list_flashcard_templates(mode="server", limit=5, offset=1)
+    fetched = await scope.get_flashcard_template(mode="server", template_id=3)
+    updated = await scope.update_flashcard_template(
+        mode="server",
+        template_id=3,
+        name="Updated science",
+        expected_version=1,
+    )
+    deleted = await scope.delete_flashcard_template(mode="server", template_id=3, expected_version=2)
+
+    assert created["record_id"] == "server:study_flashcard_template:3"
+    assert listed["record_id"] == "server:study_flashcard_template_list:5:1"
+    assert listed["items"][0]["record_id"] == "server:study_flashcard_template:3"
+    assert fetched["record_id"] == "server:study_flashcard_template:3"
+    assert updated["version"] == 2
+    assert deleted is True
+    assert policy_enforcer.calls == [
+        "study.flashcard.templates.create.server",
+        "study.flashcard.templates.list.server",
+        "study.flashcard.templates.detail.server",
+        "study.flashcard.templates.update.server",
+        "study.flashcard.templates.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("method_name", "kwargs"),
     [
@@ -507,6 +610,11 @@ async def test_scope_service_routes_server_flashcard_helper_methods_and_normaliz
         ("get_flashcard_assistant", {"card_id": "card-local-1"}),
         ("respond_flashcard_assistant", {"card_id": "card-local-1", "action": "follow_up", "message": "Why?"}),
         ("generate_flashcards", {"text": "Cells divide by mitosis."}),
+        ("list_flashcard_templates", {}),
+        ("create_flashcard_template", {"name": "Basic science", "front_template": "{{question}}"}),
+        ("get_flashcard_template", {"template_id": 3}),
+        ("update_flashcard_template", {"template_id": 3, "name": "Updated science"}),
+        ("delete_flashcard_template", {"template_id": 3, "expected_version": 1}),
     ],
 )
 async def test_scope_service_rejects_remote_only_flashcard_helpers_in_local_mode(method_name, kwargs):
@@ -1133,6 +1241,11 @@ def test_scope_service_reports_study_pack_and_suggestion_unsupported_capabilitie
                 "study.flashcard.review_sessions.list.local",
                 "study.flashcard.tags.list.local",
                 "study.flashcard.tags.update.local",
+                "study.flashcard.templates.create.local",
+                "study.flashcard.templates.delete.local",
+                "study.flashcard.templates.detail.local",
+                "study.flashcard.templates.list.local",
+                "study.flashcard.templates.update.local",
             ],
         },
     ]
