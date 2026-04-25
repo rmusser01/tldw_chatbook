@@ -482,6 +482,13 @@ from .ocr_vlm_schemas import (
     OCRPointsPreloadResponse,
     VLMBackendsResponse,
 )
+from .llm_provider_schemas import (
+    LLMHealthResponse,
+    LLMModelMetadata,
+    LLMModelMetadataResponse,
+    LLMProviderDetail,
+    LLMProviderListResponse,
+)
 from .data_tables_schemas import (
     ColumnType,
     DataTableColumn,
@@ -721,6 +728,8 @@ __all__ = [
     "WebClipperWorkspacePayload", "WebClipperWorkspacePlacement",
     "TranslateRequest", "TranslateResponse",
     "OCRBackendDiscoveryEntry", "OCRBackendsResponse", "OCRPointsPreloadResponse", "VLMBackendsResponse",
+    "LLMHealthResponse", "LLMModelMetadata", "LLMModelMetadataResponse",
+    "LLMProviderDetail", "LLMProviderListResponse",
     "ColumnType", "DataTableColumn", "DataTableColumnHint", "DataTableColumnInput",
     "DataTableContentUpdateRequest", "DataTableDeleteResponse", "DataTableDetailResponse",
     "DataTableExportFormat", "DataTableExportResponse", "DataTableGenerateRequest",

@@ -124,6 +124,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 2
 - Notes: Priority 58. This is a cross-cutting media/chat utility surface, but it should stay source-separated until local audio artifact and history semantics are explicitly designed.
 
+### LLM Provider / Model Catalog: LLM health, configured providers, model metadata, and available model IDs
+- Requirement class: Local parity required + Remote parity required
+- Client obligation: Discover / Configure / Observe
+- Current state: Chatbook now has typed direct API-client wrappers for server LLM inference health, configured-provider list, provider detail, flattened model metadata with repeatable type/input/output modality filters, and the flat available-model ID catalog. Local provider configuration remains a separate Chatbook-owned concern.
+- Gap: Dedicated UX adoption, source-aware provider catalog service routing, provider configuration mutation, server switching cache invalidation, MLX/llama.cpp admin process controls, and provider-setting sync/mirror semantics remain pending. Admin/provider-control endpoints are intentionally not wrapped in this discovery slice.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/llm_providers.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/llm_provider_schemas.py`; Verification: `Tests/tldw_api/test_llm_provider_client.py`.
+- Recommended tranche: Tranche 2
+- Notes: Priority 57. This row is cross-cutting because chat, writing, audio, slides, research, and generation UX need an honest active-server model catalog without mutating local provider settings.
+
 ### Prompts / Chatbooks: Prompt library, prompt workflows, and chatbook import/export jobs
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD

@@ -121,6 +121,12 @@ from .ocr_vlm_schemas import (
     OCRPointsPreloadResponse,
     VLMBackendsResponse,
 )
+from .llm_provider_schemas import (
+    LLMHealthResponse,
+    LLMModelMetadataResponse,
+    LLMProviderDetail,
+    LLMProviderListResponse,
+)
 from .data_tables_schemas import (
     DataTableContentUpdateRequest,
     DataTableDeleteResponse,
@@ -1014,6 +1020,79 @@ class TLDWAPIClient:
     async def list_vlm_backends(self) -> VLMBackendsResponse:
         response = await self._request("GET", "/api/v1/vlm/backends")
         return VLMBackendsResponse.model_validate(response)
+
+    async def get_llm_health(self) -> LLMHealthResponse:
+        response = await self._request("GET", "/api/v1/llm/health")
+        return LLMHealthResponse.model_validate(response)
+
+    async def list_llm_providers(
+        self,
+        *,
+        include_deprecated: bool = False,
+    ) -> LLMProviderListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/llm/providers",
+            params={"include_deprecated": str(include_deprecated).lower()},
+        )
+        return LLMProviderListResponse.model_validate(response)
+
+    async def get_llm_provider(
+        self,
+        provider_name: str,
+        *,
+        include_deprecated: bool = False,
+    ) -> LLMProviderDetail:
+        response = await self._request(
+            "GET",
+            f"/api/v1/llm/providers/{provider_name}",
+            params={"include_deprecated": str(include_deprecated).lower()},
+        )
+        return LLMProviderDetail.model_validate(response)
+
+    async def get_llm_models_metadata(
+        self,
+        *,
+        include_deprecated: bool = False,
+        refresh_openrouter: bool = False,
+        model_type: str | list[str] | None = None,
+        input_modality: str | list[str] | None = None,
+        output_modality: str | list[str] | None = None,
+    ) -> LLMModelMetadataResponse:
+        params = {
+            "include_deprecated": str(include_deprecated).lower(),
+            "refresh_openrouter": str(refresh_openrouter).lower(),
+            "type": model_type,
+            "input_modality": input_modality,
+            "output_modality": output_modality,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/llm/models/metadata",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return LLMModelMetadataResponse.model_validate(response)
+
+    async def list_llm_models(
+        self,
+        *,
+        include_deprecated: bool = False,
+        model_type: str | list[str] | None = None,
+        input_modality: str | list[str] | None = None,
+        output_modality: str | list[str] | None = None,
+    ) -> list[str]:
+        params = {
+            "include_deprecated": str(include_deprecated).lower(),
+            "type": model_type,
+            "input_modality": input_modality,
+            "output_modality": output_modality,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/llm/models",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return [str(model) for model in response]
 
     async def generate_data_table(
         self,
