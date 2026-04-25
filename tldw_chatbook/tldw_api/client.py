@@ -216,6 +216,12 @@ from .connectors_schemas import (
     ConnectorSourceSyncStatus,
     ConnectorSourceSyncTriggerResponse,
 )
+from .chat_grammar_schemas import (
+    ChatGrammarCreate,
+    ChatGrammarListResponse,
+    ChatGrammarResponse,
+    ChatGrammarUpdate,
+)
 from .skills_schemas import (
     SkillContextPayload,
     SkillCreate,
@@ -6796,6 +6802,56 @@ class TLDWAPIClient:
 
     async def get_connector_job_status(self, job_id: int) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/connectors/jobs/{job_id}")
+
+    async def create_chat_grammar(self, request_data: ChatGrammarCreate) -> ChatGrammarResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/grammars",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ChatGrammarResponse.model_validate(response)
+
+    async def list_chat_grammars(
+        self,
+        *,
+        include_archived: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> ChatGrammarListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/grammars",
+            params={"include_archived": include_archived, "limit": limit, "offset": offset},
+        )
+        return ChatGrammarListResponse.model_validate(response)
+
+    async def get_chat_grammar(self, grammar_id: str, *, include_archived: bool = False) -> ChatGrammarResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/grammars/{grammar_id}",
+            params={"include_archived": include_archived},
+        )
+        return ChatGrammarResponse.model_validate(response)
+
+    async def update_chat_grammar(
+        self,
+        grammar_id: str,
+        request_data: ChatGrammarUpdate,
+    ) -> ChatGrammarResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/grammars/{grammar_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ChatGrammarResponse.model_validate(response)
+
+    async def delete_chat_grammar(self, grammar_id: str, *, hard_delete: bool = False) -> bool:
+        await self._request(
+            "DELETE",
+            f"/api/v1/grammars/{grammar_id}",
+            params={"hard_delete": hard_delete},
+        )
+        return True
 
     async def list_skills(
         self,

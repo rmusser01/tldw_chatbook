@@ -663,6 +663,14 @@ from .connectors_schemas import (
     ConnectorSyncJobSummary,
     SyncOptions,
 )
+from .chat_grammar_schemas import (
+    ChatGrammarBase,
+    ChatGrammarCreate,
+    ChatGrammarListResponse,
+    ChatGrammarResponse,
+    ChatGrammarUpdate,
+    ChatGrammarValidationStatus,
+)
 from .skills_schemas import (
     SkillBase,
     SkillContextPayload,

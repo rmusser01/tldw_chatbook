@@ -88,6 +88,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 1
 - Notes: Priority 78. Chat remains a core credibility surface for Chatbook as a serious standalone client.
 
+### Chat Grammars: User-scoped reusable GBNF grammars for structured chat output
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Full CRUD
+- Current state: Chatbook now has typed direct API-client wrappers for server saved grammar create, list, detail, update, and soft/hard delete operations.
+- Gap: Dedicated UX adoption, chat-launch/runtime selection, validation presentation, local grammar-library storage, offline-unavailable presentation, and local/server grammar mirror semantics remain pending. Local provider grammar options should stay local/ad hoc until a deliberate local grammar library is approved.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/chat_grammars.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/chat_grammar_schemas.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/chat_grammar_schemas.py`; Verification: `Tests/tldw_api/test_chat_grammars_client.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 32. This is chat-adjacent interoperability work, but it should not disrupt the existing chat UI until the UX layer adopts grammar selection deliberately.
+
 ### Characters / Personas / CCP: Character catalog, persona profiles, chat sessions, and character messages
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
