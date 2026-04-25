@@ -27,6 +27,7 @@ from tldw_chatbook.tldw_api import (
     PromptStudioTestCaseExportRequest,
     PromptStudioTestCaseImportRequest,
     PromptStudioTestCaseUpdate,
+    ReadingExportResponse,
     TLDWAPIClient,
 )
 
@@ -332,3 +333,64 @@ async def test_prompt_studio_evaluations_optimizations_and_status_routes(monkeyp
     assert comparison.data["optimization_ids"] == [41, 42]
     assert isinstance(status, PromptStudioStatusResponse)
     assert status.data["queue_depth"] == 1
+
+
+@pytest.mark.asyncio
+async def test_prompt_studio_csv_upload_template_and_sse_routes(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    request_mock = AsyncMock(return_value={"success": True, "data": {"imported": 1, "errors": [], "total_test_cases": 4}})
+    binary_mock = AsyncMock(
+        return_value=ReadingExportResponse(
+            content=b"name,input.text,expected.summary\n",
+            content_type="text/csv; charset=utf-8",
+            content_disposition='attachment; filename="prompt_studio_test_cases_template.csv"',
+            filename="prompt_studio_test_cases_template.csv",
+        )
+    )
+    sse_calls = []
+
+    async def fake_sse_request(method, endpoint, params=None, headers=None):
+        sse_calls.append((method, endpoint, params, headers))
+        yield {"event": "message", "data": {"type": "connection", "status": "connected"}, "event_id": None}
+        yield {"event": "message", "data": {"type": "initial_state", "project_id": 1, "jobs": []}, "event_id": None}
+
+    monkeypatch.setattr(client, "_request", request_mock)
+    monkeypatch.setattr(client, "_binary_request", binary_mock)
+    monkeypatch.setattr(client, "_sse_request", fake_sse_request)
+
+    upload_result = await client.import_prompt_studio_test_cases_csv_upload(
+        project_id=1,
+        csv_content="name,input.text\nSmoke,Hello\n",
+        filename="cases.csv",
+        signature_id=7,
+        auto_generate_names=False,
+    )
+    template = await client.get_prompt_studio_test_cases_csv_template(signature_id=7)
+    events = [event async for event in client.stream_prompt_studio_events(client_id="chatbook-1", project_id=1)]
+
+    assert request_mock.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/test-cases/import/csv-upload",
+    )
+    assert request_mock.await_args_list[0].kwargs["data"] == {
+        "project_id": "1",
+        "signature_id": "7",
+        "auto_generate_names": "false",
+    }
+    assert request_mock.await_args_list[0].kwargs["files"] == [
+        ("file", ("cases.csv", b"name,input.text\nSmoke,Hello\n", "text/csv"))
+    ]
+    assert binary_mock.await_args_list[0].args[:2] == ("GET", "/api/v1/prompt-studio/test-cases/import/template")
+    assert binary_mock.await_args_list[0].kwargs["params"] == {"signature_id": 7}
+    assert sse_calls == [
+        (
+            "GET",
+            "/api/v1/prompt-studio/ws",
+            {"client_id": "chatbook-1", "project_id": 1},
+            {"Accept": "text/event-stream"},
+        )
+    ]
+    assert upload_result.data["imported"] == 1
+    assert template.filename == "prompt_studio_test_cases_template.csv"
+    assert events[0]["data"]["status"] == "connected"
+    assert events[1]["data"]["project_id"] == 1

@@ -2132,6 +2132,42 @@ class TLDWAPIClient:
         )
         return PromptStudioStandardResponse.model_validate(response)
 
+    async def import_prompt_studio_test_cases_csv_upload(
+        self,
+        *,
+        project_id: int,
+        csv_content: str | bytes,
+        filename: str = "prompt_studio_test_cases.csv",
+        signature_id: int | None = None,
+        auto_generate_names: bool = True,
+    ) -> PromptStudioStandardResponse:
+        content = csv_content.encode("utf-8") if isinstance(csv_content, str) else csv_content
+        form_data = {
+            "project_id": str(project_id),
+            "auto_generate_names": str(auto_generate_names).lower(),
+        }
+        if signature_id is not None:
+            form_data["signature_id"] = str(signature_id)
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/test-cases/import/csv-upload",
+            data=form_data,
+            files=[("file", (filename, content, "text/csv"))],
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def get_prompt_studio_test_cases_csv_template(
+        self,
+        *,
+        signature_id: int | None = None,
+    ) -> ReadingExportResponse:
+        params = {"signature_id": signature_id} if signature_id is not None else None
+        return await self._binary_request(
+            "GET",
+            "/api/v1/prompt-studio/test-cases/import/template",
+            params=params,
+        )
+
     async def export_prompt_studio_test_cases(
         self,
         project_id: int,
@@ -2338,6 +2374,23 @@ class TLDWAPIClient:
             params={"warn_seconds": warn_seconds},
         )
         return PromptStudioStatusResponse.model_validate(response)
+
+    async def stream_prompt_studio_events(
+        self,
+        *,
+        client_id: str,
+        project_id: int | None = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        params: Dict[str, Any] = {"client_id": client_id}
+        if project_id is not None:
+            params["project_id"] = project_id
+        async for event in self._sse_request(
+            "GET",
+            "/api/v1/prompt-studio/ws",
+            params=params,
+            headers={"Accept": "text/event-stream"},
+        ):
+            yield event
 
     async def generate_data_table(
         self,
