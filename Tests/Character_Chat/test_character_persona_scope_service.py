@@ -484,6 +484,61 @@ async def test_scope_service_rejects_invalid_mode():
         await scope_service.list_characters(mode="bogus")
 
 
+def test_scope_service_reports_known_character_persona_capability_gaps():
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterBackend(),
+        server_service=FakeCharacterPersonaClient(),
+    )
+
+    local_report = scope_service.list_unsupported_capabilities(mode="local")
+    server_report = scope_service.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "character.persona.profiles.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_scope_missing",
+            "user_message": "Local persona profile CRUD is still handled by older CCP/local chat paths and is not wrapped by the source-aware character/persona scope yet.",
+            "affected_action_ids": [
+                "character.persona.create.local",
+                "character.persona.delete.local",
+                "character.persona.detail.local",
+                "character.persona.list.local",
+                "character.persona.update.local",
+            ],
+        },
+        {
+            "operation_id": "character.sessions.admin.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_scope_missing",
+            "user_message": "Local character chat sessions, greetings, presets, settings, export, and diagnostics still use legacy local CCP flows instead of this source-aware scope.",
+            "affected_action_ids": [
+                "character.sessions.create.local",
+                "character.sessions.delete.local",
+                "character.sessions.detail.local",
+                "character.sessions.export.local",
+                "character.sessions.launch.local",
+                "character.sessions.list.local",
+                "character.sessions.observe.local",
+                "character.sessions.restore.local",
+                "character.sessions.update.local",
+            ],
+        },
+    ]
+    assert server_report == [
+        {
+            "operation_id": "character.messages.mutation.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "chatbook_contract_missing",
+            "user_message": "Server character-message endpoints exist, but Chatbook does not yet wrap message mutation through the source-aware character/persona scope.",
+            "affected_action_ids": ["character.sessions.detail.server", "character.sessions.update.server"],
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_scope_service_requires_local_backend_for_local_calls():
     scope_service = CharacterPersonaScopeService(

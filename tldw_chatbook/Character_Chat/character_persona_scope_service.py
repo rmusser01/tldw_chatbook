@@ -8,6 +8,53 @@ import inspect
 from typing import Any
 
 
+_LOCAL_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "character.persona.profiles.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_scope_missing",
+        "user_message": "Local persona profile CRUD is still handled by older CCP/local chat paths and is not wrapped by the source-aware character/persona scope yet.",
+        "affected_action_ids": [
+            "character.persona.create.local",
+            "character.persona.delete.local",
+            "character.persona.detail.local",
+            "character.persona.list.local",
+            "character.persona.update.local",
+        ],
+    },
+    {
+        "operation_id": "character.sessions.admin.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_scope_missing",
+        "user_message": "Local character chat sessions, greetings, presets, settings, export, and diagnostics still use legacy local CCP flows instead of this source-aware scope.",
+        "affected_action_ids": [
+            "character.sessions.create.local",
+            "character.sessions.delete.local",
+            "character.sessions.detail.local",
+            "character.sessions.export.local",
+            "character.sessions.launch.local",
+            "character.sessions.list.local",
+            "character.sessions.observe.local",
+            "character.sessions.restore.local",
+            "character.sessions.update.local",
+        ],
+    },
+]
+
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "character.messages.mutation.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "chatbook_contract_missing",
+        "user_message": "Server character-message endpoints exist, but Chatbook does not yet wrap message mutation through the source-aware character/persona scope.",
+        "affected_action_ids": ["character.sessions.detail.server", "character.sessions.update.server"],
+    }
+]
+
+
 class CharacterPersonaScopeService:
     """Route character and persona catalog reads to the selected backend."""
 
@@ -50,6 +97,12 @@ class CharacterPersonaScopeService:
     @staticmethod
     def _session_action_id(mode: str, action: str = "launch") -> str:
         return f"character.sessions.{action}.{mode}"
+
+    def list_unsupported_capabilities(self, *, mode: str | None = None) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == "local":
+            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def _invoke_backend_method(
         self,
