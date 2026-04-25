@@ -116,6 +116,43 @@ async def test_service_delegates_chatbook_api_calls():
     assert import_job["status"] == "completed"
 
 
+@pytest.mark.asyncio
+async def test_service_accepts_dict_payloads_from_scope_adapter():
+    class FakeClient:
+        def __init__(self):
+            self.export_request = None
+            self.import_request = None
+
+        async def export_chatbook(self, request_data):
+            self.export_request = request_data
+            return {"job_id": "export-job-1", "status": "queued"}
+
+        async def import_chatbook(self, chatbook_file_path: str, request_data):
+            self.import_request = request_data
+            return {"job_id": "import-job-1", "status": "queued"}
+
+    client = FakeClient()
+    service = ServerChatbookService(client=client)
+
+    await service.export_chatbook(
+        {
+            "name": "Pack",
+            "description": "Desc",
+            "content_selections": {"conversation": ["1"]},
+        }
+    )
+    await service.import_chatbook(
+        "/tmp/demo.chatbook.zip",
+        {
+            "content_selections": {"conversation": ["1"]},
+            "conflict_resolution": "rename",
+        },
+    )
+
+    assert client.export_request.content_selections == {"conversation": ["1"]}
+    assert client.import_request.conflict_resolution == "rename"
+
+
 def test_service_builds_server_import_selections_from_manifest():
     manifest = ChatbookManifest(
         version=ChatbookVersion.V1,

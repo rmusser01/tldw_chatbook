@@ -42,11 +42,11 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Research Sessions / Runs: Deep research session lifecycle, streaming events, and bundle retrieval
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
-- Current state: No dedicated Chatbook research session or run UX exists; only adjacent eval tooling is present.
-- Gap: Chatbook lacks the local-first research session lifecycle the user explicitly wants, and the remote run contract is not surfaced either.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/research_runs.py`, `../tldw_server/tldw_Server_API/app/core/Research/service.py`, `../tldw_server/tldw_Server_API/app/core/Research/streaming.py`; Chatbook: adjacent eval tooling in `tldw_chatbook/Evaluations_Interop/` and `tldw_chatbook/Widgets/Evals/`; Verification: stable endpoint-backed session/run lifecycle with streaming and bundle helpers exists.
+- Current state: Local research session/run persistence, event history, artifact storage, bundle retrieval, source-normalized records, server run wrappers, and a mode-aware scope service are now present and app-wired. The server contract still does not expose research-run deletion, so Chatbook surfaces that as an explicit unsupported server operation after policy enforcement.
+- Gap: Dedicated research UX/adoption remains missing, and server-side session semantics are still run-centric rather than a full draft-session CRUD surface. Local CRUD is now available at the service seam; server run launch/list/detail/update/observe/bundle/artifact operations are available through the server wrapper and scope service.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/research_runs.py`, `../tldw_server/tldw_Server_API/app/core/Research/service.py`, `../tldw_server/tldw_Server_API/app/core/Research/streaming.py`; Chatbook: `tldw_chatbook/Research_Interop/local_research_service.py`, `tldw_chatbook/Research_Interop/server_research_service.py`, `tldw_chatbook/Research_Interop/research_scope_service.py`, `tldw_chatbook/app.py`; Verification: `Tests/Research/test_local_research_service.py`, `Tests/Research/test_research_scope_service.py`, `Tests/Research/test_server_research_service.py`, and `Tests/UI/test_screen_navigation.py`.
 - Recommended tranche: Tranche 2
-- Notes: Priority 75. This is one of the most important missing standalone product surfaces in the audit.
+- Notes: Priority 75. This is now a backend-foundation/adoption gap rather than an absent local-first data model. UI/UX work is deferred to the parallel UX effort.
 
 ### Local MCP Runtime: Local MCP server runtime, protocol handling, tools, prompts, and status
 - Requirement class: Local parity required
@@ -118,9 +118,9 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Prompts / Chatbooks: Prompt library, prompt workflows, and chatbook import/export jobs
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
-- Current state: Create plus import/export paths exist, and there is already an explicit server chatbook service seam.
-- Gap: Update, delete, and fully mode-separated parity are not finished.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/prompts.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/chatbooks.py`; Chatbook: `tldw_chatbook/Chatbooks/chatbook_creator.py`, `tldw_chatbook/Chatbooks/chatbook_importer.py`, `tldw_chatbook/Chatbooks/server_chatbook_service.py`, `tldw_chatbook/UI/Screens/chatbooks_screen.py`; Verification: dedicated prompt and chatbook routers exist server-side.
+- Current state: Prompt CRUD now has local and server adapters, server prompt update/delete client methods, source-normalized records, and a policy-enforced prompt/chatbook scope service wired into app startup. Chatbook import/export now has local and server service adapters, and server chatbook payloads accept scope-layer dicts as well as typed request objects.
+- Gap: Prompt UI adoption and prompt version controls are still pending. Chatbook archive import/export is available, but list/detail/create/update/delete record-style chatbook CRUD remains explicitly unsupported unless a backend exposes those methods; the scope service enforces policy first and then raises an honest unsupported boundary.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/prompts.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/chatbooks.py`; Chatbook: `tldw_chatbook/Prompt_Management/local_prompt_service.py`, `tldw_chatbook/Prompt_Management/server_prompt_service.py`, `tldw_chatbook/Prompt_Management/prompt_chatbook_scope_service.py`, `tldw_chatbook/Chatbooks/local_chatbook_service.py`, `tldw_chatbook/Chatbooks/server_chatbook_service.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/app.py`; Verification: `Tests/Prompt_Management/test_prompt_chatbook_scope_service.py`, `Tests/tldw_api/test_prompt_chatbook_client.py`, `Tests/Chatbooks/test_server_chatbook_service.py`, and `Tests/UI/test_screen_navigation.py`.
 - Recommended tranche: Tranche 1
 - Notes: Priority 67. This remains important, but it does not outrank the standalone-first gaps above.
 

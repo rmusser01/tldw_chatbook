@@ -133,6 +133,10 @@ class ServerChatbookService:
     def __init__(self, client: Optional[TLDWAPIClient]):
         self.client = client
 
+    @classmethod
+    def from_config(cls, app_config: Mapping[str, Any] | None) -> "ServerChatbookService":
+        return cls(build_runtime_api_client_from_config(app_config or {}))
+
     def _require_client(self) -> TLDWAPIClient:
         if self.client is None:
             raise ValueError("TLDW API client is required for server chatbook operations.")
@@ -208,13 +212,29 @@ class ServerChatbookService:
             async_mode=async_mode,
         )
 
+    def _coerce_export_request(self, request_data: ChatbookExportRequest | Mapping[str, Any]) -> ChatbookExportRequest:
+        if isinstance(request_data, ChatbookExportRequest):
+            return request_data
+        payload = dict(request_data)
+        if "content_selections" in payload:
+            payload["content_selections"] = self.normalize_content_selections(payload.get("content_selections"))
+        return ChatbookExportRequest(**payload)
+
+    def _coerce_import_request(self, request_data: ChatbookImportRequest | Mapping[str, Any]) -> ChatbookImportRequest:
+        if isinstance(request_data, ChatbookImportRequest):
+            return request_data
+        payload = dict(request_data)
+        if "content_selections" in payload and payload.get("content_selections") is not None:
+            payload["content_selections"] = self.normalize_content_selections(payload.get("content_selections"))
+        return ChatbookImportRequest(**payload)
+
     async def preview_chatbook(self, chatbook_file_path: Union[str, Path]) -> Dict[str, Any]:
         client = self._require_client()
         return await client.preview_chatbook(str(chatbook_file_path))
 
     async def export_chatbook(self, request_data: ChatbookExportRequest) -> Dict[str, Any]:
         client = self._require_client()
-        return await client.export_chatbook(request_data)
+        return await client.export_chatbook(self._coerce_export_request(request_data))
 
     async def export_chatbook_from_selection(
         self,
@@ -251,7 +271,7 @@ class ServerChatbookService:
         request_data: ChatbookImportRequest,
     ) -> Dict[str, Any]:
         client = self._require_client()
-        return await client.import_chatbook(str(chatbook_file_path), request_data)
+        return await client.import_chatbook(str(chatbook_file_path), self._coerce_import_request(request_data))
 
     async def import_chatbook_from_selection(
         self,

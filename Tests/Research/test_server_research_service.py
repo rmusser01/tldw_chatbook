@@ -92,3 +92,18 @@ async def test_server_research_service_hard_stops_denied_ui_policy_decision():
 
     assert exc.value.reason_code == "server_unreachable"
     assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_research_service_exposes_honest_delete_boundary():
+    client = FakeResearchClient()
+    policy = Mock()
+    service = ServerResearchService(client=client, policy_enforcer=policy)
+
+    with pytest.raises(NotImplementedError, match="does not support research run deletion"):
+        await service.delete_run("run-1")
+
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "research.runs.delete.server"
+    ]
+    assert client.calls == []

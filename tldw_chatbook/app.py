@@ -67,6 +67,7 @@ from .config import (
     get_media_db_path,
     get_prompts_db_path,
     get_notifications_db_path,
+    get_research_db_path,
     get_subscriptions_db_path,
 )
 from .Logging_Config import configure_application_logging
@@ -76,8 +77,14 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_N
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
+from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Logging_Config import RichLogHandler
-from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
+from tldw_chatbook.Prompt_Management import (
+    LocalPromptService,
+    PromptChatbookScopeService,
+    Prompts_Interop as prompts_interop,
+    ServerPromptService,
+)
 from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, supports_emoji
 from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 from tldw_chatbook.Utils.ui_helpers import UIHelpers
@@ -201,7 +208,12 @@ from tldw_chatbook.Notifications import (
     ServerNotificationsService,
 )
 from tldw_chatbook.Outputs_Interop import ServerOutputsService
-from tldw_chatbook.Research_Interop import ServerResearchSearchService, ServerResearchService
+from tldw_chatbook.Research_Interop import (
+    LocalResearchService,
+    ResearchScopeService,
+    ServerResearchSearchService,
+    ServerResearchService,
+)
 from tldw_chatbook.Sharing_Interop import ServerSharingService
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService
 from tldw_chatbook.Subscriptions import (
@@ -1289,6 +1301,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_media_reading_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self._wire_prompt_chatbook_services()
         self._wire_watchlists_and_notifications_services()
 
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
@@ -1411,6 +1424,34 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             policy_enforcer=self.service_policy_enforcer,
         )
 
+    def _build_chatbook_db_paths(self) -> dict[str, str]:
+        return {
+            "ChaChaNotes": str(get_chachanotes_db_path()),
+            "Media": str(get_media_db_path()),
+            "Prompts": str(get_prompts_db_path()),
+        }
+
+    def _wire_prompt_chatbook_services(self) -> None:
+        self.local_prompt_service = LocalPromptService(prompts_interop)
+        try:
+            self.server_prompt_service = ServerPromptService.from_config(self.app_config)
+        except ValueError:
+            self.server_prompt_service = ServerPromptService(client=None)
+
+        self.local_chatbook_service = LocalChatbookService(self._build_chatbook_db_paths())
+        try:
+            self.server_chatbook_service = ServerChatbookService.from_config(self.app_config)
+        except ValueError:
+            self.server_chatbook_service = ServerChatbookService(client=None)
+
+        self.prompt_chatbook_scope_service = PromptChatbookScopeService(
+            local_prompt_service=self.local_prompt_service,
+            server_prompt_service=self.server_prompt_service,
+            local_chatbook_service=self.local_chatbook_service,
+            server_chatbook_service=self.server_chatbook_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
     def _wire_evaluation_services(self) -> None:
         self.local_evaluation_service = None
         try:
@@ -1489,6 +1530,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 policy_enforcer=self.service_policy_enforcer,
             )
         try:
+            self.local_research_service = LocalResearchService(get_research_db_path())
+        except Exception:
+            logger.warning("Local research service unavailable during app wiring", exc_info=True)
+            self.local_research_service = None
+        try:
             self.server_research_service = ServerResearchService.from_config(
                 self.app_config,
                 policy_enforcer=self.service_policy_enforcer,
@@ -1498,6 +1544,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        self.research_scope_service = ResearchScopeService(
+            local_service=self.local_research_service,
+            server_service=self.server_research_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         try:
             self.server_research_search_service = ServerResearchSearchService.from_config(
                 self.app_config,

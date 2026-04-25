@@ -19,6 +19,8 @@ from .chatbook_creator import ChatbookCreator
 from .chatbook_importer import ChatbookImporter
 from .chatbook_models import Chatbook, ChatbookManifest, ChatbookContent
 from .error_handler import ChatbookError, ChatbookErrorHandler, ChatbookErrorType
+from .local_chatbook_service import LocalChatbookService
+from .server_chatbook_service import ServerChatbookService
 
 __all__ = [
     'ChatbookCreator',
@@ -26,6 +28,8 @@ __all__ = [
     'Chatbook',
     'ChatbookManifest',
     'ChatbookContent',
+    'LocalChatbookService',
+    'ServerChatbookService',
     'ChatbookError',
     'ChatbookErrorHandler',
     'ChatbookErrorType'

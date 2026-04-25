@@ -19,7 +19,18 @@ from tldw_chatbook.Notifications import (
     ServerNotificationsService,
 )
 from tldw_chatbook.Outputs_Interop import ServerOutputsService
-from tldw_chatbook.Research_Interop import ServerResearchSearchService, ServerResearchService
+from tldw_chatbook.Prompt_Management import (
+    LocalPromptService,
+    PromptChatbookScopeService,
+    ServerPromptService,
+)
+from tldw_chatbook.Research_Interop import (
+    LocalResearchService,
+    ResearchScopeService,
+    ServerResearchSearchService,
+    ServerResearchService,
+)
+from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Sharing_Interop import ServerSharingService
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService
 from tldw_chatbook.Subscriptions import (
@@ -59,7 +70,8 @@ def _build_test_app() -> TldwCli:
                                         with patch("tldw_chatbook.app.load_runtime_policy_for_app", side_effect=fake_runtime_policy):
                                             with patch("tldw_chatbook.app.get_notifications_db_path", return_value=":memory:"):
                                                 with patch("tldw_chatbook.app.get_subscriptions_db_path", return_value=":memory:"):
-                                                    return TldwCli()
+                                                    with patch("tldw_chatbook.app.get_research_db_path", return_value=":memory:"):
+                                                        return TldwCli()
 
 
 def test_app_uses_screen_navigation_and_wires_media_services():
@@ -82,10 +94,17 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.notification_dispatch_service, NotificationDispatchService)
     assert isinstance(app.server_notifications_service, ServerNotificationsService)
     assert isinstance(app.server_outputs_service, ServerOutputsService)
+    assert isinstance(app.local_research_service, LocalResearchService)
     assert isinstance(app.server_research_service, ServerResearchService)
+    assert isinstance(app.research_scope_service, ResearchScopeService)
     assert isinstance(app.server_research_search_service, ServerResearchSearchService)
     assert isinstance(app.server_sharing_service, ServerSharingService)
     assert isinstance(app.server_web_clipper_service, ServerWebClipperService)
+    assert isinstance(app.local_prompt_service, LocalPromptService)
+    assert isinstance(app.server_prompt_service, ServerPromptService)
+    assert isinstance(app.local_chatbook_service, LocalChatbookService)
+    assert isinstance(app.server_chatbook_service, ServerChatbookService)
+    assert isinstance(app.prompt_chatbook_scope_service, PromptChatbookScopeService)
 
 
 def test_media_screen_uses_shared_runtime_state():

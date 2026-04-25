@@ -2690,6 +2690,19 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True),
         )
 
+    async def update_prompt(self, prompt_identifier: Union[str, int], request_data: PromptCreateRequest) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/prompts/{prompt_identifier}",
+            json_data=request_data.model_dump(exclude_none=True, exclude_unset=True),
+        )
+
+    async def delete_prompt(self, prompt_identifier: Union[str, int]) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/prompts/{prompt_identifier}",
+        )
+
     async def query_characters(self, request_data: CharacterQueryRequest) -> Dict[str, Any]:
         return await self._request(
             "GET",

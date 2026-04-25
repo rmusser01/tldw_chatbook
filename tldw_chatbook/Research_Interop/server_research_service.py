@@ -124,6 +124,10 @@ class ServerResearchService:
         self._enforce("research.runs.update.server")
         return self._dump(await self._require_client().cancel_research_run(session_id))
 
+    async def delete_run(self, session_id: str, *, expected_version: int | None = None) -> None:
+        self._enforce("research.runs.delete.server")
+        raise NotImplementedError("The current server API does not support research run deletion.")
+
     async def get_bundle(self, session_id: str) -> dict[str, Any]:
         self._enforce("research.runs.detail.server")
         return await self._require_client().get_research_bundle(session_id)

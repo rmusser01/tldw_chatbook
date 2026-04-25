@@ -29,6 +29,30 @@ class TestPromptChatbookClient:
         args, kwargs = mocked.await_args
         assert args[:2] == ("POST", "/api/v1/prompts")
 
+    async def test_update_prompt_puts_to_prompt_endpoint(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"id": 1, "uuid": "abc", "name": "Updated"})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.update_prompt("abc", PromptCreateRequest(name="Updated", details="New details"))
+
+        mocked.assert_awaited_once()
+        args, kwargs = mocked.await_args
+        assert args[:2] == ("PUT", "/api/v1/prompts/abc")
+        assert kwargs["json_data"]["name"] == "Updated"
+        assert kwargs["json_data"]["details"] == "New details"
+
+    async def test_delete_prompt_deletes_prompt_endpoint(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.delete_prompt("abc")
+
+        mocked.assert_awaited_once()
+        args, kwargs = mocked.await_args
+        assert args[:2] == ("DELETE", "/api/v1/prompts/abc")
+
     async def test_export_chatbook_posts_to_export_endpoint(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")
         mocked = AsyncMock(return_value={"success": True, "job_id": "job_123"})

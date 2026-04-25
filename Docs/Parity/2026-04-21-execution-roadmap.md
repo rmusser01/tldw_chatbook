@@ -12,6 +12,8 @@ Tranche ordering follows the capability matrix, gap ledger, and target-state des
 
 That changes the roadmap in one important way: runtime policy remains a cross-cutting extension surface, but it is no longer the next unresolved blocker. Active execution should now move into the domains that either build directly on the new authority layer or deliver the highest-value standalone-client parity you prioritized.
 
+Additional backend foundations have since landed for media/read-it-later, watchlists/client notifications, writing suite, research sessions/runs, remote outputs, sharing, web clipper, study packs/suggestions, and server notification/reminder wrappers. The remaining work in those rows is now primarily adoption/UI, contract edge cleanup, or explicitly deferred sync/mirroring behavior rather than absence of a service seam.
+
 ## Immediate Post-Tranche-0 Order
 
 1. `Media / Reading / Ingestion Sources` plus `Collections: Reading List / Read-it-later`
@@ -62,6 +64,7 @@ Domains in this tranche:
 Execution intent for this tranche:
 
 - Finish the strongest existing local/server seams before building fresh remote-only surfaces.
+- Current implementation note: source-aware backend foundations are now landed for media/reading/ingestion, study/evaluations, research sessions/runs, and prompts/chatbooks. Remaining tranche work is primarily UI adoption, broader endpoint coverage, and honest unsupported-boundary reduction rather than first-pass service construction.
 - Prefer source-separated crosswalks and normalization work over redesigning mature local flows.
 - Use these domains to prove the runtime-policy model in everyday product surfaces before expanding to more ambitious missing capabilities.
 
