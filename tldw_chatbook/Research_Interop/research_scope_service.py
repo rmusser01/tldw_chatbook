@@ -9,6 +9,18 @@ from typing import Any
 from .research_normalizers import normalize_research_record
 
 
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "research.runs.delete.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server API does not support research run deletion.",
+        "affected_action_ids": ["research.runs.delete.server"],
+    }
+]
+
+
 class ResearchBackend(str, Enum):
     LOCAL = "local"
     SERVER = "server"
@@ -54,6 +66,16 @@ class ResearchScopeService:
     @staticmethod
     def _action_id(resource: str, action: str, mode: ResearchBackend) -> str:
         return f"research.{resource}.{action}.{mode.value}"
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        mode: ResearchBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == ResearchBackend.LOCAL:
+            return []
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def _call_service(self, service: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
         method = getattr(service, method_name)

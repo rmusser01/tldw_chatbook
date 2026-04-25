@@ -181,3 +181,24 @@ async def test_research_scope_service_normalizes_bundle_artifact_and_event_recor
         "research.runs.detail.server",
         "research.runs.detail.server",
     ]
+
+
+def test_research_scope_service_reports_known_unsupported_server_capabilities():
+    scope = ResearchScopeService(
+        local_service=FakeResearchService("local"),
+        server_service=FakeResearchService("server"),
+    )
+
+    assert scope.list_unsupported_capabilities(mode="local") == []
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert server_report == [
+        {
+            "operation_id": "research.runs.delete.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server API does not support research run deletion.",
+            "affected_action_ids": ["research.runs.delete.server"],
+        }
+    ]

@@ -25,7 +25,7 @@ Additional backend foundations have since landed for media/read-it-later, watchl
 4. `Writing Suite`
    This remains a high-value standalone row with a clear server contract. The backend seam is now app-wired and covers project/manuscript/chapter/scene CRUD, source-scoped structure retrieval, local direct manuscript-level scenes, local manual version snapshots/restores, local trash listing/restores, reorder/move helpers, Markdown-preserving server scene writes, and machine-readable unsupported-capability reporting for known server contract gaps. The next useful work is eventual UX adoption.
 5. `Research Sessions / Runs`
-   Research is a user-priority local-first domain, but it depends on several adjacent capabilities becoming less fragmented first: local notifications, stronger collection/media seams, and a clearer execution/status model.
+   Research is a user-priority local-first domain. The backend seam now covers local session/run persistence, event/artifact/bundle retrieval, server run launch/list/detail/update/observe/bundle/artifact wrappers, source-normalized records, and unsupported reporting for server run deletion; remaining work is UX adoption and any future server session semantics beyond run-centric execution.
 6. `Workflows`, `Scheduler Workflows`, and `Chat Workflows`
    These remain remote-only acceptable, but once the local-first rows above are in place, Chatbook should add discover/trigger/observe support for connected-server workflow surfaces.
 7. `Server Reminders / Notification Feeds`, `Sharing`, and `Web Clipper`
