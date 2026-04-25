@@ -26,14 +26,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "affected_action_ids": ["media.reading.create.local"],
     },
     {
-        "operation_id": "media.reading.tts.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_contract_missing",
-        "user_message": "Local reading TTS generation is not implemented; switch to server mode for server-side reading audio.",
-        "affected_action_ids": ["media.reading.tts.local"],
-    },
-    {
         "operation_id": "media.ingestion.execution.local",
         "source": "local",
         "supported": False,
@@ -537,8 +529,6 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_action_id(normalized_mode, "tts"))
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            raise ValueError("Local reading TTS generation is not available yet.")
         service = self._service_for_mode(normalized_mode)
         return self._to_plain(
             await self._maybe_await(

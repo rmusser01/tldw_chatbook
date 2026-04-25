@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import inspect
 import json
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
@@ -22,8 +23,9 @@ class LocalMediaReadingService:
     _SUPPORTED_INGESTION_SINK_TYPES = {"media", "notes"}
     _SUPPORTED_INGESTION_POLICIES = {"canonical", "import_only"}
 
-    def __init__(self, media_db: Any):
+    def __init__(self, media_db: Any, *, tts_audio_generator: Any = None):
         self.media_db = media_db
+        self.tts_audio_generator = tts_audio_generator
 
     def _require_db(self) -> Any:
         if self.media_db is None:
@@ -445,6 +447,46 @@ class LocalMediaReadingService:
                 }
             ],
             "generated_at": db._get_current_utc_timestamp_str(),
+        }
+
+    async def tts_reading_item(
+        self,
+        item_id: Any,
+        *,
+        model: str,
+        voice: str = "af_heart",
+        response_format: str = "mp3",
+        stream: bool = True,
+        speed: float | None = None,
+        max_chars: int | None = None,
+        text_source: str | None = None,
+    ) -> dict[str, Any]:
+        detail = self.get_media_detail(item_id)
+        text = self._local_tts_text_from_detail(detail, text_source=text_source)
+        if not text or not text.strip():
+            raise ValueError("reading_item_no_tts_text")
+        if max_chars is not None:
+            text = text[: int(max_chars)]
+        normalized_format = str(response_format or "mp3").strip().lower()
+        generator = self.tts_audio_generator or self._default_tts_audio_generator
+        generated = generator(
+            text=text,
+            model=model,
+            voice=voice,
+            response_format=normalized_format,
+            stream=stream,
+            speed=speed,
+        )
+        content = await self._maybe_await(generated)
+        if not isinstance(content, (bytes, bytearray, memoryview)):
+            raise ValueError("local_tts_generator_must_return_bytes")
+        filename = f"reading_tts_{self._coerce_media_id(item_id)}.{normalized_format}"
+        return {
+            "item_id": self._coerce_media_id(item_id),
+            "content": bytes(content),
+            "content_type": self._tts_content_type(normalized_format),
+            "content_disposition": f"attachment; filename={filename}",
+            "filename": filename,
         }
 
     def list_reading_import_jobs(
@@ -1429,6 +1471,100 @@ class LocalMediaReadingService:
             if value not in (None, ""):
                 return str(value)
         return None
+
+    def _local_tts_text_from_detail(self, detail: Mapping[str, Any], *, text_source: str | None) -> str | None:
+        normalized_source = str(text_source or "text").strip().lower()
+        if normalized_source == "summary":
+            return self._first_present_text(detail, "summary", "analysis_content", "analysis")
+        if normalized_source == "notes":
+            return self._first_present_text(detail, "notes")
+        return self._local_text_from_row(detail)
+
+    @staticmethod
+    def _first_present_text(row: Mapping[str, Any], *keys: str) -> str | None:
+        for key in keys:
+            value = row.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return None
+
+    @staticmethod
+    async def _maybe_await(value: Any) -> Any:
+        if inspect.isawaitable(value):
+            return await value
+        return value
+
+    async def _default_tts_audio_generator(
+        self,
+        *,
+        text: str,
+        model: str,
+        voice: str,
+        response_format: str,
+        stream: bool,
+        speed: float | None,
+    ) -> bytes:
+        from tldw_chatbook.TTS import OpenAISpeechRequest, get_tts_service
+
+        app_config = {
+            "app_tts": {
+                "default_provider": self._tts_provider_for_model(model),
+                "default_voice": voice,
+                "default_model": model,
+                "default_format": response_format,
+                "default_speed": speed or 1.0,
+            }
+        }
+        service = await get_tts_service(app_config)
+        request = OpenAISpeechRequest(
+            model=model,
+            input=text,
+            voice=voice,
+            response_format=response_format,  # type: ignore[arg-type]
+            stream=stream,
+            speed=speed or 1.0,
+        )
+        chunks: list[bytes] = []
+        async for chunk in service.generate_audio_stream(request, self._tts_internal_model_id(model)):
+            chunks.append(bytes(chunk))
+        return b"".join(chunks)
+
+    @staticmethod
+    def _tts_provider_for_model(model: str) -> str:
+        normalized = str(model or "").strip().lower()
+        if normalized in {"kokoro", "chatterbox", "alltalk", "higgs"}:
+            return normalized
+        if normalized.startswith("elevenlabs"):
+            return "elevenlabs"
+        return "openai"
+
+    @staticmethod
+    def _tts_internal_model_id(model: str) -> str:
+        normalized = str(model or "").strip().lower()
+        if normalized in {"tts-1", "tts-1-hd"}:
+            return f"openai_official_{normalized}"
+        if normalized == "kokoro":
+            return "local_kokoro_default_onnx"
+        if normalized == "chatterbox":
+            return "local_chatterbox_default"
+        if normalized == "alltalk":
+            return "alltalk_default"
+        if normalized == "higgs":
+            return "local_higgs_default"
+        if normalized.startswith("elevenlabs"):
+            return f"elevenlabs_{normalized}"
+        return normalized
+
+    @staticmethod
+    def _tts_content_type(response_format: str) -> str:
+        return {
+            "mp3": "audio/mpeg",
+            "opus": "audio/opus",
+            "aac": "audio/aac",
+            "flac": "audio/flac",
+            "wav": "audio/wav",
+            "pcm": "application/octet-stream",
+        }.get(response_format, "application/octet-stream")
 
     def _unique_media_ids(self, media_ids: Any) -> list[int]:
         seen: set[int] = set()

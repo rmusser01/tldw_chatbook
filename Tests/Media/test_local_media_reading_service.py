@@ -343,6 +343,44 @@ def test_local_service_generates_extractive_reading_summary(memory_db_factory):
     assert summary["generated_at"] is not None
 
 
+@pytest.mark.asyncio
+async def test_local_service_generates_reading_tts_with_injected_generator(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Listen",
+        content="First sentence. Second sentence.",
+        media_type="article",
+        url="https://example.com/listen",
+        keywords=[],
+    )
+    calls = []
+
+    async def fake_tts_generator(**kwargs):
+        calls.append(kwargs)
+        return b"audio-bytes"
+
+    service = LocalMediaReadingService(db, tts_audio_generator=fake_tts_generator)
+
+    audio = await service.tts_reading_item(
+        media_id,
+        model="kokoro",
+        voice="af_heart",
+        response_format="wav",
+        max_chars=15,
+    )
+
+    assert calls[0]["text"] == "First sentence."
+    assert calls[0]["model"] == "kokoro"
+    assert calls[0]["voice"] == "af_heart"
+    assert audio == {
+        "item_id": media_id,
+        "content": b"audio-bytes",
+        "content_type": "audio/wav",
+        "content_disposition": f"attachment; filename=reading_tts_{media_id}.wav",
+        "filename": f"reading_tts_{media_id}.wav",
+    }
+
+
 def test_local_service_executes_csv_reading_import_jobs(memory_db_factory, tmp_path):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)

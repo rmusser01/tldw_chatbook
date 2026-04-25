@@ -174,6 +174,16 @@ class FakeLocalMediaService:
             "generated_at": "2026-04-21T12:00:00Z",
         }
 
+    def tts_reading_item(self, item_id, **kwargs):
+        self.calls.append(("tts_reading_item", item_id, kwargs))
+        return {
+            "item_id": item_id,
+            "content": b"mp3-bytes",
+            "content_type": "audio/mpeg",
+            "content_disposition": f"attachment; filename=reading_{item_id}.mp3",
+            "filename": f"reading_{item_id}.mp3",
+        }
+
     def import_reading_items(self, import_path, *, source="auto", merge_tags=True):
         self.calls.append(("import_reading_items", import_path, source, merge_tags))
         return {"job_id": 701, "job_uuid": "local-job-uuid", "status": "queued"}
@@ -855,14 +865,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
             "reason_code": "local_contract_missing",
             "user_message": "Local direct URL reading-item creation is not available yet; use local ingest jobs instead.",
             "affected_action_ids": ["media.reading.create.local"],
-        },
-        {
-            "operation_id": "media.reading.tts.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_contract_missing",
-            "user_message": "Local reading TTS generation is not implemented; switch to server mode for server-side reading audio.",
-            "affected_action_ids": ["media.reading.tts.local"],
         },
         {
             "operation_id": "media.ingestion.execution.local",
@@ -1592,18 +1594,33 @@ async def test_scope_service_routes_server_reading_tts_with_policy():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_reports_local_reading_tts_as_explicitly_unsupported_after_policy():
+async def test_scope_service_routes_local_reading_tts_with_policy():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local reading TTS generation is not available yet."):
-        await scope.tts_reading_item(mode="local", item_id=41, model="kokoro")
+    audio = await scope.tts_reading_item(mode="local", item_id=41, model="kokoro")
 
+    assert audio["filename"] == "reading_41.mp3"
+    assert audio["content"] == b"mp3-bytes"
     assert policy.calls[-1:] == ["media.reading.tts.local"]
+    assert local.calls[-1] == (
+        "tts_reading_item",
+        41,
+        {
+            "model": "kokoro",
+            "voice": "af_heart",
+            "response_format": "mp3",
+            "stream": True,
+            "speed": None,
+            "max_chars": None,
+            "text_source": None,
+        },
+    )
 
 
 @pytest.mark.asyncio
