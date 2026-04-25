@@ -435,6 +435,22 @@ from .audio_schemas import (
     VoiceEncodeRequest,
     VoiceEncodeResponse,
 )
+from .audiobook_schemas import (
+    AudiobookArtifactsResponse,
+    AudiobookChapterListResponse,
+    AudiobookJobCreateResponse,
+    AudiobookJobRequest,
+    AudiobookJobStatusResponse,
+    AudiobookParseRequest,
+    AudiobookParseResponse,
+    AudiobookProjectListResponse,
+    AudiobookProjectResponse,
+    SubtitleExportRequest,
+    VoiceProfileCreateRequest,
+    VoiceProfileDeleteResponse,
+    VoiceProfileListResponse,
+    VoiceProfileResponse,
+)
 from .rag_admin_schemas import (
     ChunkingTemplateApplyRequest,
     ChunkingTemplateApplyResponse,
@@ -3193,6 +3209,101 @@ class TLDWAPIClient:
             "POST",
             f"/api/v1/audio/voices/{voice_id}/preview",
             data={"text": text},
+        )
+
+    async def parse_audiobook_source(self, request_data: AudiobookParseRequest) -> AudiobookParseResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/audiobooks/parse",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return AudiobookParseResponse.model_validate(response)
+
+    async def create_audiobook_job(self, request_data: AudiobookJobRequest) -> AudiobookJobCreateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/audiobooks/jobs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return AudiobookJobCreateResponse.model_validate(response)
+
+    async def get_audiobook_job_status(self, job_id: int) -> AudiobookJobStatusResponse:
+        response = await self._request("GET", f"/api/v1/audiobooks/jobs/{job_id}")
+        return AudiobookJobStatusResponse.model_validate(response)
+
+    async def list_audiobook_job_artifacts(self, job_id: int) -> AudiobookArtifactsResponse:
+        response = await self._request("GET", f"/api/v1/audiobooks/jobs/{job_id}/artifacts")
+        return AudiobookArtifactsResponse.model_validate(response)
+
+    async def list_audiobook_projects(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> AudiobookProjectListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/audiobooks/projects",
+            params={"limit": limit, "offset": offset},
+        )
+        return AudiobookProjectListResponse.model_validate(response)
+
+    async def get_audiobook_project(self, project_ref: str) -> AudiobookProjectResponse:
+        response = await self._request("GET", f"/api/v1/audiobooks/projects/{project_ref}")
+        return AudiobookProjectResponse.model_validate(response)
+
+    async def list_audiobook_project_chapters(
+        self,
+        project_ref: str,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> AudiobookChapterListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/audiobooks/projects/{project_ref}/chapters",
+            params={"limit": limit, "offset": offset},
+        )
+        return AudiobookChapterListResponse.model_validate(response)
+
+    async def list_audiobook_project_artifacts(
+        self,
+        project_ref: str,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> AudiobookArtifactsResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/audiobooks/projects/{project_ref}/artifacts",
+            params={"limit": limit, "offset": offset},
+        )
+        return AudiobookArtifactsResponse.model_validate(response)
+
+    async def create_audiobook_voice_profile(
+        self,
+        request_data: VoiceProfileCreateRequest,
+    ) -> VoiceProfileResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/audiobooks/voices/profiles",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return VoiceProfileResponse.model_validate(response)
+
+    async def list_audiobook_voice_profiles(self) -> VoiceProfileListResponse:
+        response = await self._request("GET", "/api/v1/audiobooks/voices/profiles")
+        return VoiceProfileListResponse.model_validate(response)
+
+    async def delete_audiobook_voice_profile(self, profile_id: str) -> VoiceProfileDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/audiobooks/voices/profiles/{profile_id}")
+        return VoiceProfileDeleteResponse.model_validate(response)
+
+    async def export_audiobook_subtitles(self, request_data: SubtitleExportRequest) -> ReadingExportResponse:
+        return await self._binary_request(
+            "POST",
+            "/api/v1/audiobooks/subtitles",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
 
     async def list_tts_history(
