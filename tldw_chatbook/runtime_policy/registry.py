@@ -307,7 +307,6 @@ AUDITED_CAPABILITY_SEEDS = (
                 "prompts.versions",
                 actions=(LIST, RESTORE),
                 domain_id="prompts",
-                sources=(SERVER_SOURCE,),
             ),
             _resource(
                 "chatbooks",

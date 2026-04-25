@@ -15,14 +15,6 @@ from .prompt_chatbook_normalizers import (
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
-        "operation_id": "prompts.versions.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_contract_missing",
-        "user_message": "Local prompt version history is not exposed by the current local prompt service.",
-        "affected_action_ids": [],
-    },
-    {
         "operation_id": "chatbooks.records.local",
         "source": "local",
         "supported": False,
@@ -131,12 +123,8 @@ class PromptChatbookScopeService:
         return f"{resource}.{action}.{mode.value}"
 
     @staticmethod
-    def _prompt_version_action_id(action: str) -> str:
-        return f"prompts.versions.{action}.server"
-
-    def _require_server_prompt_versions(self, mode: PromptChatbookBackend) -> None:
-        if mode != PromptChatbookBackend.SERVER:
-            raise ValueError("Prompt version operations are currently server-backed.")
+    def _prompt_version_action_id(action: str, mode: PromptChatbookBackend) -> str:
+        return f"prompts.versions.{action}.{mode.value}"
 
     def list_unsupported_capabilities(
         self,
@@ -240,8 +228,7 @@ class PromptChatbookScopeService:
         prompt_id: int | str,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_prompt_versions(normalized_mode)
-        self._enforce_policy(self._prompt_version_action_id("list"))
+        self._enforce_policy(self._prompt_version_action_id("list", normalized_mode))
         result = await self._call_service(
             self._service_for_mode("prompts", normalized_mode),
             "list_prompt_versions",
@@ -257,8 +244,7 @@ class PromptChatbookScopeService:
         version: int,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_prompt_versions(normalized_mode)
-        self._enforce_policy(self._prompt_version_action_id("restore"))
+        self._enforce_policy(self._prompt_version_action_id("restore", normalized_mode))
         result = await self._call_service(
             self._service_for_mode("prompts", normalized_mode),
             "restore_prompt_version",

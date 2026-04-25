@@ -184,17 +184,30 @@ async def test_prompt_chatbook_scope_service_routes_server_prompt_version_contro
 
 
 @pytest.mark.asyncio
-async def test_prompt_chatbook_scope_service_rejects_local_prompt_version_controls_explicitly():
+async def test_prompt_chatbook_scope_service_routes_local_prompt_version_controls():
+    local_prompts = FakePromptBackend("local")
+    policy = FakePolicyEnforcer()
     scope = PromptChatbookScopeService(
-        local_prompt_service=FakePromptBackend("local"),
+        local_prompt_service=local_prompts,
         server_prompt_service=FakePromptBackend("server"),
         local_chatbook_service=FakeChatbookBackend("local"),
         server_chatbook_service=FakeChatbookBackend("server"),
-        policy_enforcer=FakePolicyEnforcer(),
+        policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Prompt version operations are currently server-backed"):
-        await scope.list_prompt_versions(mode="local", prompt_id="local-prompt-1")
+    versions = await scope.list_prompt_versions(mode="local", prompt_id="local-prompt-1")
+    restored = await scope.restore_prompt_version(mode="local", prompt_id="local-prompt-1", version=2)
+
+    assert versions[0]["record_id"] == "local:prompt_version:2"
+    assert restored["record_id"] == "local:prompt:local-prompt-1"
+    assert local_prompts.calls[-2:] == [
+        ("list_prompt_versions", "local-prompt-1"),
+        ("restore_prompt_version", "local-prompt-1", 2),
+    ]
+    assert policy.calls == [
+        "prompts.versions.list.local",
+        "prompts.versions.restore.local",
+    ]
 
 
 @pytest.mark.asyncio
@@ -244,14 +257,13 @@ def test_prompt_chatbook_scope_service_reports_known_unsupported_capabilities():
     server_report = scope.list_unsupported_capabilities(mode="server")
 
     assert [item["operation_id"] for item in local_report] == [
-        "prompts.versions.local",
         "chatbooks.records.local",
     ]
     assert [item["operation_id"] for item in server_report] == [
         "chatbooks.records.server",
         "chatbooks.import_content_types.server",
     ]
-    assert local_report[1]["affected_action_ids"] == [
+    assert local_report[0]["affected_action_ids"] == [
         "chatbooks.list.local",
         "chatbooks.detail.local",
         "chatbooks.create.local",

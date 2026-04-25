@@ -500,7 +500,9 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         prompts.preview.server
         prompts.update.local
         prompts.update.server
+        prompts.versions.list.local
         prompts.versions.list.server
+        prompts.versions.restore.local
         prompts.versions.restore.server
     """),
     "rag_embeddings_chunking_admin": _action_ids("""
