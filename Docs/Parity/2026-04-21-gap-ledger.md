@@ -21,6 +21,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 2
 - Notes: Priority 81. This is now a partially landed vertical rather than an open blank-slate gap; the remaining work is the per-media-type saved-view matrix and any future sync contract.
 
+### Collections: Feed Subscriptions: Server feed subscriptions and scheduled collection polling
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Full CRUD + Observe
+- Current state: Chatbook now has typed direct API-client wrappers for server collections feed create, list, detail, update, and delete operations, including returned feed health and schedule metadata.
+- Gap: Dedicated UX adoption, source-aware service routing, explicit local/offline unavailable presentation, immediate-run status beyond returned job metadata, and local/server subscription mirror semantics remain pending. Local RSS/subscription behavior remains under the Watchlists row and should not be collapsed into server collections feed state.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/collections_feeds.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/collections_feeds_schemas.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/collections_feeds_schemas.py`; Verification: `Tests/tldw_api/test_collections_feeds_client.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 36. This overlaps the user's local collections/watchlists priorities but remains a server-owned feed-subscription surface until an explicit sync/import mapping is designed.
+
 ### Watchlists: Watchlists, sources, jobs, runs, and alert rules
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD

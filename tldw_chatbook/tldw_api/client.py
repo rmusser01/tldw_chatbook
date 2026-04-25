@@ -229,6 +229,12 @@ from .feedback_schemas import (
     FeedbackListResponse,
     FeedbackUpdateRequest,
 )
+from .collections_feeds_schemas import (
+    CollectionsFeed,
+    CollectionsFeedCreateRequest,
+    CollectionsFeedsListResponse,
+    CollectionsFeedUpdateRequest,
+)
 from .skills_schemas import (
     SkillContextPayload,
     SkillCreate,
@@ -6891,6 +6897,45 @@ class TLDWAPIClient:
     async def delete_feedback(self, feedback_id: str) -> FeedbackDeleteResponse:
         response = await self._request("DELETE", f"/api/v1/feedback/{feedback_id}")
         return FeedbackDeleteResponse.model_validate(response)
+
+    async def create_collections_feed(self, request_data: CollectionsFeedCreateRequest) -> CollectionsFeed:
+        response = await self._request(
+            "POST",
+            "/api/v1/collections/feeds",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return CollectionsFeed.model_validate(response)
+
+    async def list_collections_feeds(
+        self,
+        *,
+        q: str | None = None,
+        page: int = 1,
+        size: int = 20,
+    ) -> CollectionsFeedsListResponse:
+        params = {key: value for key, value in {"q": q, "page": page, "size": size}.items() if value is not None}
+        response = await self._request("GET", "/api/v1/collections/feeds", params=params)
+        return CollectionsFeedsListResponse.model_validate(response)
+
+    async def get_collections_feed(self, feed_id: int) -> CollectionsFeed:
+        response = await self._request("GET", f"/api/v1/collections/feeds/{feed_id}")
+        return CollectionsFeed.model_validate(response)
+
+    async def update_collections_feed(
+        self,
+        feed_id: int,
+        request_data: CollectionsFeedUpdateRequest,
+    ) -> CollectionsFeed:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/collections/feeds/{feed_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return CollectionsFeed.model_validate(response)
+
+    async def delete_collections_feed(self, feed_id: int) -> bool:
+        await self._request("DELETE", f"/api/v1/collections/feeds/{feed_id}")
+        return True
 
     async def list_skills(
         self,

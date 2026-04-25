@@ -679,6 +679,12 @@ from .feedback_schemas import (
     FeedbackRecord,
     FeedbackUpdateRequest,
 )
+from .collections_feeds_schemas import (
+    CollectionsFeed,
+    CollectionsFeedCreateRequest,
+    CollectionsFeedsListResponse,
+    CollectionsFeedUpdateRequest,
+)
 from .skills_schemas import (
     SkillBase,
     SkillContextPayload,
