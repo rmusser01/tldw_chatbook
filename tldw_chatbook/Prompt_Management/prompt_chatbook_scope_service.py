@@ -6,7 +6,11 @@ import inspect
 from enum import Enum
 from typing import Any
 
-from .prompt_chatbook_normalizers import normalize_chatbook_result, normalize_prompt_result
+from .prompt_chatbook_normalizers import (
+    normalize_chatbook_result,
+    normalize_prompt_result,
+    normalize_prompt_version_result,
+)
 
 
 class PromptChatbookBackend(str, Enum):
@@ -66,6 +70,14 @@ class PromptChatbookScopeService:
     @staticmethod
     def _action_id(resource: str, action: str, mode: PromptChatbookBackend) -> str:
         return f"{resource}.{action}.{mode.value}"
+
+    @staticmethod
+    def _prompt_version_action_id(action: str) -> str:
+        return f"prompts.versions.{action}.server"
+
+    def _require_server_prompt_versions(self, mode: PromptChatbookBackend) -> None:
+        if mode != PromptChatbookBackend.SERVER:
+            raise ValueError("Prompt version operations are currently server-backed.")
 
     async def _call_service(self, service: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
         if not hasattr(service, method_name):
@@ -151,6 +163,40 @@ class PromptChatbookScopeService:
                 prompt_id,
             )
         )
+
+    async def list_prompt_versions(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        prompt_id: int | str,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_prompt_versions(normalized_mode)
+        self._enforce_policy(self._prompt_version_action_id("list"))
+        result = await self._call_service(
+            self._service_for_mode("prompts", normalized_mode),
+            "list_prompt_versions",
+            prompt_id,
+        )
+        return normalize_prompt_version_result(normalized_mode.value, result)
+
+    async def restore_prompt_version(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        prompt_id: int | str,
+        version: int,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_prompt_versions(normalized_mode)
+        self._enforce_policy(self._prompt_version_action_id("restore"))
+        result = await self._call_service(
+            self._service_for_mode("prompts", normalized_mode),
+            "restore_prompt_version",
+            prompt_id,
+            version,
+        )
+        return normalize_prompt_result(normalized_mode.value, result)
 
     async def preview_chatbook(
         self,

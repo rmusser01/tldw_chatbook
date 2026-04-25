@@ -30,6 +30,14 @@ class FakePromptClient:
         self.calls.append(("delete_prompt", prompt_id))
         return {"deleted": True}
 
+    async def list_prompt_versions(self, prompt_id):
+        self.calls.append(("list_prompt_versions", prompt_id))
+        return [{"version": 3, "prompt_uuid": "prompt-uuid"}]
+
+    async def restore_prompt_version(self, prompt_id, version):
+        self.calls.append(("restore_prompt_version", prompt_id, version))
+        return {"id": prompt_id, "uuid": "prompt-uuid", "version": version, "name": "Restored"}
+
 
 @pytest.mark.asyncio
 async def test_server_prompt_service_enforces_policy_actions():
@@ -49,6 +57,27 @@ async def test_server_prompt_service_enforces_policy_actions():
         "prompts.preview.server",
         "prompts.update.server",
         "prompts.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_service_routes_prompt_version_controls():
+    client = FakePromptClient()
+    policy = Mock()
+    service = ServerPromptService(client=client, policy_enforcer=policy)
+
+    versions = await service.list_prompt_versions("prompt-uuid")
+    restored = await service.restore_prompt_version("prompt-uuid", 3)
+
+    assert versions == [{"version": 3, "prompt_uuid": "prompt-uuid"}]
+    assert restored["name"] == "Restored"
+    assert client.calls[-2:] == [
+        ("list_prompt_versions", "prompt-uuid"),
+        ("restore_prompt_version", "prompt-uuid", 3),
+    ]
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list][-2:] == [
+        "prompts.versions.list.server",
+        "prompts.versions.restore.server",
     ]
 
 

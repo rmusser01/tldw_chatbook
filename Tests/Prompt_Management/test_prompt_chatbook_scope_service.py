@@ -29,6 +29,14 @@ class FakePromptBackend:
         self.calls.append(("delete_prompt", prompt_id))
         return True
 
+    async def list_prompt_versions(self, prompt_id):
+        self.calls.append(("list_prompt_versions", prompt_id))
+        return [{"version": 2, "prompt_uuid": f"{self.source}-prompt-1"}]
+
+    async def restore_prompt_version(self, prompt_id, version):
+        self.calls.append(("restore_prompt_version", prompt_id, version))
+        return {"id": prompt_id, "name": "Restored", "version": version}
+
 
 class FakeChatbookBackend:
     def __init__(self, source):
@@ -145,6 +153,48 @@ async def test_prompt_chatbook_scope_service_routes_chatbooks_and_policy_actions
         "chatbooks.detail.server",
         "chatbooks.detail.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_chatbook_scope_service_routes_server_prompt_version_controls():
+    server_prompts = FakePromptBackend("server")
+    policy = FakePolicyEnforcer()
+    scope = PromptChatbookScopeService(
+        local_prompt_service=FakePromptBackend("local"),
+        server_prompt_service=server_prompts,
+        local_chatbook_service=FakeChatbookBackend("local"),
+        server_chatbook_service=FakeChatbookBackend("server"),
+        policy_enforcer=policy,
+    )
+
+    versions = await scope.list_prompt_versions(mode="server", prompt_id="server-prompt-1")
+    restored = await scope.restore_prompt_version(mode="server", prompt_id="server-prompt-1", version=2)
+
+    assert versions[0]["record_type"] == "prompt_version"
+    assert versions[0]["record_id"] == "server:prompt_version:2"
+    assert restored["record_id"] == "server:prompt:server-prompt-1"
+    assert server_prompts.calls[-2:] == [
+        ("list_prompt_versions", "server-prompt-1"),
+        ("restore_prompt_version", "server-prompt-1", 2),
+    ]
+    assert policy.calls == [
+        "prompts.versions.list.server",
+        "prompts.versions.restore.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_chatbook_scope_service_rejects_local_prompt_version_controls_explicitly():
+    scope = PromptChatbookScopeService(
+        local_prompt_service=FakePromptBackend("local"),
+        server_prompt_service=FakePromptBackend("server"),
+        local_chatbook_service=FakeChatbookBackend("local"),
+        server_chatbook_service=FakeChatbookBackend("server"),
+        policy_enforcer=FakePolicyEnforcer(),
+    )
+
+    with pytest.raises(ValueError, match="Prompt version operations are currently server-backed"):
+        await scope.list_prompt_versions(mode="local", prompt_id="local-prompt-1")
 
 
 @pytest.mark.asyncio

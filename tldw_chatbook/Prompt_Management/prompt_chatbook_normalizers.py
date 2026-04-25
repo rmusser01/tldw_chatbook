@@ -58,6 +58,34 @@ def normalize_prompt_result(source: str, result: Any) -> Any:
     return result
 
 
+def _prompt_version_identifier(record: dict[str, Any]) -> str:
+    version = record.get("version")
+    if version is not None and str(version).strip():
+        return str(version)
+    return _record_identifier(record, "unsaved")
+
+
+def normalize_prompt_version_record(source: str, record: Any) -> dict[str, Any]:
+    normalized = _as_dict(record)
+    identifier = _prompt_version_identifier(normalized)
+    normalized.setdefault("source", source)
+    normalized.setdefault("record_type", "prompt_version")
+    normalized.setdefault("record_id", f"{source}:prompt_version:{identifier}")
+    return normalized
+
+
+def normalize_prompt_version_result(source: str, result: Any) -> Any:
+    if isinstance(result, list):
+        return [normalize_prompt_version_record(source, item) for item in result]
+    if isinstance(result, dict):
+        if isinstance(result.get("items"), list):
+            normalized = dict(result)
+            normalized["items"] = [normalize_prompt_version_record(source, item) for item in result["items"]]
+            return normalized
+        return normalize_prompt_version_record(source, result)
+    return result
+
+
 def normalize_chatbook_record(source: str, record_type: str, record: Any) -> dict[str, Any]:
     normalized = _as_dict(record)
     identifier = _record_identifier(normalized, "unsaved")

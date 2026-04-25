@@ -297,6 +297,19 @@ from .character_persona_schemas import (
     PresetTokenInfo,
     PresetUpdate,
 )
+from .chat_dictionary_schemas import (
+    BulkDictionaryEntryOperationRequest,
+    ChatDictionaryCreateRequest,
+    ChatDictionaryUpdateRequest,
+    DictionaryEntryCreateRequest,
+    DictionaryEntryReorderRequest,
+    DictionaryEntryType,
+    DictionaryEntryUpdateRequest,
+    ImportDictionaryJSONRequest,
+    ImportDictionaryMarkdownRequest,
+    ProcessChatDictionariesRequest,
+    ValidateDictionaryRequest,
+)
 from .watchlists_schemas import (
     SourceCreateRequest,
     SourceDeleteResponse,
@@ -517,6 +530,10 @@ __all__ = [
     "PersonaSessionResponse", "PersonaSessionStatus", "PersonaSessionSummary",
     "PersonaSetupState", "PersonaVoiceDefaults",
     "PresetCreate", "PresetDetail", "PresetListResponse", "PresetTokenInfo", "PresetUpdate",
+    "BulkDictionaryEntryOperationRequest", "ChatDictionaryCreateRequest", "ChatDictionaryUpdateRequest",
+    "DictionaryEntryCreateRequest", "DictionaryEntryReorderRequest", "DictionaryEntryType",
+    "DictionaryEntryUpdateRequest", "ImportDictionaryJSONRequest", "ImportDictionaryMarkdownRequest",
+    "ProcessChatDictionariesRequest", "ValidateDictionaryRequest",
     "SourceCreateRequest", "SourceDeleteResponse", "SourceListResponse",
     "SourceResponse", "SourceUpdateRequest", "WatchlistAlertRuleCreateRequest",
     "WatchlistAlertRuleDeleteResponse", "WatchlistAlertRuleListResponse",

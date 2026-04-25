@@ -231,6 +231,24 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         character.sessions.restore.server
         character.sessions.update.local
         character.sessions.update.server
+        chat.dictionaries.create.server
+        chat.dictionaries.delete.server
+        chat.dictionaries.detail.server
+        chat.dictionaries.export.server
+        chat.dictionaries.import.server
+        chat.dictionaries.list.server
+        chat.dictionaries.process.server
+        chat.dictionaries.update.server
+        chat.dictionary.activity.list.server
+        chat.dictionary.entries.create.server
+        chat.dictionary.entries.delete.server
+        chat.dictionary.entries.list.server
+        chat.dictionary.entries.reorder.server
+        chat.dictionary.entries.update.server
+        chat.dictionary.statistics.detail.server
+        chat.dictionary.versions.detail.server
+        chat.dictionary.versions.list.server
+        chat.dictionary.versions.restore.server
     """),
     "chat": _action_ids("""
         chat.create.local
@@ -436,6 +454,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         prompts.preview.server
         prompts.update.local
         prompts.update.server
+        prompts.versions.list.server
+        prompts.versions.restore.server
     """),
     "rag_embeddings_chunking_admin": _action_ids("""
         rag.admin.configure.local

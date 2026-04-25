@@ -57,6 +57,10 @@ class ServerPromptService:
     def _action_id(action: str) -> str:
         return f"prompts.{action}.server"
 
+    @staticmethod
+    def _version_action_id(action: str) -> str:
+        return f"prompts.versions.{action}.server"
+
     async def list_prompts(self, *, include_deleted: bool = False, **_kwargs: Any) -> Any:
         self._enforce(self._action_id("list"))
         return await self._require_client().list_prompts(include_deleted=include_deleted)
@@ -92,3 +96,11 @@ class ServerPromptService:
         self._enforce(self._action_id("delete"))
         await self._require_client().delete_prompt(prompt_id)
         return True
+
+    async def list_prompt_versions(self, prompt_id: int | str) -> Any:
+        self._enforce(self._version_action_id("list"))
+        return await self._require_client().list_prompt_versions(prompt_id)
+
+    async def restore_prompt_version(self, prompt_id: int | str, version: int) -> dict[str, Any]:
+        self._enforce(self._version_action_id("restore"))
+        return await self._require_client().restore_prompt_version(prompt_id, version)

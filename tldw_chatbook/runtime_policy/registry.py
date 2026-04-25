@@ -141,6 +141,7 @@ LAUNCH = _action("launch", "launch")
 OBSERVE = _action("observe", "observe")
 CONFIGURE = _action("configure", "update")
 TRIGGER = _action("trigger", "launch")
+PROCESS = _action("process", "launch")
 IMPORT = _action("import", "launch")
 EXPORT = _action("export", "launch")
 APPROVE = _action("approve", "update")
@@ -219,6 +220,36 @@ AUDITED_CAPABILITY_SEEDS = (
                 "character.sessions",
                 actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH, EXPORT, OBSERVE, RESTORE)),
             ),
+            _resource(
+                "chat.dictionaries",
+                actions=_combine_action_sets(CRUD_ACTIONS, (PROCESS, IMPORT, EXPORT)),
+                domain_id="characters",
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
+                "chat.dictionary.entries",
+                actions=(LIST, CREATE, UPDATE, DELETE, REORDER),
+                domain_id="characters",
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
+                "chat.dictionary.activity",
+                actions=(LIST,),
+                domain_id="characters",
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
+                "chat.dictionary.versions",
+                actions=(LIST, DETAIL, RESTORE),
+                domain_id="characters",
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
+                "chat.dictionary.statistics",
+                actions=(DETAIL,),
+                domain_id="characters",
+                sources=(SERVER_SOURCE,),
+            ),
         ),
     ),
     _capability(
@@ -258,6 +289,12 @@ AUDITED_CAPABILITY_SEEDS = (
                 "prompts",
                 actions=(LIST, PREVIEW, CREATE, UPDATE, DELETE),
                 domain_id="prompts",
+            ),
+            _resource(
+                "prompts.versions",
+                actions=(LIST, RESTORE),
+                domain_id="prompts",
+                sources=(SERVER_SOURCE,),
             ),
             _resource(
                 "chatbooks",

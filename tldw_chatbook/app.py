@@ -129,6 +129,7 @@ from .Notes.Notes_Library import NotesInteropService
 from .Notes.notes_scope_service import NotesScopeService
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
+from .Character_Chat.server_chat_dictionary_service import ServerChatDictionaryService
 from .Character_Chat.server_character_persona_service import ServerCharacterPersonaService
 from .RAG_Admin.local_rag_admin_service import LocalRAGAdminService
 from .RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
@@ -1448,6 +1449,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_character_persona_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        try:
+            self.server_chat_dictionary_service = ServerChatDictionaryService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_chat_dictionary_service = ServerChatDictionaryService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
 
     def _wire_chat_conversation_services(self) -> None:
         self.local_chat_conversation_service = (

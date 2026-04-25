@@ -199,6 +199,18 @@ from .character_persona_schemas import (
     PresetCreate,
     PresetUpdate,
 )
+from .chat_dictionary_schemas import (
+    BulkDictionaryEntryOperationRequest,
+    ChatDictionaryCreateRequest,
+    ChatDictionaryUpdateRequest,
+    DictionaryEntryCreateRequest,
+    DictionaryEntryReorderRequest,
+    DictionaryEntryUpdateRequest,
+    ImportDictionaryJSONRequest,
+    ImportDictionaryMarkdownRequest,
+    ProcessChatDictionariesRequest,
+    ValidateDictionaryRequest,
+)
 from .watchlists_schemas import (
     SourceCreateRequest,
     SourceDeleteResponse,
@@ -3452,6 +3464,197 @@ class TLDWAPIClient:
 
     async def get_chat_conversation_citations(self, conversation_id: str) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/citations")
+
+    async def list_chat_dictionaries(
+        self,
+        *,
+        include_inactive: bool = False,
+        include_usage: bool = False,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/api/v1/chat/dictionaries",
+            params={
+                "include_inactive": str(include_inactive).lower(),
+                "include_usage": str(include_usage).lower(),
+            },
+        )
+
+    async def create_chat_dictionary(
+        self,
+        request_data: ChatDictionaryCreateRequest | Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/chat/dictionaries",
+            json_data=self._dump_request_payload(request_data),
+        )
+
+    async def get_chat_dictionary(self, dictionary_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/chat/dictionaries/{dictionary_id}")
+
+    async def update_chat_dictionary(
+        self,
+        dictionary_id: int,
+        request_data: ChatDictionaryUpdateRequest | Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/chat/dictionaries/{dictionary_id}",
+            json_data=self._dump_request_payload(request_data, exclude_unset=True),
+        )
+
+    async def delete_chat_dictionary(
+        self,
+        dictionary_id: int,
+        *,
+        hard_delete: bool = False,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/chat/dictionaries/{dictionary_id}",
+            params={"hard_delete": str(hard_delete).lower()},
+        )
+
+    async def add_chat_dictionary_entry(
+        self,
+        dictionary_id: int,
+        request_data: DictionaryEntryCreateRequest | Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/chat/dictionaries/{dictionary_id}/entries",
+            json_data=self._dump_request_payload(request_data),
+        )
+
+    async def list_chat_dictionary_entries(
+        self,
+        dictionary_id: int,
+        *,
+        group: str | None = None,
+    ) -> Dict[str, Any]:
+        params = {"group": group} if group is not None else None
+        return await self._request(
+            "GET",
+            f"/api/v1/chat/dictionaries/{dictionary_id}/entries",
+            params=params,
+        )
+
+    async def update_chat_dictionary_entry(
+        self,
+        entry_id: int,
+        request_data: DictionaryEntryUpdateRequest | Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/chat/dictionaries/entries/{entry_id}",
+            json_data=self._dump_request_payload(request_data, exclude_unset=True),
+        )
+
+    async def delete_chat_dictionary_entry(self, entry_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/chat/dictionaries/entries/{entry_id}")
+
+    async def bulk_chat_dictionary_entry_operations(
+        self,
+        request_data: BulkDictionaryEntryOperationRequest | Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/chat/dictionaries/entries/bulk",
+            json_data=self._dump_request_payload(request_data),
+        )
+
+    async def reorder_chat_dictionary_entries(
+        self,
+        dictionary_id: int,
+        request_data: DictionaryEntryReorderRequest | Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/chat/dictionaries/{dictionary_id}/entries/reorder",
+            json_data=self._dump_request_payload(request_data),
+        )
+
+    async def process_chat_dictionaries(
+        self,
+        request_data: ProcessChatDictionariesRequest | Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/chat/dictionaries/process",
+            json_data=self._dump_request_payload(request_data),
+        )
+
+    async def import_chat_dictionary_markdown(
+        self,
+        request_data: ImportDictionaryMarkdownRequest | Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/chat/dictionaries/import",
+            json_data=self._dump_request_payload(request_data),
+        )
+
+    async def export_chat_dictionary_markdown(self, dictionary_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/chat/dictionaries/{dictionary_id}/export")
+
+    async def export_chat_dictionary_json(self, dictionary_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/chat/dictionaries/{dictionary_id}/export/json")
+
+    async def import_chat_dictionary_json(
+        self,
+        request_data: ImportDictionaryJSONRequest | Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/chat/dictionaries/import/json",
+            json_data=self._dump_request_payload(request_data),
+        )
+
+    async def list_chat_dictionary_activity(
+        self,
+        dictionary_id: int,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/chat/dictionaries/{dictionary_id}/activity",
+            params={"limit": limit, "offset": offset},
+        )
+
+    async def list_chat_dictionary_versions(
+        self,
+        dictionary_id: int,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/chat/dictionaries/{dictionary_id}/versions",
+            params={"limit": limit, "offset": offset},
+        )
+
+    async def get_chat_dictionary_version(self, dictionary_id: int, revision: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/chat/dictionaries/{dictionary_id}/versions/{revision}")
+
+    async def revert_chat_dictionary_version(self, dictionary_id: int, revision: int) -> Dict[str, Any]:
+        return await self._request("POST", f"/api/v1/chat/dictionaries/{dictionary_id}/versions/{revision}/revert")
+
+    async def get_chat_dictionary_statistics(self, dictionary_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/chat/dictionaries/{dictionary_id}/statistics")
+
+    async def validate_chat_dictionary(
+        self,
+        request_data: ValidateDictionaryRequest | Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/chat/dictionaries/validate",
+            json_data=self._dump_request_payload(request_data),
+        )
 
     async def list_prompt_versions(self, prompt_identifier: Union[str, int]) -> Dict[str, Any]:
         return await self._request(
