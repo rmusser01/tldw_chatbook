@@ -222,6 +222,7 @@ from tldw_chatbook.Media import (
     MediaReadingScopeService,
     ServerMediaReadingService,
 )
+from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     ClientNotificationsService,
@@ -1683,6 +1684,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.claims_scope_service = ClaimsScopeService(
             server_service=self.server_claims_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_meetings_service = ServerMeetingsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_meetings_service = ServerMeetingsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.meetings_scope_service = MeetingsScopeService(
+            server_service=self.server_meetings_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:

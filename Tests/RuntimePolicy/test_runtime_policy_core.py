@@ -149,6 +149,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": FULL_CRUD_AND_LAUNCH,
         },
     },
+    "meetings": {
+        "expected_domain_ids": {"meetings"},
+        "expected_action_kinds_by_source": {
+            "server": _action_kinds("browse", "detail", "create", "update", "launch", "observe"),
+        },
+    },
     "client_notifications": {
         "expected_domain_ids": {"notifications"},
         "expected_action_kinds_by_source": {
@@ -487,6 +493,21 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         claims.settings.list.server
         claims.settings.update.server
         claims.status.detail.server
+    """),
+    "meetings": _action_ids("""
+        meetings.artifacts.create.server
+        meetings.artifacts.list.server
+        meetings.events.observe.server
+        meetings.health.detail.server
+        meetings.sessions.create.server
+        meetings.sessions.detail.server
+        meetings.sessions.launch.server
+        meetings.sessions.list.server
+        meetings.sessions.update.server
+        meetings.share.launch.server
+        meetings.templates.create.server
+        meetings.templates.detail.server
+        meetings.templates.list.server
     """),
     "server_skills": _action_ids("""
         skills.context.list.server

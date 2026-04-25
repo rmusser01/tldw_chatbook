@@ -192,6 +192,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "chat_grammars",
         "explicit_feedback",
         "claims_notifications_alerts",
+        "meetings",
         "client_notifications",
         "server_runtime_config_discovery",
         "llm_provider_model_catalog",
@@ -483,6 +484,20 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("claims.cluster_timeline", actions=(LIST,)),
             _resource("claims.cluster_evidence", actions=(LIST,)),
             _resource("claims.fva", actions=(LIST, LAUNCH)),
+        ),
+    ),
+    _capability(
+        "meetings",
+        "Meetings",
+        "meetings",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("meetings.health", actions=(DETAIL,)),
+            _resource("meetings.sessions", actions=(LIST, DETAIL, CREATE, UPDATE, LAUNCH)),
+            _resource("meetings.templates", actions=(LIST, DETAIL, CREATE)),
+            _resource("meetings.artifacts", actions=(LIST, CREATE)),
+            _resource("meetings.share", actions=(LAUNCH,)),
+            _resource("meetings.events", actions=(OBSERVE,)),
         ),
     ),
     _capability(
