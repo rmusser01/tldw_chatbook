@@ -74,6 +74,8 @@ from .watchlist_normalizers import (
     normalize_local_subscription_row,
     normalize_server_delete_response,
     normalize_server_watchlist_source,
+    normalize_watchlist_alert_rule,
+    normalize_watchlist_run,
 )
 from .watchlist_scope_service import WatchlistBackend, WatchlistScopeService
 
@@ -85,4 +87,6 @@ __all__.extend([
     "normalize_local_subscription_row",
     "normalize_server_delete_response",
     "normalize_server_watchlist_source",
+    "normalize_watchlist_alert_rule",
+    "normalize_watchlist_run",
 ])

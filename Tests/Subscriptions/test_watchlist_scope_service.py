@@ -30,6 +30,42 @@ class FakeLocalWatchlists:
         self.calls.append(("delete_source", source_id))
         return {"success": True, "id": f"local:subscription:{source_id}"}
 
+    async def launch_run(self, **kwargs):
+        self.calls.append(("launch_run", kwargs))
+        return {"id": "local:watchlist_run:1", "backend": "local", "status": "queued"}
+
+    async def list_runs(self, **kwargs):
+        self.calls.append(("list_runs", kwargs))
+        return [{"id": "local:watchlist_run:1", "backend": "local"}]
+
+    async def get_run(self, run_id):
+        self.calls.append(("get_run", run_id))
+        return {"id": f"local:watchlist_run:{run_id}", "backend": "local"}
+
+    async def get_run_detail(self, run_id, **kwargs):
+        self.calls.append(("get_run_detail", run_id, kwargs))
+        return {"id": f"local:watchlist_run:{run_id}", "backend": "local", "log_text": "local"}
+
+    async def list_alert_rules(self, **kwargs):
+        self.calls.append(("list_alert_rules", kwargs))
+        return [{"id": "local:watchlist_alert_rule:1", "backend": "local"}]
+
+    async def get_alert_rule(self, rule_id):
+        self.calls.append(("get_alert_rule", rule_id))
+        return {"id": f"local:watchlist_alert_rule:{rule_id}", "backend": "local"}
+
+    async def create_alert_rule(self, **kwargs):
+        self.calls.append(("create_alert_rule", kwargs))
+        return {"id": "local:watchlist_alert_rule:2", "backend": "local", **kwargs}
+
+    async def update_alert_rule(self, rule_id, **kwargs):
+        self.calls.append(("update_alert_rule", rule_id, kwargs))
+        return {"id": f"local:watchlist_alert_rule:{rule_id}", "backend": "local", **kwargs}
+
+    async def delete_alert_rule(self, rule_id):
+        self.calls.append(("delete_alert_rule", rule_id))
+        return {"deleted": True, "id": f"local:watchlist_alert_rule:{rule_id}"}
+
 
 class FakeServerWatchlists:
     def __init__(self):
@@ -54,6 +90,42 @@ class FakeServerWatchlists:
     async def delete_source(self, source_id):
         self.calls.append(("delete_source", source_id))
         return {"success": True, "id": f"server:watchlist_source:{source_id}"}
+
+    async def launch_run(self, **kwargs):
+        self.calls.append(("launch_run", kwargs))
+        return {"id": "server:watchlist_run:101", "backend": "server", "status": "running"}
+
+    async def list_runs(self, **kwargs):
+        self.calls.append(("list_runs", kwargs))
+        return [{"id": "server:watchlist_run:101", "backend": "server"}]
+
+    async def get_run(self, run_id):
+        self.calls.append(("get_run", run_id))
+        return {"id": f"server:watchlist_run:{run_id}", "backend": "server"}
+
+    async def get_run_detail(self, run_id, **kwargs):
+        self.calls.append(("get_run_detail", run_id, kwargs))
+        return {"id": f"server:watchlist_run:{run_id}", "backend": "server", "log_text": "server"}
+
+    async def list_alert_rules(self, **kwargs):
+        self.calls.append(("list_alert_rules", kwargs))
+        return [{"id": "server:watchlist_alert_rule:11", "backend": "server"}]
+
+    async def get_alert_rule(self, rule_id):
+        self.calls.append(("get_alert_rule", rule_id))
+        return {"id": f"server:watchlist_alert_rule:{rule_id}", "backend": "server"}
+
+    async def create_alert_rule(self, **kwargs):
+        self.calls.append(("create_alert_rule", kwargs))
+        return {"id": "server:watchlist_alert_rule:12", "backend": "server", **kwargs}
+
+    async def update_alert_rule(self, rule_id, **kwargs):
+        self.calls.append(("update_alert_rule", rule_id, kwargs))
+        return {"id": f"server:watchlist_alert_rule:{rule_id}", "backend": "server", **kwargs}
+
+    async def delete_alert_rule(self, rule_id):
+        self.calls.append(("delete_alert_rule", rule_id))
+        return {"deleted": True, "id": f"server:watchlist_alert_rule:{rule_id}"}
 
 
 @pytest.mark.asyncio
@@ -161,3 +233,93 @@ async def test_scope_service_hard_stops_denied_ui_policy_decision():
 
     assert exc.value.reason_code == "server_unreachable"
     assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_run_actions_with_watchlists_run_action_ids():
+    policy = Mock()
+    server = FakeServerWatchlists()
+    scope = WatchlistScopeService(
+        local_service=FakeLocalWatchlists(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    launched = await scope.launch_run(runtime_backend="server", job_id=7)
+    listed = await scope.list_runs(runtime_backend="server", job_id=7, limit=25, offset=25)
+    fetched = await scope.get_run("server:watchlist_run:101", runtime_backend="server")
+    observed = await scope.observe_run("server:watchlist_run:101", runtime_backend="server", include_tallies=True)
+
+    assert launched["status"] == "running"
+    assert listed[0]["backend"] == "server"
+    assert fetched["id"] == "server:watchlist_run:101"
+    assert observed["log_text"] == "server"
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "watchlists.runs.launch.server",
+        "watchlists.runs.list.server",
+        "watchlists.runs.detail.server",
+        "watchlists.runs.observe.server",
+    ]
+    assert server.calls[-4:] == [
+        ("launch_run", {"job_id": 7, "source_id": None}),
+        ("list_runs", {"job_id": 7, "limit": 25, "offset": 25, "q": None}),
+        ("get_run", "101"),
+        ("get_run_detail", "101", {"include_tallies": True}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_alert_rule_crud_with_watchlists_alert_rule_action_ids():
+    policy = Mock()
+    server = FakeServerWatchlists()
+    scope = WatchlistScopeService(
+        local_service=FakeLocalWatchlists(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    listed = await scope.list_alert_rules(runtime_backend="server", job_id=7)
+    fetched = await scope.get_alert_rule("server:watchlist_alert_rule:11", runtime_backend="server")
+    created = await scope.create_alert_rule(
+        runtime_backend="server",
+        payload={
+            "name": "Too many",
+            "condition_type": "items_above",
+            "condition_value": {"threshold": 10},
+            "job_id": 7,
+        },
+    )
+    updated = await scope.update_alert_rule(
+        "server:watchlist_alert_rule:12",
+        runtime_backend="server",
+        payload={"enabled": False},
+    )
+    deleted = await scope.delete_alert_rule("server:watchlist_alert_rule:12", runtime_backend="server")
+
+    assert listed[0]["backend"] == "server"
+    assert fetched["id"] == "server:watchlist_alert_rule:11"
+    assert created["name"] == "Too many"
+    assert updated["enabled"] is False
+    assert deleted["deleted"] is True
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "watchlists.alert_rules.list.server",
+        "watchlists.alert_rules.detail.server",
+        "watchlists.alert_rules.create.server",
+        "watchlists.alert_rules.update.server",
+        "watchlists.alert_rules.delete.server",
+    ]
+    assert server.calls[-5:] == [
+        ("list_alert_rules", {"job_id": 7}),
+        ("get_alert_rule", "11"),
+        (
+            "create_alert_rule",
+            {
+                "name": "Too many",
+                "condition_type": "items_above",
+                "condition_value": {"threshold": 10},
+                "job_id": 7,
+            },
+        ),
+        ("update_alert_rule", "12", {"enabled": False}),
+        ("delete_alert_rule", "12"),
+    ]

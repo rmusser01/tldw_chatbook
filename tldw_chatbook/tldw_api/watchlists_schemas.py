@@ -80,3 +80,91 @@ class SourceDeleteResponse(BaseModel):
     source_id: int
     restore_window_seconds: int | None = None
     restore_expires_at: str | None = None
+
+
+class WatchlistRunResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    job_id: int
+    status: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    stats: dict[str, Any] | None = None
+    error_msg: str | None = None
+
+
+class WatchlistRunListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[WatchlistRunResponse] = Field(default_factory=list)
+    total: int = 0
+    has_more: bool | None = None
+
+
+class WatchlistRunDetailResponse(WatchlistRunResponse):
+    model_config = ConfigDict(extra="ignore")
+
+    filter_tallies: dict[str, Any] | None = None
+    log_text: str | None = None
+    log_path: str | None = None
+    truncated: bool = False
+    filtered_sample: list[dict[str, Any]] | None = None
+
+
+class WatchlistRunCancelResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    run_id: int
+    status: str
+    cancelled: bool
+    message: str | None = None
+
+
+class WatchlistAlertRuleCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    condition_type: str
+    condition_value: dict[str, Any] | None = None
+    job_id: int | None = None
+    severity: str = "warning"
+
+
+class WatchlistAlertRuleUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    enabled: bool | None = None
+    condition_type: str | None = None
+    condition_value: dict[str, Any] | None = None
+    job_id: int | None = None
+    severity: str | None = None
+
+
+class WatchlistAlertRuleResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    user_id: str
+    job_id: int | None = None
+    name: str
+    enabled: bool
+    condition_type: str
+    condition_value: str = "{}"
+    severity: str
+    created_at: str
+    updated_at: str
+
+
+class WatchlistAlertRuleListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[WatchlistAlertRuleResponse] = Field(default_factory=list)
+
+
+class WatchlistAlertRuleDeleteResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    deleted: bool = True
+    rule_id: int | None = None

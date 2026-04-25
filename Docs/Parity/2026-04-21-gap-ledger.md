@@ -24,9 +24,9 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Watchlists: Watchlists, sources, jobs, runs, and alert rules
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
-- Current state: Local subscriptions plus notification plumbing already provide a practical local precursor, but the server watchlist vocabulary is not mapped into Chatbook yet.
-- Gap: Remote watchlist, source, run, and alert-rule alignment is missing despite strong local user value.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/watchlists.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/watchlist_alert_rules.py`; Chatbook: `tldw_chatbook/DB/Subscriptions_DB.py`, `tldw_chatbook/UI/Screens/subscription_screen.py`, `tldw_chatbook/Widgets/toast_notification.py`; Verification: stable watchlist and alert-rule routers exist server-side.
+- Current state: Local subscriptions are now mapped through a watchlists scope service, server source CRUD is wrapped through the shared API client, and local/server run lifecycle seams exist for list/detail/launch/observe. Alert-rule CRUD now has local persistence, server API wrappers, source-normalized records, and runtime-policy action gates.
+- Gap: Watchlist group editing, dedicated watchlists management UX, notification delivery alignment, and sync/mirror semantics remain missing. The backend seam now covers sources, run lifecycle, and alert rules.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/watchlists.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/watchlist_alert_rules.py`; Chatbook: `tldw_chatbook/Subscriptions/local_watchlists_service.py`, `tldw_chatbook/Subscriptions/server_watchlists_service.py`, `tldw_chatbook/Subscriptions/watchlist_scope_service.py`, `tldw_chatbook/tldw_api/client.py`; Verification: source CRUD, run lifecycle, alert-rule CRUD, and policy registry coverage are covered by `Tests/Subscriptions/test_watchlist_scope_service.py`, `Tests/Subscriptions/test_local_watchlists_service.py`, `Tests/Subscriptions/test_server_watchlists_service.py`, `Tests/tldw_api/test_watchlists_client.py`, and `Tests/RuntimePolicy/test_runtime_policy_core.py`.
 - Recommended tranche: Tranche 2
 - Notes: Priority 81. This is the strongest local-name crosswalk in the matrix and directly matches the user's standalone monitoring priority.
 
@@ -109,9 +109,9 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Media / Reading / Ingestion Sources: Reading lists, ingestion sources, ingestion jobs, reading progress, and media-side item flows
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
-- Current state: Media and reading seams already span local and server modes, including reading progress and ingest-job paths.
-- Gap: Full source, job, and contract parity is still incomplete.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/reading.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/ingestion_sources.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/media/ingest_jobs.py`; Chatbook: `tldw_chatbook/Media/local_media_reading_service.py`, `tldw_chatbook/Media/server_media_reading_service.py`, `tldw_chatbook/UI/Screens/media_screen.py`, `tldw_chatbook/UI/Screens/media_ingest_screen.py`; Verification: stable reading, ingestion-source, ingest-job, and reading-progress routes verify the split.
+- Current state: Media and reading seams span local and server modes, including reading progress, read-it-later state, document-version helpers, server ingestion-source CRUD/sync/archive wrappers, server ingest-job controls, and a local ingestion-source/job queue seam. Local ingestion sources can now be created, listed, read, patched, deleted, synced into queued jobs, and used to queue local URL/file ingest jobs without requiring a server.
+- Gap: Actual local ingestion execution, source item materialization, per-media-type server saved views, and UI adoption remain incomplete. Server ingestion-source deletion is not exposed by tldw_server and is surfaced as an explicit unsupported boundary after policy enforcement.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/reading.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/ingestion_sources.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/media/ingest_jobs.py`; Chatbook: `tldw_chatbook/Media/local_media_reading_service.py`, `tldw_chatbook/Media/server_media_reading_service.py`, `tldw_chatbook/Media/media_reading_scope_service.py`, `tldw_chatbook/UI/Screens/media_screen.py`, `tldw_chatbook/UI/Screens/media_ingest_screen.py`; Verification: `Tests/Media/test_local_media_reading_service.py`, `Tests/Media/test_media_reading_scope_service.py`, `Tests/Media/test_server_media_reading_service.py`, `Tests/Media/test_server_media_ingest_jobs_service.py`, and `Tests/tldw_api/test_media_reading_client.py`.
 - Recommended tranche: Tranche 1
 - Notes: Priority 78. This row underpins the higher-ranked reading-list and research work.
 

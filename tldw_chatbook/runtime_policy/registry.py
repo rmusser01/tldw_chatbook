@@ -318,6 +318,7 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=SEPARATED_SOURCES,
         resources=(
             _resource("watchlists", actions=CRUD_ACTIONS),
+            _resource("watchlists.alert_rules", actions=CRUD_ACTIONS),
             _resource("watchlists.runs", actions=(LIST, DETAIL, LAUNCH, OBSERVE)),
         ),
     ),

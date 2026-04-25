@@ -96,3 +96,68 @@ def normalize_server_delete_response(response: Mapping[str, Any] | Any, *, sourc
         "restore_window_seconds": payload.get("restore_window_seconds"),
         "restore_expires_at": payload.get("restore_expires_at"),
     }
+
+
+def normalize_watchlist_run(source: str, run: Mapping[str, Any] | Any) -> dict[str, Any]:
+    """Normalize local or server watchlist run metadata."""
+    payload = _model_to_dict(run)
+    run_id = payload["id"]
+    source_id = payload.get("source_id")
+    job_id = payload.get("job_id")
+    if source_id is None and source == "local":
+        source_id = job_id
+    return {
+        "id": f"{source}:watchlist_run:{run_id}",
+        "backend": source,
+        "entity_kind": "watchlist_run",
+        "run_id": run_id,
+        "job_id": job_id,
+        "source_id": source_id,
+        "status": payload.get("status") or "unknown",
+        "started_at": payload.get("started_at"),
+        "finished_at": payload.get("finished_at"),
+        "stats": dict(payload.get("stats") or {}),
+        "error_msg": payload.get("error_msg"),
+        "filter_tallies": payload.get("filter_tallies"),
+        "log_text": payload.get("log_text"),
+        "log_path": payload.get("log_path"),
+        "truncated": bool(payload.get("truncated", False)),
+        "filtered_sample": payload.get("filtered_sample"),
+    }
+
+
+def _coerce_condition_value(value: Any) -> dict[str, Any]:
+    if value in (None, ""):
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {"raw": value}
+        return dict(parsed) if isinstance(parsed, dict) else {"value": parsed}
+    return {"value": value}
+
+
+def normalize_watchlist_alert_rule(source: str, rule: Mapping[str, Any] | Any) -> dict[str, Any]:
+    """Normalize local or server watchlist alert-rule metadata."""
+    payload = _model_to_dict(rule)
+    rule_id = payload["id"]
+    job_id = payload.get("job_id")
+    return {
+        "id": f"{source}:watchlist_alert_rule:{rule_id}",
+        "backend": source,
+        "entity_kind": "watchlist_alert_rule",
+        "rule_id": rule_id,
+        "user_id": payload.get("user_id") or ("local" if source == "local" else None),
+        "job_id": job_id,
+        "source_id": payload.get("source_id") or job_id,
+        "name": payload.get("name") or "Untitled alert rule",
+        "enabled": bool(payload.get("enabled", True)),
+        "condition_type": payload.get("condition_type"),
+        "condition_value": _coerce_condition_value(payload.get("condition_value")),
+        "severity": payload.get("severity") or "warning",
+        "created_at": payload.get("created_at"),
+        "updated_at": payload.get("updated_at"),
+    }

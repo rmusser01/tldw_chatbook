@@ -12,14 +12,14 @@ Tranche ordering follows the capability matrix, gap ledger, and target-state des
 
 That changes the roadmap in one important way: runtime policy remains a cross-cutting extension surface, but it is no longer the next unresolved blocker. Active execution should now move into the domains that either build directly on the new authority layer or deliver the highest-value standalone-client parity you prioritized.
 
-Additional backend foundations have since landed for media/read-it-later, watchlists/client notifications, writing suite, research sessions/runs, remote outputs, sharing, web clipper, study packs/suggestions, and server notification/reminder wrappers. The remaining work in those rows is now primarily adoption/UI, contract edge cleanup, or explicitly deferred sync/mirroring behavior rather than absence of a service seam.
+Additional backend foundations have since landed for media/read-it-later, watchlists/client notifications, writing suite, research sessions/runs, remote outputs, sharing, web clipper, study packs/suggestions, and server notification/reminder wrappers. Media now includes a local ingestion-source/job queue seam; watchlists now include source CRUD, local/server run list/detail/launch/observe seams, and alert-rule CRUD. The remaining work in those rows is now primarily adoption/UI, actual local execution, contract edge cleanup, delivery integration, or explicitly deferred sync/mirroring behavior rather than absence of a service seam.
 
 ## Immediate Post-Tranche-0 Order
 
 1. `Media / Reading / Ingestion Sources` plus `Collections: Reading List / Read-it-later`
-   This is the cleanest next crosswalk because Chatbook already has landed local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, and server ingestion-source create for `archive_snapshot` and `git_repository`; per-media-type server saved views and sync/mirror semantics remain deferred.
+   This is the cleanest next crosswalk because Chatbook already has landed local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, server ingestion-source create for `archive_snapshot` and `git_repository`, and local queued ingestion-source/job persistence; per-media-type server saved views, actual local execution, and sync/mirror semantics remain deferred.
 2. `Watchlists` plus `Client Notifications`
-   Chatbook already has a real local subscriptions stack and toast-like notification plumbing, so this is the strongest local-first bridge into server watchlists, alert rules, and later remote reminder/feed awareness.
+   Chatbook already has a real local subscriptions stack, source CRUD/run-lifecycle/alert-rule service seams, and toast-like notification plumbing, so the remaining high-value bridge is adoption into the eventual watchlists management UX plus notification delivery alignment.
 3. `Local MCP Runtime`
    The runtime-policy layer is now in place, and Chatbook already has local MCP modules; the next gap is turning that into a first-class local runtime, approvals, status, and governance surface.
 4. `Writing Suite`
@@ -64,7 +64,7 @@ Domains in this tranche:
 Execution intent for this tranche:
 
 - Finish the strongest existing local/server seams before building fresh remote-only surfaces.
-- Current implementation note: source-aware backend foundations are now landed for media/reading/ingestion, study/evaluations, research sessions/runs, and prompts/chatbooks. Remaining tranche work is primarily UI adoption, broader endpoint coverage, and honest unsupported-boundary reduction rather than first-pass service construction.
+- Current implementation note: source-aware backend foundations are now landed for media/reading/ingestion, study/evaluations, research sessions/runs, and prompts/chatbooks. Media ingestion now includes local queued source/job persistence, but still needs actual local execution and source item materialization. Remaining tranche work is primarily UI adoption, broader endpoint coverage, and honest unsupported-boundary reduction rather than first-pass service construction.
 - Prefer source-separated crosswalks and normalization work over redesigning mature local flows.
 - Use these domains to prove the runtime-policy model in everyday product surfaces before expanding to more ambitious missing capabilities.
 
@@ -83,8 +83,8 @@ Domains in this tranche:
 
 Execution intent for this tranche:
 
-- Crosswalk `Watchlists` onto existing local subscriptions and notification plumbing before inventing a separate remote-first model.
-- Build `Collections: Reading List / Read-it-later` on top of the existing media and reading seams rather than treating it as a disconnected collection system. Treat local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, and server ingestion-source create as landed foundations; keep per-media-type server saved views and any sync/mirror contract out of scope for this tranche.
+- Crosswalk `Watchlists` onto existing local subscriptions and notification plumbing before inventing a separate remote-first model. Treat source CRUD, run list/detail/launch/observe, and alert-rule CRUD as landed backend seams; focus next on UI adoption, group editing policy, and notification delivery alignment.
+- Build `Collections: Reading List / Read-it-later` on top of the existing media and reading seams rather than treating it as a disconnected collection system. Treat local saved-state persistence, server save/remove compatibility, the aggregate `All Media` saved view, server ingestion-source create, and local queued ingestion-source/job persistence as landed foundations; keep per-media-type server saved views and any sync/mirror contract out of scope for this tranche.
 - Add `Writing Suite` and `Research Sessions / Runs` as serious standalone surfaces with matching remote contracts, not as thin shells around server-only functionality.
 - Keep `Client Notifications` and `Local MCP Runtime` Chatbook-owned so offline capability remains credible even as remote interop improves.
 
@@ -115,7 +115,7 @@ Execution intent for this tranche:
 ## Follow-On Vertical Plans
 
 - `Collections: Reading List / Read-it-later parity`: Turn the tranche guidance into a focused plan for the standalone-first reading collection surface, using the existing media and reading seams as the base for local and remote collection alignment. Keep the plan scoped to the landed aggregate saved view and compatibility mapping unless a separate sync/mirror design is approved.
-- `Watchlists / subscriptions alignment`: Turn the tranche guidance into a focused plan that maps local subscriptions, alert rules, and notification delivery onto the server watchlist vocabulary without collapsing local ownership.
+- `Watchlists / subscriptions alignment`: Turn the tranche guidance into a focused plan that maps local subscriptions, the landed source/run/alert-rule seams, and notification delivery onto the server watchlist vocabulary without collapsing local ownership.
 - `Local MCP runtime parity`: Define the local-first runtime, approvals, catalog, prompts, tools, resources, and status surface before any later remote governance work.
 - `Remote MCP control plane`: Define the later remote governance surface separately from local MCP runtime so catalog and approval policy do not subsume standalone Chatbook control.
 - `Writing suite parity`: Plan the local-first project, manuscript, chapter, and scene hierarchy together with the server contract and source-separated UI behavior.

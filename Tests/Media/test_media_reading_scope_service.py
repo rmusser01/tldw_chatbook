@@ -110,10 +110,22 @@ class FakeLocalMediaService:
         return True
 
     def list_ingestion_sources(self):
-        raise ValueError("Local ingestion sources are not available yet.")
+        self.calls.append(("list_ingestion_sources",))
+        return [
+            {
+                "id": 3,
+                "source_type": "local_directory",
+                "sink_type": "media",
+                "policy": "canonical",
+                "enabled": True,
+                "schedule_enabled": False,
+                "config": {"path": "/tmp/source"},
+            }
+        ]
 
     def create_ingestion_source(self, **kwargs):
-        raise ValueError("Local ingestion sources are not available yet.")
+        self.calls.append(("create_ingestion_source", kwargs))
+        return {"id": 4, **kwargs}
 
     def save_to_read_it_later(self, media_id):
         self.calls.append(("save_to_read_it_later", media_id))
@@ -132,19 +144,44 @@ class FakeLocalMediaService:
         }
 
     def get_ingestion_source(self, source_id):
-        raise ValueError("Local ingestion sources are not available yet.")
+        self.calls.append(("get_ingestion_source", source_id))
+        return {
+            "id": source_id,
+            "source_type": "local_directory",
+            "sink_type": "media",
+            "policy": "canonical",
+            "enabled": True,
+            "schedule_enabled": False,
+            "config": {"path": "/tmp/source"},
+        }
 
     def patch_ingestion_source(self, source_id, **changes):
-        raise ValueError("Local ingestion sources are not available yet.")
+        self.calls.append(("patch_ingestion_source", source_id, changes))
+        return {
+            "id": source_id,
+            "source_type": "local_directory",
+            "sink_type": "media",
+            "policy": "canonical",
+            "enabled": changes.get("enabled", True),
+            "schedule_enabled": changes.get("schedule_enabled", False),
+            "config": {"path": "/tmp/source"},
+        }
+
+    def delete_ingestion_source(self, source_id):
+        self.calls.append(("delete_ingestion_source", source_id))
+        return {"deleted": True, "source_id": source_id}
 
     def list_ingestion_source_items(self, source_id):
-        raise ValueError("Local ingestion sources are not available yet.")
+        self.calls.append(("list_ingestion_source_items", source_id))
+        return []
 
     def trigger_ingestion_source_sync(self, source_id):
-        raise ValueError("Local ingestion sources are not available yet.")
+        self.calls.append(("trigger_ingestion_source_sync", source_id))
+        return {"status": "queued", "source_id": source_id, "job_id": 301}
 
     def upload_ingestion_source_archive(self, source_id, archive_path):
-        raise ValueError("Local ingestion sources are not available yet.")
+        self.calls.append(("upload_ingestion_source_archive", source_id, archive_path))
+        return {"status": "queued", "source_id": source_id, "job_id": 302, "snapshot_status": "staged"}
 
     def list_document_versions(self, media_id, include_deleted=False):
         self.calls.append(("list_document_versions", media_id, include_deleted))
@@ -200,6 +237,34 @@ class FakeLocalMediaService:
 
     def generate_document_insights(self, media_id, **params):
         raise ValueError("Local document intelligence is not available yet.")
+
+    def submit_ingest_jobs(self, **kwargs):
+        self.calls.append(("submit_ingest_jobs", kwargs))
+        return {"batch_id": "local-batch-1", "jobs": [{"id": 301, "status": "queued"}], "errors": []}
+
+    def get_ingest_job(self, job_id):
+        self.calls.append(("get_ingest_job", job_id))
+        return {"id": job_id, "status": "queued"}
+
+    def list_ingest_jobs(self, batch_id, *, limit=100):
+        self.calls.append(("list_ingest_jobs", batch_id, limit))
+        return {"batch_id": batch_id, "jobs": [{"id": 301, "status": "queued"}]}
+
+    def stream_ingest_job_events(self, *, batch_id=None, after_id=0):
+        self.calls.append(("stream_ingest_job_events", batch_id, after_id))
+        return [{"event": "status", "data": {"id": 301, "status": "queued"}}]
+
+    def cancel_ingest_job(self, job_id, *, reason=None):
+        self.calls.append(("cancel_ingest_job", job_id, reason))
+        return {"success": True, "job_id": job_id, "status": "cancelled"}
+
+    def cancel_ingest_batch(self, *, batch_id=None, session_id=None, reason=None):
+        self.calls.append(("cancel_ingest_batch", batch_id, session_id, reason))
+        return {"success": True, "batch_id": batch_id, "requested": 1, "cancelled": 1, "already_terminal": 0}
+
+    def reprocess_media(self, media_id, **options):
+        self.calls.append(("reprocess_media", media_id, options))
+        return {"status": "queued", "media_id": media_id, "job_id": 303}
 
 
 class FakeServerMediaService:
@@ -321,6 +386,10 @@ class FakeServerMediaService:
             "policy": changes.get("policy", "canonical"),
             "enabled": changes.get("enabled", True),
         }
+
+    async def delete_ingestion_source(self, source_id):
+        self.calls.append(("delete_ingestion_source", source_id))
+        raise NotImplementedError("Server ingestion source deletion is not exposed by tldw_server.")
 
     async def list_ingestion_source_items(self, source_id):
         self.calls.append(("list_ingestion_source_items", source_id))
@@ -798,35 +867,98 @@ async def test_media_scope_service_denies_server_ingestion_sources_when_server_i
 
 
 @pytest.mark.asyncio
-async def test_scope_service_fails_explicitly_for_unsupported_local_ingestion_sources():
+async def test_scope_service_routes_local_ingestion_sources_and_jobs_with_policy_actions():
+    policy_enforcer = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     scope_service = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
-        server_service=FakeServerMediaService(),
-    )
-
-    with pytest.raises(ValueError, match="Local ingestion sources are not available yet."):
-        await scope_service.list_ingestion_sources(mode="local")
-
-
-@pytest.mark.asyncio
-async def test_scope_service_create_ingestion_source_fails_explicitly_for_local_before_policy_denial():
-    policy_enforcer = FakePolicyEnforcer.deny("blocked")
-    scope_service = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
         policy_enforcer=policy_enforcer,
     )
 
-    with pytest.raises(ValueError, match="Local ingestion sources are not available yet."):
-        await scope_service.create_ingestion_source(
-            mode="local",
-            source_type="git_repository",
-            sink_type="media",
-            policy="canonical",
-            config={"repo_url": "https://example.com/repo.git"},
-        )
+    listed = await scope_service.list_ingestion_sources(mode="local")
+    created = await scope_service.create_ingestion_source(
+        mode="local",
+        source_type="local_directory",
+        sink_type="media",
+        policy="canonical",
+        config={"path": "/tmp/source"},
+    )
+    detail = await scope_service.get_ingestion_source(mode="local", source_id=3)
+    patched = await scope_service.patch_ingestion_source(mode="local", source_id=3, enabled=False)
+    deleted = await scope_service.delete_ingestion_source(mode="local", source_id=3)
+    items = await scope_service.list_ingestion_source_items(mode="local", source_id=3)
+    triggered = await scope_service.trigger_ingestion_source_sync(mode="local", source_id=3)
+    submitted = await scope_service.submit_ingest_jobs(
+        mode="local",
+        media_type="pdf",
+        urls=["https://example.com/a.pdf"],
+    )
+    status = await scope_service.get_ingest_job(mode="local", job_id=301)
+    cancelled = await scope_service.cancel_ingest_job(mode="local", job_id=301, reason="user requested")
 
-    assert policy_enforcer.calls == []
+    assert listed[0]["id"] == "local:ingestion_source:3"
+    assert created["id"] == "local:ingestion_source:4"
+    assert detail["source_type"] == "local_directory"
+    assert patched["enabled"] is False
+    assert deleted["deleted"] is True
+    assert items == []
+    assert triggered["job_id"] == 301
+    assert submitted["batch_id"] == "local-batch-1"
+    assert status["id"] == 301
+    assert cancelled["status"] == "cancelled"
+    assert policy_enforcer.calls[-10:] == [
+        "media.ingestion_sources.list.local",
+        "media.ingestion_sources.create.local",
+        "media.ingestion_sources.detail.local",
+        "media.ingestion_sources.update.local",
+        "media.ingestion_sources.delete.local",
+        "media.ingestion_jobs.observe.local",
+        "media.ingestion_jobs.launch.local",
+        "media.ingestion_jobs.launch.local",
+        "media.ingestion_jobs.detail.local",
+        "media.ingestion_jobs.cancel.local",
+    ]
+    assert local.calls[-10:] == [
+        ("list_ingestion_sources",),
+        (
+            "create_ingestion_source",
+            {
+                "source_type": "local_directory",
+                "sink_type": "media",
+                "policy": "canonical",
+                "enabled": True,
+                "schedule_enabled": False,
+                "schedule": None,
+                "config": {"path": "/tmp/source"},
+            },
+        ),
+        ("get_ingestion_source", 3),
+        ("patch_ingestion_source", 3, {"enabled": False}),
+        ("delete_ingestion_source", 3),
+        ("list_ingestion_source_items", 3),
+        ("trigger_ingestion_source_sync", 3),
+        ("submit_ingest_jobs", {"media_type": "pdf", "urls": ["https://example.com/a.pdf"], "keywords": None}),
+        ("get_ingest_job", 301),
+        ("cancel_ingest_job", 301, "user requested"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_server_ingestion_source_delete_enforces_policy_then_reports_unsupported():
+    policy_enforcer = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(NotImplementedError, match="not exposed by tldw_server"):
+        await scope_service.delete_ingestion_source(mode="server", source_id=7)
+
+    assert policy_enforcer.calls[-1:] == ["media.ingestion_sources.delete.server"]
+    assert server.calls[-1:] == [("delete_ingestion_source", 7)]
 
 
 @pytest.mark.asyncio

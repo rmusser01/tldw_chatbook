@@ -556,6 +556,16 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         watchlists.detail.server
         watchlists.list.local
         watchlists.list.server
+        watchlists.alert_rules.create.local
+        watchlists.alert_rules.create.server
+        watchlists.alert_rules.delete.local
+        watchlists.alert_rules.delete.server
+        watchlists.alert_rules.detail.local
+        watchlists.alert_rules.detail.server
+        watchlists.alert_rules.list.local
+        watchlists.alert_rules.list.server
+        watchlists.alert_rules.update.local
+        watchlists.alert_rules.update.server
         watchlists.runs.detail.local
         watchlists.runs.detail.server
         watchlists.runs.launch.local

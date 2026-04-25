@@ -199,6 +199,14 @@ from .watchlists_schemas import (
     SourceListResponse,
     SourceResponse,
     SourceUpdateRequest,
+    WatchlistAlertRuleCreateRequest,
+    WatchlistAlertRuleDeleteResponse,
+    WatchlistAlertRuleListResponse,
+    WatchlistAlertRuleResponse,
+    WatchlistAlertRuleUpdateRequest,
+    WatchlistRunDetailResponse,
+    WatchlistRunListResponse,
+    WatchlistRunResponse,
 )
 from .notifications_reminders_schemas import (
     NotificationCancelSnoozeResponse,
@@ -1170,6 +1178,100 @@ class TLDWAPIClient:
         elif isinstance(response, dict) and "source_id" not in response:
             response = {**response, "source_id": source_id}
         return SourceDeleteResponse.model_validate(response)
+
+    async def trigger_watchlist_run(self, job_id: int) -> WatchlistRunResponse:
+        response = await self._request("POST", f"/api/v1/watchlists/jobs/{job_id}/run")
+        return WatchlistRunResponse.model_validate(response)
+
+    async def list_watchlist_runs(
+        self,
+        *,
+        job_id: int | None = None,
+        q: str | None = None,
+        page: int = 1,
+        size: int = 50,
+        target_user_id: int | None = None,
+    ) -> WatchlistRunListResponse:
+        path = f"/api/v1/watchlists/jobs/{job_id}/runs" if job_id is not None else "/api/v1/watchlists/runs"
+        response = await self._request(
+            "GET",
+            path,
+            params={
+                key: value
+                for key, value in {
+                    "q": q,
+                    "page": page,
+                    "size": size,
+                    "target_user_id": target_user_id,
+                }.items()
+                if value is not None
+            },
+        )
+        if isinstance(response, list):
+            response = {"items": response, "total": len(response), "has_more": False}
+        return WatchlistRunListResponse.model_validate(response)
+
+    async def get_watchlist_run(self, run_id: int) -> WatchlistRunResponse:
+        response = await self._request("GET", f"/api/v1/watchlists/runs/{run_id}")
+        return WatchlistRunResponse.model_validate(response)
+
+    async def get_watchlist_run_details(
+        self,
+        run_id: int,
+        *,
+        include_tallies: bool = False,
+        filtered_sample_max: int = 5,
+    ) -> WatchlistRunDetailResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/watchlists/runs/{run_id}/details",
+            params={
+                "include_tallies": str(include_tallies).lower(),
+                "filtered_sample_max": filtered_sample_max,
+            },
+        )
+        return WatchlistRunDetailResponse.model_validate(response)
+
+    async def list_watchlist_alert_rules(self, *, job_id: int | None = None) -> WatchlistAlertRuleListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/alert-rules",
+            params={key: value for key, value in {"job_id": job_id}.items() if value is not None},
+        )
+        if isinstance(response, list):
+            response = {"items": response}
+        return WatchlistAlertRuleListResponse.model_validate(response)
+
+    async def create_watchlist_alert_rule(
+        self,
+        request_data: WatchlistAlertRuleCreateRequest,
+    ) -> WatchlistAlertRuleResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/alert-rules",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WatchlistAlertRuleResponse.model_validate(response)
+
+    async def update_watchlist_alert_rule(
+        self,
+        rule_id: int,
+        request_data: WatchlistAlertRuleUpdateRequest,
+    ) -> WatchlistAlertRuleResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/watchlists/alert-rules/{rule_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WatchlistAlertRuleResponse.model_validate(response)
+
+    async def delete_watchlist_alert_rule(self, rule_id: int) -> WatchlistAlertRuleDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/watchlists/alert-rules/{rule_id}")
+        if not response:
+            response = {"deleted": True, "rule_id": rule_id}
+        elif isinstance(response, dict) and "rule_id" not in response:
+            response = {**response, "rule_id": rule_id}
+        return WatchlistAlertRuleDeleteResponse.model_validate(response)
 
     async def list_notifications(
         self,

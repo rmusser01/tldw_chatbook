@@ -77,6 +77,20 @@ class WatchlistScopeService:
             return item_id_text.rsplit(":", 1)[-1]
         return item_id_text
 
+    @staticmethod
+    def _run_id_from_item_id(item_id: Any) -> str:
+        item_id_text = str(item_id)
+        if ":" in item_id_text:
+            return item_id_text.rsplit(":", 1)[-1]
+        return item_id_text
+
+    @staticmethod
+    def _rule_id_from_item_id(item_id: Any) -> str:
+        item_id_text = str(item_id)
+        if ":" in item_id_text:
+            return item_id_text.rsplit(":", 1)[-1]
+        return item_id_text
+
     async def list_watch_items(
         self,
         *,
@@ -139,3 +153,112 @@ class WatchlistScopeService:
         self._enforce_policy(backend, "delete")
         service = self._service_for_backend(backend)
         return await self._maybe_await(service.delete_source(self._source_id_from_item_id(item_id)))
+
+    async def launch_run(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        job_id: Any = None,
+        source_id: Any = None,
+    ) -> dict[str, Any]:
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "runs.launch")
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(service.launch_run(job_id=job_id, source_id=source_id))
+
+    async def list_runs(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        job_id: Any = None,
+        limit: int = 100,
+        offset: int = 0,
+        q: str | None = None,
+    ) -> list[dict[str, Any]]:
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "runs.list")
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(service.list_runs(job_id=job_id, limit=limit, offset=offset, q=q))
+
+    async def get_run(
+        self,
+        run_id: Any,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> dict[str, Any]:
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "runs.detail")
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(service.get_run(self._run_id_from_item_id(run_id)))
+
+    async def observe_run(
+        self,
+        run_id: Any,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        include_tallies: bool = False,
+    ) -> dict[str, Any]:
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "runs.observe")
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(
+            service.get_run_detail(self._run_id_from_item_id(run_id), include_tallies=include_tallies)
+        )
+
+    async def list_alert_rules(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        job_id: Any = None,
+    ) -> list[dict[str, Any]]:
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "alert_rules.list")
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(service.list_alert_rules(job_id=job_id))
+
+    async def get_alert_rule(
+        self,
+        rule_id: Any,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> dict[str, Any]:
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "alert_rules.detail")
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(service.get_alert_rule(self._rule_id_from_item_id(rule_id)))
+
+    async def create_alert_rule(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "alert_rules.create")
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(service.create_alert_rule(**dict(payload)))
+
+    async def update_alert_rule(
+        self,
+        rule_id: Any,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "alert_rules.update")
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(
+            service.update_alert_rule(self._rule_id_from_item_id(rule_id), **dict(payload))
+        )
+
+    async def delete_alert_rule(
+        self,
+        rule_id: Any,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> dict[str, Any]:
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "alert_rules.delete")
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(service.delete_alert_rule(self._rule_id_from_item_id(rule_id)))

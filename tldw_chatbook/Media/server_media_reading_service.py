@@ -339,6 +339,9 @@ class ServerMediaReadingService:
         request_data = IngestionSourcePatchRequest(**changes)
         return await self._require_client().patch_ingestion_source(int(source_id), request_data)
 
+    async def delete_ingestion_source(self, source_id: Any) -> Any:
+        raise NotImplementedError("Server ingestion source deletion is not exposed by tldw_server.")
+
     async def list_ingestion_source_items(self, source_id: Any) -> Any:
         return await self._require_client().list_ingestion_source_items(int(source_id))
 

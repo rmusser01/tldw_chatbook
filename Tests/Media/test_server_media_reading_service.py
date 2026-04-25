@@ -228,6 +228,9 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
         ("upload_ingestion_source_archive", 7, "/tmp/archive.zip"),
     ]
 
+    with pytest.raises(NotImplementedError, match="not exposed by tldw_server"):
+        await service.delete_ingestion_source(7)
+
 
 @pytest.mark.asyncio
 async def test_server_service_delete_routes_to_soft_delete_endpoint_and_undelete_fails_explicitly():

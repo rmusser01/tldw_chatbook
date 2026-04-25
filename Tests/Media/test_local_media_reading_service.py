@@ -158,3 +158,57 @@ def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_facto
     assert removed["is_read_it_later"] is False
     assert removed["saved_at"] is None
     assert db.get_media_read_it_later_state(media_id) is None
+
+
+def test_local_service_persists_ingestion_sources_and_sync_jobs(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    source_path = tmp_path / "source"
+    source_path.mkdir()
+
+    created = service.create_ingestion_source(
+        source_type="local_directory",
+        sink_type="media",
+        policy="canonical",
+        config={"path": str(source_path)},
+    )
+    listed = service.list_ingestion_sources()
+    detail = service.get_ingestion_source(created["id"])
+    patched = service.patch_ingestion_source(created["id"], enabled=False, schedule_enabled=True)
+    items = service.list_ingestion_source_items(created["id"])
+    synced = service.trigger_ingestion_source_sync(created["id"])
+    job = service.get_ingest_job(synced["job_id"])
+    jobs = service.list_ingest_jobs(job["batch_id"])
+    cancelled = service.cancel_ingest_job(job["id"], reason="user requested")
+    deleted = service.delete_ingestion_source(created["id"])
+
+    assert listed[0]["id"] == created["id"]
+    assert detail["source_type"] == "local_directory"
+    assert patched["enabled"] is False
+    assert patched["schedule_enabled"] is True
+    assert items == []
+    assert synced["status"] == "queued"
+    assert job["source_id"] == created["id"]
+    assert jobs["jobs"][0]["id"] == job["id"]
+    assert cancelled["status"] == "cancelled"
+    assert deleted["deleted"] is True
+    with pytest.raises(KeyError):
+        service.get_ingestion_source(created["id"])
+
+
+def test_local_service_submit_ingest_jobs_queues_url_and_file_jobs(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    file_path = tmp_path / "doc.pdf"
+    file_path.write_text("pdf placeholder", encoding="utf-8")
+
+    submitted = service.submit_ingest_jobs(
+        media_type="pdf",
+        urls=["https://example.com/a.pdf"],
+        file_paths=[str(file_path)],
+        keywords=["paper"],
+    )
+
+    assert submitted["batch_id"].startswith("local-batch-")
+    assert [job["source_kind"] for job in submitted["jobs"]] == ["url", "file"]
+    assert service.get_ingest_job(submitted["jobs"][0]["id"])["status"] == "queued"

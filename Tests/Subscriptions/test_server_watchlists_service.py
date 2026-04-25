@@ -76,6 +76,108 @@ class FakeWatchlistsClient:
             "restore_expires_at": "2026-04-21T12:00:00Z",
         }
 
+    async def trigger_watchlist_run(self, job_id):
+        self.calls.append(("trigger_watchlist_run", job_id))
+        return {"id": 101, "job_id": job_id, "status": "running"}
+
+    async def list_watchlist_runs(self, **kwargs):
+        self.calls.append(("list_watchlist_runs", kwargs))
+        return type(
+            "Response",
+            (),
+            {
+                "model_dump": lambda self, mode="json": {
+                    "items": [{"id": 101, "job_id": 7, "status": "completed"}],
+                    "total": 1,
+                    "has_more": False,
+                }
+            },
+        )()
+
+    async def get_watchlist_run(self, run_id):
+        self.calls.append(("get_watchlist_run", run_id))
+        return {"id": run_id, "job_id": 7, "status": "completed"}
+
+    async def get_watchlist_run_details(self, run_id, **kwargs):
+        self.calls.append(("get_watchlist_run_details", run_id, kwargs))
+        return {
+            "id": run_id,
+            "job_id": 7,
+            "status": "completed",
+            "stats": {"items_found": 3},
+            "log_text": "done",
+        }
+
+    async def list_watchlist_alert_rules(self, **kwargs):
+        self.calls.append(("list_watchlist_alert_rules", kwargs))
+        return type(
+            "Response",
+            (),
+            {
+                "model_dump": lambda self, mode="json": {
+                    "items": [
+                        {
+                            "id": 11,
+                            "user_id": "user-1",
+                            "job_id": 7,
+                            "name": "No items",
+                            "enabled": True,
+                            "condition_type": "no_items",
+                            "condition_value": "{}",
+                            "severity": "warning",
+                            "created_at": "2026-04-21T12:00:00Z",
+                            "updated_at": "2026-04-21T12:00:00Z",
+                        }
+                    ]
+                }
+            },
+        )()
+
+    async def create_watchlist_alert_rule(self, request_data):
+        self.calls.append(
+            (
+                "create_watchlist_alert_rule",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+        return {
+            "id": 12,
+            "user_id": "user-1",
+            "job_id": 7,
+            "name": "Too many",
+            "enabled": True,
+            "condition_type": "items_above",
+            "condition_value": "{\"threshold\": 10}",
+            "severity": "critical",
+            "created_at": "2026-04-21T12:00:00Z",
+            "updated_at": "2026-04-21T12:00:00Z",
+        }
+
+    async def update_watchlist_alert_rule(self, rule_id, request_data):
+        self.calls.append(
+            (
+                "update_watchlist_alert_rule",
+                rule_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+        return {
+            "id": rule_id,
+            "user_id": "user-1",
+            "job_id": 7,
+            "name": "Too many updated",
+            "enabled": False,
+            "condition_type": "items_above",
+            "condition_value": "{\"threshold\": 25}",
+            "severity": "warning",
+            "created_at": "2026-04-21T12:00:00Z",
+            "updated_at": "2026-04-21T12:05:00Z",
+        }
+
+    async def delete_watchlist_alert_rule(self, rule_id):
+        self.calls.append(("delete_watchlist_alert_rule", rule_id))
+        return {"deleted": True, "rule_id": rule_id}
+
 
 @pytest.mark.asyncio
 async def test_server_watchlists_service_routes_crud_and_normalizes_sources():
@@ -160,3 +262,80 @@ async def test_server_watchlists_service_blocks_deferred_forum_and_group_editing
         await service.update_source(17, group_ids=[3])
 
     assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_watchlists_service_routes_run_lifecycle_and_normalizes_runs():
+    client = FakeWatchlistsClient()
+    service = ServerWatchlistsService(client=client)
+
+    launched = await service.launch_run(job_id=7)
+    listed = await service.list_runs(job_id=7, limit=25, offset=25)
+    fetched = await service.get_run(101)
+    detail = await service.get_run_detail(101, include_tallies=True)
+
+    assert launched["id"] == "server:watchlist_run:101"
+    assert listed[0]["id"] == "server:watchlist_run:101"
+    assert fetched["run_id"] == 101
+    assert detail["log_text"] == "done"
+    assert client.calls[-4:] == [
+        ("trigger_watchlist_run", 7),
+        ("list_watchlist_runs", {"job_id": 7, "page": 2, "size": 25, "q": None}),
+        ("get_watchlist_run", 101),
+        ("get_watchlist_run_details", 101, {"include_tallies": True, "filtered_sample_max": 5}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_watchlists_service_routes_alert_rule_crud_and_normalizes_rules():
+    client = FakeWatchlistsClient()
+    service = ServerWatchlistsService(client=client)
+
+    listed = await service.list_alert_rules(job_id=7)
+    fetched = await service.get_alert_rule(11)
+    created = await service.create_alert_rule(
+        name="Too many",
+        condition_type="items_above",
+        condition_value={"threshold": 10},
+        job_id=7,
+        severity="critical",
+    )
+    updated = await service.update_alert_rule(
+        12,
+        name="Too many updated",
+        enabled=False,
+        condition_value={"threshold": 25},
+        severity="warning",
+    )
+    deleted = await service.delete_alert_rule(12)
+
+    assert listed[0]["id"] == "server:watchlist_alert_rule:11"
+    assert fetched["rule_id"] == 11
+    assert created["condition_value"] == {"threshold": 10}
+    assert updated["enabled"] is False
+    assert deleted["deleted"] is True
+    assert client.calls[-6:] == [
+        ("list_watchlist_alert_rules", {"job_id": 7}),
+        ("list_watchlist_alert_rules", {"job_id": None}),
+        (
+            "create_watchlist_alert_rule",
+            {
+                "name": "Too many",
+                "condition_type": "items_above",
+                "condition_value": {"threshold": 10},
+                "job_id": 7,
+                "severity": "critical",
+            },
+        ),
+        (
+            "update_watchlist_alert_rule",
+            12,
+            {
+                "name": "Too many updated",
+                "enabled": False,
+                "condition_value": {"threshold": 25},
+                "severity": "warning",
+            },
+        ),
+        ("delete_watchlist_alert_rule", 12),
+    ]
