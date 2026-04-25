@@ -1029,6 +1029,13 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
+    async def reattach_ingestion_source_item(self, source_id: int, item_id: int) -> IngestionSourceItemResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/ingestion-sources/{source_id}/items/{item_id}/reattach",
+        )
+        return IngestionSourceItemResponse.model_validate(response)
+
     async def save_reading_item(self, request_data: ReadingSaveRequest) -> Dict[str, Any]:
         return await self._request(
             "POST",

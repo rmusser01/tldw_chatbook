@@ -99,6 +99,13 @@ async def test_ingestion_source_routes_wire_and_list_methods_are_typed_as_lists(
             ],
             {"status": "queued", "source_id": 7, "job_id": 99},
             {"status": "queued", "source_id": 7, "job_id": 100},
+            {
+                "id": 5,
+                "source_id": 7,
+                "normalized_relative_path": "chapter-1.md",
+                "sync_status": "sync_managed",
+                "binding": {"note_id": "note-1"},
+            },
         ]
     )
     monkeypatch.setattr(client, "_request", mocked)
@@ -115,6 +122,7 @@ async def test_ingestion_source_routes_wire_and_list_methods_are_typed_as_lists(
     items = await client.list_ingestion_source_items(7)
     synced = await client.trigger_ingestion_source_sync(7)
     archived = await client.upload_ingestion_source_archive(7, str(archive))
+    reattached = await client.reattach_ingestion_source_item(7, 5)
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/ingestion-sources/")
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/ingestion-sources/")
@@ -124,6 +132,7 @@ async def test_ingestion_source_routes_wire_and_list_methods_are_typed_as_lists(
     assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/ingestion-sources/7/sync")
     assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/ingestion-sources/7/archive")
     assert mocked.await_args_list[6].kwargs["files"][0][0] == "archive"
+    assert mocked.await_args_list[7].args[:2] == ("POST", "/api/v1/ingestion-sources/7/items/5/reattach")
 
     assert isinstance(created, IngestionSourceResponse)
     assert isinstance(got, IngestionSourceResponse)
@@ -134,6 +143,7 @@ async def test_ingestion_source_routes_wire_and_list_methods_are_typed_as_lists(
     assert isinstance(items[0], IngestionSourceItemResponse)
     assert synced.status == "queued"
     assert archived.status == "queued"
+    assert reattached.sync_status == "sync_managed"
 
 
 @pytest.mark.asyncio

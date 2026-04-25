@@ -154,6 +154,7 @@ REORDER = _action("reorder", "update")
 BULK_UPDATE = _action("bulk_update", "update")
 ARCHIVE = _action("archive", "create")
 SUMMARIZE = _action("summarize", "launch")
+REATTACH = _action("reattach", "update")
 
 CRUD_ACTIONS = (LIST, DETAIL, CREATE, UPDATE, DELETE)
 DISCOVER_TRIGGER_OBSERVE_ACTIONS = (LIST, LAUNCH, OBSERVE)
@@ -281,6 +282,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("media.reading.note_links", actions=(LIST, CREATE, DELETE)),
             _resource("media.reading_progress", actions=(DETAIL, UPDATE)),
             _resource("media.ingestion_sources", actions=CRUD_ACTIONS),
+            _resource("media.ingestion_source_items", actions=(REATTACH,)),
             _resource("media.ingestion_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE, CANCEL)),
         ),
     ),

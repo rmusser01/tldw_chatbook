@@ -183,6 +183,9 @@ class FakeLocalMediaService:
         self.calls.append(("upload_ingestion_source_archive", source_id, archive_path))
         return {"status": "queued", "source_id": source_id, "job_id": 302, "snapshot_status": "staged"}
 
+    def reattach_ingestion_source_item(self, source_id, item_id):
+        raise ValueError("Local ingestion source item reattach is not available yet.")
+
     def list_document_versions(self, media_id, include_deleted=False):
         self.calls.append(("list_document_versions", media_id, include_deleted))
         return [{"uuid": "version-1", "media_id": media_id, "analysis_content": "analysis"}]
@@ -410,6 +413,15 @@ class FakeServerMediaService:
     async def upload_ingestion_source_archive(self, source_id, archive_path):
         self.calls.append(("upload_ingestion_source_archive", source_id, archive_path))
         return {"status": "queued", "source_id": source_id, "job_id": 124}
+
+    async def reattach_ingestion_source_item(self, source_id, item_id):
+        self.calls.append(("reattach_ingestion_source_item", source_id, item_id))
+        return {
+            "id": item_id,
+            "source_id": source_id,
+            "normalized_relative_path": "chapter-1.md",
+            "sync_status": "sync_managed",
+        }
 
     async def list_document_versions(self, media_id, include_deleted=False, **kwargs):
         self.calls.append(("list_document_versions", media_id, include_deleted, kwargs))
@@ -834,6 +846,7 @@ async def test_scope_service_routes_server_ingestion_source_operations_and_norma
         source_id=7,
         archive_path="/tmp/archive.zip",
     )
+    reattached = await scope_service.reattach_ingestion_source_item(mode="server", source_id=7, item_id=55)
 
     assert listed[0]["id"] == "server:ingestion_source:7"
     assert detail["id"] == "server:ingestion_source:7"
@@ -841,6 +854,41 @@ async def test_scope_service_routes_server_ingestion_source_operations_and_norma
     assert items[0]["id"] == "server:file_artifact:55"
     assert triggered["job_id"] == 123
     assert uploaded["job_id"] == 124
+    assert reattached["id"] == "server:file_artifact:55"
+    assert reattached["sync_status"] == "sync_managed"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_ingestion_source_item_reattach_with_policy():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    reattached = await scope.reattach_ingestion_source_item(mode="server", source_id=7, item_id=55)
+
+    assert reattached["id"] == "server:file_artifact:55"
+    assert reattached["sync_status"] == "sync_managed"
+    assert policy.calls[-1:] == ["media.ingestion_source_items.reattach.server"]
+    assert server.calls[-1:] == [("reattach_ingestion_source_item", 7, 55)]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_reports_local_ingestion_source_item_reattach_as_explicitly_unsupported():
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Local ingestion source item reattach is not available yet."):
+        await scope.reattach_ingestion_source_item(mode="local", source_id=3, item_id=55)
+
+    assert policy.calls[-1:] == ["media.ingestion_source_items.reattach.local"]
 
 
 @pytest.mark.asyncio

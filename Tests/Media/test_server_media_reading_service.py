@@ -85,6 +85,15 @@ class FakeClient:
         self.calls.append(("upload_ingestion_source_archive", source_id, archive_path))
         return {"status": "queued", "source_id": source_id, "job_id": 124}
 
+    async def reattach_ingestion_source_item(self, source_id, item_id):
+        self.calls.append(("reattach_ingestion_source_item", source_id, item_id))
+        return {
+            "id": item_id,
+            "source_id": source_id,
+            "normalized_relative_path": "chapter-1.md",
+            "sync_status": "sync_managed",
+        }
+
     async def list_media_versions(self, media_id, *, include_content=False, limit=10, page=1):
         self.calls.append(("list_media_versions", media_id, include_content, limit, page))
         return [{"media_id": media_id, "version_number": 1, "analysis_content": "analysis"}]
@@ -284,6 +293,7 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
     items = await service.list_ingestion_source_items(7)
     triggered = await service.trigger_ingestion_source_sync(7)
     uploaded = await service.upload_ingestion_source_archive(7, "/tmp/archive.zip")
+    reattached = await service.reattach_ingestion_source_item(7, 55)
 
     assert listed[0]["id"] == 7
     assert created["id"] == 8
@@ -292,6 +302,7 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
     assert items[0]["source_id"] == 7
     assert triggered["job_id"] == 123
     assert uploaded["job_id"] == 124
+    assert reattached["sync_status"] == "sync_managed"
     assert client.calls == [
         ("list_ingestion_sources",),
         (
@@ -311,6 +322,7 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
         ("list_ingestion_source_items", 7),
         ("trigger_ingestion_source_sync", 7),
         ("upload_ingestion_source_archive", 7, "/tmp/archive.zip"),
+        ("reattach_ingestion_source_item", 7, 55),
     ]
 
     with pytest.raises(NotImplementedError, match="not exposed by tldw_server"):
@@ -492,6 +504,7 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
     await service.list_ingestion_source_items(7)
     await service.trigger_ingestion_source_sync(7)
     await service.upload_ingestion_source_archive(7, "/tmp/archive.zip")
+    await service.reattach_ingestion_source_item(7, 55)
     await service.bulk_update_reading_items(item_ids=[41], action="set_status", status="read")
     await service.create_reading_archive(41, format="md")
     await service.summarize_reading_item(41, prompt="Summarize")
@@ -514,6 +527,7 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
         "media.ingestion_jobs.observe.server",
         "media.ingestion_jobs.launch.server",
         "media.ingestion_jobs.launch.server",
+        "media.ingestion_source_items.reattach.server",
         "media.reading.bulk_update.server",
         "media.reading.archive.server",
         "media.reading.summarize.server",

@@ -78,6 +78,10 @@ class MediaReadingScopeService:
     def _ingestion_job_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.ingestion_jobs.{action}.{mode.value}"
 
+    @staticmethod
+    def _ingestion_source_item_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.ingestion_source_items.{action}.{mode.value}"
+
     def read_it_later_browse_capability(
         self,
         *,
@@ -1000,6 +1004,21 @@ class MediaReadingScopeService:
         self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.upload_ingestion_source_archive(source_id, archive_path))
+
+    async def reattach_ingestion_source_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        source_id: Any,
+        item_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._ingestion_source_item_action_id(normalized_mode, "reattach"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local ingestion source item reattach is not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        item = await self._maybe_await(service.reattach_ingestion_source_item(source_id, item_id))
+        return normalize_ingestion_source_item(item, backend=normalized_mode.value)
 
     async def list_document_versions(
         self,

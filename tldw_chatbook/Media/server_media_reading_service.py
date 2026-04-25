@@ -101,6 +101,10 @@ class ServerMediaReadingService:
     def _ingestion_job_action_id(action: str) -> str:
         return f"media.ingestion_jobs.{action}.server"
 
+    @staticmethod
+    def _ingestion_source_item_action_id(action: str) -> str:
+        return f"media.ingestion_source_items.{action}.server"
+
     async def search_media(
         self,
         *,
@@ -588,6 +592,10 @@ class ServerMediaReadingService:
     async def upload_ingestion_source_archive(self, source_id: Any, archive_path: str) -> Any:
         self._enforce(self._ingestion_job_action_id("launch"))
         return await self._require_client().upload_ingestion_source_archive(int(source_id), archive_path)
+
+    async def reattach_ingestion_source_item(self, source_id: Any, item_id: Any) -> Any:
+        self._enforce(self._ingestion_source_item_action_id("reattach"))
+        return await self._require_client().reattach_ingestion_source_item(int(source_id), int(item_id))
 
     async def list_document_versions(
         self,
