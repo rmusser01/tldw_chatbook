@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import json
 import uuid
+import zipfile
 from typing import Any, Mapping, Optional
 
 
@@ -162,6 +164,59 @@ class LocalMediaReadingService:
             "saved_at": None,
             "updated_at": current_time,
         }
+
+    def export_reading_items(
+        self,
+        *,
+        status: list[str] | None = None,
+        tags: list[str] | None = None,
+        favorite: bool | None = None,
+        q: str | None = None,
+        domain: str | None = None,
+        page: int = 1,
+        size: int = 1000,
+        include_metadata: bool = True,
+        include_clean_html: bool = False,
+        include_text: bool = False,
+        include_highlights: bool = False,
+        include_notes: bool = True,
+        format: str = "jsonl",
+    ) -> Any:
+        normalized_statuses = {str(value).strip().lower() for value in (status or ["saved"]) if value}
+        if normalized_statuses and "saved" not in normalized_statuses:
+            rows: list[dict[str, Any]] = []
+        elif favorite is True:
+            rows = []
+        else:
+            offset = max(int(page) - 1, 0) * max(int(size), 1)
+            payload = self.search_media(
+                query=q,
+                limit=max(int(size), 1),
+                offset=offset,
+                read_it_later_only=True,
+                must_have=tags,
+            )
+            rows = list(payload.get("items", []))
+            if domain:
+                normalized_domain = str(domain).strip().lower()
+                rows = [
+                    row for row in rows
+                    if normalized_domain in str(row.get("url") or "").lower()
+                ]
+        if include_metadata or include_text or include_clean_html or include_notes:
+            rows = [self._local_export_detail_row(row) for row in rows]
+        export_rows = [
+            self._serialize_local_reading_export_row(
+                row,
+                include_metadata=include_metadata,
+                include_clean_html=include_clean_html,
+                include_text=include_text,
+                include_highlights=include_highlights,
+                include_notes=include_notes,
+            )
+            for row in rows
+        ]
+        return self._build_reading_export_response(export_rows, format=format)
 
     def create_saved_search(
         self,
@@ -714,6 +769,87 @@ class LocalMediaReadingService:
             return json.loads(str(value))
         except json.JSONDecodeError:
             return {}
+
+    @staticmethod
+    def _local_text_from_row(row: Mapping[str, Any]) -> str | None:
+        for key in ("content", "text", "transcription", "transcript", "content_text"):
+            value = row.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return None
+
+    def _local_export_detail_row(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            detail = self.get_media_detail(row.get("id"))
+        except Exception:
+            return dict(row)
+        merged = dict(row)
+        merged.update(dict(detail))
+        return merged
+
+    def _serialize_local_reading_export_row(
+        self,
+        row: Mapping[str, Any],
+        *,
+        include_metadata: bool,
+        include_clean_html: bool,
+        include_text: bool,
+        include_highlights: bool,
+        include_notes: bool,
+    ) -> dict[str, Any]:
+        payload = {
+            "id": row.get("id"),
+            "url": row.get("url"),
+            "canonical_url": row.get("canonical_url") or row.get("url"),
+            "domain": row.get("domain"),
+            "title": row.get("title"),
+            "summary": row.get("summary"),
+            "status": "saved",
+            "favorite": False,
+            "tags": row.get("keywords") or row.get("tags") or [],
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at") or row.get("last_modified"),
+            "read_at": row.get("read_at"),
+            "published_at": row.get("published_at"),
+            "origin_type": row.get("media_type") or row.get("type"),
+        }
+        if include_notes:
+            payload["notes"] = row.get("notes")
+        if include_metadata:
+            payload["metadata"] = dict(row)
+        if include_clean_html:
+            payload["clean_html"] = row.get("clean_html")
+        if include_text:
+            payload["text"] = self._local_text_from_row(row)
+        if include_highlights:
+            payload["highlights"] = []
+        return payload
+
+    @staticmethod
+    def _build_reading_export_response(rows: list[dict[str, Any]], *, format: str) -> dict[str, Any]:
+        normalized_format = str(format or "jsonl").strip().lower()
+        payload = "".join(json.dumps(row, ensure_ascii=False, default=str) + "\n" for row in rows)
+        if normalized_format == "zip":
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("reading_export.jsonl", payload)
+            content = buffer.getvalue()
+            filename = "reading_export_local.zip"
+            return {
+                "content": content,
+                "content_type": "application/zip",
+                "content_disposition": f"attachment; filename={filename}",
+                "filename": filename,
+            }
+        if normalized_format != "jsonl":
+            raise ValueError("Unsupported local reading export format.")
+        filename = "reading_export_local.jsonl"
+        return {
+            "content": payload.encode("utf-8"),
+            "content_type": "application/x-ndjson",
+            "content_disposition": f"attachment; filename={filename}",
+            "filename": filename,
+        }
 
     @staticmethod
     def _new_batch_id() -> str:

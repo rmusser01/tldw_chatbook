@@ -144,6 +144,15 @@ class FakeLocalMediaService:
             "saved_at": None,
         }
 
+    def export_reading_items(self, **kwargs):
+        self.calls.append(("export_reading_items", kwargs))
+        return {
+            "content": b'{"id": 12}\n',
+            "content_type": "application/x-ndjson",
+            "content_disposition": "attachment; filename=reading_export_local.jsonl",
+            "filename": "reading_export_local.jsonl",
+        }
+
     def create_saved_search(self, **kwargs):
         self.calls.append(("create_saved_search", kwargs))
         return {"id": 1, "created_at": "2026-04-21T12:00:00Z", "updated_at": "2026-04-21T12:00:00Z", **kwargs}
@@ -1328,18 +1337,40 @@ async def test_scope_service_routes_server_reading_export_with_policy():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_reports_local_reading_export_as_explicitly_unsupported_after_policy():
+async def test_scope_service_routes_local_reading_export_with_policy():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local reading export is not available yet."):
-        await scope.export_reading_items(mode="local")
+    exported = await scope.export_reading_items(mode="local", format="jsonl")
 
+    assert exported["content"] == b'{"id": 12}\n'
+    assert exported["filename"] == "reading_export_local.jsonl"
     assert policy.calls[-1:] == ["media.reading.export.local"]
+    assert local.calls[-1:] == [
+        (
+            "export_reading_items",
+            {
+                "status": None,
+                "tags": None,
+                "favorite": None,
+                "q": None,
+                "domain": None,
+                "page": 1,
+                "size": 1000,
+                "include_metadata": True,
+                "include_clean_html": False,
+                "include_text": False,
+                "include_highlights": False,
+                "include_notes": True,
+                "format": "jsonl",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

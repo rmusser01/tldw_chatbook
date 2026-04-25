@@ -1,5 +1,8 @@
 from importlib.util import module_from_spec, spec_from_file_location
+import io
+import json
 from pathlib import Path
+import zipfile
 
 import pytest
 
@@ -187,6 +190,49 @@ def test_local_service_persists_saved_searches_and_note_links(memory_db_factory)
     assert unlinked == {"deleted": True, "item_id": media_id, "note_id": "note-1"}
     assert service.list_note_links(media_id)["links"] == []
     assert deleted == {"deleted": True, "id": created["id"]}
+
+
+def test_local_service_exports_saved_reading_items(memory_db_factory):
+    db = memory_db_factory()
+    saved_id, _, _ = db.add_media_with_keywords(
+        title="Saved",
+        content="Saved text",
+        media_type="article",
+        url="https://example.com/saved",
+        keywords=["ai"],
+    )
+    other_id, _, _ = db.add_media_with_keywords(
+        title="Other",
+        content="Other text",
+        media_type="article",
+        url="https://example.org/other",
+        keywords=["ml"],
+    )
+    db.save_media_to_read_it_later(saved_id)
+    service = LocalMediaReadingService(db)
+
+    exported = service.export_reading_items(format="jsonl", include_metadata=True, include_text=True)
+    zip_export = service.export_reading_items(format="zip", include_metadata=False)
+
+    rows = [json.loads(line) for line in exported["content"].decode("utf-8").splitlines()]
+    assert exported["content_type"] == "application/x-ndjson"
+    assert exported["filename"].endswith(".jsonl")
+    assert rows[0]["id"] == saved_id
+    assert rows[0]["title"] == "Saved"
+    assert rows[0]["status"] == "saved"
+    assert rows[0]["text"] == "Saved text"
+    assert "metadata" in rows[0]
+    assert all(row["id"] != other_id for row in rows)
+
+    with zipfile.ZipFile(io.BytesIO(zip_export["content"]), "r") as archive:
+        zipped_rows = [
+            json.loads(line)
+            for line in archive.read("reading_export.jsonl").decode("utf-8").splitlines()
+        ]
+    assert zip_export["content_type"] == "application/zip"
+    assert zip_export["filename"].endswith(".zip")
+    assert zipped_rows[0]["id"] == saved_id
+    assert "metadata" not in zipped_rows[0]
 
 
 def test_local_service_persists_ingestion_sources_and_sync_jobs(memory_db_factory, tmp_path):
