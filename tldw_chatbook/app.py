@@ -223,8 +223,8 @@ from tldw_chatbook.Research_Interop import (
     ServerResearchSearchService,
     ServerResearchService,
 )
-from tldw_chatbook.Sharing_Interop import ServerSharingService
-from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService
+from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
+from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
 from tldw_chatbook.Subscriptions import (
     LocalWatchlistsService,
     ServerWatchlistsService,
@@ -1679,6 +1679,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        self.sharing_scope_service = SharingScopeService(
+            server_service=self.server_sharing_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         try:
             self.server_web_clipper_service = ServerWebClipperService.from_config(
                 self.app_config,
@@ -1689,6 +1693,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        self.web_clipper_scope_service = WebClipperScopeService(
+            server_service=self.server_web_clipper_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.watchlist_scope_service = WatchlistScopeService(
             local_service=self.local_watchlists_service,
             server_service=self.server_watchlists_service,

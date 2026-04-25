@@ -219,18 +219,18 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Sharing: Share links, permissions, revocation, and share discovery
 - Requirement class: Remote-only acceptable
 - Client obligation: Discover / Configure / Trigger / Observe
-- Current state: Chatbook now has a dedicated policy-gated `ServerSharingService` over link create/list/revoke/inspect/verify/import, workspace permission sharing/list/update/revoke, shared-with-me discovery, shared workspace/media retrieval, clone, and shared-workspace chat.
-- Gap: Dedicated sharing UX/adoption and explicit offline-unavailable presentation remain pending. Sharing remains server-owned and remote-only.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/sharing.py`; Chatbook: `tldw_chatbook/Sharing_Interop/server_sharing_service.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/sharing_schemas.py`, `tldw_chatbook/app.py`; Verification: `Tests/Sharing/test_server_sharing_service.py`, `Tests/tldw_api/test_sharing_client.py`, and app wiring assertions in `Tests/UI/test_screen_navigation.py`.
+- Current state: Chatbook now has a dedicated policy-gated `ServerSharingService` over link create/list/revoke/inspect/verify/import, workspace permission sharing/list/update/revoke, shared-with-me discovery, shared workspace/media retrieval, clone, and shared-workspace chat, plus a `SharingScopeService` source boundary that normalizes server records and rejects local mode as explicitly unavailable.
+- Gap: Dedicated sharing UX/adoption remains pending. Sharing remains server-owned and remote-only, but the service seam now exposes the offline-unavailable state for future UI binding.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/sharing.py`; Chatbook: `tldw_chatbook/Sharing_Interop/server_sharing_service.py`, `tldw_chatbook/Sharing_Interop/sharing_scope_service.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/sharing_schemas.py`, `tldw_chatbook/app.py`; Verification: `Tests/Sharing/test_server_sharing_service.py`, `Tests/Sharing/test_sharing_scope_service.py`, `Tests/tldw_api/test_sharing_client.py`, and app wiring assertions in `Tests/UI/test_screen_navigation.py`.
 - Recommended tranche: Tranche 3
 - Notes: Priority 29. This remains a server-owned convenience surface rather than a local-parity target.
 
 ### Web Clipper: Browser clip save, status, and enrichment capture
 - Requirement class: Remote-only acceptable
 - Client obligation: Discover / Trigger / Observe
-- Current state: Chatbook now has a dedicated policy-gated `ServerWebClipperService` over clip save, clip status, and enrichment persistence.
-- Gap: Dedicated web-clipper UX/adoption, browser-extension handoff, and explicit offline-unavailable presentation remain pending. Web clipper remains server-owned and remote-only.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/web_clipper.py`; Chatbook: `tldw_chatbook/Web_Clipper_Interop/server_web_clipper_service.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/web_clipper_schemas.py`, `tldw_chatbook/app.py`; Verification: `Tests/WebClipper/test_server_web_clipper_service.py`, `Tests/tldw_api/test_web_clipper_client.py`, and app wiring assertions in `Tests/UI/test_screen_navigation.py`.
+- Current state: Chatbook now has a dedicated policy-gated `ServerWebClipperService` over clip save, clip status, and enrichment persistence, plus a `WebClipperScopeService` source boundary that normalizes clip/enrichment records and rejects local mode as explicitly unavailable.
+- Gap: Dedicated web-clipper UX/adoption and browser-extension handoff remain pending. Web clipper remains server-owned and remote-only, but the service seam now exposes the offline-unavailable state for future UI binding.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/web_clipper.py`; Chatbook: `tldw_chatbook/Web_Clipper_Interop/server_web_clipper_service.py`, `tldw_chatbook/Web_Clipper_Interop/web_clipper_scope_service.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/web_clipper_schemas.py`, `tldw_chatbook/app.py`; Verification: `Tests/WebClipper/test_server_web_clipper_service.py`, `Tests/WebClipper/test_web_clipper_scope_service.py`, `Tests/tldw_api/test_web_clipper_client.py`, and app wiring assertions in `Tests/UI/test_screen_navigation.py`.
 - Recommended tranche: Tranche 3
 - Notes: Priority 29. This should remain below the standalone-first reading and writing rows.
 
