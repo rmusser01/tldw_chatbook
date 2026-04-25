@@ -235,6 +235,14 @@ from .collections_feeds_schemas import (
     CollectionsFeedsListResponse,
     CollectionsFeedUpdateRequest,
 )
+from .claims_schemas import (
+    ClaimNotificationsAckRequest,
+    ClaimNotificationsDigestResponse,
+    ClaimNotificationResponse,
+    ClaimsAlertConfigCreate,
+    ClaimsAlertConfigResponse,
+    ClaimsAlertConfigUpdate,
+)
 from .skills_schemas import (
     SkillContextPayload,
     SkillCreate,
@@ -6936,6 +6944,131 @@ class TLDWAPIClient:
     async def delete_collections_feed(self, feed_id: int) -> bool:
         await self._request("DELETE", f"/api/v1/collections/feeds/{feed_id}")
         return True
+
+    async def list_claim_notifications(
+        self,
+        *,
+        kind: str | None = None,
+        target_user_id: str | None = None,
+        target_review_group: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        delivered: bool | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        user_id: int | None = None,
+    ) -> List[ClaimNotificationResponse]:
+        params = {
+            key: value
+            for key, value in {
+                "kind": kind,
+                "target_user_id": target_user_id,
+                "target_review_group": target_review_group,
+                "resource_type": resource_type,
+                "resource_id": resource_id,
+                "delivered": delivered,
+                "limit": limit,
+                "offset": offset,
+                "user_id": user_id,
+            }.items()
+            if value is not None
+        }
+        response = await self._request("GET", "/api/v1/claims/notifications", params=params)
+        return [ClaimNotificationResponse.model_validate(item) for item in response]
+
+    async def get_claim_notifications_digest(
+        self,
+        *,
+        kind: str | None = None,
+        target_user_id: str | None = None,
+        target_review_group: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        delivered: bool | None = None,
+        include_items: bool = False,
+        ack: bool = False,
+        limit: int = 200,
+        offset: int = 0,
+        user_id: int | None = None,
+    ) -> ClaimNotificationsDigestResponse:
+        params = {
+            key: value
+            for key, value in {
+                "kind": kind,
+                "target_user_id": target_user_id,
+                "target_review_group": target_review_group,
+                "resource_type": resource_type,
+                "resource_id": resource_id,
+                "delivered": delivered,
+                "include_items": include_items,
+                "ack": ack,
+                "limit": limit,
+                "offset": offset,
+                "user_id": user_id,
+            }.items()
+            if value is not None
+        }
+        response = await self._request("GET", "/api/v1/claims/notifications/digest", params=params)
+        return ClaimNotificationsDigestResponse.model_validate(response)
+
+    async def ack_claim_notifications(self, request_data: ClaimNotificationsAckRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/claims/notifications/ack",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def evaluate_claim_watchlist_notifications(self, *, user_id: int | None = None) -> Dict[str, Any]:
+        params = {"user_id": user_id} if user_id is not None else None
+        return await self._request("POST", "/api/v1/claims/notifications/watchlists/evaluate", params=params)
+
+    async def list_claim_alerts(self, *, user_id: int | None = None) -> List[ClaimsAlertConfigResponse]:
+        params = {"user_id": user_id} if user_id is not None else None
+        response = await self._request("GET", "/api/v1/claims/alerts", params=params)
+        return [ClaimsAlertConfigResponse.model_validate(item) for item in response]
+
+    async def create_claim_alert(
+        self,
+        request_data: ClaimsAlertConfigCreate,
+        *,
+        user_id: int | None = None,
+    ) -> ClaimsAlertConfigResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/claims/alerts",
+            params={"user_id": user_id} if user_id is not None else None,
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ClaimsAlertConfigResponse.model_validate(response)
+
+    async def update_claim_alert(
+        self,
+        config_id: int,
+        request_data: ClaimsAlertConfigUpdate,
+    ) -> ClaimsAlertConfigResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/claims/alerts/{config_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ClaimsAlertConfigResponse.model_validate(response)
+
+    async def delete_claim_alert(self, config_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/claims/alerts/{config_id}")
+
+    async def evaluate_claim_alerts(
+        self,
+        *,
+        window_sec: int = 3600,
+        baseline_sec: int = 86400,
+        user_id: int | None = None,
+    ) -> Dict[str, Any]:
+        params = {
+            key: value
+            for key, value in {"window_sec": window_sec, "baseline_sec": baseline_sec, "user_id": user_id}.items()
+            if value is not None
+        }
+        return await self._request("POST", "/api/v1/claims/alerts/evaluate", params=params)
 
     async def list_skills(
         self,

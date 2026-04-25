@@ -297,6 +297,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 3
 - Notes: Priority 45. This is now a remote-client backend/adoption gap rather than an absent client wrapper.
 
+### Claims Notifications / Alerts: Claims event notifications, digest/ack, watchlist evaluation, and alert configuration
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Discover / Configure / Trigger / Observe
+- Current state: Chatbook now has typed API-client wrappers for server claims notification listing, digest retrieval, acknowledgement, watchlist notification evaluation, alert config list/create/update/delete, and alert evaluation.
+- Gap: Dedicated claims UX, explicit offline-unavailable presentation, local notification bridge adoption, claims settings/status, monitoring config, review queues/rules, analytics/export, cluster search/detail/update/rebuild, and FVA verification remain follow-on. Local notifications remain Chatbook-owned and should not silently become the source of authority for server claim notification records.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/claims.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/claims_schemas.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/claims_schemas.py`; Verification: `Tests/tldw_api/test_claims_client.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 38. This is a connected-server client seam for user-facing claims alerts and notifications; broader claims governance, review, analytics, and verification controls remain separate slices.
+
 ### Meetings: Meeting sessions, templates, artifacts, finalization, sharing, and event stream
 - Requirement class: Remote-only acceptable
 - Client obligation: Full CRUD + Observe

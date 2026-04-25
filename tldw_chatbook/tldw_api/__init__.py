@@ -685,6 +685,14 @@ from .collections_feeds_schemas import (
     CollectionsFeedsListResponse,
     CollectionsFeedUpdateRequest,
 )
+from .claims_schemas import (
+    ClaimNotificationsAckRequest,
+    ClaimNotificationsDigestResponse,
+    ClaimNotificationResponse,
+    ClaimsAlertConfigCreate,
+    ClaimsAlertConfigResponse,
+    ClaimsAlertConfigUpdate,
+)
 from .skills_schemas import (
     SkillBase,
     SkillContextPayload,
