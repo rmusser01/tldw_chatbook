@@ -476,6 +476,12 @@ from .translation_schemas import (
     TranslateRequest,
     TranslateResponse,
 )
+from .ocr_vlm_schemas import (
+    OCRBackendDiscoveryEntry,
+    OCRBackendsResponse,
+    OCRPointsPreloadResponse,
+    VLMBackendsResponse,
+)
 
 __all__ = [
     "TLDWAPIClient",
@@ -613,4 +619,5 @@ __all__ = [
     "WebClipperSaveResponse", "WebClipperSavedNote", "WebClipperStatusResponse",
     "WebClipperWorkspacePayload", "WebClipperWorkspacePlacement",
     "TranslateRequest", "TranslateResponse",
+    "OCRBackendDiscoveryEntry", "OCRBackendsResponse", "OCRPointsPreloadResponse", "VLMBackendsResponse",
 ]

@@ -114,6 +114,11 @@ from .translation_schemas import (
     TranslateRequest,
     TranslateResponse,
 )
+from .ocr_vlm_schemas import (
+    OCRBackendsResponse,
+    OCRPointsPreloadResponse,
+    VLMBackendsResponse,
+)
 from .rag_admin_schemas import (
     ChunkingTemplateApplyRequest,
     ChunkingTemplateApplyResponse,
@@ -914,6 +919,18 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return TranslateResponse.model_validate(response)
+
+    async def list_ocr_backends(self) -> OCRBackendsResponse:
+        response = await self._request("GET", "/api/v1/ocr/backends")
+        return OCRBackendsResponse.model_validate(response)
+
+    async def preload_ocr_points_transformers(self) -> OCRPointsPreloadResponse:
+        response = await self._request("POST", "/api/v1/ocr/points/preload")
+        return OCRPointsPreloadResponse.model_validate(response)
+
+    async def list_vlm_backends(self) -> VLMBackendsResponse:
+        response = await self._request("GET", "/api/v1/vlm/backends")
+        return VLMBackendsResponse.model_validate(response)
 
     async def submit_media_ingest_jobs(
         self,
