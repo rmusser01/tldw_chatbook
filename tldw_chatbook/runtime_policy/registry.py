@@ -193,6 +193,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "client_notifications",
         "server_reminders_notification_feeds",
         "external_connectors",
+        "server_skills",
         "workflows",
         "scheduler_workflows",
         "chat_workflows",
@@ -482,6 +483,20 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("connectors.accounts", actions=(LIST, DELETE)),
             _resource("connectors.sources", actions=(LIST, CREATE, UPDATE, LAUNCH, OBSERVE)),
             _resource("connectors.jobs", actions=(OBSERVE,)),
+        ),
+    ),
+    _capability(
+        "server_skills",
+        "Server Skills",
+        "skills",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("skills", actions=CRUD_ACTIONS),
+            _resource("skills.context", actions=(LIST,)),
+            _resource("skills.import", actions=(LAUNCH,)),
+            _resource("skills.export", actions=(LAUNCH,)),
+            _resource("skills.execute", actions=(LAUNCH,)),
+            _resource("skills.seed", actions=(LAUNCH,)),
         ),
     ),
     _capability(

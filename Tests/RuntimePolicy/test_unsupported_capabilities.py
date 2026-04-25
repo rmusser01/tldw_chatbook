@@ -16,6 +16,7 @@ from tldw_chatbook.RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
 from tldw_chatbook.Research_Interop.research_scope_service import ResearchScopeService
 from tldw_chatbook.Research_Interop.research_search_scope_service import ResearchSearchScopeService
 from tldw_chatbook.Sharing_Interop.sharing_scope_service import SharingScopeService
+from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.Study_Interop.quiz_scope_service import QuizScopeService
 from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
 from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistScopeService
@@ -128,6 +129,7 @@ def test_collect_unsupported_capability_reports_labels_each_report_scope():
         (NotificationsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (CollectionsFeedsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (ConnectorsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (SkillsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (SharingScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (WebClipperScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (EvaluationScopeService(local_service=None, server_service=None), [{"mode": "local"}, {"mode": "server"}]),

@@ -132,6 +132,7 @@ Execution intent for this tranche:
 - External Connectors now follows the same active-server-owned pattern for provider discovery, OAuth handoff, account/source management, import/sync triggers, and job observation; local ingestion remains the separate offline path.
 - Chat Grammars now has a remote-only saved-grammar service seam with policy-gated CRUD and explicit local/offline unavailability, keeping local ad hoc provider grammar options separate until a local grammar-library model is approved.
 - Explicit Feedback now has a remote-only service seam with policy-gated submit/list/update/delete, source-normalized records, local/offline unavailable reporting, and a source-reported missing single-feedback detail endpoint.
+- Server Skills now has a remote-only service seam with policy-gated CRUD, import/export, context, execute, and seed operations, while local instruction assets remain separate until explicit sync/import rules are designed.
 - Reuse the source-labeling, offline fallback, and discover/trigger/observe patterns proven in earlier tranches instead of creating special-case remote UI rules.
 
 ## Follow-On Vertical Plans

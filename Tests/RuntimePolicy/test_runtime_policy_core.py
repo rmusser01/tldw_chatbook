@@ -161,6 +161,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": CONNECTOR_ACTIONS,
         },
     },
+    "server_skills": {
+        "expected_domain_ids": {"skills"},
+        "expected_action_kinds_by_source": {
+            "server": FULL_CRUD_AND_LAUNCH,
+        },
+    },
     "workflows": {
         "expected_domain_ids": {"workflows"},
         "expected_action_kinds_by_source": {
@@ -399,6 +405,18 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         feedback.detail.server
         feedback.list.server
         feedback.update.server
+    """),
+    "server_skills": _action_ids("""
+        skills.context.list.server
+        skills.create.server
+        skills.delete.server
+        skills.detail.server
+        skills.execute.launch.server
+        skills.export.launch.server
+        skills.import.launch.server
+        skills.list.server
+        skills.seed.launch.server
+        skills.update.server
     """),
     "cross_cutting_runtime_policy": _action_ids("""
         runtime.policy.configure.local
