@@ -10,8 +10,13 @@ from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
+    FlashcardDeckUpdateRequest,
+    FlashcardGenerateRequest,
     FlashcardReviewRequest,
+    FlashcardResetSchedulingRequest,
+    FlashcardTagsUpdate,
     FlashcardUpdateRequest,
+    StudyAssistantRespondRequest,
     StudyPackCreateJobRequest,
     SuggestionActionRequest,
     SuggestionRefreshRequest,
@@ -67,6 +72,30 @@ class ServerStudyService:
         return f"study.deck.{action}.server"
 
     @staticmethod
+    def _flashcard_action_id(action: str) -> str:
+        return f"study.flashcard.{action}.server"
+
+    @staticmethod
+    def _flashcard_tags_action_id(action: str) -> str:
+        return f"study.flashcard.tags.{action}.server"
+
+    @staticmethod
+    def _flashcard_analytics_action_id(action: str) -> str:
+        return f"study.flashcard.analytics.{action}.server"
+
+    @staticmethod
+    def _flashcard_review_sessions_action_id(action: str) -> str:
+        return f"study.flashcard.review_sessions.{action}.server"
+
+    @staticmethod
+    def _flashcard_assistant_action_id(action: str) -> str:
+        return f"study.flashcard.assistant.{action}.server"
+
+    @staticmethod
+    def _flashcard_generation_action_id(action: str) -> str:
+        return f"study.flashcard.generation.{action}.server"
+
+    @staticmethod
     def _study_pack_action_id(action: str) -> str:
         return f"study.packs.jobs.{action}.server"
 
@@ -110,6 +139,33 @@ class ServerStudyService:
         )
         return self._model_to_dict(response)
 
+    async def update_deck(
+        self,
+        deck_id: int,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        review_prompt_side: Optional[str] = None,
+        scheduler_type: Optional[str] = None,
+        scheduler_settings: Optional[dict[str, Any]] = None,
+        expected_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
+        response = await self._require_client().update_flashcard_deck(
+            int(deck_id),
+            FlashcardDeckUpdateRequest(
+                name=name,
+                description=description,
+                workspace_id=workspace_id,
+                review_prompt_side=review_prompt_side,
+                scheduler_type=scheduler_type,
+                scheduler_settings=scheduler_settings,
+                expected_version=expected_version,
+            ),
+        )
+        return self._model_to_dict(response)
+
     async def list_flashcards(
         self,
         *,
@@ -148,6 +204,138 @@ class ServerStudyService:
                 notes=notes,
                 extra=extra,
                 model_type="basic",
+            )
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard(self, card_id: str) -> dict[str, Any]:
+        self._enforce(self._flashcard_action_id("detail"))
+        response = await self._require_client().get_flashcard(card_id)
+        return self._model_to_dict(response)
+
+    async def reset_flashcard_scheduling(
+        self,
+        card_id: str,
+        *,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_action_id("update"))
+        response = await self._require_client().reset_flashcard_scheduling(
+            card_id,
+            FlashcardResetSchedulingRequest(expected_version=expected_version),
+        )
+        return self._model_to_dict(response)
+
+    async def set_flashcard_tags(
+        self,
+        card_id: str,
+        *,
+        tags: list[str],
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_tags_action_id("update"))
+        response = await self._require_client().set_flashcard_tags(
+            card_id,
+            FlashcardTagsUpdate(tags=tags),
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard_tags(self, card_id: str) -> dict[str, Any]:
+        self._enforce(self._flashcard_tags_action_id("list"))
+        return await self._require_client().get_flashcard_tags(card_id)
+
+    async def list_flashcard_tag_suggestions(
+        self,
+        *,
+        q: Optional[str] = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_tags_action_id("list"))
+        response = await self._require_client().list_flashcard_tag_suggestions(q=q, limit=limit)
+        return self._model_to_dict(response)
+
+    async def get_flashcard_analytics_summary(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_analytics_action_id("observe"))
+        response = await self._require_client().get_flashcard_analytics_summary(
+            deck_id=self._coerce_deck_id(deck_id),
+            workspace_id=workspace_id,
+            include_workspace_items=include_workspace_items,
+        )
+        return self._model_to_dict(response)
+
+    async def list_review_sessions(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        scope_key: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        self._enforce(self._flashcard_review_sessions_action_id("list"))
+        response = await self._require_client().list_flashcard_review_sessions(
+            deck_id=self._coerce_deck_id(deck_id),
+            scope_key=scope_key,
+            status=status,
+            limit=limit,
+        )
+        return [self._model_to_dict(item) for item in list(response or [])]
+
+    async def get_flashcard_assistant(self, card_id: str) -> dict[str, Any]:
+        self._enforce(self._flashcard_assistant_action_id("detail"))
+        response = await self._require_client().get_flashcard_assistant(card_id)
+        return self._model_to_dict(response)
+
+    async def respond_flashcard_assistant(
+        self,
+        card_id: str,
+        *,
+        action: str,
+        message: Optional[str] = None,
+        input_modality: str = "text",
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        expected_thread_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_assistant_action_id("launch"))
+        response = await self._require_client().respond_flashcard_assistant(
+            card_id,
+            StudyAssistantRespondRequest(
+                action=action,
+                message=message,
+                input_modality=input_modality,
+                provider=provider,
+                model=model,
+                expected_thread_version=expected_thread_version,
+            ),
+        )
+        return self._model_to_dict(response)
+
+    async def generate_flashcards(
+        self,
+        *,
+        text: str,
+        num_cards: int = 10,
+        card_type: str = "basic",
+        difficulty: str = "mixed",
+        focus_topics: Optional[list[str]] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_generation_action_id("launch"))
+        response = await self._require_client().generate_flashcards(
+            FlashcardGenerateRequest(
+                text=text,
+                num_cards=num_cards,
+                card_type=card_type,
+                difficulty=difficulty,
+                focus_topics=focus_topics or [],
+                provider=provider,
+                model=model,
             )
         )
         return self._model_to_dict(response)

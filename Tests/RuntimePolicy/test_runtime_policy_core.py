@@ -1069,6 +1069,32 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         study.deck.list.server
         study.deck.update.local
         study.deck.update.server
+        study.flashcard.analytics.observe.local
+        study.flashcard.analytics.observe.server
+        study.flashcard.assistant.detail.local
+        study.flashcard.assistant.detail.server
+        study.flashcard.assistant.launch.local
+        study.flashcard.assistant.launch.server
+        study.flashcard.create.local
+        study.flashcard.create.server
+        study.flashcard.delete.local
+        study.flashcard.delete.server
+        study.flashcard.detail.local
+        study.flashcard.detail.server
+        study.flashcard.generation.launch.local
+        study.flashcard.generation.launch.server
+        study.flashcard.list.local
+        study.flashcard.list.server
+        study.flashcard.review_sessions.list.local
+        study.flashcard.review_sessions.list.server
+        study.flashcard.review_sessions.observe.local
+        study.flashcard.review_sessions.observe.server
+        study.flashcard.tags.list.local
+        study.flashcard.tags.list.server
+        study.flashcard.tags.update.local
+        study.flashcard.tags.update.server
+        study.flashcard.update.local
+        study.flashcard.update.server
         study.guides.launch.local
         study.guides.launch.server
         study.guides.observe.local

@@ -7128,6 +7128,60 @@ UPDATE db_schema_version
             
         return deck_id
 
+    def update_deck(
+        self,
+        deck_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        expected_version: Optional[int] = None,
+    ) -> bool:
+        """Update flashcard deck metadata with optional optimistic locking."""
+        try:
+            with self.transaction() as cursor:
+                row = cursor.execute(
+                    "SELECT version, is_deleted FROM decks WHERE id = ?",
+                    (deck_id,),
+                ).fetchone()
+                if not row or int(row["is_deleted"]):
+                    return False
+
+                current_version = int(row["version"])
+                if expected_version is not None and current_version != expected_version:
+                    raise ConflictError("Version mismatch updating deck", entity="decks", entity_id=deck_id)
+
+                updates: list[str] = []
+                params: list[Any] = []
+                if name is not None:
+                    normalized_name = str(name).strip()
+                    if not normalized_name:
+                        raise InputError("Deck name cannot be blank")
+                    updates.append("name = ?")
+                    params.append(normalized_name)
+                if description is not None:
+                    updates.append("description = ?")
+                    params.append(description)
+
+                if not updates:
+                    return True
+
+                updates.extend(
+                    [
+                        "updated_at = CURRENT_TIMESTAMP",
+                        "version = version + 1",
+                        "last_modified_by = ?",
+                    ]
+                )
+                params.append(self.client_id)
+                params.append(deck_id)
+                cursor.execute(
+                    f"UPDATE decks SET {', '.join(updates)} WHERE id = ? AND is_deleted = 0",
+                    tuple(params),
+                )
+                return bool(cursor.rowcount)
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(f"Failed to update deck: {e}") from e
+
     def delete_flashcard(self, card_id: str, expected_version: Optional[int] = None, hard_delete: bool = False) -> bool:
         """Delete a flashcard and refresh the owning deck count."""
         try:

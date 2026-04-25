@@ -26,6 +26,10 @@ class FakeDB:
         self.calls.append(("get_deck", deck_id))
         return {"id": deck_id, "name": "Biology", "description": "Cell review"}
 
+    def update_deck(self, deck_id, **payload):
+        self.calls.append(("update_deck", deck_id, payload))
+        return True
+
     def list_flashcards(self, *, deck_id=None, q=None, limit=100, offset=0):
         self.calls.append(("list_flashcards", deck_id, q, limit, offset))
         return [{"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer"}]
@@ -75,6 +79,28 @@ def test_local_study_service_lists_and_creates_decks():
     assert db.calls == [
         ("list_decks", 5, 1),
         ("create_deck", "Biology", "Cell review"),
+        ("get_deck", "deck-local-1"),
+    ]
+
+
+def test_local_study_service_updates_decks_and_refetches_record():
+    db = FakeDB()
+    service = LocalStudyService(db=db)
+
+    updated = service.update_deck(
+        "deck-local-1",
+        name="Biology Updated",
+        description="Cells and genetics",
+        expected_version=3,
+    )
+
+    assert updated["id"] == "deck-local-1"
+    assert db.calls == [
+        (
+            "update_deck",
+            "deck-local-1",
+            {"name": "Biology Updated", "description": "Cells and genetics", "expected_version": 3},
+        ),
         ("get_deck", "deck-local-1"),
     ]
 

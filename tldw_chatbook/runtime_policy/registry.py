@@ -345,6 +345,12 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=SEPARATED_SOURCES,
         resources=(
             _resource("study.deck", actions=CRUD_ACTIONS, domain_id="study"),
+            _resource("study.flashcard", actions=CRUD_ACTIONS, domain_id="study"),
+            _resource("study.flashcard.tags", actions=(LIST, UPDATE), domain_id="study"),
+            _resource("study.flashcard.analytics", actions=(OBSERVE,), domain_id="study"),
+            _resource("study.flashcard.review_sessions", actions=(LIST, OBSERVE), domain_id="study"),
+            _resource("study.flashcard.assistant", actions=(DETAIL, LAUNCH), domain_id="study"),
+            _resource("study.flashcard.generation", actions=(LAUNCH,), domain_id="study"),
             _resource("quiz", actions=CRUD_ACTIONS, domain_id="quiz"),
             _resource("quiz.question", actions=(LIST, DETAIL), domain_id="quiz"),
             _resource("quiz.attempt", actions=(CREATE, OBSERVE), domain_id="quiz"),

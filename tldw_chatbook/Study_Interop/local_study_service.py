@@ -22,6 +22,25 @@ class LocalStudyService:
     def get_deck(self, deck_id: str) -> Any:
         return self._require_db().get_deck(deck_id)
 
+    def update_deck(
+        self,
+        deck_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        expected_version: Optional[int] = None,
+        **_: Any,
+    ) -> Any:
+        updated = self._require_db().update_deck(
+            deck_id,
+            name=name,
+            description=description,
+            expected_version=expected_version,
+        )
+        if not updated:
+            return None
+        return self._require_db().get_deck(deck_id)
+
     def create_deck(
         self,
         *,
@@ -43,6 +62,9 @@ class LocalStudyService:
     ) -> Any:
         normalized_q = str(q or "").strip() or None
         return self._require_db().list_flashcards(deck_id=deck_id, q=normalized_q, limit=limit, offset=offset)
+
+    def get_flashcard(self, card_id: str) -> Any:
+        return self._require_db().get_flashcard(card_id)
 
     def create_flashcard(
         self,

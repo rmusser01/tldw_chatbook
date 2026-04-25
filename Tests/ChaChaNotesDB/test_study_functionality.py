@@ -297,6 +297,42 @@ class TestFlashcardOperations:
         assert deck["name"] == "Test Deck"
         assert deck["card_count"] == 1
 
+    def test_update_deck_updates_metadata_and_version(self, db_instance, sample_flashcard):
+        updated = db_instance.update_deck(
+            sample_flashcard["deck_id"],
+            name="Updated Deck",
+            description="Updated description",
+            expected_version=1,
+        )
+        deck = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        assert updated is True
+        assert deck is not None
+        assert deck["name"] == "Updated Deck"
+        assert deck["description"] == "Updated description"
+        assert deck["version"] == 2
+        assert deck["card_count"] == 1
+
+    def test_update_deck_rejects_stale_version_without_mutation(self, db_instance, sample_flashcard):
+        with pytest.raises(ConflictError, match="Version mismatch updating deck"):
+            db_instance.update_deck(sample_flashcard["deck_id"], name="Stale", expected_version=0)
+
+        deck = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        assert deck is not None
+        assert deck["name"] == "Test Deck"
+        assert deck["version"] == 1
+
+    def test_update_deck_rejects_blank_name_without_mutation(self, db_instance, sample_flashcard):
+        with pytest.raises(InputError, match="Deck name cannot be blank"):
+            db_instance.update_deck(sample_flashcard["deck_id"], name="   ", expected_version=1)
+
+        deck = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        assert deck is not None
+        assert deck["name"] == "Test Deck"
+        assert deck["version"] == 1
+
     def test_delete_flashcard_hides_card_and_recounts_deck(self, db_instance, sample_flashcard):
         deck_before_delete = db_instance.get_deck(sample_flashcard["deck_id"])
 
