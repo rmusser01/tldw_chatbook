@@ -211,6 +211,11 @@ from tldw_chatbook.Chat_Grammars_Interop import ChatGrammarsScopeService, Server
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Feedback_Interop import FeedbackScopeService, ServerFeedbackService
+from tldw_chatbook.LLM_Provider_Catalog import (
+    LLMProviderCatalogScopeService,
+    LocalLLMProviderCatalogService,
+    ServerLLMProviderCatalogService,
+)
 from tldw_chatbook.Media import (
     LocalMediaReadingService,
     MediaReadingScopeService,
@@ -1794,6 +1799,27 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.server_runtime_scope_service = ServerRuntimeScopeService(
             server_service=self.server_runtime_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.local_llm_provider_catalog_service = LocalLLMProviderCatalogService(
+            provider_catalog_loader=lambda: dict(getattr(self, "providers_models", {}) or {}),
+            local_provider_names=set(LOCAL_PROVIDERS),
+            default_provider=get_cli_setting("chat_defaults", "provider", None),
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_llm_provider_catalog_service = ServerLLMProviderCatalogService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_llm_provider_catalog_service = ServerLLMProviderCatalogService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.llm_provider_catalog_scope_service = LLMProviderCatalogScopeService(
+            local_service=self.local_llm_provider_catalog_service,
+            server_service=self.server_llm_provider_catalog_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:

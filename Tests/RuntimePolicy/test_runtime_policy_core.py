@@ -155,6 +155,13 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": _action_kinds("browse", "update", "launch", "observe"),
         },
     },
+    "llm_provider_model_catalog": {
+        "expected_domain_ids": {"llm_catalog"},
+        "expected_action_kinds_by_source": {
+            "local": _action_kinds("browse", "detail", "update", "observe"),
+            "server": _action_kinds("browse", "detail", "update", "observe"),
+        },
+    },
     "server_reminders_notification_feeds": {
         "expected_domain_ids": {"notifications_server"},
         "expected_action_kinds_by_source": {
@@ -701,6 +708,20 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         server.runtime.health.observe.server
         server.runtime.providers.list.server
         server.runtime.providers.validate.server
+    """),
+    "llm_provider_model_catalog": _action_ids("""
+        llm.catalog.health.observe.local
+        llm.catalog.health.observe.server
+        llm.catalog.models.detail.local
+        llm.catalog.models.detail.server
+        llm.catalog.models.list.local
+        llm.catalog.models.list.server
+        llm.catalog.providers.configure.local
+        llm.catalog.providers.configure.server
+        llm.catalog.providers.detail.local
+        llm.catalog.providers.detail.server
+        llm.catalog.providers.list.local
+        llm.catalog.providers.list.server
     """),
     "user_governance": _action_ids("""
         user_governance.consent.list.server

@@ -193,6 +193,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "explicit_feedback",
         "client_notifications",
         "server_runtime_config_discovery",
+        "llm_provider_model_catalog",
         "server_reminders_notification_feeds",
         "external_connectors",
         "server_skills",
@@ -475,6 +476,17 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("server.runtime.health", actions=(LIST, OBSERVE)),
             _resource("server.runtime.config", actions=(LIST, UPDATE)),
             _resource("server.runtime.providers", actions=(LIST, VALIDATE)),
+        ),
+    ),
+    _capability(
+        "llm_provider_model_catalog",
+        "LLM Provider / Model Catalog",
+        "llm_catalog",
+        sources=SEPARATED_SOURCES,
+        resources=(
+            _resource("llm.catalog.health", actions=(OBSERVE,)),
+            _resource("llm.catalog.providers", actions=(LIST, DETAIL, CONFIGURE)),
+            _resource("llm.catalog.models", actions=(LIST, DETAIL)),
         ),
     ),
     _capability(
