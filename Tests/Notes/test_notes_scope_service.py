@@ -438,3 +438,36 @@ async def test_scope_service_rejects_local_notes_graph_operations_explicitly():
 
     with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
         await scope_service.get_notes_graph(scope=ScopeType.LOCAL_NOTE)
+
+
+def test_scope_service_reports_known_notes_graph_capability_gaps():
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+    )
+
+    local_report = scope_service.list_unsupported_capabilities(scope=ScopeType.LOCAL_NOTE)
+    workspace_report = scope_service.list_unsupported_capabilities(scope=ScopeType.WORKSPACE)
+    server_report = scope_service.list_unsupported_capabilities(scope=ScopeType.SERVER_NOTE)
+
+    assert local_report == [
+        {
+            "operation_id": "notes.graph.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local/offline notes graph generation and manual graph links are deferred; graph operations are server-backed today.",
+            "affected_action_ids": [],
+        }
+    ]
+    assert workspace_report == [
+        {
+            "operation_id": "notes.graph.workspace",
+            "source": "workspace",
+            "supported": False,
+            "reason_code": "scope_not_supported",
+            "user_message": "Workspace-scoped notes remain isolated from the global notes graph until sync/graph semantics are designed.",
+            "affected_action_ids": [],
+        }
+    ]
+    assert server_report == []

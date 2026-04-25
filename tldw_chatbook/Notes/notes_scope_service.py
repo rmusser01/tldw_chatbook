@@ -14,6 +14,25 @@ class ScopeType(str, Enum):
     WORKSPACE = "workspace"
 
 
+_LOCAL_GRAPH_UNSUPPORTED_CAPABILITY = {
+    "operation_id": "notes.graph.local",
+    "source": "local",
+    "supported": False,
+    "reason_code": "local_contract_missing",
+    "user_message": "Local/offline notes graph generation and manual graph links are deferred; graph operations are server-backed today.",
+    "affected_action_ids": [],
+}
+
+_WORKSPACE_GRAPH_UNSUPPORTED_CAPABILITY = {
+    "operation_id": "notes.graph.workspace",
+    "source": "workspace",
+    "supported": False,
+    "reason_code": "scope_not_supported",
+    "user_message": "Workspace-scoped notes remain isolated from the global notes graph until sync/graph semantics are designed.",
+    "affected_action_ids": [],
+}
+
+
 class NotesScopeService:
     """Route screen-facing note actions to the correct backing service."""
 
@@ -57,6 +76,14 @@ class NotesScopeService:
     def _require_server_graph_scope(self, scope: ScopeType | str) -> None:
         if self._normalize_scope(scope) != ScopeType.SERVER_NOTE:
             raise ValueError("Notes graph operations are currently server-backed.")
+
+    def list_unsupported_capabilities(self, *, scope: ScopeType | str) -> list[dict[str, Any]]:
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope == ScopeType.LOCAL_NOTE:
+            return [dict(_LOCAL_GRAPH_UNSUPPORTED_CAPABILITY)]
+        if normalized_scope == ScopeType.WORKSPACE:
+            return [dict(_WORKSPACE_GRAPH_UNSUPPORTED_CAPABILITY)]
+        return []
 
     @staticmethod
     def _normalize_keywords(keywords: Optional[Sequence[str]]) -> list[str]:
