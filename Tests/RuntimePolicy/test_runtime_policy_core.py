@@ -89,6 +89,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": FULL_CRUD,
         },
     },
+    "collections_feed_subscriptions": {
+        "expected_domain_ids": {"collections_feeds"},
+        "expected_action_kinds_by_source": {
+            "server": FULL_CRUD,
+        },
+    },
     "collections_outputs_templates_artifacts": {
         "expected_domain_ids": {"outputs"},
         "expected_action_kinds_by_source": {
@@ -341,6 +347,13 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         collections.reading_list.list.server
         collections.reading_list.update.local
         collections.reading_list.update.server
+    """),
+    "collections_feed_subscriptions": _action_ids("""
+        collections.feeds.create.server
+        collections.feeds.delete.server
+        collections.feeds.detail.server
+        collections.feeds.list.server
+        collections.feeds.update.server
     """),
     "cross_cutting_runtime_policy": _action_ids("""
         runtime.policy.configure.local

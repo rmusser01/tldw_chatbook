@@ -182,6 +182,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "study_packs",
         "study_suggestions",
         "collections_reading_list",
+        "collections_feed_subscriptions",
         "collections_outputs_templates_artifacts",
         "watchlists",
         "writing_suite",
@@ -359,6 +360,15 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=SEPARATED_SOURCES,
         resources=(
             _resource("collections.reading_list", actions=CRUD_ACTIONS),
+        ),
+    ),
+    _capability(
+        "collections_feed_subscriptions",
+        "Collections: Feed Subscriptions",
+        "collections_feeds",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("collections.feeds", actions=CRUD_ACTIONS),
         ),
     ),
     _capability(
