@@ -23,9 +23,10 @@ class LocalMediaReadingService:
     _SUPPORTED_INGESTION_SINK_TYPES = {"media", "notes"}
     _SUPPORTED_INGESTION_POLICIES = {"canonical", "import_only"}
 
-    def __init__(self, media_db: Any, *, tts_audio_generator: Any = None):
+    def __init__(self, media_db: Any, *, tts_audio_generator: Any = None, url_article_scraper: Any = None):
         self.media_db = media_db
         self.tts_audio_generator = tts_audio_generator
+        self.url_article_scraper = url_article_scraper
 
     def _require_db(self) -> Any:
         if self.media_db is None:
@@ -1065,16 +1066,15 @@ class LocalMediaReadingService:
         batch_id = self._new_batch_id()
         jobs: list[dict[str, Any]] = []
         for url in kwargs.get("urls") or []:
-            jobs.append(
-                self._create_ingest_job(
-                    batch_id=batch_id,
-                    job_type="media_ingest",
-                    media_type=media_type,
-                    source=str(url),
-                    source_kind="url",
-                    options=kwargs,
-                )
+            job = self._create_ingest_job(
+                batch_id=batch_id,
+                job_type="media_ingest",
+                media_type=media_type,
+                source=str(url),
+                source_kind="url",
+                options=kwargs,
             )
+            jobs.append(self.execute_ingest_job(job["id"]))
         for file_path in kwargs.get("file_paths") or []:
             job = self._create_ingest_job(
                 batch_id=batch_id,
@@ -1107,19 +1107,23 @@ class LocalMediaReadingService:
         supported_job = (
             job.get("job_type") == "ingestion_source_sync"
             or (job.get("job_type") == "media_ingest" and job.get("source_kind") == "file")
+            or (job.get("job_type") == "media_ingest" and job.get("source_kind") == "url")
         )
         if not supported_job:
             return job
 
-        progress_message = (
-            "Syncing ingestion source"
-            if job.get("job_type") == "ingestion_source_sync"
-            else "Ingesting local file"
-        )
+        if job.get("job_type") == "ingestion_source_sync":
+            progress_message = "Syncing ingestion source"
+        elif job.get("source_kind") == "url":
+            progress_message = "Ingesting URL"
+        else:
+            progress_message = "Ingesting local file"
         self._mark_ingest_job_started(job_id, progress_message=progress_message)
         try:
             if job.get("job_type") == "ingestion_source_sync":
                 result = self._execute_ingestion_source_sync_job(job)
+            elif job.get("source_kind") == "url":
+                result = self._execute_url_article_media_ingest_job(job)
             else:
                 result = self._execute_local_file_media_ingest_job(job)
         except Exception as exc:
@@ -1181,6 +1185,75 @@ class LocalMediaReadingService:
             "skipped": 0 if media_id is not None else 1,
             "errors": [],
         }
+
+    def _execute_url_article_media_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new
+
+        options = dict(job.get("options") or {})
+        source_url = str(job.get("source") or "").strip()
+        if not source_url:
+            raise ValueError("Local URL ingest job is missing a URL.")
+        media_type = str(job.get("media_type") or "").strip().lower()
+        if media_type not in {"article", "web_article", "webpage", "html"}:
+            raise ValueError(f"Local URL ingest is currently implemented for article/web content, not {media_type}.")
+
+        scraper = self.url_article_scraper or self._default_url_article_scraper
+        article = scraper(source_url, custom_cookies=options.get("custom_cookies"))
+        if not isinstance(article, Mapping):
+            raise ValueError("Local URL article scraper must return a mapping.")
+        if article.get("extraction_successful") is False:
+            raise ValueError(str(article.get("error") or "URL article extraction failed."))
+
+        content = self._first_present_text(article, "content", "text", "markdown", "body")
+        if not content or not content.strip():
+            raise ValueError("URL article extraction returned no content.")
+        title = str(article.get("title") or source_url)
+        author = article.get("author")
+        if author is not None:
+            author = str(author)
+        keywords = self._merge_keyword_values(options.get("keywords"), article.get("keywords"))
+        media_id, media_uuid, message = ingest_article_to_db_new(
+            self._require_db(),
+            url=str(article.get("url") or source_url),
+            title=title,
+            content=content,
+            author=author,
+            keywords=keywords,
+            summary=article.get("summary"),
+            ingestion_date=article.get("date") or article.get("published_at") or article.get("published_date"),
+            custom_prompt=options.get("custom_prompt"),
+            overwrite=bool(options.get("overwrite", False)),
+        )
+        return {
+            "source": source_url,
+            "source_kind": "url",
+            "media_id": media_id,
+            "media_uuid": media_uuid,
+            "title": title,
+            "content_length": len(content),
+            "message": message,
+            "imported": 1 if media_id is not None else 0,
+            "updated": 1 if "updated" in str(message).lower() else 0,
+            "skipped": 0 if media_id is not None else 1,
+            "errors": [],
+        }
+
+    @staticmethod
+    def _default_url_article_scraper(url: str, *, custom_cookies: Any = None) -> Mapping[str, Any]:
+        from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article_sync
+
+        try:
+            import asyncio
+
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return scrape_article_sync(url, custom_cookies=custom_cookies)
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(scrape_article_sync, url, custom_cookies=custom_cookies)
+            return future.result()
 
     @staticmethod
     def _failed_local_ingest_result(job: Mapping[str, Any], exc: Exception) -> dict[str, Any]:
@@ -1487,6 +1560,24 @@ class LocalMediaReadingService:
             if value not in (None, ""):
                 return str(value)
         return None
+
+    @staticmethod
+    def _merge_keyword_values(*values: Any) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if value in (None, ""):
+                continue
+            candidates = value if isinstance(value, (list, tuple, set)) else [value]
+            for candidate in candidates:
+                if candidate in (None, ""):
+                    continue
+                keyword = str(candidate).strip()
+                key = keyword.lower()
+                if keyword and key not in seen:
+                    merged.append(keyword)
+                    seen.add(key)
+        return merged
 
     @staticmethod
     async def _maybe_await(value: Any) -> Any:

@@ -1,3 +1,4 @@
+import asyncio
 from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
@@ -575,14 +576,24 @@ def test_local_service_reattaches_detached_ingestion_source_item(memory_db_facto
     assert reattached["binding"]["sync_status"] == "sync_managed"
 
 
-def test_local_service_submit_ingest_jobs_queues_url_and_file_jobs(memory_db_factory, tmp_path):
+def test_local_service_submit_ingest_jobs_executes_url_article_and_file_jobs(memory_db_factory, tmp_path):
     db = memory_db_factory()
-    service = LocalMediaReadingService(db)
+    def fake_scraper(url, *, custom_cookies=None):
+        return {
+            "url": url,
+            "title": "Remote Article",
+            "author": "Grace",
+            "content": "Remote article body",
+            "date": "2026-04-25T00:00:00Z",
+            "extraction_successful": True,
+        }
+
+    service = LocalMediaReadingService(db, url_article_scraper=fake_scraper)
     file_path = tmp_path / "doc.txt"
     file_path.write_text("text placeholder", encoding="utf-8")
 
     submitted = service.submit_ingest_jobs(
-        media_type="plaintext",
+        media_type="article",
         urls=["https://example.com/a.txt"],
         file_paths=[str(file_path)],
         keywords=["paper"],
@@ -590,8 +601,79 @@ def test_local_service_submit_ingest_jobs_queues_url_and_file_jobs(memory_db_fac
 
     assert submitted["batch_id"].startswith("local-batch-")
     assert [job["source_kind"] for job in submitted["jobs"]] == ["url", "file"]
-    assert service.get_ingest_job(submitted["jobs"][0]["id"])["status"] == "queued"
+    assert service.get_ingest_job(submitted["jobs"][0]["id"])["status"] == "completed"
     assert service.get_ingest_job(submitted["jobs"][1]["id"])["status"] == "completed"
+
+
+def test_local_service_executes_url_article_ingest_jobs_with_injected_scraper(memory_db_factory):
+    db = memory_db_factory()
+    calls = []
+
+    def fake_scraper(url, *, custom_cookies=None):
+        calls.append((url, custom_cookies))
+        return {
+            "url": url,
+            "title": "Saved URL",
+            "author": "Ada",
+            "content": "URL article content",
+            "summary": "URL summary",
+            "date": "2026-04-25T00:00:00Z",
+            "extraction_successful": True,
+        }
+
+    service = LocalMediaReadingService(db, url_article_scraper=fake_scraper)
+
+    submitted = service.submit_ingest_jobs(
+        media_type="article",
+        urls=["https://example.com/article"],
+        keywords=["Read Later"],
+        custom_cookies=[{"name": "session", "value": "abc"}],
+    )
+    job = service.get_ingest_job(submitted["jobs"][0]["id"])
+    media = db.get_media_by_url("https://example.com/article")
+
+    assert calls == [("https://example.com/article", [{"name": "session", "value": "abc"}])]
+    assert submitted["jobs"][0]["status"] == "completed"
+    assert job["result"]["source_kind"] == "url"
+    assert job["result"]["imported"] == 1
+    assert job["result"]["media_id"] == media["id"]
+    assert media["title"] == "Saved URL"
+    assert media["content"] == "URL article content"
+    assert db.fetch_keywords_for_media_batch([media["id"]])[media["id"]] == ["read later"]
+
+
+@pytest.mark.asyncio
+async def test_local_service_default_url_scraper_is_safe_from_async_scope(memory_db_factory, monkeypatch):
+    from tldw_chatbook.Web_Scraping import Article_Extractor_Lib
+
+    db = memory_db_factory()
+
+    def fake_scrape_article_sync(url, *, custom_cookies=None):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("scrape_article_sync was called inside the active event loop")
+        return {
+            "url": url,
+            "title": "Async Safe URL",
+            "author": "Ada",
+            "content": "Async safe URL article content",
+            "extraction_successful": True,
+        }
+
+    monkeypatch.setattr(Article_Extractor_Lib, "scrape_article_sync", fake_scrape_article_sync)
+    service = LocalMediaReadingService(db)
+
+    submitted = service.submit_ingest_jobs(
+        media_type="article",
+        urls=["https://example.com/async-safe"],
+    )
+    media = db.get_media_by_url("https://example.com/async-safe")
+
+    assert submitted["jobs"][0]["status"] == "completed"
+    assert media["title"] == "Async Safe URL"
 
 
 def test_local_service_executes_local_file_ingest_jobs(memory_db_factory, tmp_path):
