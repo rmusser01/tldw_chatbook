@@ -838,6 +838,90 @@ def test_scope_service_reports_server_read_it_later_as_aggregate_only():
     assert local_article == {"available": True, "reason": ""}
 
 
+def test_scope_service_reports_known_media_reading_capability_gaps():
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+    )
+
+    local_report = scope_service.list_unsupported_capabilities(mode="local")
+    server_report = scope_service.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "media.reading.create.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local direct URL reading-item creation is not available yet; use local ingest jobs instead.",
+            "affected_action_ids": ["media.reading.create.local"],
+        },
+        {
+            "operation_id": "media.reading.tts.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local reading TTS generation is not implemented; switch to server mode for server-side reading audio.",
+            "affected_action_ids": ["media.reading.tts.local"],
+        },
+        {
+            "operation_id": "media.reading.import.execution.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local reading imports currently create durable queued jobs, but local import execution/materialization is not implemented yet.",
+            "affected_action_ids": [
+                "media.reading.import.local",
+                "media.reading_import_jobs.detail.local",
+                "media.reading_import_jobs.list.local",
+            ],
+        },
+        {
+            "operation_id": "media.ingestion.execution.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local ingestion sources and ingest jobs are persisted locally, but actual local ingestion execution is not implemented yet.",
+            "affected_action_ids": [
+                "media.ingestion_jobs.detail.local",
+                "media.ingestion_jobs.launch.local",
+                "media.ingestion_jobs.list.local",
+                "media.ingestion_jobs.observe.local",
+            ],
+        },
+        {
+            "operation_id": "media.ingestion_source_items.materialize.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local ingestion source item materialization is not implemented beyond queued jobs and reattach metadata.",
+            "affected_action_ids": [
+                "media.ingestion_jobs.launch.local",
+                "media.ingestion_jobs.observe.local",
+                "media.ingestion_source_items.reattach.local",
+            ],
+        },
+    ]
+    assert server_report == [
+        {
+            "operation_id": "collections.reading_list.per_media_type.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "Server read-it-later browsing is exposed only as the aggregate All Media saved view; per-media-type saved views remain unavailable.",
+            "affected_action_ids": ["collections.reading_list.list.server"],
+        },
+        {
+            "operation_id": "media.ingestion_sources.delete.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server ingestion-source API does not expose deletion.",
+            "affected_action_ids": ["media.ingestion_sources.delete.server"],
+        },
+    ]
+
+
 @pytest.mark.asyncio
 async def test_scope_service_blocks_invalid_server_read_it_later_media_type_context():
     server = FakeServerMediaService()
