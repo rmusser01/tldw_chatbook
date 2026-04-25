@@ -736,9 +736,14 @@ async def test_scope_service_routes_study_pack_jobs_to_server_with_policy():
     regenerated = await scope.regenerate_study_pack(mode="server", pack_id=9)
 
     assert created["job"]["id"] == 42
+    assert created["backend"] == "server"
+    assert created["job"]["record_id"] == "server:study_pack_job:42"
     assert status["study_pack"]["id"] == 9
+    assert status["study_pack"]["record_id"] == "server:study_pack:9"
     assert pack["id"] == 9
+    assert pack["record_id"] == "server:study_pack:9"
     assert regenerated["job"]["id"] == 43
+    assert regenerated["job"]["record_id"] == "server:study_pack_job:43"
     assert policy_enforcer.calls == [
         "study.packs.jobs.launch.server",
         "study.packs.jobs.observe.server",
@@ -794,9 +799,13 @@ async def test_scope_service_routes_study_suggestions_to_server_with_policy():
     )
 
     assert status["snapshot_id"] == 11
+    assert status["record_id"] == "server:study_suggestion_status:deck:7"
     assert snapshot["snapshot"]["id"] == 11
+    assert snapshot["snapshot"]["record_id"] == "server:study_suggestion_snapshot:11"
     assert refresh["job"]["id"] == 44
+    assert refresh["job"]["record_id"] == "server:study_suggestion_job:44"
     assert action["target_id"] == "quiz-9"
+    assert action["record_id"] == "server:study_suggestion_action:11:fp-1"
     assert policy_enforcer.calls == [
         "study.suggestions.list.server",
         "study.suggestions.observe.server",

@@ -90,6 +90,84 @@ class StudyScopeService:
             return str(result.get("status") or "").strip().lower() == "deleted"
         return bool(result)
 
+    @staticmethod
+    def _with_backend_record(
+        *,
+        backend: StudyBackend,
+        kind: str,
+        payload: Mapping[str, Any],
+        source_id: Any,
+    ) -> dict[str, Any]:
+        record = dict(payload or {})
+        record.setdefault("backend", backend.value)
+        if source_id is not None:
+            record.setdefault("record_id", f"{backend.value}:{kind}:{source_id}")
+        return record
+
+    def _normalize_study_pack_payload(self, payload: Any) -> Any:
+        if not isinstance(payload, Mapping):
+            return payload
+        record = dict(payload)
+        record.setdefault("backend", StudyBackend.SERVER.value)
+        if isinstance(record.get("job"), Mapping):
+            job = record["job"]
+            record["job"] = self._with_backend_record(
+                backend=StudyBackend.SERVER,
+                kind="study_pack_job",
+                payload=job,
+                source_id=job.get("id"),
+            )
+        if isinstance(record.get("study_pack"), Mapping):
+            study_pack = record["study_pack"]
+            record["study_pack"] = self._with_backend_record(
+                backend=StudyBackend.SERVER,
+                kind="study_pack",
+                payload=study_pack,
+                source_id=study_pack.get("id"),
+            )
+        if "id" in record and "title" in record:
+            return self._with_backend_record(
+                backend=StudyBackend.SERVER,
+                kind="study_pack",
+                payload=record,
+                source_id=record.get("id"),
+            )
+        return record
+
+    def _normalize_study_suggestion_payload(self, payload: Any) -> Any:
+        if not isinstance(payload, Mapping):
+            return payload
+        record = dict(payload)
+        record.setdefault("backend", StudyBackend.SERVER.value)
+        if record.get("anchor_type") is not None and record.get("anchor_id") is not None:
+            record.setdefault(
+                "record_id",
+                f"server:study_suggestion_status:{record.get('anchor_type')}:{record.get('anchor_id')}",
+            )
+        if isinstance(record.get("snapshot"), Mapping):
+            snapshot = record["snapshot"]
+            record["snapshot"] = self._with_backend_record(
+                backend=StudyBackend.SERVER,
+                kind="study_suggestion_snapshot",
+                payload=snapshot,
+                source_id=snapshot.get("id"),
+            )
+        if isinstance(record.get("job"), Mapping):
+            job = record["job"]
+            record["job"] = self._with_backend_record(
+                backend=StudyBackend.SERVER,
+                kind="study_suggestion_job",
+                payload=job,
+                source_id=job.get("id"),
+            )
+        if record.get("snapshot_id") is not None and record.get("selection_fingerprint") is not None:
+            record.setdefault(
+                "record_id",
+                "server:study_suggestion_action:"
+                f"{record.get('snapshot_id')}:{record.get('selection_fingerprint')}",
+            )
+        return record
+
     @classmethod
     def _normalize_scope(cls, scope_type: str | None, workspace_id: str | None) -> tuple[str, str | None]:
         normalized_scope = str(scope_type or "global").strip().lower()
@@ -396,13 +474,14 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Study packs")
         self._enforce_policy(self._study_pack_action_id("launch"))
-        return await self._maybe_await(
+        result = await self._maybe_await(
             self._service_for_mode(normalized_mode).create_study_pack_job(
                 title=title,
                 workspace_id=workspace_id,
                 source_items=source_items,
             )
         )
+        return self._normalize_study_pack_payload(result)
 
     async def get_study_pack_job_status(
         self,
@@ -413,9 +492,10 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Study packs")
         self._enforce_policy(self._study_pack_action_id("observe"))
-        return await self._maybe_await(
+        result = await self._maybe_await(
             self._service_for_mode(normalized_mode).get_study_pack_job_status(job_id)
         )
+        return self._normalize_study_pack_payload(result)
 
     async def get_study_pack(
         self,
@@ -426,9 +506,10 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Study packs")
         self._enforce_policy(self._study_pack_action_id("observe"))
-        return await self._maybe_await(
+        result = await self._maybe_await(
             self._service_for_mode(normalized_mode).get_study_pack(pack_id)
         )
+        return self._normalize_study_pack_payload(result)
 
     async def regenerate_study_pack(
         self,
@@ -439,9 +520,10 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Study packs")
         self._enforce_policy(self._study_pack_action_id("launch"))
-        return await self._maybe_await(
+        result = await self._maybe_await(
             self._service_for_mode(normalized_mode).regenerate_study_pack(pack_id)
         )
+        return self._normalize_study_pack_payload(result)
 
     async def get_study_suggestion_status(
         self,
@@ -453,12 +535,13 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Study suggestions")
         self._enforce_policy(self._study_suggestion_action_id("list"))
-        return await self._maybe_await(
+        result = await self._maybe_await(
             self._service_for_mode(normalized_mode).get_study_suggestion_status(
                 anchor_type=anchor_type,
                 anchor_id=anchor_id,
             )
         )
+        return self._normalize_study_suggestion_payload(result)
 
     async def get_study_suggestion_snapshot(
         self,
@@ -469,9 +552,10 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Study suggestions")
         self._enforce_policy(self._study_suggestion_action_id("observe"))
-        return await self._maybe_await(
+        result = await self._maybe_await(
             self._service_for_mode(normalized_mode).get_study_suggestion_snapshot(snapshot_id)
         )
+        return self._normalize_study_suggestion_payload(result)
 
     async def refresh_study_suggestion_snapshot(
         self,
@@ -483,12 +567,13 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Study suggestions")
         self._enforce_policy(self._study_suggestion_action_id("launch"))
-        return await self._maybe_await(
+        result = await self._maybe_await(
             self._service_for_mode(normalized_mode).refresh_study_suggestion_snapshot(
                 snapshot_id,
                 reason=reason,
             )
         )
+        return self._normalize_study_suggestion_payload(result)
 
     async def trigger_study_suggestion_action(
         self,
@@ -508,7 +593,7 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Study suggestions")
         self._enforce_policy(self._study_suggestion_action_id("configure"))
-        return await self._maybe_await(
+        result = await self._maybe_await(
             self._service_for_mode(normalized_mode).trigger_study_suggestion_action(
                 snapshot_id,
                 target_service=target_service,
@@ -522,3 +607,4 @@ class StudyScopeService:
                 force_regenerate=force_regenerate,
             )
         )
+        return self._normalize_study_suggestion_payload(result)
