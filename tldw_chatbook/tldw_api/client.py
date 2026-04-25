@@ -152,6 +152,33 @@ from .meetings_schemas import (
     MeetingTemplateResponse,
     MeetingTemplateScope,
 )
+from .slides_schemas import (
+    GenerateFromChatRequest,
+    GenerateFromMediaRequest,
+    GenerateFromNotesRequest,
+    GenerateFromPromptRequest,
+    GenerateFromRagRequest,
+    PresentationCreateRequest,
+    PresentationListResponse,
+    PresentationPatchRequest,
+    PresentationRenderArtifactListResponse,
+    PresentationRenderJobResponse,
+    PresentationRenderJobStatusResponse,
+    PresentationRenderRequest,
+    PresentationReorderRequest,
+    PresentationResponse,
+    PresentationSearchResponse,
+    PresentationUpdateRequest,
+    PresentationVersionListResponse,
+    SlidesExportFormat,
+    SlidesHealthResponse,
+    SlidesTemplateListResponse,
+    SlidesTemplateResponse,
+    VisualStyleCreateRequest,
+    VisualStyleListResponse,
+    VisualStylePatchRequest,
+    VisualStyleResponse,
+)
 from .rag_admin_schemas import (
     ChunkingTemplateApplyRequest,
     ChunkingTemplateApplyResponse,
@@ -431,6 +458,12 @@ class TLDWAPIClient:
                 mode="json",
             )
         return dict(request_data)
+
+    @staticmethod
+    def _if_match_header(if_match: str | None) -> Optional[Dict[str, str]]:
+        if if_match is None:
+            return None
+        return {"If-Match": if_match}
 
     async def _request(
         self,
@@ -1246,6 +1279,330 @@ class TLDWAPIClient:
             f"/api/v1/meetings/sessions/{session_id}/events",
         ):
             yield event
+
+    async def get_slides_health(self) -> SlidesHealthResponse:
+        response = await self._request("GET", "/api/v1/slides/health")
+        return SlidesHealthResponse.model_validate(response)
+
+    async def create_presentation(self, request_data: PresentationCreateRequest) -> PresentationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/slides/presentations",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def list_presentations(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        sort: str | None = None,
+        include_deleted: bool = False,
+    ) -> PresentationListResponse:
+        params = {
+            "limit": limit,
+            "offset": offset,
+            "sort": sort,
+            "include_deleted": str(include_deleted).lower(),
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/slides/presentations",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return PresentationListResponse.model_validate(response)
+
+    async def search_presentations(
+        self,
+        query: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        include_deleted: bool = False,
+    ) -> PresentationSearchResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/slides/presentations/search",
+            params={
+                "q": query,
+                "limit": limit,
+                "offset": offset,
+                "include_deleted": str(include_deleted).lower(),
+            },
+        )
+        return PresentationSearchResponse.model_validate(response)
+
+    async def get_presentation(
+        self,
+        presentation_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> PresentationResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/slides/presentations/{presentation_id}",
+            params={"include_deleted": str(include_deleted).lower()},
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def update_presentation(
+        self,
+        presentation_id: str,
+        request_data: PresentationUpdateRequest,
+        *,
+        if_match: str | None = None,
+    ) -> PresentationResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/slides/presentations/{presentation_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers=self._if_match_header(if_match),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def patch_presentation(
+        self,
+        presentation_id: str,
+        request_data: PresentationPatchRequest,
+        *,
+        if_match: str | None = None,
+    ) -> PresentationResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/slides/presentations/{presentation_id}",
+            json_data=request_data.model_dump(exclude_none=False, exclude_unset=True, mode="json"),
+            headers=self._if_match_header(if_match),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def reorder_presentation(
+        self,
+        presentation_id: str,
+        order: list[int] | PresentationReorderRequest,
+        *,
+        if_match: str | None = None,
+    ) -> PresentationResponse:
+        request_data = order if isinstance(order, PresentationReorderRequest) else PresentationReorderRequest(order=order)
+        response = await self._request(
+            "POST",
+            f"/api/v1/slides/presentations/{presentation_id}/reorder",
+            json_data=request_data.model_dump(mode="json"),
+            headers=self._if_match_header(if_match),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def delete_presentation(
+        self,
+        presentation_id: str,
+        *,
+        if_match: str | None = None,
+    ) -> PresentationResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/slides/presentations/{presentation_id}",
+            headers=self._if_match_header(if_match),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def restore_presentation(
+        self,
+        presentation_id: str,
+        *,
+        if_match: str | None = None,
+    ) -> PresentationResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/slides/presentations/{presentation_id}/restore",
+            headers=self._if_match_header(if_match),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def list_slide_templates(self) -> SlidesTemplateListResponse:
+        response = await self._request("GET", "/api/v1/slides/templates")
+        return SlidesTemplateListResponse.model_validate(response)
+
+    async def get_slide_template(self, template_id: str) -> SlidesTemplateResponse:
+        response = await self._request("GET", f"/api/v1/slides/templates/{template_id}")
+        return SlidesTemplateResponse.model_validate(response)
+
+    async def list_visual_styles(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> VisualStyleListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/slides/styles",
+            params={"limit": limit, "offset": offset},
+        )
+        return VisualStyleListResponse.model_validate(response)
+
+    async def get_visual_style(self, style_id: str) -> VisualStyleResponse:
+        response = await self._request("GET", f"/api/v1/slides/styles/{style_id}")
+        return VisualStyleResponse.model_validate(response)
+
+    async def create_visual_style(self, request_data: VisualStyleCreateRequest) -> VisualStyleResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/slides/styles",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return VisualStyleResponse.model_validate(response)
+
+    async def patch_visual_style(
+        self,
+        style_id: str,
+        request_data: VisualStylePatchRequest,
+    ) -> VisualStyleResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/slides/styles/{style_id}",
+            json_data=request_data.model_dump(exclude_none=False, exclude_unset=True, mode="json"),
+        )
+        return VisualStyleResponse.model_validate(response)
+
+    async def delete_visual_style(self, style_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/slides/styles/{style_id}")
+
+    async def list_presentation_versions(
+        self,
+        presentation_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> PresentationVersionListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/slides/presentations/{presentation_id}/versions",
+            params={"limit": limit, "offset": offset},
+        )
+        return PresentationVersionListResponse.model_validate(response)
+
+    async def get_presentation_version(self, presentation_id: str, version: int) -> PresentationResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/slides/presentations/{presentation_id}/versions/{version}",
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def restore_presentation_version(
+        self,
+        presentation_id: str,
+        version: int,
+        *,
+        if_match: str | None = None,
+    ) -> PresentationResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/slides/presentations/{presentation_id}/versions/{version}/restore",
+            headers=self._if_match_header(if_match),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def submit_presentation_render_job(
+        self,
+        presentation_id: str,
+        request_data: PresentationRenderRequest,
+        *,
+        if_match: str | None = None,
+    ) -> PresentationRenderJobResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/slides/presentations/{presentation_id}/render-jobs",
+            json_data=request_data.model_dump(mode="json"),
+            headers=self._if_match_header(if_match),
+        )
+        return PresentationRenderJobResponse.model_validate(response)
+
+    async def get_presentation_render_job_status(self, job_id: int) -> PresentationRenderJobStatusResponse:
+        response = await self._request("GET", f"/api/v1/slides/render-jobs/{job_id}")
+        return PresentationRenderJobStatusResponse.model_validate(response)
+
+    async def list_presentation_render_artifacts(
+        self,
+        presentation_id: str,
+    ) -> PresentationRenderArtifactListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/slides/presentations/{presentation_id}/render-artifacts",
+        )
+        return PresentationRenderArtifactListResponse.model_validate(response)
+
+    async def generate_presentation_from_prompt(
+        self,
+        request_data: GenerateFromPromptRequest,
+    ) -> PresentationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/slides/generate",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def generate_presentation_from_chat(self, request_data: GenerateFromChatRequest) -> PresentationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/slides/generate/from-chat",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def generate_presentation_from_notes(self, request_data: GenerateFromNotesRequest) -> PresentationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/slides/generate/from-notes",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def generate_presentation_from_media(self, request_data: GenerateFromMediaRequest) -> PresentationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/slides/generate/from-media",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def generate_presentation_from_rag(self, request_data: GenerateFromRagRequest) -> PresentationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/slides/generate/from-rag",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PresentationResponse.model_validate(response)
+
+    async def export_presentation(
+        self,
+        presentation_id: str,
+        *,
+        format: SlidesExportFormat = "revealjs",
+        pdf_format: str | None = None,
+        pdf_width: str | None = None,
+        pdf_height: str | None = None,
+        pdf_landscape: bool | None = None,
+        pdf_margin_top: str | None = None,
+        pdf_margin_bottom: str | None = None,
+        pdf_margin_left: str | None = None,
+        pdf_margin_right: str | None = None,
+    ) -> ReadingExportResponse:
+        params = {
+            "format": format,
+            "pdf_format": pdf_format,
+            "pdf_width": pdf_width,
+            "pdf_height": pdf_height,
+            "pdf_landscape": str(pdf_landscape).lower() if pdf_landscape is not None else None,
+            "pdf_margin_top": pdf_margin_top,
+            "pdf_margin_bottom": pdf_margin_bottom,
+            "pdf_margin_left": pdf_margin_left,
+            "pdf_margin_right": pdf_margin_right,
+        }
+        return await self._binary_request(
+            "GET",
+            f"/api/v1/slides/presentations/{presentation_id}/export",
+            params={key: value for key, value in params.items() if value is not None},
+        )
 
     async def submit_media_ingest_jobs(
         self,
