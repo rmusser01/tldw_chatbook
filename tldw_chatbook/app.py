@@ -216,7 +216,9 @@ from tldw_chatbook.Notifications import (
 )
 from tldw_chatbook.Outputs_Interop import ServerOutputsService
 from tldw_chatbook.Research_Interop import (
+    LocalResearchSearchService,
     LocalResearchService,
+    ResearchSearchScopeService,
     ResearchScopeService,
     ServerResearchSearchService,
     ServerResearchService,
@@ -1644,6 +1646,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_research_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self.local_research_search_service = LocalResearchSearchService(
+            policy_enforcer=self.service_policy_enforcer,
+        )
         try:
             self.server_research_search_service = ServerResearchSearchService.from_config(
                 self.app_config,
@@ -1654,6 +1659,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        self.research_search_scope_service = ResearchSearchScopeService(
+            local_service=self.local_research_search_service,
+            server_service=self.server_research_search_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         try:
             self.server_sharing_service = ServerSharingService.from_config(
                 self.app_config,
