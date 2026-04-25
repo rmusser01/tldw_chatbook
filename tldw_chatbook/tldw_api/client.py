@@ -495,7 +495,19 @@ from .evaluations_schemas import (
     EvaluationRunCreateRequest,
     EvaluationRunListResponse,
     EvaluationRunResponse,
+    SyntheticEvalGenerationRequest,
+    SyntheticEvalGenerationResponse,
+    SyntheticEvalPromotionRequest,
+    SyntheticEvalPromotionResponse,
+    SyntheticEvalQueueResponse,
+    SyntheticEvalReviewActionRecord,
+    SyntheticEvalReviewRequest,
     UpdateEvaluationRequest,
+    WebhookRegistrationRequest,
+    WebhookRegistrationResponse,
+    WebhookStatusResponse,
+    WebhookTestRequest,
+    WebhookTestResponse,
 )
 from .flashcards_schemas import (
     FlashcardAnalyticsSummaryResponse,
@@ -5104,6 +5116,133 @@ class TLDWAPIClient:
 
     async def delete_evaluation_embeddings_abtest(self, test_id: str) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/evaluations/embeddings/abtest/{test_id}")
+
+    async def generate_synthetic_evaluation_drafts(
+        self,
+        request_data: SyntheticEvalGenerationRequest,
+    ) -> SyntheticEvalGenerationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/synthetic/drafts/generate",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SyntheticEvalGenerationResponse.model_validate(response)
+
+    async def list_synthetic_evaluation_queue(
+        self,
+        *,
+        recipe_kind: str | None = None,
+        review_state: str | None = None,
+        source_kind: str | None = None,
+        generation_batch_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> SyntheticEvalQueueResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/evaluations/synthetic/queue",
+            params={
+                key: value
+                for key, value in {
+                    "recipe_kind": recipe_kind,
+                    "review_state": review_state,
+                    "source_kind": source_kind,
+                    "generation_batch_id": generation_batch_id,
+                    "limit": limit,
+                    "offset": offset,
+                }.items()
+                if value is not None
+            },
+        )
+        return SyntheticEvalQueueResponse.model_validate(response)
+
+    async def review_synthetic_evaluation_sample(
+        self,
+        sample_id: str,
+        request_data: SyntheticEvalReviewRequest,
+    ) -> SyntheticEvalReviewActionRecord:
+        response = await self._request(
+            "POST",
+            f"/api/v1/evaluations/synthetic/queue/{sample_id}/review",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SyntheticEvalReviewActionRecord.model_validate(response)
+
+    async def promote_synthetic_evaluation_samples(
+        self,
+        request_data: SyntheticEvalPromotionRequest,
+    ) -> SyntheticEvalPromotionResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/synthetic/promotions",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SyntheticEvalPromotionResponse.model_validate(response)
+
+    async def list_evaluation_benchmarks(self) -> Dict[str, Any]:
+        return await self._request("GET", "/api/v1/evaluations/benchmarks")
+
+    async def get_evaluation_benchmark(self, benchmark_name: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/evaluations/benchmarks/{benchmark_name}")
+
+    async def run_evaluation_benchmark(
+        self,
+        benchmark_name: str,
+        *,
+        limit: int | None = None,
+        api_name: str = "openai",
+        parallel: int = 4,
+        save_results: bool = True,
+        filter_categories: list[str] | None = None,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/evaluations/benchmarks/{benchmark_name}/run",
+            json_data={
+                key: value
+                for key, value in {
+                    "limit": limit,
+                    "api_name": api_name,
+                    "parallel": parallel,
+                    "save_results": save_results,
+                    "filter_categories": filter_categories,
+                }.items()
+                if value is not None
+            },
+        )
+
+    async def register_evaluation_webhook(
+        self,
+        request_data: WebhookRegistrationRequest,
+    ) -> WebhookRegistrationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/webhooks",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WebhookRegistrationResponse.model_validate(response)
+
+    async def list_evaluation_webhooks(self) -> list[WebhookStatusResponse]:
+        response = await self._request("GET", "/api/v1/evaluations/webhooks")
+        return [WebhookStatusResponse.model_validate(item) for item in list(response or [])]
+
+    async def unregister_evaluation_webhook(self, url: str) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            "/api/v1/evaluations/webhooks",
+            params={"url": url},
+        )
+
+    async def test_evaluation_webhook(
+        self,
+        request_data: WebhookTestRequest,
+    ) -> WebhookTestResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/evaluations/webhooks/test",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WebhookTestResponse.model_validate(response)
 
     async def create_flashcard_deck(
         self,

@@ -29,6 +29,14 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "user_message": "Local evaluation runs can persist requested webhook URLs, but do not dispatch webhook callbacks yet; observe the local run record and artifacts instead.",
         "affected_action_ids": ["evaluations.run.observe.local", "evaluations.run.update.local"],
     },
+    {
+        "operation_id": "evaluations.server_auxiliary_controls.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "remote_only_surface",
+        "user_message": "Server synthetic evaluation drafts, benchmark runs, and webhook administration are unavailable in local/offline mode.",
+        "affected_action_ids": [],
+    },
 ]
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
@@ -109,6 +117,18 @@ class EvaluationScopeService:
     @staticmethod
     def _abtest_action_id(mode: EvaluationBackend, action: str) -> str:
         return f"evaluations.embeddings_abtest.{action}.{mode.value}"
+
+    @staticmethod
+    def _synthetic_action_id(mode: EvaluationBackend, action: str) -> str:
+        return f"evaluations.synthetic.{action}.{mode.value}"
+
+    @staticmethod
+    def _benchmark_action_id(mode: EvaluationBackend, action: str) -> str:
+        return f"evaluations.benchmarks.{action}.{mode.value}"
+
+    @staticmethod
+    def _webhook_action_id(mode: EvaluationBackend, action: str) -> str:
+        return f"evaluations.webhooks.{action}.{mode.value}"
 
     def _require_server_only_mode(
         self,
@@ -697,3 +717,257 @@ class EvaluationScopeService:
         self._enforce_policy(self._abtest_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
         return dict(await self._maybe_await(service.delete_embeddings_abtest(test_id)) or {})
+
+    async def generate_synthetic_drafts(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_kind: str,
+        corpus_scope: dict[str, Any] | list[str] | None = None,
+        generation_metadata: dict[str, Any] | None = None,
+        context_snapshot_ref: str | None = None,
+        retrieval_baseline_ref: str | None = None,
+        reference_answer: str | None = None,
+        real_examples: list[dict[str, Any]] | None = None,
+        seed_examples: list[dict[str, Any]] | None = None,
+        target_sample_count: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Synthetic evaluation draft administration",
+        )
+        self._enforce_policy(self._synthetic_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.generate_synthetic_drafts(
+                    recipe_kind=recipe_kind,
+                    corpus_scope=corpus_scope,
+                    generation_metadata=generation_metadata,
+                    context_snapshot_ref=context_snapshot_ref,
+                    retrieval_baseline_ref=retrieval_baseline_ref,
+                    reference_answer=reference_answer,
+                    real_examples=real_examples,
+                    seed_examples=seed_examples,
+                    target_sample_count=target_sample_count,
+                )
+            )
+            or {}
+        )
+
+    async def list_synthetic_queue(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_kind: str | None = None,
+        review_state: str | None = None,
+        source_kind: str | None = None,
+        generation_batch_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Synthetic evaluation draft administration",
+        )
+        self._enforce_policy(self._synthetic_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.list_synthetic_queue(
+                    recipe_kind=recipe_kind,
+                    review_state=review_state,
+                    source_kind=source_kind,
+                    generation_batch_id=generation_batch_id,
+                    limit=limit,
+                    offset=offset,
+                )
+            )
+            or {}
+        )
+
+    async def review_synthetic_sample(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        sample_id: str,
+        action: str,
+        notes: str | None = None,
+        action_payload: dict[str, Any] | None = None,
+        resulting_review_state: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Synthetic evaluation draft administration",
+        )
+        self._enforce_policy(self._synthetic_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.review_synthetic_sample(
+                    sample_id,
+                    action=action,
+                    notes=notes,
+                    action_payload=action_payload,
+                    resulting_review_state=resulting_review_state,
+                )
+            )
+            or {}
+        )
+
+    async def promote_synthetic_samples(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        sample_ids: list[str],
+        dataset_name: str,
+        dataset_description: str | None = None,
+        dataset_metadata: dict[str, Any] | None = None,
+        promotion_reason: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Synthetic evaluation draft administration",
+        )
+        self._enforce_policy(self._synthetic_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.promote_synthetic_samples(
+                    sample_ids=sample_ids,
+                    dataset_name=dataset_name,
+                    dataset_description=dataset_description,
+                    dataset_metadata=dataset_metadata,
+                    promotion_reason=promotion_reason,
+                )
+            )
+            or {}
+        )
+
+    async def list_benchmarks(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation benchmark administration",
+        )
+        self._enforce_policy(self._benchmark_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.list_benchmarks()) or {})
+
+    async def get_benchmark(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        benchmark_name: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation benchmark administration",
+        )
+        self._enforce_policy(self._benchmark_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.get_benchmark(benchmark_name)) or {})
+
+    async def run_benchmark(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        benchmark_name: str,
+        limit: int | None = None,
+        api_name: str = "openai",
+        parallel: int = 4,
+        save_results: bool = True,
+        filter_categories: list[str] | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation benchmark administration",
+        )
+        self._enforce_policy(self._benchmark_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.run_benchmark(
+                    benchmark_name,
+                    limit=limit,
+                    api_name=api_name,
+                    parallel=parallel,
+                    save_results=save_results,
+                    filter_categories=filter_categories,
+                )
+            )
+            or {}
+        )
+
+    async def register_webhook(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        url: str,
+        events: list[str],
+        secret: str | None = None,
+        retry_count: int | None = None,
+        timeout_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation webhook administration",
+        )
+        self._enforce_policy(self._webhook_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.register_webhook(
+                    url=url,
+                    events=events,
+                    secret=secret,
+                    retry_count=retry_count,
+                    timeout_seconds=timeout_seconds,
+                )
+            )
+            or {}
+        )
+
+    async def list_webhooks(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation webhook administration",
+        )
+        self._enforce_policy(self._webhook_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        return list(await self._maybe_await(service.list_webhooks()) or [])
+
+    async def unregister_webhook(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        url: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation webhook administration",
+        )
+        self._enforce_policy(self._webhook_action_id(normalized_mode, "delete"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.unregister_webhook(url)) or {})
+
+    async def test_webhook(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        url: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation webhook administration",
+        )
+        self._enforce_policy(self._webhook_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.test_webhook(url)) or {})

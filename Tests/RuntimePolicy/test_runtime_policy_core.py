@@ -665,18 +665,29 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         evaluations.dataset.list.server
         evaluations.dataset.update.local
         evaluations.dataset.update.server
+        evaluations.benchmarks.detail.server
+        evaluations.benchmarks.launch.server
+        evaluations.benchmarks.list.server
         evaluations.embeddings_abtest.create.server
         evaluations.embeddings_abtest.delete.server
         evaluations.embeddings_abtest.detail.server
         evaluations.embeddings_abtest.export.server
         evaluations.embeddings_abtest.launch.server
         evaluations.embeddings_abtest.observe.server
+        evaluations.webhooks.create.server
+        evaluations.webhooks.delete.server
+        evaluations.webhooks.launch.server
+        evaluations.webhooks.list.server
         evaluations.rag_pipeline.create.server
         evaluations.rag_pipeline.delete.server
         evaluations.rag_pipeline.detail.server
         evaluations.rag_pipeline.launch.server
         evaluations.rag_pipeline.list.server
         evaluations.rag_pipeline.update.server
+        evaluations.synthetic.create.server
+        evaluations.synthetic.launch.server
+        evaluations.synthetic.list.server
+        evaluations.synthetic.update.server
         evaluations.run.create.local
         evaluations.run.create.server
         evaluations.run.delete.local

@@ -11,8 +11,13 @@ from ..tldw_api import (
     CreateEvaluationRequest,
     EvaluationDatasetCreateRequest,
     EvaluationRunCreateRequest,
+    SyntheticEvalGenerationRequest,
+    SyntheticEvalPromotionRequest,
+    SyntheticEvalReviewRequest,
     TLDWAPIClient,
     UpdateEvaluationRequest,
+    WebhookRegistrationRequest,
+    WebhookTestRequest,
 )
 
 
@@ -75,6 +80,18 @@ class ServerEvaluationsService:
     @staticmethod
     def _abtest_action_id(action: str) -> str:
         return f"evaluations.embeddings_abtest.{action}.server"
+
+    @staticmethod
+    def _synthetic_action_id(action: str) -> str:
+        return f"evaluations.synthetic.{action}.server"
+
+    @staticmethod
+    def _benchmark_action_id(action: str) -> str:
+        return f"evaluations.benchmarks.{action}.server"
+
+    @staticmethod
+    def _webhook_action_id(action: str) -> str:
+        return f"evaluations.webhooks.{action}.server"
 
     def _dump_model(self, value: Any) -> Any:
         if hasattr(value, "model_dump") and callable(value.model_dump):
@@ -384,3 +401,152 @@ class ServerEvaluationsService:
     async def delete_embeddings_abtest(self, test_id: str) -> dict[str, Any]:
         self._enforce(self._abtest_action_id("delete"))
         return self._dump_model(await self._require_client().delete_evaluation_embeddings_abtest(test_id))
+
+    async def generate_synthetic_drafts(
+        self,
+        *,
+        recipe_kind: str,
+        corpus_scope: dict[str, Any] | list[str] | None = None,
+        generation_metadata: dict[str, Any] | None = None,
+        context_snapshot_ref: str | None = None,
+        retrieval_baseline_ref: str | None = None,
+        reference_answer: str | None = None,
+        real_examples: list[dict[str, Any]] | None = None,
+        seed_examples: list[dict[str, Any]] | None = None,
+        target_sample_count: int = 0,
+    ) -> dict[str, Any]:
+        self._enforce(self._synthetic_action_id("launch"))
+        request = SyntheticEvalGenerationRequest(
+            recipe_kind=recipe_kind,
+            corpus_scope=corpus_scope,
+            generation_metadata=generation_metadata or {},
+            context_snapshot_ref=context_snapshot_ref,
+            retrieval_baseline_ref=retrieval_baseline_ref,
+            reference_answer=reference_answer,
+            real_examples=real_examples or [],
+            seed_examples=seed_examples or [],
+            target_sample_count=target_sample_count,
+        )
+        return self._dump_model(await self._require_client().generate_synthetic_evaluation_drafts(request))
+
+    async def list_synthetic_queue(
+        self,
+        *,
+        recipe_kind: str | None = None,
+        review_state: str | None = None,
+        source_kind: str | None = None,
+        generation_batch_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        self._enforce(self._synthetic_action_id("list"))
+        return self._dump_model(
+            await self._require_client().list_synthetic_evaluation_queue(
+                recipe_kind=recipe_kind,
+                review_state=review_state,
+                source_kind=source_kind,
+                generation_batch_id=generation_batch_id,
+                limit=limit,
+                offset=offset,
+            )
+        )
+
+    async def review_synthetic_sample(
+        self,
+        sample_id: str,
+        *,
+        action: str,
+        notes: str | None = None,
+        action_payload: dict[str, Any] | None = None,
+        resulting_review_state: str | None = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._synthetic_action_id("update"))
+        request = SyntheticEvalReviewRequest(
+            action=action,
+            notes=notes,
+            action_payload=action_payload or {},
+            resulting_review_state=resulting_review_state,
+        )
+        return self._dump_model(
+            await self._require_client().review_synthetic_evaluation_sample(sample_id, request)
+        )
+
+    async def promote_synthetic_samples(
+        self,
+        *,
+        sample_ids: list[str],
+        dataset_name: str,
+        dataset_description: str | None = None,
+        dataset_metadata: dict[str, Any] | None = None,
+        promotion_reason: str | None = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._synthetic_action_id("create"))
+        request = SyntheticEvalPromotionRequest(
+            sample_ids=sample_ids,
+            dataset_name=dataset_name,
+            dataset_description=dataset_description,
+            dataset_metadata=dataset_metadata or {},
+            promotion_reason=promotion_reason,
+        )
+        return self._dump_model(await self._require_client().promote_synthetic_evaluation_samples(request))
+
+    async def list_benchmarks(self) -> dict[str, Any]:
+        self._enforce(self._benchmark_action_id("list"))
+        return self._dump_model(await self._require_client().list_evaluation_benchmarks())
+
+    async def get_benchmark(self, benchmark_name: str) -> dict[str, Any]:
+        self._enforce(self._benchmark_action_id("detail"))
+        return self._dump_model(await self._require_client().get_evaluation_benchmark(benchmark_name))
+
+    async def run_benchmark(
+        self,
+        benchmark_name: str,
+        *,
+        limit: int | None = None,
+        api_name: str = "openai",
+        parallel: int = 4,
+        save_results: bool = True,
+        filter_categories: list[str] | None = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._benchmark_action_id("launch"))
+        return self._dump_model(
+            await self._require_client().run_evaluation_benchmark(
+                benchmark_name,
+                limit=limit,
+                api_name=api_name,
+                parallel=parallel,
+                save_results=save_results,
+                filter_categories=filter_categories,
+            )
+        )
+
+    async def register_webhook(
+        self,
+        *,
+        url: str,
+        events: list[str],
+        secret: str | None = None,
+        retry_count: int | None = None,
+        timeout_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._webhook_action_id("create"))
+        request = WebhookRegistrationRequest(
+            url=url,
+            events=events,
+            secret=secret,
+            retry_count=retry_count,
+            timeout_seconds=timeout_seconds,
+        )
+        return self._dump_model(await self._require_client().register_evaluation_webhook(request))
+
+    async def list_webhooks(self) -> list[dict[str, Any]]:
+        self._enforce(self._webhook_action_id("list"))
+        return list(self._dump_model(await self._require_client().list_evaluation_webhooks()) or [])
+
+    async def unregister_webhook(self, url: str) -> dict[str, Any]:
+        self._enforce(self._webhook_action_id("delete"))
+        return self._dump_model(await self._require_client().unregister_evaluation_webhook(url))
+
+    async def test_webhook(self, url: str) -> dict[str, Any]:
+        self._enforce(self._webhook_action_id("launch"))
+        return self._dump_model(await self._require_client().test_evaluation_webhook(WebhookTestRequest(url=url)))

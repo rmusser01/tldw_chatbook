@@ -13,8 +13,20 @@ from tldw_chatbook.tldw_api import (
     EvaluationRunListResponse,
     EvaluationRunResponse,
     EvaluationSpec,
+    SyntheticEvalGenerationRequest,
+    SyntheticEvalGenerationResponse,
+    SyntheticEvalPromotionRequest,
+    SyntheticEvalPromotionResponse,
+    SyntheticEvalQueueResponse,
+    SyntheticEvalReviewRequest,
+    SyntheticEvalReviewActionRecord,
     TLDWAPIClient,
     UpdateEvaluationRequest,
+    WebhookRegistrationRequest,
+    WebhookRegistrationResponse,
+    WebhookStatusResponse,
+    WebhookTestRequest,
+    WebhookTestResponse,
 )
 
 
@@ -418,3 +430,202 @@ async def test_evaluation_embeddings_abtest_routes_wire(monkeypatch):
     assert significance["metric"] == "ndcg"
     assert exported["test_id"] == "ab_123"
     assert deleted["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_evaluation_synthetic_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    sample = {
+        "sample_id": "sample_1",
+        "recipe_kind": "rag_answer_quality",
+        "provenance": "synthetic_from_corpus",
+        "review_state": "draft",
+        "sample_payload": {"input": "What is RAG?", "expected": "Retrieval augmented generation."},
+        "sample_metadata": {"topic": "rag"},
+        "source_kind": "corpus",
+        "created_by": "user_1",
+        "created_at": "2026-04-21T00:00:00Z",
+        "updated_at": "2026-04-21T00:01:00Z",
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "generation_batch_id": "batch_1",
+                "samples": [sample],
+                "source_breakdown": {"corpus": 1},
+                "coverage": {"topic": ["rag"]},
+                "missing_coverage": {},
+                "corpus_scope": {"collection": "docs"},
+            },
+            {"data": [sample], "total": 1},
+            {
+                "action_id": "review_1",
+                "sample_id": "sample_1",
+                "action": "approve",
+                "reviewer_id": "user_1",
+                "notes": "Looks usable",
+                "action_payload": {},
+                "resulting_review_state": "approved",
+                "created_at": "2026-04-21T00:02:00Z",
+            },
+            {
+                "dataset_id": "dataset_1",
+                "dataset_snapshot_ref": "snapshot_1",
+                "promotion_ids": ["promotion_1"],
+                "sample_count": 1,
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    generated = await client.generate_synthetic_evaluation_drafts(
+        SyntheticEvalGenerationRequest(
+            recipe_kind="rag_answer_quality",
+            corpus_scope={"collection": "docs"},
+            target_sample_count=1,
+        )
+    )
+    queue = await client.list_synthetic_evaluation_queue(
+        recipe_kind="rag_answer_quality",
+        review_state="draft",
+        source_kind="corpus",
+        generation_batch_id="batch_1",
+        limit=25,
+        offset=5,
+    )
+    reviewed = await client.review_synthetic_evaluation_sample(
+        "sample_1",
+        SyntheticEvalReviewRequest(
+            action="approve",
+            notes="Looks usable",
+            resulting_review_state="approved",
+        ),
+    )
+    promoted = await client.promote_synthetic_evaluation_samples(
+        SyntheticEvalPromotionRequest(
+            sample_ids=["sample_1"],
+            dataset_name="approved_synthetic",
+            dataset_description="Approved synthetic samples",
+            promotion_reason="seed dataset",
+        )
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/evaluations/synthetic/drafts/generate")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "recipe_kind": "rag_answer_quality",
+        "corpus_scope": {"collection": "docs"},
+        "generation_metadata": {},
+        "real_examples": [],
+        "seed_examples": [],
+        "target_sample_count": 1,
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/synthetic/queue")
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "recipe_kind": "rag_answer_quality",
+        "review_state": "draft",
+        "source_kind": "corpus",
+        "generation_batch_id": "batch_1",
+        "limit": 25,
+        "offset": 5,
+    }
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/evaluations/synthetic/queue/sample_1/review")
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/evaluations/synthetic/promotions")
+
+    assert isinstance(generated, SyntheticEvalGenerationResponse)
+    assert isinstance(queue, SyntheticEvalQueueResponse)
+    assert isinstance(reviewed, SyntheticEvalReviewActionRecord)
+    assert isinstance(promoted, SyntheticEvalPromotionResponse)
+    assert generated.samples[0].sample_id == "sample_1"
+    assert queue.total == 1
+    assert reviewed.resulting_review_state == "approved"
+    assert promoted.dataset_snapshot_ref == "snapshot_1"
+
+
+@pytest.mark.asyncio
+async def test_evaluation_benchmark_and_webhook_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {"object": "list", "data": [{"name": "mmlu", "evaluation_type": "qa"}], "total": 1},
+            {"name": "mmlu", "evaluation_type": "qa", "description": "Benchmark"},
+            {
+                "benchmark": "mmlu",
+                "total_samples": 2,
+                "results_summary": {"average_score": 0.75},
+                "evaluation_id": "eval_1",
+            },
+            {
+                "webhook_id": 10,
+                "url": "https://example.com/evals",
+                "events": ["evaluation.completed"],
+                "secret": "x" * 32,
+                "created_at": "2026-04-21T00:00:00Z",
+                "status": "active",
+                "retry_count": 2,
+                "timeout_seconds": 10,
+            },
+            [
+                {
+                    "webhook_id": 10,
+                    "url": "https://example.com/evals",
+                    "events": ["evaluation.completed"],
+                    "status": "active",
+                    "retry_count": 2,
+                    "timeout_seconds": 10,
+                    "created_at": "2026-04-21T00:00:00Z",
+                    "failure_count": 0,
+                }
+            ],
+            {"status": "unregistered", "url": "https://example.com/evals"},
+            {"success": True, "status_code": 204, "response_time_ms": 12.5},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    benchmarks = await client.list_evaluation_benchmarks()
+    benchmark = await client.get_evaluation_benchmark("mmlu")
+    run = await client.run_evaluation_benchmark(
+        "mmlu",
+        limit=2,
+        api_name="openai",
+        parallel=2,
+        save_results=True,
+        filter_categories=["math"],
+    )
+    registered = await client.register_evaluation_webhook(
+        WebhookRegistrationRequest(
+            url="https://example.com/evals",
+            events=["evaluation.completed"],
+            secret="x" * 32,
+            retry_count=2,
+            timeout_seconds=10,
+        )
+    )
+    webhooks = await client.list_evaluation_webhooks()
+    unregistered = await client.unregister_evaluation_webhook("https://example.com/evals")
+    tested = await client.test_evaluation_webhook(WebhookTestRequest(url="https://example.com/evals"))
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/evaluations/benchmarks")
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/benchmarks/mmlu")
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/evaluations/benchmarks/mmlu/run")
+    assert mocked.await_args_list[2].kwargs["json_data"] == {
+        "limit": 2,
+        "api_name": "openai",
+        "parallel": 2,
+        "save_results": True,
+        "filter_categories": ["math"],
+    }
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/evaluations/webhooks")
+    assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/evaluations/webhooks")
+    assert mocked.await_args_list[5].args[:2] == ("DELETE", "/api/v1/evaluations/webhooks")
+    assert mocked.await_args_list[5].kwargs["params"] == {"url": "https://example.com/evals"}
+    assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/evaluations/webhooks/test")
+
+    assert benchmarks["total"] == 1
+    assert benchmark["name"] == "mmlu"
+    assert run["evaluation_id"] == "eval_1"
+    assert isinstance(registered, WebhookRegistrationResponse)
+    assert isinstance(webhooks[0], WebhookStatusResponse)
+    assert unregistered["status"] == "unregistered"
+    assert isinstance(tested, WebhookTestResponse)
+    assert tested.success is True

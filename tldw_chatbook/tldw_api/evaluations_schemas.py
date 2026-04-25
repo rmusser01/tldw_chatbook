@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -156,3 +157,135 @@ class EvaluationDatasetListResponse(BaseModel):
     first_id: Optional[str] = None
     last_id: Optional[str] = None
     total: Optional[int] = None
+
+
+class SyntheticEvalDraftSampleRecord(BaseModel):
+    sample_id: str
+    recipe_kind: str
+    provenance: str
+    review_state: str
+    sample_payload: dict[str, Any] = Field(default_factory=dict)
+    sample_metadata: dict[str, Any] = Field(default_factory=dict)
+    source_kind: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class SyntheticEvalGenerationRequest(BaseModel):
+    recipe_kind: str
+    corpus_scope: dict[str, Any] | list[str] | None = None
+    generation_metadata: dict[str, Any] = Field(default_factory=dict)
+    context_snapshot_ref: Optional[str] = None
+    retrieval_baseline_ref: Optional[str] = None
+    reference_answer: Optional[str] = None
+    real_examples: list[dict[str, Any]] = Field(default_factory=list)
+    seed_examples: list[dict[str, Any]] = Field(default_factory=list)
+    target_sample_count: int = Field(default=0, ge=0, le=500)
+
+
+class SyntheticEvalGenerationResponse(BaseModel):
+    generation_batch_id: Optional[str] = None
+    samples: list[SyntheticEvalDraftSampleRecord] = Field(default_factory=list)
+    source_breakdown: dict[str, int] = Field(default_factory=dict)
+    coverage: dict[str, list[str]] = Field(default_factory=dict)
+    missing_coverage: dict[str, list[str]] = Field(default_factory=dict)
+    corpus_scope: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class SyntheticEvalQueueResponse(BaseModel):
+    data: list[SyntheticEvalDraftSampleRecord] = Field(default_factory=list)
+    total: int = 0
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class SyntheticEvalReviewRequest(BaseModel):
+    action: str
+    reviewer_id: Optional[str] = None
+    notes: Optional[str] = None
+    action_payload: dict[str, Any] = Field(default_factory=dict)
+    resulting_review_state: Optional[str] = None
+
+
+class SyntheticEvalReviewActionRecord(BaseModel):
+    action_id: str
+    sample_id: str
+    action: str
+    reviewer_id: Optional[str] = None
+    notes: Optional[str] = None
+    action_payload: dict[str, Any] = Field(default_factory=dict)
+    resulting_review_state: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class SyntheticEvalPromotionRequest(BaseModel):
+    sample_ids: list[str] = Field(..., min_length=1)
+    dataset_name: str
+    dataset_description: Optional[str] = None
+    dataset_metadata: dict[str, Any] = Field(default_factory=dict)
+    promoted_by: Optional[str] = None
+    promotion_reason: Optional[str] = None
+
+
+class SyntheticEvalPromotionResponse(BaseModel):
+    dataset_id: str
+    dataset_snapshot_ref: str
+    promotion_ids: list[str] = Field(default_factory=list)
+    sample_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class WebhookRegistrationRequest(BaseModel):
+    url: str
+    events: list[str] = Field(..., min_length=1)
+    secret: Optional[str] = None
+    retry_count: Optional[int] = Field(default=3, ge=0, le=10)
+    timeout_seconds: Optional[int] = Field(default=30, ge=1, le=300)
+
+
+class WebhookRegistrationResponse(BaseModel):
+    webhook_id: int
+    url: str
+    events: list[str]
+    secret: str
+    created_at: datetime
+    status: str = "active"
+    retry_count: int = 3
+    timeout_seconds: int = 30
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class WebhookStatusResponse(BaseModel):
+    webhook_id: int
+    url: str
+    events: list[str]
+    status: str
+    retry_count: Optional[int] = None
+    timeout_seconds: Optional[int] = None
+    created_at: datetime
+    last_triggered: Optional[datetime] = None
+    failure_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class WebhookTestRequest(BaseModel):
+    url: str
+
+
+class WebhookTestResponse(BaseModel):
+    success: bool
+    status_code: Optional[int] = None
+    response_time_ms: Optional[float] = None
+    error: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")

@@ -262,6 +262,50 @@ class FakeServerEvaluationService:
         self.calls.append(("delete_embeddings_abtest", test_id))
         return {"status": "deleted", "test_id": test_id}
 
+    async def generate_synthetic_drafts(self, **kwargs):
+        self.calls.append(("generate_synthetic_drafts", kwargs))
+        return {"generation_batch_id": "batch_1", "samples": [], "source_breakdown": {}, "coverage": {}, "missing_coverage": {}, "corpus_scope": {}}
+
+    async def list_synthetic_queue(self, **kwargs):
+        self.calls.append(("list_synthetic_queue", kwargs))
+        return {"data": [{"sample_id": "sample_1"}], "total": 1}
+
+    async def review_synthetic_sample(self, sample_id, **kwargs):
+        self.calls.append(("review_synthetic_sample", sample_id, kwargs))
+        return {"action_id": "review_1", "sample_id": sample_id, "action": "approve"}
+
+    async def promote_synthetic_samples(self, **kwargs):
+        self.calls.append(("promote_synthetic_samples", kwargs))
+        return {"dataset_id": "dataset_1", "dataset_snapshot_ref": "snapshot_1", "promotion_ids": [], "sample_count": 1}
+
+    async def list_benchmarks(self):
+        self.calls.append(("list_benchmarks",))
+        return {"object": "list", "data": [{"name": "mmlu"}], "total": 1}
+
+    async def get_benchmark(self, benchmark_name):
+        self.calls.append(("get_benchmark", benchmark_name))
+        return {"name": benchmark_name, "evaluation_type": "qa"}
+
+    async def run_benchmark(self, benchmark_name, **kwargs):
+        self.calls.append(("run_benchmark", benchmark_name, kwargs))
+        return {"benchmark": benchmark_name, "total_samples": 2, "results_summary": {"average_score": 0.75}, "evaluation_id": "eval_1"}
+
+    async def register_webhook(self, **kwargs):
+        self.calls.append(("register_webhook", kwargs))
+        return {"webhook_id": 10, "url": kwargs["url"], "events": kwargs["events"], "secret": kwargs.get("secret") or "x" * 32, "created_at": "2026-04-21T00:00:00Z"}
+
+    async def list_webhooks(self):
+        self.calls.append(("list_webhooks",))
+        return [{"webhook_id": 10, "url": "https://example.com/evals", "events": ["evaluation.completed"], "status": "active", "created_at": "2026-04-21T00:00:00Z"}]
+
+    async def unregister_webhook(self, url):
+        self.calls.append(("unregister_webhook", url))
+        return {"status": "unregistered", "url": url}
+
+    async def test_webhook(self, url):
+        self.calls.append(("test_webhook", url))
+        return {"success": True}
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
@@ -599,6 +643,98 @@ async def test_scope_service_routes_server_embeddings_abtest_admin_with_policy()
     ]
 
 
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_synthetic_benchmark_and_webhook_controls_with_policy():
+    server = FakeServerEvaluationService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    generated = await scope.generate_synthetic_drafts(
+        mode="server",
+        recipe_kind="rag_answer_quality",
+        target_sample_count=2,
+        corpus_scope={"collection": "docs"},
+    )
+    queue = await scope.list_synthetic_queue(mode="server", recipe_kind="rag_answer_quality", limit=25, offset=5)
+    reviewed = await scope.review_synthetic_sample(mode="server", sample_id="sample_1", action="approve")
+    promoted = await scope.promote_synthetic_samples(
+        mode="server",
+        sample_ids=["sample_1"],
+        dataset_name="approved_synthetic",
+    )
+    benchmarks = await scope.list_benchmarks(mode="server")
+    benchmark = await scope.get_benchmark(mode="server", benchmark_name="mmlu")
+    run = await scope.run_benchmark(mode="server", benchmark_name="mmlu", limit=2, api_name="openai")
+    registered = await scope.register_webhook(
+        mode="server",
+        url="https://example.com/evals",
+        events=["evaluation.completed"],
+        secret="x" * 32,
+    )
+    webhooks = await scope.list_webhooks(mode="server")
+    unregistered = await scope.unregister_webhook(mode="server", url="https://example.com/evals")
+    tested = await scope.test_webhook(mode="server", url="https://example.com/evals")
+
+    assert generated["generation_batch_id"] == "batch_1"
+    assert queue["total"] == 1
+    assert reviewed["sample_id"] == "sample_1"
+    assert promoted["dataset_id"] == "dataset_1"
+    assert benchmarks["total"] == 1
+    assert benchmark["name"] == "mmlu"
+    assert run["evaluation_id"] == "eval_1"
+    assert registered["webhook_id"] == 10
+    assert webhooks[0]["webhook_id"] == 10
+    assert unregistered["status"] == "unregistered"
+    assert tested["success"] is True
+    assert server.calls[-11:] == [
+        ("generate_synthetic_drafts", {"recipe_kind": "rag_answer_quality", "corpus_scope": {"collection": "docs"}, "generation_metadata": None, "context_snapshot_ref": None, "retrieval_baseline_ref": None, "reference_answer": None, "real_examples": None, "seed_examples": None, "target_sample_count": 2}),
+        ("list_synthetic_queue", {"recipe_kind": "rag_answer_quality", "review_state": None, "source_kind": None, "generation_batch_id": None, "limit": 25, "offset": 5}),
+        ("review_synthetic_sample", "sample_1", {"action": "approve", "notes": None, "action_payload": None, "resulting_review_state": None}),
+        ("promote_synthetic_samples", {"sample_ids": ["sample_1"], "dataset_name": "approved_synthetic", "dataset_description": None, "dataset_metadata": None, "promotion_reason": None}),
+        ("list_benchmarks",),
+        ("get_benchmark", "mmlu"),
+        ("run_benchmark", "mmlu", {"limit": 2, "api_name": "openai", "parallel": 4, "save_results": True, "filter_categories": None}),
+        ("register_webhook", {"url": "https://example.com/evals", "events": ["evaluation.completed"], "secret": "x" * 32, "retry_count": None, "timeout_seconds": None}),
+        ("list_webhooks",),
+        ("unregister_webhook", "https://example.com/evals"),
+        ("test_webhook", "https://example.com/evals"),
+    ]
+    assert policy_enforcer.calls[-11:] == [
+        "evaluations.synthetic.launch.server",
+        "evaluations.synthetic.list.server",
+        "evaluations.synthetic.update.server",
+        "evaluations.synthetic.create.server",
+        "evaluations.benchmarks.list.server",
+        "evaluations.benchmarks.detail.server",
+        "evaluations.benchmarks.launch.server",
+        "evaluations.webhooks.create.server",
+        "evaluations.webhooks.list.server",
+        "evaluations.webhooks.delete.server",
+        "evaluations.webhooks.launch.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_server_only_evaluation_helpers_in_local_mode():
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=FakeServerEvaluationService(),
+    )
+
+    with pytest.raises(ValueError, match="Synthetic evaluation draft administration"):
+        await scope.list_synthetic_queue(mode="local")
+
+    with pytest.raises(ValueError, match="Evaluation benchmark administration"):
+        await scope.list_benchmarks(mode="local")
+
+    with pytest.raises(ValueError, match="Evaluation webhook administration"):
+        await scope.list_webhooks(mode="local")
+
+
 def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
     scope = EvaluationScopeService(
         local_service=FakeLocalEvaluationService(),
@@ -616,6 +752,14 @@ def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
             "reason_code": "local_contract_missing",
             "user_message": "Local evaluation runs can persist requested webhook URLs, but do not dispatch webhook callbacks yet; observe the local run record and artifacts instead.",
             "affected_action_ids": ["evaluations.run.observe.local", "evaluations.run.update.local"],
+        },
+        {
+            "operation_id": "evaluations.server_auxiliary_controls.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "remote_only_surface",
+            "user_message": "Server synthetic evaluation drafts, benchmark runs, and webhook administration are unavailable in local/offline mode.",
+            "affected_action_ids": [],
         },
     ]
     assert server_report == [

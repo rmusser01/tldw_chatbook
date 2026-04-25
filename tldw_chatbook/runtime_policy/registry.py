@@ -764,6 +764,21 @@ AUDITED_CAPABILITY_SEEDS = (
                 actions=(CREATE, LAUNCH, DETAIL, OBSERVE, EXPORT, DELETE),
                 sources=(SERVER_SOURCE,),
             ),
+            _resource(
+                "evaluations.synthetic",
+                actions=(LIST, CREATE, UPDATE, LAUNCH),
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
+                "evaluations.benchmarks",
+                actions=(LIST, DETAIL, LAUNCH),
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
+                "evaluations.webhooks",
+                actions=(LIST, CREATE, DELETE, LAUNCH),
+                sources=(SERVER_SOURCE,),
+            ),
         ),
     ),
     _capability(
