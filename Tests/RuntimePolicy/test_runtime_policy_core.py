@@ -25,6 +25,7 @@ FULL_CRUD_AND_LAUNCH_AND_OBSERVE = _action_kinds(
 )
 DISCOVER_TRIGGER_OBSERVE = _action_kinds("browse", "launch", "observe")
 DISCOVER_CONFIGURE_TRIGGER_OBSERVE = _action_kinds("browse", "update", "launch", "observe")
+CONNECTOR_ACTIONS = _action_kinds("browse", "create", "update", "delete", "launch", "observe")
 
 
 EXPECTED_AUDITED_CAPABILITIES = {
@@ -140,6 +141,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
         "expected_domain_ids": {"notifications_server"},
         "expected_action_kinds_by_source": {
             "server": DISCOVER_CONFIGURE_TRIGGER_OBSERVE,
+        },
+    },
+    "external_connectors": {
+        "expected_domain_ids": {"connectors"},
+        "expected_action_kinds_by_source": {
+            "server": CONNECTOR_ACTIONS,
         },
     },
     "workflows": {
@@ -354,6 +361,18 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         collections.feeds.detail.server
         collections.feeds.list.server
         collections.feeds.update.server
+    """),
+    "external_connectors": _action_ids("""
+        connectors.accounts.delete.server
+        connectors.accounts.list.server
+        connectors.jobs.observe.server
+        connectors.providers.launch.server
+        connectors.providers.list.server
+        connectors.sources.create.server
+        connectors.sources.launch.server
+        connectors.sources.list.server
+        connectors.sources.observe.server
+        connectors.sources.update.server
     """),
     "cross_cutting_runtime_policy": _action_ids("""
         runtime.policy.configure.local

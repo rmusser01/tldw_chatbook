@@ -43,6 +43,7 @@ from tldw_chatbook.Research_Interop import (
 )
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
+from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
 from tldw_chatbook.Writing_Interop import LocalWritingService, ServerWritingService, WritingScopeService
@@ -119,6 +120,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.research_search_scope_service, ResearchSearchScopeService)
     assert isinstance(app.server_collections_feeds_service, ServerCollectionsFeedsService)
     assert isinstance(app.collections_feeds_scope_service, CollectionsFeedsScopeService)
+    assert isinstance(app.server_connectors_service, ServerConnectorsService)
+    assert isinstance(app.connectors_scope_service, ConnectorsScopeService)
     assert isinstance(app.server_sharing_service, ServerSharingService)
     assert isinstance(app.sharing_scope_service, SharingScopeService)
     assert isinstance(app.server_web_clipper_service, ServerWebClipperService)

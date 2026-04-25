@@ -190,6 +190,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "research_search_provider_surfaces",
         "client_notifications",
         "server_reminders_notification_feeds",
+        "external_connectors",
         "workflows",
         "scheduler_workflows",
         "chat_workflows",
@@ -449,6 +450,18 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource("notifications.reminders", actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS),
             _resource("notifications.feed", actions=(LIST, UPDATE, OBSERVE)),
+        ),
+    ),
+    _capability(
+        "external_connectors",
+        "External Connectors",
+        "connectors",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("connectors.providers", actions=(LIST, LAUNCH)),
+            _resource("connectors.accounts", actions=(LIST, DELETE)),
+            _resource("connectors.sources", actions=(LIST, CREATE, UPDATE, LAUNCH, OBSERVE)),
+            _resource("connectors.jobs", actions=(OBSERVE,)),
         ),
     ),
     _capability(

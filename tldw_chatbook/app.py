@@ -208,6 +208,7 @@ from .UI.Tab_Dropdown import TabDropdown
 from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
 from .UI.SearchWindow import SearchWindow
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
+from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Media import (
     LocalMediaReadingService,
     MediaReadingScopeService,
@@ -1718,6 +1719,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.collections_feeds_scope_service = CollectionsFeedsScopeService(
             server_service=self.server_collections_feeds_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_connectors_service = ServerConnectorsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_connectors_service = ServerConnectorsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.connectors_scope_service = ConnectorsScopeService(
+            server_service=self.server_connectors_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
