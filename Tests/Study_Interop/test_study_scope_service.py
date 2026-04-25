@@ -845,3 +845,42 @@ async def test_scope_service_rejects_study_suggestions_in_local_mode_before_disp
 
     assert local.calls == []
     assert server.calls == []
+
+
+def test_scope_service_reports_study_pack_and_suggestion_unsupported_capabilities():
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=FakeServerStudyService(),
+    )
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "study.packs.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "remote_only_surface",
+            "user_message": "Study-pack generation jobs are server-only; use local decks and flashcards offline.",
+            "affected_action_ids": [],
+        },
+        {
+            "operation_id": "study.suggestions.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "remote_only_surface",
+            "user_message": "Study suggestions are server-only; use local study review flows offline.",
+            "affected_action_ids": [],
+        },
+    ]
+    assert server_report == [
+        {
+            "operation_id": "study.packs.jobs.list.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server study-pack contract exposes launch, job status, pack detail, and regenerate, but not job listing/discovery.",
+            "affected_action_ids": ["study.packs.jobs.list.server"],
+        }
+    ]

@@ -19,6 +19,37 @@ class StudyBackend(str, Enum):
     SERVER = "server"
 
 
+_LOCAL_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "study.packs.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "remote_only_surface",
+        "user_message": "Study-pack generation jobs are server-only; use local decks and flashcards offline.",
+        "affected_action_ids": [],
+    },
+    {
+        "operation_id": "study.suggestions.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "remote_only_surface",
+        "user_message": "Study suggestions are server-only; use local study review flows offline.",
+        "affected_action_ids": [],
+    },
+]
+
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "study.packs.jobs.list.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server study-pack contract exposes launch, job status, pack detail, and regenerate, but not job listing/discovery.",
+        "affected_action_ids": ["study.packs.jobs.list.server"],
+    }
+]
+
+
 class StudyScopeService:
     """Route study flashcard actions to local or server backends and normalize outputs."""
 
@@ -167,6 +198,16 @@ class StudyScopeService:
                 f"{record.get('snapshot_id')}:{record.get('selection_fingerprint')}",
             )
         return record
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == StudyBackend.LOCAL:
+            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     @classmethod
     def _normalize_scope(cls, scope_type: str | None, workspace_id: str | None) -> tuple[str, str | None]:

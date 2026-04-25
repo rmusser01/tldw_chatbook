@@ -109,7 +109,7 @@ Domains in this tranche:
 Execution intent for this tranche:
 
 - Keep remote-only workflows and remote MCP governance behind the core standalone-first roadmap rather than letting them pull priority forward.
-- Treat `Sharing`, `Web Clipper`, `Study Packs`, `Study Suggestions`, `Collections: Outputs / Templates / Artifacts`, and `Research Search / Provider Surfaces` as backend-seam-present rows whose next work is adoption, offline-unavailable presentation, and edge cleanup rather than first-pass client construction. For Outputs and Research Search, keep contract gaps explicit through scope-service unsupported reports until the server exposes first-class asynchronous render-job and provider configure/observe contracts.
+- Treat `Sharing`, `Web Clipper`, `Study Packs`, `Study Suggestions`, `Collections: Outputs / Templates / Artifacts`, and `Research Search / Provider Surfaces` as backend-seam-present rows whose next work is adoption, offline-unavailable presentation, and edge cleanup rather than first-pass client construction. For Outputs, Research Search, and Study Packs, keep contract gaps explicit through scope-service unsupported reports until the server exposes first-class asynchronous render-job, provider configure/observe, and study-pack job-list contracts.
 - Reuse the source-labeling, offline fallback, and discover/trigger/observe patterns proven in earlier tranches instead of creating special-case remote UI rules.
 
 ## Follow-On Vertical Plans
