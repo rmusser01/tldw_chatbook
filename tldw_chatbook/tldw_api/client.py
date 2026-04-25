@@ -127,6 +127,21 @@ from .llm_provider_schemas import (
     LLMProviderDetail,
     LLMProviderListResponse,
 )
+from .server_runtime_schemas import (
+    FlashcardsImportLimitsResponse,
+    JobsConfigResponse,
+    ProviderValidateRequest,
+    ProviderValidateResponse,
+    ProvidersStatusResponse,
+    ServerDocsInfoResponse,
+    ServerHealthResponse,
+    ServerLivenessResponse,
+    ServerMetricsResponse,
+    ServerReadinessResponse,
+    ServerSecurityHealthResponse,
+    TokenizerConfigResponse,
+    TokenizerUpdateRequest,
+)
 from .data_tables_schemas import (
     DataTableContentUpdateRequest,
     DataTableDeleteResponse,
@@ -1020,6 +1035,62 @@ class TLDWAPIClient:
     async def list_vlm_backends(self) -> VLMBackendsResponse:
         response = await self._request("GET", "/api/v1/vlm/backends")
         return VLMBackendsResponse.model_validate(response)
+
+    async def get_server_health(self) -> ServerHealthResponse:
+        response = await self._request("GET", "/api/v1/health")
+        return ServerHealthResponse.model_validate(response)
+
+    async def get_server_liveness(self) -> ServerLivenessResponse:
+        response = await self._request("GET", "/api/v1/health/live")
+        return ServerLivenessResponse.model_validate(response)
+
+    async def get_server_readiness(self) -> ServerReadinessResponse:
+        response = await self._request("GET", "/api/v1/health/ready")
+        return ServerReadinessResponse.model_validate(response)
+
+    async def get_server_metrics(self) -> ServerMetricsResponse:
+        response = await self._request("GET", "/api/v1/health/metrics")
+        return ServerMetricsResponse.model_validate(response)
+
+    async def get_server_security_health(self) -> ServerSecurityHealthResponse:
+        response = await self._request("GET", "/api/v1/health/security")
+        return ServerSecurityHealthResponse.model_validate(response)
+
+    async def get_server_docs_info(self) -> ServerDocsInfoResponse:
+        response = await self._request("GET", "/api/v1/config/docs-info")
+        return ServerDocsInfoResponse.model_validate(response)
+
+    async def get_flashcards_import_limits(self) -> FlashcardsImportLimitsResponse:
+        response = await self._request("GET", "/api/v1/config/flashcards-import-limits")
+        return FlashcardsImportLimitsResponse.model_validate(response)
+
+    async def get_tokenizer_config(self) -> TokenizerConfigResponse:
+        response = await self._request("GET", "/api/v1/config/tokenizer")
+        return TokenizerConfigResponse.model_validate(response)
+
+    async def update_tokenizer_config(self, request_data: TokenizerUpdateRequest) -> TokenizerConfigResponse:
+        response = await self._request(
+            "PUT",
+            "/api/v1/config/tokenizer",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return TokenizerConfigResponse.model_validate(response)
+
+    async def get_jobs_config(self) -> JobsConfigResponse:
+        response = await self._request("GET", "/api/v1/config/jobs")
+        return JobsConfigResponse.model_validate(response)
+
+    async def list_config_providers(self) -> ProvidersStatusResponse:
+        response = await self._request("GET", "/api/v1/config/providers")
+        return ProvidersStatusResponse.model_validate(response)
+
+    async def validate_provider_key(self, request_data: ProviderValidateRequest) -> ProviderValidateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/config/validate-provider",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ProviderValidateResponse.model_validate(response)
 
     async def get_llm_health(self) -> LLMHealthResponse:
         response = await self._request("GET", "/api/v1/llm/health")

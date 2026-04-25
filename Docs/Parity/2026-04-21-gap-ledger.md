@@ -133,6 +133,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 2
 - Notes: Priority 57. This row is cross-cutting because chat, writing, audio, slides, research, and generation UX need an honest active-server model catalog without mutating local provider settings.
 
+### Server Runtime / Config Discovery: Health, readiness, safe config, tokenizer/jobs config, and provider key status
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Discover / Configure / Observe
+- Current state: Chatbook now has typed direct API-client wrappers for server health, liveness, readiness, metrics, security posture, non-sensitive docs-info capability flags, flashcards import limits, tokenizer config get/update, jobs config, provider key status, and explicit provider-key validation. This stays scoped to active-server discovery and safe client-facing config.
+- Gap: Dedicated UX adoption, full auth/session/profile management, server switching cache invalidation, and admin config mutation remain pending. Chatbook local runtime settings remain separate and are not overwritten by server discovery.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/health.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/config_info.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/server_runtime_schemas.py`; Verification: `Tests/tldw_api/test_server_runtime_client.py`.
+- Recommended tranche: Tranche 2
+- Notes: Priority 54. This row supports server switching and connected-mode capability gating without requiring the UI/UX layer to infer server capabilities from unrelated domain calls.
+
 ### Prompts / Chatbooks: Prompt library, prompt workflows, and chatbook import/export jobs
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
