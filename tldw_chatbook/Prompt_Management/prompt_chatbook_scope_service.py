@@ -13,6 +13,65 @@ from .prompt_chatbook_normalizers import (
 )
 
 
+_LOCAL_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "prompts.versions.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local prompt version history is not exposed by the current local prompt service.",
+        "affected_action_ids": [],
+    },
+    {
+        "operation_id": "chatbooks.records.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local chatbook archive import/export is supported, but persistent chatbook record CRUD is not exposed.",
+        "affected_action_ids": [
+            "chatbooks.list.local",
+            "chatbooks.detail.local",
+            "chatbooks.create.local",
+            "chatbooks.update.local",
+            "chatbooks.delete.local",
+        ],
+    },
+]
+
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "chatbooks.records.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "Server chatbook archive import/export is supported, but persistent chatbook record CRUD is not exposed.",
+        "affected_action_ids": [
+            "chatbooks.list.server",
+            "chatbooks.detail.server",
+            "chatbooks.create.server",
+            "chatbooks.update.server",
+            "chatbooks.delete.server",
+        ],
+    },
+    {
+        "operation_id": "chatbooks.import_content_types.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_partial",
+        "user_message": "Server chatbook import currently accepts conversations, notes, and characters only.",
+        "affected_action_ids": [
+            "chatbooks.import.server",
+        ],
+        "unsupported_content_types": [
+            "embedding",
+            "evaluation",
+            "media",
+            "prompt",
+        ],
+    },
+]
+
+
 class PromptChatbookBackend(str, Enum):
     LOCAL = "local"
     SERVER = "server"
@@ -78,6 +137,16 @@ class PromptChatbookScopeService:
     def _require_server_prompt_versions(self, mode: PromptChatbookBackend) -> None:
         if mode != PromptChatbookBackend.SERVER:
             raise ValueError("Prompt version operations are currently server-backed.")
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == PromptChatbookBackend.LOCAL:
+            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def _call_service(self, service: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
         if not hasattr(service, method_name):

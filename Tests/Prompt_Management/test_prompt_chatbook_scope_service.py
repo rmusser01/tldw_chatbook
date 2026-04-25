@@ -230,3 +230,37 @@ async def test_prompt_chatbook_scope_service_exposes_unsupported_chatbook_crud_a
         await scope.list_chatbooks(mode="server")
 
     assert policy.calls == ["chatbooks.list.server"]
+
+
+def test_prompt_chatbook_scope_service_reports_known_unsupported_capabilities():
+    scope = PromptChatbookScopeService(
+        local_prompt_service=FakePromptBackend("local"),
+        server_prompt_service=FakePromptBackend("server"),
+        local_chatbook_service=FakeChatbookBackend("local"),
+        server_chatbook_service=FakeChatbookBackend("server"),
+    )
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert [item["operation_id"] for item in local_report] == [
+        "prompts.versions.local",
+        "chatbooks.records.local",
+    ]
+    assert [item["operation_id"] for item in server_report] == [
+        "chatbooks.records.server",
+        "chatbooks.import_content_types.server",
+    ]
+    assert local_report[1]["affected_action_ids"] == [
+        "chatbooks.list.local",
+        "chatbooks.detail.local",
+        "chatbooks.create.local",
+        "chatbooks.update.local",
+        "chatbooks.delete.local",
+    ]
+    assert server_report[1]["unsupported_content_types"] == [
+        "embedding",
+        "evaluation",
+        "media",
+        "prompt",
+    ]
