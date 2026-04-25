@@ -55,6 +55,7 @@ from .media_reading_schemas import (
     DocumentInsightsResponse,
     DocumentOutlineResponse,
     DocumentReferencesResponse,
+    FileArtifactsPurgeRequest,
     FileCreateRequest,
     IngestionSourceCreateRequest,
     IngestionSourceItemListResponse,
@@ -877,11 +878,29 @@ class TLDWAPIClient:
     async def get_file_artifact(self, file_id: int) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/files/{file_id}")
 
+    async def export_file_artifact(self, file_id: int, *, format: str) -> ReadingExportResponse:
+        return await self._binary_request(
+            "GET",
+            f"/api/v1/files/{file_id}/export",
+            params={"format": format},
+        )
+
     async def delete_file_artifact(self, file_id: int, hard: bool = False, delete_file: bool = False) -> Dict[str, Any]:
         return await self._request(
             "DELETE",
             f"/api/v1/files/{file_id}",
             params={"hard": str(hard).lower(), "delete_file": str(delete_file).lower()},
+        )
+
+    async def purge_file_artifacts(
+        self,
+        request_data: FileArtifactsPurgeRequest | None = None,
+    ) -> Dict[str, Any]:
+        payload = request_data or FileArtifactsPurgeRequest()
+        return await self._request(
+            "POST",
+            "/api/v1/files/purge",
+            json_data=payload.model_dump(exclude_none=True, mode="json"),
         )
 
     async def submit_media_ingest_jobs(

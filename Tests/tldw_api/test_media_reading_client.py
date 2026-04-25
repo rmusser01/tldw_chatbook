@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from tldw_chatbook.tldw_api import (
+    FileArtifactsPurgeRequest,
     FileCreateOptions,
     FileCreateRequest,
     IngestionSourceCreateRequest,
@@ -65,6 +66,41 @@ async def test_file_artifact_routes_wire_and_delete_serializes_flags(monkeypatch
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/files/19")
     assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/files/19")
     assert mocked.await_args_list[3].kwargs["params"] == {"hard": "true", "delete_file": "true"}
+
+
+@pytest.mark.asyncio
+async def test_file_artifact_export_and_purge_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    binary = AsyncMock(
+        return_value=ReadingExportResponse(
+            content=b"# export\n",
+            content_type="text/markdown",
+            content_disposition="attachment; filename=artifact.md",
+            filename="artifact.md",
+        )
+    )
+    request = AsyncMock(return_value={"removed": 2, "files_deleted": 1})
+    monkeypatch.setattr(client, "_binary_request", binary)
+    monkeypatch.setattr(client, "_request", request)
+
+    exported = await client.export_file_artifact(19, format="md")
+    purged = await client.purge_file_artifacts(
+        FileArtifactsPurgeRequest(delete_files=True, soft_deleted_grace_days=7, include_retention=False)
+    )
+
+    binary.assert_awaited_once()
+    assert binary.await_args.args[:2] == ("GET", "/api/v1/files/19/export")
+    assert binary.await_args.kwargs["params"] == {"format": "md"}
+    request.assert_awaited_once()
+    assert request.await_args.args[:2] == ("POST", "/api/v1/files/purge")
+    assert request.await_args.kwargs["json_data"] == {
+        "delete_files": True,
+        "soft_deleted_grace_days": 7,
+        "include_retention": False,
+    }
+    assert exported.content == b"# export\n"
+    assert exported.filename == "artifact.md"
+    assert purged["removed"] == 2
 
 
 @pytest.mark.asyncio
