@@ -163,6 +163,146 @@ class LocalMediaReadingService:
             "updated_at": current_time,
         }
 
+    def create_saved_search(
+        self,
+        *,
+        name: str,
+        query: Mapping[str, Any] | None = None,
+        sort: str | None = None,
+    ) -> Any:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_name = self._normalize_saved_search_name(name)
+        now = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO local_reading_saved_searches (
+                    name, query_json, sort, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (normalized_name, self._json_dumps(query or {}), sort, now, now),
+            )
+            search_id = cursor.lastrowid
+        return self._get_saved_search(search_id)
+
+    def list_saved_searches(self, *, limit: int = 50, offset: int = 0) -> Any:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_limit = max(int(limit), 0)
+        normalized_offset = max(int(offset), 0)
+        total = db.get_connection().execute("SELECT COUNT(*) FROM local_reading_saved_searches").fetchone()[0]
+        rows = db.get_connection().execute(
+            """
+            SELECT * FROM local_reading_saved_searches
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (normalized_limit, normalized_offset),
+        ).fetchall()
+        return {
+            "items": [self._saved_search_row_to_dict(row) for row in rows],
+            "total": total,
+            "limit": normalized_limit,
+            "offset": normalized_offset,
+        }
+
+    def update_saved_search(
+        self,
+        search_id: Any,
+        *,
+        name: str | None = None,
+        query: Mapping[str, Any] | None = None,
+        sort: str | None = None,
+    ) -> Any:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        self._get_saved_search(search_id)
+        updates: dict[str, Any] = {}
+        if name is not None:
+            updates["name"] = self._normalize_saved_search_name(name)
+        if query is not None:
+            updates["query_json"] = self._json_dumps(query)
+        if sort is not None:
+            updates["sort"] = sort
+        if not updates:
+            return self._get_saved_search(search_id)
+        updates["updated_at"] = db._get_current_utc_timestamp_str()
+        assignments = ", ".join(f"{column} = ?" for column in updates)
+        values = list(updates.values()) + [int(search_id)]
+        with db.transaction() as conn:
+            conn.execute(f"UPDATE local_reading_saved_searches SET {assignments} WHERE id = ?", values)
+        return self._get_saved_search(search_id)
+
+    def delete_saved_search(self, search_id: Any) -> Any:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        with db.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM local_reading_saved_searches WHERE id = ?",
+                (int(search_id),),
+            )
+        return {"deleted": cursor.rowcount > 0, "id": int(search_id)}
+
+    def link_note(self, item_id: Any, note_id: str) -> Any:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_item_id = self._coerce_media_id(item_id)
+        normalized_note_id = self._normalize_note_id(note_id)
+        now = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO local_reading_note_links (
+                    item_id, note_id, created_at
+                )
+                VALUES (?, ?, COALESCE(
+                    (SELECT created_at FROM local_reading_note_links WHERE item_id = ? AND note_id = ?),
+                    ?
+                ))
+                """,
+                (normalized_item_id, normalized_note_id, normalized_item_id, normalized_note_id, now),
+            )
+        return self._note_link_row_to_dict(
+            db.get_connection().execute(
+                "SELECT * FROM local_reading_note_links WHERE item_id = ? AND note_id = ?",
+                (normalized_item_id, normalized_note_id),
+            ).fetchone()
+        )
+
+    def list_note_links(self, item_id: Any) -> Any:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_item_id = self._coerce_media_id(item_id)
+        rows = db.get_connection().execute(
+            """
+            SELECT * FROM local_reading_note_links
+            WHERE item_id = ?
+            ORDER BY created_at DESC, note_id ASC
+            """,
+            (normalized_item_id,),
+        ).fetchall()
+        return {
+            "item_id": normalized_item_id,
+            "links": [self._note_link_row_to_dict(row) for row in rows],
+        }
+
+    def unlink_note(self, item_id: Any, note_id: str) -> Any:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_item_id = self._coerce_media_id(item_id)
+        normalized_note_id = self._normalize_note_id(note_id)
+        with db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM local_reading_note_links
+                WHERE item_id = ? AND note_id = ?
+                """,
+                (normalized_item_id, normalized_note_id),
+            )
+        return {"deleted": cursor.rowcount > 0, "item_id": normalized_item_id, "note_id": normalized_note_id}
+
     def list_ingestion_sources(self) -> Any:
         db = self._require_db()
         self._ensure_local_ingestion_schema(db)
@@ -556,6 +696,42 @@ class LocalMediaReadingService:
         return normalized
 
     @staticmethod
+    def _normalize_saved_search_name(name: str) -> str:
+        normalized = str(name or "").strip()
+        if not normalized:
+            raise ValueError("Saved search name cannot be blank.")
+        return normalized
+
+    @staticmethod
+    def _normalize_note_id(note_id: str) -> str:
+        normalized = str(note_id or "").strip()
+        if not normalized:
+            raise ValueError("note_id cannot be blank.")
+        return normalized
+
+    @staticmethod
+    def _ensure_local_reading_aux_schema(db: Any) -> None:
+        with db.transaction() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS local_reading_saved_searches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    query_json TEXT NOT NULL DEFAULT '{}',
+                    sort TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS local_reading_note_links (
+                    item_id INTEGER NOT NULL,
+                    note_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (item_id, note_id)
+                );
+                """
+            )
+
+    @staticmethod
     def _ensure_local_ingestion_schema(db: Any) -> None:
         with db.transaction() as conn:
             conn.executescript(
@@ -615,6 +791,36 @@ class LocalMediaReadingService:
                 );
                 """
             )
+
+    def _get_saved_search(self, search_id: Any) -> dict[str, Any]:
+        row = self._require_db().get_connection().execute(
+            "SELECT * FROM local_reading_saved_searches WHERE id = ?",
+            (int(search_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Local reading saved search not found: {search_id}")
+        return self._saved_search_row_to_dict(row)
+
+    def _saved_search_row_to_dict(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        return {
+            "id": payload["id"],
+            "name": payload.get("name"),
+            "query": self._json_loads(payload.get("query_json")),
+            "sort": payload.get("sort"),
+            "created_at": payload.get("created_at"),
+            "updated_at": payload.get("updated_at"),
+        }
+
+    def _note_link_row_to_dict(self, row: Mapping[str, Any] | None) -> dict[str, Any]:
+        if row is None:
+            raise KeyError("Local reading note link not found.")
+        payload = dict(row)
+        return {
+            "item_id": payload.get("item_id"),
+            "note_id": payload.get("note_id"),
+            "created_at": payload.get("created_at"),
+        }
 
     def _ingestion_source_row_to_dict(self, row: Mapping[str, Any]) -> dict[str, Any]:
         payload = dict(row)

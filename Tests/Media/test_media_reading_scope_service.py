@@ -143,6 +143,42 @@ class FakeLocalMediaService:
             "saved_at": None,
         }
 
+    def create_saved_search(self, **kwargs):
+        self.calls.append(("create_saved_search", kwargs))
+        return {"id": 1, "created_at": "2026-04-21T12:00:00Z", "updated_at": "2026-04-21T12:00:00Z", **kwargs}
+
+    def list_saved_searches(self, *, limit=50, offset=0):
+        self.calls.append(("list_saved_searches", limit, offset))
+        return {
+            "items": [{"id": 1, "name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"}],
+            "total": 1,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def update_saved_search(self, search_id, **changes):
+        self.calls.append(("update_saved_search", search_id, changes))
+        return {"id": search_id, "name": changes.get("name", "Morning"), "query": changes.get("query") or {}}
+
+    def delete_saved_search(self, search_id):
+        self.calls.append(("delete_saved_search", search_id))
+        return {"deleted": True, "id": search_id}
+
+    def link_note(self, item_id, note_id):
+        self.calls.append(("link_note", item_id, note_id))
+        return {"item_id": item_id, "note_id": note_id, "created_at": "2026-04-21T12:00:00Z"}
+
+    def list_note_links(self, item_id):
+        self.calls.append(("list_note_links", item_id))
+        return {
+            "item_id": item_id,
+            "links": [{"item_id": item_id, "note_id": "note-1", "created_at": "2026-04-21T12:00:00Z"}],
+        }
+
+    def unlink_note(self, item_id, note_id):
+        self.calls.append(("unlink_note", item_id, note_id))
+        return {"deleted": True, "item_id": item_id, "note_id": note_id}
+
     def get_ingestion_source(self, source_id):
         self.calls.append(("get_ingestion_source", source_id))
         return {
@@ -1029,18 +1065,48 @@ async def test_scope_service_routes_server_reading_create_saved_searches_and_not
 
 
 @pytest.mark.asyncio
-async def test_scope_service_reports_local_saved_searches_as_explicitly_unsupported_after_policy():
+async def test_scope_service_routes_local_saved_searches_and_note_links_with_policy():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local reading saved searches are not available yet."):
-        await scope.list_saved_searches(mode="local")
+    created = await scope.create_saved_search(mode="local", name="Morning", query={"q": "ai"}, sort="updated_desc")
+    listed = await scope.list_saved_searches(mode="local", limit=25, offset=5)
+    updated = await scope.update_saved_search(mode="local", search_id=1, name="Updated", query={"q": "ml"})
+    deleted = await scope.delete_saved_search(mode="local", search_id=1)
+    linked = await scope.link_note(mode="local", item_id=60, note_id="note-1")
+    links = await scope.list_note_links(mode="local", item_id=60)
+    unlinked = await scope.unlink_note(mode="local", item_id=60, note_id="note-1")
 
-    assert policy.calls[-1:] == ["media.reading.saved_searches.list.local"]
+    assert created["id"] == 1
+    assert listed["total"] == 1
+    assert updated["name"] == "Updated"
+    assert deleted["deleted"] is True
+    assert linked["note_id"] == "note-1"
+    assert links["links"][0]["note_id"] == "note-1"
+    assert unlinked["deleted"] is True
+    assert policy.calls[-7:] == [
+        "media.reading.saved_searches.create.local",
+        "media.reading.saved_searches.list.local",
+        "media.reading.saved_searches.update.local",
+        "media.reading.saved_searches.delete.local",
+        "media.reading.note_links.create.local",
+        "media.reading.note_links.list.local",
+        "media.reading.note_links.delete.local",
+    ]
+    assert local.calls[-7:] == [
+        ("create_saved_search", {"name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"}),
+        ("list_saved_searches", 25, 5),
+        ("update_saved_search", 1, {"name": "Updated", "query": {"q": "ml"}, "sort": None}),
+        ("delete_saved_search", 1),
+        ("link_note", 60, "note-1"),
+        ("list_note_links", 60),
+        ("unlink_note", 60, "note-1"),
+    ]
 
 
 @pytest.mark.asyncio

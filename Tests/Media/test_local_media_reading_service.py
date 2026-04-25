@@ -160,6 +160,35 @@ def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_facto
     assert db.get_media_read_it_later_state(media_id) is None
 
 
+def test_local_service_persists_saved_searches_and_note_links(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    service = LocalMediaReadingService(db)
+
+    created = service.create_saved_search(name=" Morning ", query={"q": "ai"}, sort="updated_desc")
+    listed = service.list_saved_searches(limit=25, offset=0)
+    updated = service.update_saved_search(created["id"], name="Updated", query={"q": "ml"})
+    linked = service.link_note(media_id, "note-1")
+    links = service.list_note_links(media_id)
+    unlinked = service.unlink_note(media_id, "note-1")
+    deleted = service.delete_saved_search(created["id"])
+
+    assert created["name"] == "Morning"
+    assert created["query"] == {"q": "ai"}
+    assert listed["items"][0]["id"] == created["id"]
+    assert listed["total"] == 1
+    assert updated["name"] == "Updated"
+    assert updated["query"] == {"q": "ml"}
+    assert updated["sort"] == "updated_desc"
+    assert linked["item_id"] == media_id
+    assert linked["note_id"] == "note-1"
+    assert linked["created_at"] is not None
+    assert links["links"] == [linked]
+    assert unlinked == {"deleted": True, "item_id": media_id, "note_id": "note-1"}
+    assert service.list_note_links(media_id)["links"] == []
+    assert deleted == {"deleted": True, "id": created["id"]}
+
+
 def test_local_service_persists_ingestion_sources_and_sync_jobs(memory_db_factory, tmp_path):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
