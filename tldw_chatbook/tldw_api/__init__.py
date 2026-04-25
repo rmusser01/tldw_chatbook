@@ -645,6 +645,18 @@ from .user_governance_schemas import (
     PrivilegeSelfItem,
     PrivilegeSelfResponse,
 )
+from .skills_schemas import (
+    SkillBase,
+    SkillContextPayload,
+    SkillCreate,
+    SkillExecuteRequest,
+    SkillExecutionResult,
+    SkillImportRequest,
+    SkillResponse,
+    SkillsListResponse,
+    SkillSummary,
+    SkillUpdate,
+)
 from .data_tables_schemas import (
     ColumnType,
     DataTableColumn,

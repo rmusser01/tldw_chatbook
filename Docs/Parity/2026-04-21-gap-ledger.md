@@ -160,6 +160,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 3
 - Notes: Priority 31. This is needed for Chatbook-as-client transparency against a multi-user server, but it should not outrank local-first content and task surfaces.
 
+### Server Skills: Server-managed SKILL.md skills, context payloads, and execution preview
+- Requirement class: Remote parity required, local parity optional/deferred
+- Client obligation: Full CRUD + Execute
+- Current state: Chatbook now has typed direct API-client wrappers for server skill list, context payload retrieval, detail, create, update with `If-Match`, delete with `If-Match`, text import, multipart file import, binary zip export, execution preview, and built-in seed operations.
+- Gap: Dedicated UX adoption, policy-aware invocation placement, local/offline unavailable presentation, and any local/server skill mirror or sync semantics remain pending. Chatbook should not auto-merge server SKILL.md records into local instruction assets until identity and safety rules are designed.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/skills.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/skills_schemas.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/skills_schemas.py`; Verification: `Tests/tldw_api/test_skills_client.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 33. This is useful for server-client completeness and future agent tooling, but remains below the local-first product surfaces and does not require MCP SDK usage.
+
 ### Prompts / Chatbooks: Prompt library, prompt workflows, and chatbook import/export jobs
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD

@@ -204,6 +204,16 @@ from .user_governance_schemas import (
     PrivilegeDetailResponse,
     PrivilegeSelfResponse,
 )
+from .skills_schemas import (
+    SkillContextPayload,
+    SkillCreate,
+    SkillExecuteRequest,
+    SkillExecutionResult,
+    SkillImportRequest,
+    SkillResponse,
+    SkillsListResponse,
+    SkillUpdate,
+)
 from .prompt_studio_schemas import (
     PromptStudioCompareStrategiesRequest,
     PromptStudioDeleteMessage,
@@ -6652,6 +6662,106 @@ class TLDWAPIClient:
     async def restore_kanban_card(self, card_id: int) -> KanbanCardResponse:
         response = await self._request("POST", f"/api/v1/kanban/cards/{card_id}/restore")
         return KanbanCardResponse.model_validate(response)
+
+    async def list_skills(
+        self,
+        *,
+        include_hidden: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> SkillsListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/skills/",
+            params={"include_hidden": include_hidden, "limit": limit, "offset": offset},
+        )
+        return SkillsListResponse.model_validate(response)
+
+    async def get_skills_context(self) -> SkillContextPayload:
+        response = await self._request("GET", "/api/v1/skills/context")
+        return SkillContextPayload.model_validate(response)
+
+    async def get_skill(self, skill_name: str) -> SkillResponse:
+        response = await self._request("GET", f"/api/v1/skills/{skill_name}")
+        return SkillResponse.model_validate(response)
+
+    async def create_skill(self, request_data: SkillCreate) -> SkillResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/skills/",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SkillResponse.model_validate(response)
+
+    async def update_skill(
+        self,
+        skill_name: str,
+        request_data: SkillUpdate,
+        *,
+        expected_version: int | None = None,
+    ) -> SkillResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/skills/{skill_name}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"If-Match": str(expected_version)} if expected_version is not None else None,
+        )
+        return SkillResponse.model_validate(response)
+
+    async def delete_skill(self, skill_name: str, *, expected_version: int | None = None) -> bool:
+        await self._request(
+            "DELETE",
+            f"/api/v1/skills/{skill_name}",
+            headers={"If-Match": str(expected_version)} if expected_version is not None else None,
+        )
+        return True
+
+    async def import_skill(self, request_data: SkillImportRequest) -> SkillResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/skills/import",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SkillResponse.model_validate(response)
+
+    async def import_skill_file(
+        self,
+        file_content: bytes,
+        *,
+        filename: str = "SKILL.md",
+        content_type: str = "text/markdown",
+        overwrite: bool = False,
+    ) -> SkillResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/skills/import/file",
+            files=[("file", (filename, file_content, content_type))],
+            params={"overwrite": overwrite},
+        )
+        return SkillResponse.model_validate(response)
+
+    async def export_skill(self, skill_name: str) -> ReadingExportResponse:
+        return await self._binary_request("GET", f"/api/v1/skills/{skill_name}/export")
+
+    async def execute_skill(
+        self,
+        skill_name: str,
+        request_data: SkillExecuteRequest | None = None,
+    ) -> SkillExecutionResult:
+        payload = request_data or SkillExecuteRequest()
+        response = await self._request(
+            "POST",
+            f"/api/v1/skills/{skill_name}/execute",
+            json_data=payload.model_dump(exclude_none=True, mode="json"),
+        )
+        return SkillExecutionResult.model_validate(response)
+
+    async def seed_builtin_skills(self, *, overwrite: bool = False) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/skills/seed",
+            params={"overwrite": overwrite},
+        )
 
 #
 # End of client.py
