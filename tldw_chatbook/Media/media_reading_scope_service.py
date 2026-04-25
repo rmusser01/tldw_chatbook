@@ -1135,8 +1135,6 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._ingestion_source_item_action_id(normalized_mode, "reattach"))
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            raise ValueError("Local ingestion source item reattach is not available yet.")
         service = self._service_for_mode(normalized_mode)
         item = await self._maybe_await(service.reattach_ingestion_source_item(source_id, item_id))
         return normalize_ingestion_source_item(item, backend=normalized_mode.value)

@@ -220,7 +220,16 @@ class FakeLocalMediaService:
         return {"status": "queued", "source_id": source_id, "job_id": 302, "snapshot_status": "staged"}
 
     def reattach_ingestion_source_item(self, source_id, item_id):
-        raise ValueError("Local ingestion source item reattach is not available yet.")
+        self.calls.append(("reattach_ingestion_source_item", source_id, item_id))
+        return {
+            "id": item_id,
+            "source_id": source_id,
+            "normalized_relative_path": "note.md",
+            "content_hash": None,
+            "sync_status": "sync_managed",
+            "binding": {"note_id": "note-1", "sync_status": "sync_managed"},
+            "present_in_source": True,
+        }
 
     def list_document_versions(self, media_id, include_deleted=False):
         self.calls.append(("list_document_versions", media_id, include_deleted))
@@ -961,18 +970,21 @@ async def test_scope_service_routes_server_ingestion_source_item_reattach_with_p
 
 
 @pytest.mark.asyncio
-async def test_scope_service_reports_local_ingestion_source_item_reattach_as_explicitly_unsupported():
+async def test_scope_service_routes_local_ingestion_source_item_reattach_with_policy():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Local ingestion source item reattach is not available yet."):
-        await scope.reattach_ingestion_source_item(mode="local", source_id=3, item_id=55)
+    reattached = await scope.reattach_ingestion_source_item(mode="local", source_id=3, item_id=55)
 
+    assert reattached["id"] == "local:file_artifact:55"
+    assert reattached["sync_status"] == "sync_managed"
     assert policy.calls[-1:] == ["media.ingestion_source_items.reattach.local"]
+    assert local.calls[-1:] == [("reattach_ingestion_source_item", 3, 55)]
 
 
 @pytest.mark.asyncio

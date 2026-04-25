@@ -453,6 +453,37 @@ class LocalMediaReadingService:
         )
         return [self._ingestion_source_item_row_to_dict(row) for row in cursor.fetchall()]
 
+    def reattach_ingestion_source_item(self, source_id: Any, item_id: Any) -> Any:
+        db = self._require_db()
+        self._ensure_local_ingestion_schema(db)
+        source = self.get_ingestion_source(source_id)
+        if str(source.get("sink_type") or "").strip().lower() != "notes":
+            raise ValueError("Reattach is only supported for notes sinks.")
+        item = self._get_ingestion_source_item(source_id, item_id)
+        if str(item.get("sync_status") or "").strip().lower() != "conflict_detached":
+            raise ValueError("Only detached items can be reattached.")
+        binding = dict(item.get("binding") or {})
+        if not binding.get("note_id"):
+            raise ValueError("Detached item is missing a bound note.")
+        binding["sync_status"] = "sync_managed"
+        now = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE local_ingestion_source_items
+                SET sync_status = ?, binding_json = ?, content_hash = NULL, updated_at = ?
+                WHERE id = ? AND source_id = ?
+                """,
+                (
+                    "sync_managed",
+                    self._json_dumps(binding),
+                    now,
+                    int(item_id),
+                    int(source_id),
+                ),
+            )
+        return self._get_ingestion_source_item(source_id, item_id)
+
     def trigger_ingestion_source_sync(self, source_id: Any) -> Any:
         source = self.get_ingestion_source(source_id)
         job = self._create_ingest_job(
@@ -821,6 +852,18 @@ class LocalMediaReadingService:
             "note_id": payload.get("note_id"),
             "created_at": payload.get("created_at"),
         }
+
+    def _get_ingestion_source_item(self, source_id: Any, item_id: Any) -> dict[str, Any]:
+        row = self._require_db().get_connection().execute(
+            """
+            SELECT * FROM local_ingestion_source_items
+            WHERE source_id = ? AND id = ?
+            """,
+            (int(source_id), int(item_id)),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Local ingestion source item not found: {item_id}")
+        return self._ingestion_source_item_row_to_dict(row)
 
     def _ingestion_source_row_to_dict(self, row: Mapping[str, Any]) -> dict[str, Any]:
         payload = dict(row)

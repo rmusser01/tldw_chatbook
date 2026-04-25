@@ -225,6 +225,47 @@ def test_local_service_persists_ingestion_sources_and_sync_jobs(memory_db_factor
         service.get_ingestion_source(created["id"])
 
 
+def test_local_service_reattaches_detached_ingestion_source_item(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    source = service.create_ingestion_source(
+        source_type="local_directory",
+        sink_type="notes",
+        policy="canonical",
+        config={"path": "/tmp/source"},
+    )
+    now = db._get_current_utc_timestamp_str()
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO local_ingestion_source_items (
+                source_id, normalized_relative_path, content_hash, sync_status,
+                binding_json, present_in_source, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source["id"],
+                "note.md",
+                "old-hash",
+                "conflict_detached",
+                '{"note_id": "note-1", "current_version": 2}',
+                1,
+                now,
+                now,
+            ),
+        )
+        item_id = cursor.lastrowid
+
+    reattached = service.reattach_ingestion_source_item(source["id"], item_id)
+
+    assert reattached["id"] == item_id
+    assert reattached["sync_status"] == "sync_managed"
+    assert reattached["content_hash"] is None
+    assert reattached["binding"]["note_id"] == "note-1"
+    assert reattached["binding"]["sync_status"] == "sync_managed"
+
+
 def test_local_service_submit_ingest_jobs_queues_url_and_file_jobs(memory_db_factory, tmp_path):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
