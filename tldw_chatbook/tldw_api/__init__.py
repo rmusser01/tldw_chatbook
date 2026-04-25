@@ -13,11 +13,15 @@ from .schemas import (
     MediaType, ChunkMethod, PdfEngine, ScrapeMethod # Export Enums/Literals
 )
 from .notes_workspace_schemas import (
+    EdgeType,
+    GraphFormat,
     MediaListItem,
     MediaListPagination,
     MediaListResponse,
     MediaSearchRequest,
     NoteCreateRequest,
+    NoteGraphRequest,
+    NoteLinkCreate,
     NoteListResponse,
     NoteResponse,
     NoteUpdateRequest,
@@ -34,6 +38,7 @@ from .notes_workspace_schemas import (
     WorkspaceSourceResponse,
     WorkspaceSourceUpdateRequest,
     WorkspaceUpdateRequest,
+    TimeRange,
 )
 from .media_reading_schemas import (
     AsyncMode,
@@ -435,7 +440,9 @@ __all__ = [
     "BatchProcessXMLResponse", "ProcessedMediaWikiPage",
     "MediaType", "ChunkMethod", "PdfEngine", "ScrapeMethod",
     "MediaListItem", "MediaListPagination", "MediaListResponse", "MediaSearchRequest",
-    "NoteCreateRequest", "NoteListResponse", "NoteResponse", "NoteUpdateRequest",
+    "EdgeType", "GraphFormat", "TimeRange",
+    "NoteCreateRequest", "NoteGraphRequest", "NoteLinkCreate",
+    "NoteListResponse", "NoteResponse", "NoteUpdateRequest",
     "WorkspaceArtifactCreateRequest", "WorkspaceArtifactResponse", "WorkspaceArtifactUpdateRequest",
     "WorkspaceCreateRequest", "WorkspaceListResponse",
     "WorkspaceNoteCreateRequest", "WorkspaceNoteResponse", "WorkspaceNoteUpdateRequest",

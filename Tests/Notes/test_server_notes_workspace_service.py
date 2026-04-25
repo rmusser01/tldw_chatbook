@@ -10,6 +10,7 @@ class FakeClient:
     def __init__(self):
         self.search_calls = []
         self.workspace_calls = []
+        self.graph_calls = []
 
     async def search_server_notes(self, *, query=None, limit=10, offset=0, include_keywords=True):
         self.search_calls.append(
@@ -90,6 +91,30 @@ class FakeClient:
                 }
             ]
         }
+
+    async def get_notes_graph(self, request_data):
+        self.graph_calls.append(("graph", request_data))
+        return {
+            "nodes": [{"id": "note:123", "type": "note", "label": "Note"}],
+            "edges": [],
+            "limits": {"max_nodes": 200, "max_edges": 400, "max_degree": 40},
+        }
+
+    async def get_note_neighbors(self, note_id, **kwargs):
+        self.graph_calls.append(("neighbors", note_id, kwargs))
+        return {
+            "nodes": [{"id": note_id, "type": "note", "label": "Note"}],
+            "edges": [],
+            "limits": {"max_nodes": 200, "max_edges": 400, "max_degree": 40},
+        }
+
+    async def create_note_link(self, note_id, request_data):
+        self.graph_calls.append(("create_link", note_id, request_data))
+        return {"status": "created", "edge": {"id": "e:1", "source": note_id}}
+
+    async def delete_note_link(self, edge_id):
+        self.graph_calls.append(("delete_link", edge_id))
+        return {"deleted": True, "edge_id": edge_id}
 
 
 class FakePolicyEnforcer:
@@ -375,3 +400,50 @@ async def test_service_loads_workspace_context_with_versions():
     assert context["notes"][0]["version"] == 3
     assert context["sources"][0]["version"] == 5
     assert context["artifacts"][0]["version"] == 9
+
+
+@pytest.mark.asyncio
+async def test_service_delegates_notes_graph_operations_to_server_client():
+    client = FakeClient()
+    service = ServerNotesWorkspaceService(client=client)
+
+    graph = await service.get_notes_graph(center_note_id="note:123", edge_types=["manual"])
+    neighbors = await service.get_note_neighbors("note:123", edge_types=["manual", "backlink"])
+    created = await service.create_note_link(
+        "note:123",
+        to_note_id="note:456",
+        directed=True,
+        weight=2.5,
+        metadata={"label": "related"},
+    )
+    deleted = await service.delete_note_link("e:1")
+
+    assert graph["nodes"][0]["id"] == "note:123"
+    assert neighbors["nodes"][0]["id"] == "note:123"
+    assert created["status"] == "created"
+    assert deleted["deleted"] is True
+    assert client.graph_calls[0][0] == "graph"
+    assert client.graph_calls[1] == ("neighbors", "note:123", {"edge_types": ["manual", "backlink"]})
+    assert client.graph_calls[2][0:2] == ("create_link", "note:123")
+    assert client.graph_calls[3] == ("delete_link", "e:1")
+
+
+@pytest.mark.asyncio
+async def test_service_enforces_notes_graph_policy_actions():
+    policy_enforcer = FakePolicyEnforcer()
+    service = ServerNotesWorkspaceService(
+        client=FakeClient(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    await service.get_notes_graph(center_note_id="note:123")
+    await service.get_note_neighbors("note:123")
+    await service.create_note_link("note:123", to_note_id="note:456")
+    await service.delete_note_link("e:1")
+
+    assert policy_enforcer.calls == [
+        "notes.graph.list.server",
+        "notes.graph.detail.server",
+        "notes.graph.create.server",
+        "notes.graph.delete.server",
+    ]

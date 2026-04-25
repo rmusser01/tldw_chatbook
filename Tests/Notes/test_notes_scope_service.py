@@ -107,6 +107,7 @@ class FakeServerNotes:
         self.server_queries = []
         self.workspace_queries = []
         self.loaded_workspaces = []
+        self.graph_calls = []
 
     async def save_server_note(self, **kwargs):
         self.saved_ids.append(kwargs["note_id"])
@@ -135,6 +136,22 @@ class FakeServerNotes:
     async def load_workspace_context(self, workspace_id):
         self.loaded_workspaces.append(workspace_id)
         return {"workspace": {"id": workspace_id}}
+
+    async def get_notes_graph(self, **kwargs):
+        self.graph_calls.append(("graph", kwargs))
+        return {"nodes": [], "edges": []}
+
+    async def get_note_neighbors(self, note_id, **kwargs):
+        self.graph_calls.append(("neighbors", note_id, kwargs))
+        return {"nodes": [{"id": note_id}], "edges": []}
+
+    async def create_note_link(self, note_id, **kwargs):
+        self.graph_calls.append(("create_link", note_id, kwargs))
+        return {"status": "created"}
+
+    async def delete_note_link(self, edge_id):
+        self.graph_calls.append(("delete_link", edge_id))
+        return {"deleted": True}
 
 
 class FakePolicyEnforcer:
@@ -370,3 +387,54 @@ async def test_scope_service_loads_workspace_context_from_server_service():
 
     assert server.loaded_workspaces == ["ws-7"]
     assert result == {"workspace": {"id": "ws-7"}}
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_notes_graph_operations():
+    server = FakeServerNotes()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=server,
+    )
+
+    graph = await scope_service.get_notes_graph(
+        scope=ScopeType.SERVER_NOTE,
+        center_note_id="note:123",
+        edge_types=["manual"],
+    )
+    neighbors = await scope_service.get_note_neighbors(
+        scope=ScopeType.SERVER_NOTE,
+        note_id="note:123",
+        edge_types=["manual", "backlink"],
+    )
+    created = await scope_service.create_note_link(
+        scope=ScopeType.SERVER_NOTE,
+        note_id="note:123",
+        to_note_id="note:456",
+    )
+    deleted = await scope_service.delete_note_link(
+        scope=ScopeType.SERVER_NOTE,
+        edge_id="e:1",
+    )
+
+    assert graph == {"nodes": [], "edges": []}
+    assert neighbors["nodes"] == [{"id": "note:123"}]
+    assert created == {"status": "created"}
+    assert deleted == {"deleted": True}
+    assert server.graph_calls == [
+        ("graph", {"center_note_id": "note:123", "edge_types": ["manual"]}),
+        ("neighbors", "note:123", {"edge_types": ["manual", "backlink"]}),
+        ("create_link", "note:123", {"to_note_id": "note:456"}),
+        ("delete_link", "e:1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_local_notes_graph_operations_explicitly():
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+    )
+
+    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+        await scope_service.get_notes_graph(scope=ScopeType.LOCAL_NOTE)

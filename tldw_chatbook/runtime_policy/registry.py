@@ -232,6 +232,7 @@ AUDITED_CAPABILITY_SEEDS = (
                 actions=CRUD_ACTIONS,
                 sources=(LOCAL_SOURCE, SERVER_SOURCE, WORKSPACE_SOURCE),
             ),
+            _resource("notes.graph", actions=(LIST, DETAIL, CREATE, DELETE), sources=(SERVER_SOURCE,)),
             _resource("notes.workspace", actions=CRUD_ACTIONS),
         ),
     ),

@@ -4,6 +4,7 @@ Notes, workspaces, and media picker contracts for the shared TLDW API client.
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -131,6 +132,64 @@ class NoteListResponse(BaseModel):
     limit: int = 0
     offset: int = 0
     total: Optional[int] = None
+
+
+class EdgeType(str, Enum):
+    manual = "manual"
+    wikilink = "wikilink"
+    backlink = "backlink"
+    tag_membership = "tag_membership"
+    source_membership = "source_membership"
+
+
+class GraphFormat(str, Enum):
+    default = "default"
+    cytoscape = "cytoscape"
+
+
+class TimeRange(BaseModel):
+    start: str | None = None
+    end: str | None = None
+
+
+class NoteGraphRequest(BaseModel):
+    center_note_id: str | None = None
+    radius: int = Field(1, ge=1, le=2)
+    edge_types: list[EdgeType] | None = None
+    tag: str | None = None
+    source: str | None = None
+    time_range: TimeRange | None = None
+    time_range_field: Literal["created_at", "updated_at"] = "updated_at"
+    max_nodes: int | None = Field(None, ge=1)
+    max_edges: int | None = Field(None, ge=0)
+    max_degree: int | None = Field(None, ge=1)
+    format: GraphFormat = GraphFormat.default
+    cursor: str | None = None
+    allow_heavy: bool = False
+
+    @field_validator("edge_types", mode="before")
+    @classmethod
+    def _split_csv_edge_types(cls, value: Any):
+        if value is None:
+            return value
+        if isinstance(value, str):
+            return [EdgeType(part.strip()) for part in value.split(",") if part.strip()]
+        if isinstance(value, list):
+            normalized: list[EdgeType] = []
+            for item in value:
+                if isinstance(item, EdgeType):
+                    normalized.append(item)
+                elif isinstance(item, str):
+                    normalized.append(EdgeType(item))
+            return normalized
+        return value
+
+
+class NoteLinkCreate(BaseModel):
+    to_note_id: str = Field(..., min_length=1)
+    directed: bool = False
+    weight: float | None = Field(1.0, ge=0.0)
+    metadata: dict[str, Any] | None = None
 
 
 class WorkspaceCreateRequest(BaseModel):

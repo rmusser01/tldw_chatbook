@@ -23,6 +23,8 @@ from .schemas import (
 from .notes_workspace_schemas import (
     MediaListResponse,
     MediaSearchRequest,
+    NoteGraphRequest,
+    NoteLinkCreate,
     NoteCreateRequest,
     NoteListResponse,
     NoteResponse,
@@ -578,6 +580,68 @@ class TLDWAPIClient:
             f"/api/v1/notes/{note_id}",
             headers={"expected-version": str(expected_version)},
         )
+
+    def _notes_graph_query_params(self, request_data: NoteGraphRequest | Dict[str, Any]) -> Dict[str, Any]:
+        payload = (
+            request_data.model_dump(exclude_none=True, exclude_defaults=True, mode="json")
+            if hasattr(request_data, "model_dump")
+            else dict(request_data)
+        )
+        params: Dict[str, Any] = {}
+        for key, value in payload.items():
+            if key == "edge_types" and isinstance(value, list):
+                params[key] = ",".join(str(item) for item in value)
+                continue
+            if key == "time_range" and isinstance(value, dict):
+                if value.get("start") is not None:
+                    params["time_range.start"] = value["start"]
+                if value.get("end") is not None:
+                    params["time_range.end"] = value["end"]
+                continue
+            if isinstance(value, bool):
+                params[key] = str(value).lower()
+                continue
+            params[key] = value
+        return params
+
+    async def get_notes_graph(
+        self,
+        request_data: NoteGraphRequest | Dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        request = request_data if request_data is not None else NoteGraphRequest(**kwargs)
+        return await self._request(
+            "GET",
+            "/api/v1/notes/graph",
+            params=self._notes_graph_query_params(request),
+        )
+
+    async def get_note_neighbors(
+        self,
+        note_id: str,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        request = NoteGraphRequest(**kwargs)
+        return await self._request(
+            "GET",
+            f"/api/v1/notes/{note_id}/neighbors",
+            params=self._notes_graph_query_params(request),
+        )
+
+    async def create_note_link(self, note_id: str, request_data: NoteLinkCreate | Dict[str, Any]) -> Dict[str, Any]:
+        payload = (
+            request_data.model_dump(exclude_none=True, mode="json")
+            if hasattr(request_data, "model_dump")
+            else dict(request_data)
+        )
+        return await self._request(
+            "POST",
+            f"/api/v1/notes/{note_id}/links",
+            json_data=payload,
+        )
+
+    async def delete_note_link(self, edge_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/notes/links/{edge_id}")
 
     async def list_workspaces(self) -> Dict[str, Any]:
         return await self._request("GET", "/api/v1/workspaces/")

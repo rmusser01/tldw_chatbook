@@ -51,6 +51,14 @@ class NotesScopeService:
         return f"notes.{action}.{suffix}"
 
     @staticmethod
+    def _graph_action_id(action: str) -> str:
+        return f"notes.graph.{action}.server"
+
+    def _require_server_graph_scope(self, scope: ScopeType | str) -> None:
+        if self._normalize_scope(scope) != ScopeType.SERVER_NOTE:
+            raise ValueError("Notes graph operations are currently server-backed.")
+
+    @staticmethod
     def _normalize_keywords(keywords: Optional[Sequence[str]]) -> list[str]:
         if keywords is None:
             return []
@@ -312,3 +320,23 @@ class NotesScopeService:
         return await self.server_service.load_workspace_context(
             self._require_workspace_id(workspace_id)
         )
+
+    async def get_notes_graph(self, *, scope: ScopeType | str, **kwargs: Any) -> Any:
+        self._require_server_graph_scope(scope)
+        self._enforce_policy(self._graph_action_id("list"))
+        return await self.server_service.get_notes_graph(**kwargs)
+
+    async def get_note_neighbors(self, *, scope: ScopeType | str, note_id: str, **kwargs: Any) -> Any:
+        self._require_server_graph_scope(scope)
+        self._enforce_policy(self._graph_action_id("detail"))
+        return await self.server_service.get_note_neighbors(note_id, **kwargs)
+
+    async def create_note_link(self, *, scope: ScopeType | str, note_id: str, **kwargs: Any) -> Any:
+        self._require_server_graph_scope(scope)
+        self._enforce_policy(self._graph_action_id("create"))
+        return await self.server_service.create_note_link(note_id, **kwargs)
+
+    async def delete_note_link(self, *, scope: ScopeType | str, edge_id: str) -> Any:
+        self._require_server_graph_scope(scope)
+        self._enforce_policy(self._graph_action_id("delete"))
+        return await self.server_service.delete_note_link(edge_id)

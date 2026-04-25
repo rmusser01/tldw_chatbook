@@ -10,6 +10,8 @@ from typing import Any, Mapping, Optional, Sequence
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..tldw_api import (
     NoteCreateRequest,
+    NoteGraphRequest,
+    NoteLinkCreate,
     NoteUpdateRequest,
     TLDWAPIClient,
     WorkspaceArtifactCreateRequest,
@@ -61,6 +63,10 @@ class ServerNotesWorkspaceService:
     @staticmethod
     def _workspace_action_id(action: str) -> str:
         return f"notes.workspace.{action}.server"
+
+    @staticmethod
+    def _graph_action_id(action: str) -> str:
+        return f"notes.graph.{action}.server"
 
     def _coerce_items(self, payload: Any) -> list[dict[str, Any]]:
         if isinstance(payload, list):
@@ -450,6 +456,42 @@ class ServerNotesWorkspaceService:
         self._enforce_policy(self._note_action_id("delete", "server"))
         client = self._require_client()
         return await client.delete_server_note(note_id, expected_version=version)
+
+    async def get_notes_graph(self, **kwargs: Any) -> dict[str, Any]:
+        self._enforce_policy(self._graph_action_id("list"))
+        client = self._require_client()
+        return await client.get_notes_graph(NoteGraphRequest(**kwargs))
+
+    async def get_note_neighbors(self, note_id: str, **kwargs: Any) -> dict[str, Any]:
+        self._enforce_policy(self._graph_action_id("detail"))
+        client = self._require_client()
+        return await client.get_note_neighbors(note_id, **kwargs)
+
+    async def create_note_link(
+        self,
+        note_id: str,
+        *,
+        to_note_id: str,
+        directed: bool = False,
+        weight: float | None = 1.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._enforce_policy(self._graph_action_id("create"))
+        client = self._require_client()
+        return await client.create_note_link(
+            note_id,
+            NoteLinkCreate(
+                to_note_id=to_note_id,
+                directed=directed,
+                weight=weight,
+                metadata=metadata,
+            ),
+        )
+
+    async def delete_note_link(self, edge_id: str) -> dict[str, Any]:
+        self._enforce_policy(self._graph_action_id("delete"))
+        client = self._require_client()
+        return await client.delete_note_link(edge_id)
 
     async def list_workspaces(self) -> list[dict[str, Any]]:
         self._enforce_policy(self._workspace_action_id("list"))

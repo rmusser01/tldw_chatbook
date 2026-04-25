@@ -10,8 +10,12 @@ import pytest
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api.exceptions import APIResponseError
 from tldw_chatbook.tldw_api.notes_workspace_schemas import (
+    EdgeType,
+    GraphFormat,
     MediaSearchRequest,
     MediaListResponse,
+    NoteGraphRequest,
+    NoteLinkCreate,
     NoteCreateRequest,
     NoteListResponse,
     NoteUpdateRequest,
@@ -117,6 +121,75 @@ class TestNotesWorkspaceClient:
         await getattr(client, method_name)(*call_args, **call_kwargs)
 
         _assert_request_call(mocked.await_args, expected_method, expected_endpoint, expected_kwargs)
+
+    async def test_notes_graph_endpoint_wiring(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.get_notes_graph(
+            NoteGraphRequest(
+                center_note_id="note:123",
+                radius=2,
+                edge_types=[EdgeType.manual, EdgeType.wikilink],
+                max_nodes=200,
+                format=GraphFormat.cytoscape,
+                allow_heavy=True,
+            )
+        )
+        await client.get_note_neighbors(
+            "note:123",
+            edge_types=["manual", "backlink"],
+            max_edges=100,
+        )
+        await client.create_note_link(
+            "note:123",
+            NoteLinkCreate(
+                to_note_id="note:456",
+                directed=True,
+                weight=2.5,
+                metadata={"label": "related"},
+            ),
+        )
+        await client.delete_note_link("e:edge-1")
+
+        expected_calls = [
+            (
+                "GET",
+                "/api/v1/notes/graph",
+                {
+                    "params": {
+                        "center_note_id": "note:123",
+                        "radius": 2,
+                        "edge_types": "manual,wikilink",
+                        "max_nodes": 200,
+                        "format": "cytoscape",
+                        "allow_heavy": "true",
+                    }
+                },
+            ),
+            (
+                "GET",
+                "/api/v1/notes/note:123/neighbors",
+                {"params": {"edge_types": "manual,backlink", "max_edges": 100}},
+            ),
+            (
+                "POST",
+                "/api/v1/notes/note:123/links",
+                {
+                    "json_data": {
+                        "to_note_id": "note:456",
+                        "directed": True,
+                        "weight": 2.5,
+                        "metadata": {"label": "related"},
+                    }
+                },
+            ),
+            ("DELETE", "/api/v1/notes/links/e:edge-1", {}),
+        ]
+        assert len(mocked.await_args_list) == len(expected_calls)
+        for call_args, expected in zip(mocked.await_args_list, expected_calls):
+            _assert_request_call(call_args, *expected)
 
     @pytest.mark.parametrize(
         "method_name, call_args, call_kwargs, expected_method, expected_endpoint, expected_kwargs",
