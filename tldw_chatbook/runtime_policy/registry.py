@@ -154,6 +154,7 @@ REORDER = _action("reorder", "update")
 BULK_UPDATE = _action("bulk_update", "update")
 ARCHIVE = _action("archive", "create")
 SUMMARIZE = _action("summarize", "launch")
+TTS = _action("tts", "launch")
 REATTACH = _action("reattach", "update")
 
 CRUD_ACTIONS = (LIST, DETAIL, CREATE, UPDATE, DELETE)
@@ -279,7 +280,7 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource(
                 "media.reading",
-                actions=_combine_action_sets(CRUD_ACTIONS, (BULK_UPDATE, ARCHIVE, SUMMARIZE, IMPORT, EXPORT)),
+                actions=_combine_action_sets(CRUD_ACTIONS, (BULK_UPDATE, ARCHIVE, SUMMARIZE, IMPORT, EXPORT, TTS)),
             ),
             _resource("media.reading_import_jobs", actions=(LIST, DETAIL)),
             _resource("media.reading.saved_searches", actions=CRUD_ACTIONS),

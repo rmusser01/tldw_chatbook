@@ -129,6 +129,8 @@ from .media_reading_schemas import (
     ReadingSavedSearchUpdateRequest,
     ReadingSummarizeRequest,
     ReadingSummaryResponse,
+    ReadingTTSRequest,
+    ReadingTTSResponse,
     ReadingUpdateRequest,
     ReferenceImageListItem,
     ReferenceImageListResponse,

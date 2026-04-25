@@ -403,6 +403,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.reading.list.server
         media.reading.summarize.local
         media.reading.summarize.server
+        media.reading.tts.local
+        media.reading.tts.server
         media.reading_import_jobs.detail.local
         media.reading_import_jobs.detail.server
         media.reading_import_jobs.list.local

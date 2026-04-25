@@ -24,6 +24,8 @@ from tldw_chatbook.tldw_api import (
     ReadingSavedSearchUpdateRequest,
     ReadingSummarizeRequest,
     ReadingSummaryResponse,
+    ReadingTTSRequest,
+    ReadingTTSResponse,
     ReadingUpdateRequest,
     TLDWAPIClient,
 )
@@ -236,6 +238,51 @@ async def test_reading_export_route_returns_binary_payload(monkeypatch):
     }
     assert isinstance(exported, ReadingExportResponse)
     assert exported.filename == "reading_export.jsonl"
+
+
+@pytest.mark.asyncio
+async def test_reading_tts_route_returns_audio_payload(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value=ReadingExportResponse(
+            content=b"mp3-bytes",
+            content_type="audio/mpeg",
+            content_disposition="attachment; filename=reading_31.mp3",
+            filename="reading_31.mp3",
+        )
+    )
+    monkeypatch.setattr(client, "_binary_request", mocked)
+
+    audio = await client.tts_reading_item(
+        31,
+        ReadingTTSRequest(
+            model="kokoro",
+            voice="af_heart",
+            response_format="mp3",
+            stream=False,
+            speed=1.25,
+            max_chars=12000,
+            text_source="text",
+        ),
+    )
+
+    assert mocked.await_args.args[:2] == ("POST", "/api/v1/reading/items/31/tts")
+    assert mocked.await_args.kwargs["json_data"] == {
+        "model": "kokoro",
+        "voice": "af_heart",
+        "response_format": "mp3",
+        "stream": False,
+        "speed": 1.25,
+        "max_chars": 12000,
+        "text_source": "text",
+    }
+    assert audio == ReadingTTSResponse(
+        item_id=31,
+        content=b"mp3-bytes",
+        content_type="audio/mpeg",
+        content_disposition="attachment; filename=reading_31.mp3",
+        filename="reading_31.mp3",
+    )
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ from ..tldw_api import (
     ReadingSavedSearchCreateRequest,
     ReadingSavedSearchUpdateRequest,
     ReadingSummarizeRequest,
+    ReadingTTSRequest,
     ReadingUpdateRequest,
     ReprocessMediaRequest,
     TLDWAPIClient,
@@ -291,6 +292,30 @@ class ServerMediaReadingService:
             chunked=chunked,
         )
         return await self._require_client().summarize_reading_item(int(item_id), request_data)
+
+    async def tts_reading_item(
+        self,
+        item_id: Any,
+        *,
+        model: str,
+        voice: str = "af_heart",
+        response_format: str = "mp3",
+        stream: bool = True,
+        speed: float | None = None,
+        max_chars: int | None = None,
+        text_source: str | None = None,
+    ) -> Any:
+        self._enforce(self._reading_action_id("tts"))
+        request_data = ReadingTTSRequest(
+            model=model,
+            voice=voice,
+            response_format=response_format,  # type: ignore[arg-type]
+            stream=stream,
+            speed=speed,
+            max_chars=max_chars,
+            text_source=text_source,  # type: ignore[arg-type]
+        )
+        return await self._require_client().tts_reading_item(int(item_id), request_data)
 
     async def import_reading_items(
         self,

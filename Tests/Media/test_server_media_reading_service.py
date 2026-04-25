@@ -15,6 +15,7 @@ from tldw_chatbook.tldw_api import (
     ReadingImportJobsListResponse,
     ReadingImportJobStatus,
     ReadingSummaryResponse,
+    ReadingTTSResponse,
 )
 from tldw_chatbook.tldw_api.media_reading_schemas import ItemsBulkResponse
 
@@ -196,6 +197,16 @@ class FakeClient:
             content_type="application/x-ndjson",
             content_disposition="attachment; filename=reading_export.jsonl",
             filename="reading_export.jsonl",
+        )
+
+    async def tts_reading_item(self, item_id, request_data):
+        self.calls.append(("tts_reading_item", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return ReadingTTSResponse(
+            item_id=item_id,
+            content=b"mp3-bytes",
+            content_type="audio/mpeg",
+            content_disposition=f"attachment; filename=reading_{item_id}.mp3",
+            filename=f"reading_{item_id}.mp3",
         )
 
     async def list_reading_import_jobs(self, *, status=None, limit=50, offset=0):
@@ -596,6 +607,42 @@ async def test_server_service_routes_reading_export_with_policy_action():
 
 
 @pytest.mark.asyncio
+async def test_server_service_routes_reading_tts_with_policy_action():
+    client = FakeClient()
+    policy = Mock()
+    service = ServerMediaReadingService(client=client, policy_enforcer=policy)
+
+    audio = await service.tts_reading_item(
+        41,
+        model="kokoro",
+        voice="af_heart",
+        response_format="mp3",
+        stream=False,
+        speed=1.25,
+        max_chars=12000,
+        text_source="text",
+    )
+
+    assert audio.filename == "reading_41.mp3"
+    assert client.calls[-1] == (
+        "tts_reading_item",
+        41,
+        {
+            "model": "kokoro",
+            "voice": "af_heart",
+            "response_format": "mp3",
+            "stream": False,
+            "speed": 1.25,
+            "max_chars": 12000,
+            "text_source": "text",
+        },
+    )
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "media.reading.tts.server"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_server_service_enforces_media_reading_and_ingestion_policy_actions():
     client = FakeClient()
     policy = Mock()
@@ -621,6 +668,7 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
     await service.summarize_reading_item(41, prompt="Summarize")
     await service.import_reading_items("/tmp/pocket.csv")
     await service.export_reading_items()
+    await service.tts_reading_item(41, model="kokoro")
     await service.list_reading_import_jobs()
     await service.get_reading_import_job(701)
     await service.list_document_versions(99)
@@ -648,6 +696,7 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
         "media.reading.summarize.server",
         "media.reading.import.server",
         "media.reading.export.server",
+        "media.reading.tts.server",
         "media.reading_import_jobs.list.server",
         "media.reading_import_jobs.detail.server",
         "media.reading.detail.server",

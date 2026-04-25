@@ -457,6 +457,24 @@ class ReadingExportResponse(BaseModel):
     filename: str | None = None
 
 
+class ReadingTTSRequest(BaseModel):
+    model: str = Field(..., min_length=1)
+    voice: str = "af_heart"
+    response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = "mp3"
+    stream: bool = True
+    speed: float | None = Field(default=None, ge=0.25, le=4.0)
+    max_chars: int | None = Field(default=None, ge=1, le=200000)
+    text_source: Literal["text", "summary", "notes"] | None = None
+
+
+class ReadingTTSResponse(BaseModel):
+    item_id: int
+    content: bytes
+    content_type: str | None = None
+    content_disposition: str | None = None
+    filename: str | None = None
+
+
 class ReadingImportResponse(BaseModel):
     source: str
     imported: int
@@ -908,6 +926,8 @@ __all__ = [
     "ReadingSavedSearchUpdateRequest",
     "ReadingSummarizeRequest",
     "ReadingSummaryResponse",
+    "ReadingTTSRequest",
+    "ReadingTTSResponse",
     "ReadingUpdateRequest",
     "ReferenceImageListItem",
     "ReferenceImageListResponse",

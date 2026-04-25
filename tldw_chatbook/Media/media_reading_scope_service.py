@@ -481,6 +481,39 @@ class MediaReadingScopeService:
             )
         )
 
+    async def tts_reading_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_id: Any,
+        model: str,
+        voice: str = "af_heart",
+        response_format: str = "mp3",
+        stream: bool = True,
+        speed: float | None = None,
+        max_chars: int | None = None,
+        text_source: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "tts"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading TTS generation is not available yet.")
+        service = self._service_for_mode(normalized_mode)
+        return self._to_plain(
+            await self._maybe_await(
+                service.tts_reading_item(
+                    item_id,
+                    model=model,
+                    voice=voice,
+                    response_format=response_format,
+                    stream=stream,
+                    speed=speed,
+                    max_chars=max_chars,
+                    text_source=text_source,
+                )
+            )
+        )
+
     async def import_reading_items(
         self,
         *,

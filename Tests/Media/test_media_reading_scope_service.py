@@ -605,6 +605,16 @@ class FakeServerMediaService:
             "filename": "reading_export.jsonl",
         }
 
+    async def tts_reading_item(self, item_id, **kwargs):
+        self.calls.append(("tts_reading_item", item_id, kwargs))
+        return {
+            "item_id": item_id,
+            "content": b"mp3-bytes",
+            "content_type": "audio/mpeg",
+            "content_disposition": f"attachment; filename=reading_{item_id}.mp3",
+            "filename": f"reading_{item_id}.mp3",
+        }
+
     async def list_reading_import_jobs(self, *, status=None, limit=50, offset=0):
         self.calls.append(("list_reading_import_jobs", status, limit, offset))
         return {
@@ -1250,6 +1260,60 @@ async def test_scope_service_reports_local_reading_export_as_explicitly_unsuppor
         await scope.export_reading_items(mode="local")
 
     assert policy.calls[-1:] == ["media.reading.export.local"]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_reading_tts_with_policy():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    audio = await scope.tts_reading_item(
+        mode="server",
+        item_id=41,
+        model="kokoro",
+        voice="af_heart",
+        response_format="mp3",
+        stream=False,
+        speed=1.25,
+        max_chars=12000,
+        text_source="text",
+    )
+
+    assert audio["filename"] == "reading_41.mp3"
+    assert policy.calls[-1:] == ["media.reading.tts.server"]
+    assert server.calls[-1] == (
+        "tts_reading_item",
+        41,
+        {
+            "model": "kokoro",
+            "voice": "af_heart",
+            "response_format": "mp3",
+            "stream": False,
+            "speed": 1.25,
+            "max_chars": 12000,
+            "text_source": "text",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_scope_service_reports_local_reading_tts_as_explicitly_unsupported_after_policy():
+    policy = FakePolicyEnforcer()
+    scope = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Local reading TTS generation is not available yet."):
+        await scope.tts_reading_item(mode="local", item_id=41, model="kokoro")
+
+    assert policy.calls[-1:] == ["media.reading.tts.local"]
 
 
 @pytest.mark.asyncio

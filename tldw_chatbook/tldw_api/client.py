@@ -96,6 +96,8 @@ from .media_reading_schemas import (
     ReadingSavedSearchUpdateRequest,
     ReadingSummarizeRequest,
     ReadingSummaryResponse,
+    ReadingTTSRequest,
+    ReadingTTSResponse,
     ReadingUpdateRequest,
     ReprocessMediaRequest,
     ReprocessMediaResponse,
@@ -1255,6 +1257,25 @@ class TLDWAPIClient:
             json_data=payload,
         )
         return ReadingSummaryResponse.model_validate(response)
+
+    async def tts_reading_item(
+        self,
+        item_id: int,
+        request_data: ReadingTTSRequest,
+    ) -> ReadingTTSResponse:
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        response = await self._binary_request(
+            "POST",
+            f"/api/v1/reading/items/{item_id}/tts",
+            json_data=payload,
+        )
+        return ReadingTTSResponse(
+            item_id=item_id,
+            content=response.content,
+            content_type=response.content_type,
+            content_disposition=response.content_disposition,
+            filename=response.filename,
+        )
 
     async def import_reading_items(
         self,
