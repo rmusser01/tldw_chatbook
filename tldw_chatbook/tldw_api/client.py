@@ -204,6 +204,18 @@ from .user_governance_schemas import (
     PrivilegeDetailResponse,
     PrivilegeSelfResponse,
 )
+from .connectors_schemas import (
+    AuthorizeURLResponse,
+    ConnectorAccount,
+    ConnectorBrowseResponse,
+    ConnectorImportJob,
+    ConnectorProvider,
+    ConnectorSource,
+    ConnectorSourceCreateRequest,
+    ConnectorSourcePatchRequest,
+    ConnectorSourceSyncStatus,
+    ConnectorSourceSyncTriggerResponse,
+)
 from .skills_schemas import (
     SkillContextPayload,
     SkillCreate,
@@ -6662,6 +6674,128 @@ class TLDWAPIClient:
     async def restore_kanban_card(self, card_id: int) -> KanbanCardResponse:
         response = await self._request("POST", f"/api/v1/kanban/cards/{card_id}/restore")
         return KanbanCardResponse.model_validate(response)
+
+    async def list_connector_providers(self) -> List[ConnectorProvider]:
+        response = await self._request("GET", "/api/v1/connectors/providers")
+        return [ConnectorProvider.model_validate(item) for item in response]
+
+    async def authorize_connector_provider(
+        self,
+        provider: str,
+        *,
+        state: str | None = None,
+        scopes: list[str] | str | None = None,
+    ) -> AuthorizeURLResponse:
+        params: Dict[str, Any] = {}
+        if state is not None:
+            params["state"] = state
+        if scopes is not None:
+            params["scopes"] = ",".join(scopes) if isinstance(scopes, list) else scopes
+        response = await self._request(
+            "POST",
+            f"/api/v1/connectors/providers/{provider}/authorize",
+            params=params or None,
+        )
+        return AuthorizeURLResponse.model_validate(response)
+
+    async def complete_connector_oauth_callback(
+        self,
+        provider: str,
+        *,
+        code: str | None = None,
+        oauth_token: str | None = None,
+        oauth_verifier: str | None = None,
+        state: str | None = None,
+    ) -> ConnectorAccount:
+        params = {
+            key: value
+            for key, value in {
+                "code": code,
+                "oauth_token": oauth_token,
+                "oauth_verifier": oauth_verifier,
+                "state": state,
+            }.items()
+            if value is not None
+        }
+        response = await self._request(
+            "GET",
+            f"/api/v1/connectors/providers/{provider}/callback",
+            params=params or None,
+        )
+        return ConnectorAccount.model_validate(response)
+
+    async def list_connector_accounts(self) -> List[ConnectorAccount]:
+        response = await self._request("GET", "/api/v1/connectors/accounts")
+        return [ConnectorAccount.model_validate(item) for item in response]
+
+    async def delete_connector_account(self, account_id: int) -> bool:
+        await self._request("DELETE", f"/api/v1/connectors/accounts/{account_id}")
+        return True
+
+    async def browse_connector_sources(
+        self,
+        provider: str,
+        *,
+        account_id: int,
+        parent_remote_id: str | None = None,
+        page_size: int = 50,
+        cursor: str | None = None,
+    ) -> ConnectorBrowseResponse:
+        params = {
+            key: value
+            for key, value in {
+                "account_id": account_id,
+                "parent_remote_id": parent_remote_id,
+                "page_size": page_size,
+                "cursor": cursor,
+            }.items()
+            if value is not None
+        }
+        response = await self._request(
+            "GET",
+            f"/api/v1/connectors/providers/{provider}/sources/browse",
+            params=params,
+        )
+        return ConnectorBrowseResponse.model_validate(response)
+
+    async def create_connector_source(self, request_data: ConnectorSourceCreateRequest) -> ConnectorSource:
+        response = await self._request(
+            "POST",
+            "/api/v1/connectors/sources",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ConnectorSource.model_validate(response)
+
+    async def list_connector_sources(self) -> List[ConnectorSource]:
+        response = await self._request("GET", "/api/v1/connectors/sources")
+        return [ConnectorSource.model_validate(item) for item in response]
+
+    async def update_connector_source(
+        self,
+        source_id: int,
+        request_data: ConnectorSourcePatchRequest,
+    ) -> ConnectorSource:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/connectors/sources/{source_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ConnectorSource.model_validate(response)
+
+    async def import_connector_source(self, source_id: int) -> ConnectorImportJob:
+        response = await self._request("POST", f"/api/v1/connectors/sources/{source_id}/import")
+        return ConnectorImportJob.model_validate(response)
+
+    async def get_connector_source_sync_status(self, source_id: int) -> ConnectorSourceSyncStatus:
+        response = await self._request("GET", f"/api/v1/connectors/sources/{source_id}/sync")
+        return ConnectorSourceSyncStatus.model_validate(response)
+
+    async def trigger_connector_source_sync(self, source_id: int) -> ConnectorSourceSyncTriggerResponse:
+        response = await self._request("POST", f"/api/v1/connectors/sources/{source_id}/sync")
+        return ConnectorSourceSyncTriggerResponse.model_validate(response)
+
+    async def get_connector_job_status(self, job_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/connectors/jobs/{job_id}")
 
     async def list_skills(
         self,

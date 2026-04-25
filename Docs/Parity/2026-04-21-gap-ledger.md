@@ -115,6 +115,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 1
 - Notes: Priority 78. This row underpins the higher-ranked reading-list and research work.
 
+### External Connectors: OAuth/token providers, linked accounts, remote source browsing, source import/sync, and job status
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Discover / Configure / Trigger / Observe
+- Current state: Chatbook now has typed direct API-client wrappers for server connector provider discovery, OAuth authorization URL creation, OAuth callback completion, account list/delete, provider source browsing, source create/list/patch, source import trigger, source sync status, source sync trigger, and connector job status.
+- Gap: Dedicated UX adoption, explicit offline-unavailable presentation, org connector policy admin, inbound webhook handling, credential lifecycle design, active-server switching cache invalidation, and local/server connector-source mirror semantics remain pending or out of scope. Local ingestion sources remain the offline/local mechanism and should not be conflated with server OAuth connector accounts.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/connectors.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/connectors.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/connectors_schemas.py`; Verification: `Tests/tldw_api/test_connectors_client.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 35. This is client-facing server completeness for external sources, but it should remain below the local-first media/reading ingestion work and skip admin policy surfaces in this phase.
+
 ### Audio / Speech Services: TTS/STT health, speech generation, audio jobs, TTS history, and transcription/translation
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Discover / Trigger / Observe

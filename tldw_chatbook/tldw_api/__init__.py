@@ -645,6 +645,24 @@ from .user_governance_schemas import (
     PrivilegeSelfItem,
     PrivilegeSelfResponse,
 )
+from .connectors_schemas import (
+    AuthorizeURLResponse,
+    ConnectorAccount,
+    ConnectorAuthType,
+    ConnectorBrowseResponse,
+    ConnectorImportJob,
+    ConnectorProvider,
+    ConnectorProviderName,
+    ConnectorSource,
+    ConnectorSourceCreateRequest,
+    ConnectorSourcePatchRequest,
+    ConnectorSourceSyncStatus,
+    ConnectorSourceSyncSummary,
+    ConnectorSourceSyncTriggerResponse,
+    ConnectorSourceType,
+    ConnectorSyncJobSummary,
+    SyncOptions,
+)
 from .skills_schemas import (
     SkillBase,
     SkillContextPayload,
