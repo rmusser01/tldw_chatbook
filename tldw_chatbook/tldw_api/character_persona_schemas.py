@@ -544,6 +544,58 @@ class ChatSettingsUpdate(BaseModel):
     settings: dict[str, Any] = Field(default_factory=dict)
 
 
+class CharacterMessageCreate(BaseModel):
+    """Request body for creating a message in a character/persona chat."""
+
+    role: Literal["user", "assistant", "system"]
+    content: str | None = Field(default=None, min_length=1)
+    parent_message_id: str | None = None
+    image_base64: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_content_or_image(self) -> "CharacterMessageCreate":
+        content_ok = bool(self.content and str(self.content).strip())
+        image_ok = bool(self.image_base64 and str(self.image_base64).strip())
+        if not content_ok and not image_ok:
+            raise ValueError("Provide either non-empty content or image_base64.")
+        return self
+
+
+class CharacterMessageUpdate(BaseModel):
+    """Request body for updating a message in a character/persona chat."""
+
+    content: str | None = Field(default=None, min_length=1)
+    pinned: bool | None = None
+
+    @model_validator(mode="after")
+    def _validate_content_or_pin_update(self) -> "CharacterMessageUpdate":
+        content_ok = bool(self.content and str(self.content).strip())
+        if not content_ok and self.pinned is None:
+            raise ValueError("Provide either non-empty content or pinned.")
+        return self
+
+
+class CharacterMessageResponse(BaseModel):
+    id: str
+    conversation_id: str
+    parent_message_id: str | None = None
+    sender: str
+    content: str
+    timestamp: datetime
+    ranking: int | None = None
+    has_image: bool = False
+    version: int = 1
+    tool_calls: list[dict[str, Any]] | None = None
+    metadata_extra: dict[str, Any] | None = None
+
+
+class CharacterMessageListResponse(BaseModel):
+    messages: list[CharacterMessageResponse] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 0
+    offset: int = 0
+
+
 class PersonaExemplarCreate(BaseModel):
     id: StrictStr | None = Field(default=None, min_length=1, max_length=200)
     kind: PersonaExemplarKind = "style"
@@ -691,6 +743,10 @@ __all__ = [
     "CharacterQueryResponse",
     "CharacterDeleteResponse",
     "CharacterRestoreRequest",
+    "CharacterMessageCreate",
+    "CharacterMessageListResponse",
+    "CharacterMessageResponse",
+    "CharacterMessageUpdate",
     "CharacterExemplarSource",
     "CharacterExemplarLabels",
     "CharacterExemplarSafety",

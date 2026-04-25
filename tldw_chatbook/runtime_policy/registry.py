@@ -227,6 +227,12 @@ AUDITED_CAPABILITY_SEEDS = (
                 actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH, EXPORT, OBSERVE, RESTORE)),
             ),
             _resource(
+                "character.messages",
+                actions=CRUD_ACTIONS,
+                domain_id="characters",
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
                 "chat.dictionaries",
                 actions=_combine_action_sets(CRUD_ACTIONS, (PROCESS, IMPORT, EXPORT)),
                 domain_id="characters",

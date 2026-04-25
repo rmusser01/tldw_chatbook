@@ -11,6 +11,10 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
     CharacterCreateRequest,
+    CharacterMessageCreate,
+    CharacterMessageListResponse,
+    CharacterMessageResponse,
+    CharacterMessageUpdate,
     CharacterExemplarCreate,
     CharacterExemplarSearchRequest,
     CharacterExemplarSelectionDebugRequest,
@@ -222,6 +226,107 @@ class TestCharacterPersonaClient:
         create_payload = mocked.await_args_list[2][1]["json_data"]
         assert create_payload["content"] == "hello"
         assert "persona_id" not in create_payload
+
+    async def test_character_message_endpoint_wiring(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        message_payload = {
+            "id": "msg-1",
+            "conversation_id": "chat-1",
+            "sender": "user",
+            "content": "Hello",
+            "timestamp": "2026-04-25T00:00:00Z",
+            "version": 2,
+        }
+        mocked = AsyncMock(
+            side_effect=[
+                message_payload,
+                {"messages": [message_payload], "total": 1, "limit": 25, "offset": 5},
+                message_payload,
+                {**message_payload, "content": "Updated", "metadata_extra": {"pinned": True}},
+                None,
+                {"messages": [message_payload], "total": 1, "limit": 10, "offset": 0},
+            ]
+        )
+        monkeypatch.setattr(client, "_request", mocked)
+
+        created = await client.create_character_message(
+            "chat-1",
+            CharacterMessageCreate(role="user", content="Hello"),
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        listed = await client.list_character_messages(
+            "chat-1",
+            limit=25,
+            offset=5,
+            include_deleted=True,
+            include_metadata=True,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        detail = await client.get_character_message("msg-1", include_metadata=True)
+        updated = await client.update_character_message(
+            "msg-1",
+            CharacterMessageUpdate(content="Updated", pinned=True),
+            expected_version=2,
+        )
+        await client.delete_character_message("msg-1", expected_version=3)
+        results = await client.search_character_messages("chat-1", query="hello", limit=10)
+
+        expected_calls = [
+            (
+                "POST",
+                "/api/v1/chats/chat-1/messages",
+                {
+                    "json_data": {"role": "user", "content": "Hello"},
+                    "params": {"scope_type": "workspace", "workspace_id": "ws-1"},
+                },
+            ),
+            (
+                "GET",
+                "/api/v1/chats/chat-1/messages",
+                {
+                    "params": {
+                        "limit": 25,
+                        "offset": 5,
+                        "include_deleted": "true",
+                        "include_character_context": "false",
+                        "format_for_completions": "false",
+                        "include_tool_calls": "false",
+                        "include_metadata": "true",
+                        "include_message_ids": "false",
+                        "scope_type": "workspace",
+                        "workspace_id": "ws-1",
+                    }
+                },
+            ),
+            (
+                "GET",
+                "/api/v1/messages/msg-1",
+                {"params": {"include_tool_calls": "false", "include_metadata": "true"}},
+            ),
+            (
+                "PUT",
+                "/api/v1/messages/msg-1",
+                {"json_data": {"content": "Updated", "pinned": True}, "params": {"expected_version": 2}},
+            ),
+            ("DELETE", "/api/v1/messages/msg-1", {"params": {"expected_version": 3}}),
+            (
+                "GET",
+                "/api/v1/chats/chat-1/messages/search",
+                {"params": {"query": "hello", "limit": 10}},
+            ),
+        ]
+        assert len(mocked.await_args_list) == len(expected_calls)
+        for call_args, expected in zip(mocked.await_args_list, expected_calls):
+            _assert_request_call(call_args, *expected)
+
+        assert isinstance(created, CharacterMessageResponse)
+        assert isinstance(listed, CharacterMessageListResponse)
+        assert isinstance(detail, CharacterMessageResponse)
+        assert isinstance(updated, CharacterMessageResponse)
+        assert updated.metadata_extra == {"pinned": True}
+        assert isinstance(results, CharacterMessageListResponse)
 
     async def test_greetings_and_presets_endpoint_wiring(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")

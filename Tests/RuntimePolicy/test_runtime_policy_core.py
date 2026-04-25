@@ -231,6 +231,11 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         character.sessions.restore.server
         character.sessions.update.local
         character.sessions.update.server
+        character.messages.create.server
+        character.messages.delete.server
+        character.messages.detail.server
+        character.messages.list.server
+        character.messages.update.server
         chat.dictionaries.create.server
         chat.dictionaries.delete.server
         chat.dictionaries.detail.server

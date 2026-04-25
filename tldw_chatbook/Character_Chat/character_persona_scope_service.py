@@ -44,19 +44,7 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
     },
 ]
 
-_SERVER_UNSUPPORTED_CAPABILITIES = [
-    {
-        "operation_id": "character.messages.mutation.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "chatbook_contract_missing",
-        "user_message": (
-            "Server character-message endpoints exist, but Chatbook does not yet wrap message mutation through "
-            "the source-aware character/persona scope."
-        ),
-        "affected_action_ids": ["character.sessions.detail.server", "character.sessions.update.server"],
-    }
-]
+_SERVER_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 
 
 class CharacterPersonaScopeService:
@@ -101,6 +89,19 @@ class CharacterPersonaScopeService:
     @staticmethod
     def _session_action_id(mode: str, action: str = "launch") -> str:
         return f"character.sessions.{action}.{mode}"
+
+    @staticmethod
+    def _message_action_id(mode: str, action: str) -> str:
+        if mode == "server":
+            return f"character.messages.{action}.server"
+        session_action = {
+            "list": "detail",
+            "detail": "detail",
+            "create": "update",
+            "update": "update",
+            "delete": "delete",
+        }.get(action, "detail")
+        return CharacterPersonaScopeService._session_action_id(mode, session_action)
 
     def list_unsupported_capabilities(self, *, mode: str | None = None) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
@@ -420,6 +421,129 @@ class CharacterPersonaScopeService:
             backend,
             ("restore_character_chat_session", "restore_chat_session"),
             chat_id,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def list_character_messages(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._message_action_id(normalized_mode, "list"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character messages are not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide list_character_messages()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("list_character_messages", "list_chat_messages"),
+            chat_id,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def get_character_message(self, message_id: str, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._message_action_id(normalized_mode, "detail"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character messages are not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide get_character_message()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("get_character_message", "get_chat_message"),
+            message_id,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def create_character_message(
+        self,
+        chat_id: str,
+        request_data: Any,
+        mode: str = "local",
+        **kwargs: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._message_action_id(normalized_mode, "create"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character message creation is not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide create_character_message()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("create_character_message", "create_chat_message"),
+            chat_id,
+            request_data,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def update_character_message(
+        self,
+        message_id: str,
+        request_data: Any,
+        mode: str = "local",
+        **kwargs: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._message_action_id(normalized_mode, "update"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character message updates are not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide update_character_message()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("update_character_message", "update_chat_message"),
+            message_id,
+            request_data,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def delete_character_message(self, message_id: str, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._message_action_id(normalized_mode, "delete"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character message deletion is not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide delete_character_message()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("delete_character_message", "delete_chat_message"),
+            message_id,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def search_character_messages(
+        self,
+        chat_id: str,
+        query: str,
+        mode: str = "local",
+        **kwargs: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._message_action_id(normalized_mode, "list"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character message search is not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide search_character_messages()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("search_character_messages", "search_chat_messages"),
+            chat_id,
+            query,
             missing_message=missing_message,
             **kwargs,
         )

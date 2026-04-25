@@ -197,6 +197,10 @@ from .character_persona_schemas import (
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
     CharacterCreateRequest,
+    CharacterMessageCreate,
+    CharacterMessageListResponse,
+    CharacterMessageResponse,
+    CharacterMessageUpdate,
     CharacterExemplarCreate,
     CharacterExemplarSearchRequest,
     CharacterExemplarSelectionDebugRequest,
@@ -3669,6 +3673,121 @@ class TLDWAPIClient:
         if scope_params is not None:
             params.update(scope_params.model_dump(exclude_none=True, mode="json"))
         return await self._request("POST", f"/api/v1/chats/{chat_id}/restore", params=params or None)
+
+    async def create_character_message(
+        self,
+        chat_id: str,
+        request_data: CharacterMessageCreate | Dict[str, Any],
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> CharacterMessageResponse:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params = scope_params.model_dump(exclude_none=True, mode="json") if scope_params is not None else None
+        response = await self._request(
+            "POST",
+            f"/api/v1/chats/{chat_id}/messages",
+            json_data=self._dump_request_payload(request_data, exclude_none=True),
+            params=params,
+        )
+        return CharacterMessageResponse.model_validate(response)
+
+    async def list_character_messages(
+        self,
+        chat_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        include_deleted: bool = False,
+        include_character_context: bool = False,
+        format_for_completions: bool = False,
+        include_tool_calls: bool = False,
+        include_metadata: bool = False,
+        include_message_ids: bool = False,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> CharacterMessageListResponse | Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "include_deleted": str(include_deleted).lower(),
+            "include_character_context": str(include_character_context).lower(),
+            "format_for_completions": str(format_for_completions).lower(),
+            "include_tool_calls": str(include_tool_calls).lower(),
+            "include_metadata": str(include_metadata).lower(),
+            "include_message_ids": str(include_message_ids).lower(),
+        }
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        response = await self._request("GET", f"/api/v1/chats/{chat_id}/messages", params=params)
+        if format_for_completions:
+            return response
+        return CharacterMessageListResponse.model_validate(response)
+
+    async def get_character_message(
+        self,
+        message_id: str,
+        include_tool_calls: bool = False,
+        include_metadata: bool = False,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> CharacterMessageResponse:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {
+            "include_tool_calls": str(include_tool_calls).lower(),
+            "include_metadata": str(include_metadata).lower(),
+        }
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        response = await self._request("GET", f"/api/v1/messages/{message_id}", params=params)
+        return CharacterMessageResponse.model_validate(response)
+
+    async def update_character_message(
+        self,
+        message_id: str,
+        request_data: CharacterMessageUpdate | Dict[str, Any],
+        expected_version: int,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> CharacterMessageResponse:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {"expected_version": expected_version}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        response = await self._request(
+            "PUT",
+            f"/api/v1/messages/{message_id}",
+            json_data=self._dump_request_payload(request_data, exclude_unset=True, exclude_none=True),
+            params=params,
+        )
+        return CharacterMessageResponse.model_validate(response)
+
+    async def delete_character_message(
+        self,
+        message_id: str,
+        expected_version: int,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> None:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {"expected_version": expected_version}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        await self._request("DELETE", f"/api/v1/messages/{message_id}", params=params)
+
+    async def search_character_messages(
+        self,
+        chat_id: str,
+        query: str,
+        limit: int = 50,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> CharacterMessageListResponse:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {"query": query, "limit": limit}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        response = await self._request("GET", f"/api/v1/chats/{chat_id}/messages/search", params=params)
+        return CharacterMessageListResponse.model_validate(response)
 
     async def get_chat_settings(
         self,

@@ -66,9 +66,12 @@ class ServerCharacterPersonaService:
         return f"character.persona.{action}.server"
 
     @staticmethod
-    @staticmethod
     def _session_action_id(action: str = "launch") -> str:
         return f"character.sessions.{action}.server"
+
+    @staticmethod
+    def _message_action_id(action: str) -> str:
+        return f"character.messages.{action}.server"
 
     async def list_characters(
         self,
@@ -178,6 +181,36 @@ class ServerCharacterPersonaService:
         self._enforce(self._session_action_id("restore"))
         client = self._require_client()
         return await client.restore_character_chat_session(chat_id, **kwargs)
+
+    async def list_character_messages(self, chat_id: str, **kwargs: Any) -> Any:
+        self._enforce(self._message_action_id("list"))
+        client = self._require_client()
+        return await client.list_character_messages(chat_id, **kwargs)
+
+    async def get_character_message(self, message_id: str, **kwargs: Any) -> Any:
+        self._enforce(self._message_action_id("detail"))
+        client = self._require_client()
+        return await client.get_character_message(message_id, **kwargs)
+
+    async def create_character_message(self, chat_id: str, request_data: Any, **kwargs: Any) -> Any:
+        self._enforce(self._message_action_id("create"))
+        client = self._require_client()
+        return await client.create_character_message(chat_id, request_data, **kwargs)
+
+    async def update_character_message(self, message_id: str, request_data: Any, **kwargs: Any) -> Any:
+        self._enforce(self._message_action_id("update"))
+        client = self._require_client()
+        return await client.update_character_message(message_id, request_data, **kwargs)
+
+    async def delete_character_message(self, message_id: str, **kwargs: Any) -> Any:
+        self._enforce(self._message_action_id("delete"))
+        client = self._require_client()
+        return await client.delete_character_message(message_id, **kwargs)
+
+    async def search_character_messages(self, chat_id: str, query: str, **kwargs: Any) -> Any:
+        self._enforce(self._message_action_id("list"))
+        client = self._require_client()
+        return await client.search_character_messages(chat_id, query, **kwargs)
 
     async def get_chat_settings(self, chat_id: str, **kwargs: Any) -> Any:
         self._enforce(self._session_action_id("detail"))
