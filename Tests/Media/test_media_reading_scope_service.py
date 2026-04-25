@@ -162,6 +162,45 @@ class FakeLocalMediaService:
         self.calls.append(("delete_analysis_version", version_uuid))
         return True
 
+    def create_highlight(self, item_id, **kwargs):
+        raise ValueError("Local reading highlights are not available yet.")
+
+    def list_highlights(self, item_id):
+        raise ValueError("Local reading highlights are not available yet.")
+
+    def update_highlight(self, highlight_id, **changes):
+        raise ValueError("Local reading highlights are not available yet.")
+
+    def delete_highlight(self, highlight_id):
+        raise ValueError("Local reading highlights are not available yet.")
+
+    def list_annotations(self, media_id):
+        raise ValueError("Local document annotations are not available yet.")
+
+    def create_annotation(self, media_id, **kwargs):
+        raise ValueError("Local document annotations are not available yet.")
+
+    def update_annotation(self, media_id, annotation_id, **changes):
+        raise ValueError("Local document annotations are not available yet.")
+
+    def delete_annotation(self, media_id, annotation_id):
+        raise ValueError("Local document annotations are not available yet.")
+
+    def sync_annotations(self, media_id, *, annotations, client_ids=None):
+        raise ValueError("Local document annotations are not available yet.")
+
+    def get_document_outline(self, media_id):
+        raise ValueError("Local document intelligence is not available yet.")
+
+    def get_document_figures(self, media_id, **params):
+        raise ValueError("Local document intelligence is not available yet.")
+
+    def get_document_references(self, media_id, **params):
+        raise ValueError("Local document intelligence is not available yet.")
+
+    def generate_document_insights(self, media_id, **params):
+        raise ValueError("Local document intelligence is not available yet.")
+
 
 class FakeServerMediaService:
     def __init__(self):
@@ -303,17 +342,106 @@ class FakeServerMediaService:
         self.calls.append(("upload_ingestion_source_archive", source_id, archive_path))
         return {"status": "queued", "source_id": source_id, "job_id": 124}
 
-    async def list_document_versions(self, media_id, include_deleted=False):
-        raise ValueError("Server document versions are not available yet.")
+    async def list_document_versions(self, media_id, include_deleted=False, **kwargs):
+        self.calls.append(("list_document_versions", media_id, include_deleted, kwargs))
+        return [{"uuid": "server-version-1", "media_id": media_id, "analysis_content": "analysis"}]
 
     async def save_analysis_version(self, media_id, *, content, analysis_content, prompt=None):
-        raise ValueError("Server document versions are not available yet.")
+        self.calls.append(("save_analysis_version", media_id, content, analysis_content, prompt))
+        return {"uuid": "server-version-2", "media_id": media_id}
 
     async def overwrite_analysis_version(self, media_id, *, content, analysis_content, prompt=None):
-        raise ValueError("Server document versions are not available yet.")
+        self.calls.append(("overwrite_analysis_version", media_id, content, analysis_content, prompt))
+        return {"uuid": "server-version-3", "media_id": media_id}
 
     async def delete_analysis_version(self, version_uuid):
-        raise ValueError("Server document versions are not available yet.")
+        raise ValueError("Server document version deletion requires media_id and version_number.")
+
+    async def create_highlight(self, item_id, **kwargs):
+        self.calls.append(("create_highlight", item_id, kwargs))
+        return {"id": 5, "item_id": item_id, "quote": kwargs["quote"]}
+
+    async def list_highlights(self, item_id):
+        self.calls.append(("list_highlights", item_id))
+        return [{"id": 5, "item_id": item_id, "quote": "important"}]
+
+    async def update_highlight(self, highlight_id, **changes):
+        self.calls.append(("update_highlight", highlight_id, changes))
+        return {"id": highlight_id, "item_id": 41, "quote": "important", **changes}
+
+    async def delete_highlight(self, highlight_id):
+        self.calls.append(("delete_highlight", highlight_id))
+        return {"success": True}
+
+    async def list_annotations(self, media_id):
+        self.calls.append(("list_annotations", media_id))
+        return {"media_id": media_id, "annotations": [], "total_count": 0}
+
+    async def create_annotation(self, media_id, **kwargs):
+        self.calls.append(("create_annotation", media_id, kwargs))
+        return {"id": "ann_1", "media_id": media_id, "text": kwargs["text"]}
+
+    async def update_annotation(self, media_id, annotation_id, **changes):
+        self.calls.append(("update_annotation", media_id, annotation_id, changes))
+        return {"id": annotation_id, "media_id": media_id, **changes}
+
+    async def delete_annotation(self, media_id, annotation_id):
+        self.calls.append(("delete_annotation", media_id, annotation_id))
+        return {}
+
+    async def sync_annotations(self, media_id, *, annotations, client_ids=None):
+        self.calls.append(("sync_annotations", media_id, annotations, client_ids))
+        return {"media_id": media_id, "synced_count": len(annotations), "annotations": []}
+
+    async def get_document_outline(self, media_id):
+        self.calls.append(("get_document_outline", media_id))
+        return {"media_id": media_id, "has_outline": True, "entries": [], "total_pages": 1}
+
+    async def get_document_figures(self, media_id, **params):
+        self.calls.append(("get_document_figures", media_id, params))
+        return {"media_id": media_id, "has_figures": False, "figures": [], "total_count": 0}
+
+    async def get_document_references(self, media_id, **params):
+        self.calls.append(("get_document_references", media_id, params))
+        return {"media_id": media_id, "has_references": False, "references": []}
+
+    async def generate_document_insights(self, media_id, **params):
+        self.calls.append(("generate_document_insights", media_id, params))
+        return {"media_id": media_id, "insights": [], "model_used": params.get("model") or "default"}
+
+    async def submit_ingest_jobs(self, **kwargs):
+        self.calls.append(("submit_ingest_jobs", kwargs))
+        return {"batch_id": "batch-1", "jobs": [], "errors": []}
+
+    async def get_ingest_job(self, job_id):
+        self.calls.append(("get_ingest_job", job_id))
+        return {"id": job_id, "status": "queued"}
+
+    async def list_ingest_jobs(self, batch_id, *, limit=100):
+        self.calls.append(("list_ingest_jobs", batch_id, limit))
+        return {"batch_id": batch_id, "jobs": []}
+
+    def stream_ingest_job_events(self, *, batch_id=None, after_id=0):
+        self.calls.append(("stream_ingest_job_events", batch_id, after_id))
+        return [{"event": "status", "data": {"id": 11, "status": "completed"}}]
+
+    async def cancel_ingest_job(self, job_id, *, reason=None):
+        self.calls.append(("cancel_ingest_job", job_id, reason))
+        return {"success": True, "job_id": job_id, "status": "cancelled"}
+
+    async def cancel_ingest_batch(self, *, batch_id=None, session_id=None, reason=None):
+        self.calls.append(("cancel_ingest_batch", batch_id, session_id, reason))
+        return {
+            "success": True,
+            "batch_id": batch_id or session_id,
+            "requested": 1,
+            "cancelled": 1,
+            "already_terminal": 0,
+        }
+
+    async def reprocess_media(self, media_id, **options):
+        self.calls.append(("reprocess_media", media_id, options))
+        return {"media_id": media_id, "status": "completed", "message": "ok"}
 
 
 class FakePolicyEnforcer:
@@ -387,6 +515,50 @@ async def test_scope_service_list_read_it_later_normalizes_local_saved_state():
     assert result["items"][0]["id"] == "local:media:12"
     assert result["items"][0]["is_read_it_later"] is True
     assert result["items"][0]["read_it_later_saved_at"] == "2026-04-21T10:00:00Z"
+
+
+def test_scope_service_reports_server_read_it_later_as_aggregate_only():
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+    )
+
+    server_article = scope_service.read_it_later_browse_capability(
+        mode="server",
+        media_type_context="article",
+    )
+    server_all = scope_service.read_it_later_browse_capability(
+        mode="server",
+        media_type_context="all-media",
+    )
+    local_article = scope_service.read_it_later_browse_capability(
+        mode="local",
+        media_type_context="article",
+    )
+
+    assert server_article == {
+        "available": False,
+        "reason": "Read-it-later is only available in server mode from All Media.",
+    }
+    assert server_all == {"available": True, "reason": ""}
+    assert local_article == {"available": True, "reason": ""}
+
+
+@pytest.mark.asyncio
+async def test_scope_service_blocks_invalid_server_read_it_later_media_type_context():
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+    )
+
+    with pytest.raises(ValueError, match="Read-it-later is only available in server mode from All Media."):
+        await scope_service.list_read_it_later(
+            mode="server",
+            media_type_context="article",
+        )
+
+    assert server.calls == []
 
 
 @pytest.mark.asyncio
@@ -658,11 +830,204 @@ async def test_scope_service_create_ingestion_source_fails_explicitly_for_local_
 
 
 @pytest.mark.asyncio
-async def test_scope_service_fails_explicitly_for_server_document_versions():
+async def test_scope_service_routes_server_document_versions():
     scope_service = MediaReadingScopeService(
         local_service=FakeLocalMediaService(),
         server_service=FakeServerMediaService(),
     )
 
-    with pytest.raises(ValueError, match="Server document versions are not available yet."):
-        await scope_service.list_document_versions(mode="server", media_id=99)
+    versions = await scope_service.list_document_versions(mode="server", media_id=99)
+    saved = await scope_service.save_analysis_version(
+        mode="server",
+        media_id=99,
+        content="full content",
+        analysis_content="analysis",
+        prompt="summarize",
+    )
+
+    assert versions == [{"uuid": "server-version-1", "media_id": 99, "analysis_content": "analysis"}]
+    assert saved["uuid"] == "server-version-2"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_highlights_with_media_reading_actions():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    created = await scope_service.create_highlight(
+        mode="server",
+        item_id=41,
+        quote="important",
+        color="yellow",
+    )
+    listed = await scope_service.list_highlights(mode="server", item_id=41)
+    updated = await scope_service.update_highlight(mode="server", highlight_id=5, note="recheck")
+    deleted = await scope_service.delete_highlight(mode="server", highlight_id=5)
+
+    assert created["id"] == 5
+    assert listed == [{"id": 5, "item_id": 41, "quote": "important"}]
+    assert updated["note"] == "recheck"
+    assert deleted == {"success": True}
+    assert policy.calls[-4:] == [
+        "media.reading.update.server",
+        "media.reading.detail.server",
+        "media.reading.update.server",
+        "media.reading.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_document_annotations_with_media_reading_actions():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    listed = await scope_service.list_annotations(mode="server", media_id=99)
+    created = await scope_service.create_annotation(
+        mode="server",
+        media_id=99,
+        location="12",
+        text="selected text",
+        color="yellow",
+    )
+    updated = await scope_service.update_annotation(
+        mode="server",
+        media_id=99,
+        annotation_id="ann_1",
+        note="recheck",
+    )
+    deleted = await scope_service.delete_annotation(mode="server", media_id=99, annotation_id="ann_1")
+    synced = await scope_service.sync_annotations(
+        mode="server",
+        media_id=99,
+        annotations=[{"location": "13", "text": "offline note"}],
+        client_ids=["client-1"],
+    )
+
+    assert listed["total_count"] == 0
+    assert created["id"] == "ann_1"
+    assert updated["note"] == "recheck"
+    assert deleted == {}
+    assert synced["synced_count"] == 1
+    assert policy.calls[-5:] == [
+        "media.reading.detail.server",
+        "media.reading.update.server",
+        "media.reading.update.server",
+        "media.reading.delete.server",
+        "media.reading.update.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_document_intelligence_with_media_reading_detail_actions():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    outline = await scope_service.get_document_outline(mode="server", media_id=99)
+    figures = await scope_service.get_document_figures(mode="server", media_id=99, min_size=80)
+    references = await scope_service.get_document_references(mode="server", media_id=99, enrich=True)
+    insights = await scope_service.generate_document_insights(mode="server", media_id=99, categories=["summary"])
+
+    assert outline["has_outline"] is True
+    assert figures["has_figures"] is False
+    assert references["has_references"] is False
+    assert insights["model_used"] == "default"
+    assert policy.calls[-4:] == [
+        "media.reading.detail.server",
+        "media.reading.detail.server",
+        "media.reading.detail.server",
+        "media.reading.detail.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_ingest_jobs_and_reprocess_with_ingestion_job_actions():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    submitted = await scope_service.submit_ingest_jobs(
+        mode="server",
+        media_type="pdf",
+        urls=["https://example.com/a.pdf"],
+        keywords=["paper"],
+        chunk_size=600,
+    )
+    status = await scope_service.get_ingest_job(mode="server", job_id=11)
+    listed = await scope_service.list_ingest_jobs(mode="server", batch_id="batch-1", limit=50)
+    cancelled = await scope_service.cancel_ingest_job(mode="server", job_id=11, reason="user requested")
+    batch_cancelled = await scope_service.cancel_ingest_batch(
+        mode="server",
+        batch_id="batch-1",
+        reason="user requested",
+    )
+    reprocessed = await scope_service.reprocess_media(
+        mode="server",
+        media_id=99,
+        generate_embeddings=True,
+    )
+
+    assert submitted["batch_id"] == "batch-1"
+    assert status["id"] == 11
+    assert listed["batch_id"] == "batch-1"
+    assert cancelled["success"] is True
+    assert batch_cancelled["cancelled"] == 1
+    assert reprocessed["status"] == "completed"
+    assert policy.calls[-6:] == [
+        "media.ingestion_jobs.launch.server",
+        "media.ingestion_jobs.detail.server",
+        "media.ingestion_jobs.list.server",
+        "media.ingestion_jobs.cancel.server",
+        "media.ingestion_jobs.cancel.server",
+        "media.ingestion_jobs.launch.server",
+    ]
+    assert server.calls[-6:] == [
+        (
+            "submit_ingest_jobs",
+            {
+                "media_type": "pdf",
+                "urls": ["https://example.com/a.pdf"],
+                "keywords": ["paper"],
+                "chunk_size": 600,
+            },
+        ),
+        ("get_ingest_job", 11),
+        ("list_ingest_jobs", "batch-1", 50),
+        ("cancel_ingest_job", 11, "user requested"),
+        ("cancel_ingest_batch", "batch-1", None, "user requested"),
+        ("reprocess_media", 99, {"generate_embeddings": True}),
+    ]
+
+
+def test_scope_service_streams_server_ingest_job_events_with_observe_policy():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    events = scope_service.stream_ingest_job_events(mode="server", batch_id="batch-1", after_id=4)
+
+    assert events == [{"event": "status", "data": {"id": 11, "status": "completed"}}]
+    assert policy.calls[-1:] == ["media.ingestion_jobs.observe.server"]
+    assert server.calls[-1:] == [("stream_ingest_job_events", "batch-1", 4)]

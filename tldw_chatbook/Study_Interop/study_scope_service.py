@@ -70,6 +70,19 @@ class StudyScopeService:
         return f"study.deck.{action}.{mode.value}"
 
     @staticmethod
+    def _study_pack_action_id(action: str) -> str:
+        return f"study.packs.jobs.{action}.server"
+
+    @staticmethod
+    def _study_suggestion_action_id(action: str) -> str:
+        return f"study.suggestions.{action}.server"
+
+    @staticmethod
+    def _require_server_only(mode: StudyBackend, feature_name: str) -> None:
+        if mode != StudyBackend.SERVER:
+            raise ValueError(f"{feature_name} are server-only.")
+
+    @staticmethod
     def _coerce_delete_result(result: Any) -> bool:
         if isinstance(result, Mapping):
             if "deleted" in result:
@@ -371,3 +384,141 @@ class StudyScopeService:
         if not hasattr(service, "end_review_session"):
             return None
         return await self._maybe_await(service.end_review_session(review_session_id))
+
+    async def create_study_pack_job(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        title: str,
+        source_items: list[Mapping[str, Any]],
+        workspace_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Study packs")
+        self._enforce_policy(self._study_pack_action_id("launch"))
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).create_study_pack_job(
+                title=title,
+                workspace_id=workspace_id,
+                source_items=source_items,
+            )
+        )
+
+    async def get_study_pack_job_status(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        job_id: int,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Study packs")
+        self._enforce_policy(self._study_pack_action_id("observe"))
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_study_pack_job_status(job_id)
+        )
+
+    async def get_study_pack(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        pack_id: int,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Study packs")
+        self._enforce_policy(self._study_pack_action_id("observe"))
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_study_pack(pack_id)
+        )
+
+    async def regenerate_study_pack(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        pack_id: int,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Study packs")
+        self._enforce_policy(self._study_pack_action_id("launch"))
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).regenerate_study_pack(pack_id)
+        )
+
+    async def get_study_suggestion_status(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        anchor_type: str,
+        anchor_id: int,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Study suggestions")
+        self._enforce_policy(self._study_suggestion_action_id("list"))
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_study_suggestion_status(
+                anchor_type=anchor_type,
+                anchor_id=anchor_id,
+            )
+        )
+
+    async def get_study_suggestion_snapshot(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        snapshot_id: int,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Study suggestions")
+        self._enforce_policy(self._study_suggestion_action_id("observe"))
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_study_suggestion_snapshot(snapshot_id)
+        )
+
+    async def refresh_study_suggestion_snapshot(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        snapshot_id: int,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Study suggestions")
+        self._enforce_policy(self._study_suggestion_action_id("launch"))
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).refresh_study_suggestion_snapshot(
+                snapshot_id,
+                reason=reason,
+            )
+        )
+
+    async def trigger_study_suggestion_action(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        snapshot_id: int,
+        target_service: str,
+        target_type: str,
+        action_kind: str,
+        selected_topic_ids: list[str] | None = None,
+        selected_topic_edits: list[dict[str, str]] | None = None,
+        manual_topic_labels: list[str] | None = None,
+        has_explicit_selection: bool = False,
+        generator_version: str = "v1",
+        force_regenerate: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Study suggestions")
+        self._enforce_policy(self._study_suggestion_action_id("configure"))
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).trigger_study_suggestion_action(
+                snapshot_id,
+                target_service=target_service,
+                target_type=target_type,
+                action_kind=action_kind,
+                selected_topic_ids=selected_topic_ids or [],
+                selected_topic_edits=selected_topic_edits or [],
+                manual_topic_labels=manual_topic_labels or [],
+                has_explicit_selection=has_explicit_selection,
+                generator_version=generator_version,
+                force_regenerate=force_regenerate,
+            )
+        )

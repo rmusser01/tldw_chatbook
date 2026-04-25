@@ -66,12 +66,15 @@ from .Widgets.AppFooterStatus import AppFooterStatus
 from .config import (
     get_media_db_path,
     get_prompts_db_path,
+    get_notifications_db_path,
+    get_subscriptions_db_path,
 )
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
 from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
@@ -191,6 +194,20 @@ from tldw_chatbook.Media import (
     LocalMediaReadingService,
     MediaReadingScopeService,
     ServerMediaReadingService,
+)
+from tldw_chatbook.Notifications import (
+    ClientNotificationsDB,
+    NotificationDispatchService,
+    ServerNotificationsService,
+)
+from tldw_chatbook.Outputs_Interop import ServerOutputsService
+from tldw_chatbook.Research_Interop import ServerResearchSearchService, ServerResearchService
+from tldw_chatbook.Sharing_Interop import ServerSharingService
+from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService
+from tldw_chatbook.Subscriptions import (
+    LocalWatchlistsService,
+    ServerWatchlistsService,
+    WatchlistScopeService,
 )
 from tldw_chatbook.Evaluations_Interop import (
     EvaluationScopeService,
@@ -1272,6 +1289,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_media_reading_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self._wire_watchlists_and_notifications_services()
 
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}")
@@ -1438,6 +1456,89 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.study_quiz_scope_service = QuizScopeService(
             local_service=self.local_quiz_service,
             server_service=self.server_quiz_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_watchlists_and_notifications_services(self) -> None:
+        """Initialize source-aware watchlists and local notification services."""
+        self.local_watchlists_service = LocalWatchlistsService(
+            db_factory=lambda: SubscriptionsDB(get_subscriptions_db_path(), CLI_APP_CLIENT_ID)
+        )
+        try:
+            self.server_watchlists_service = ServerWatchlistsService.from_config(self.app_config)
+        except ValueError:
+            self.server_watchlists_service = ServerWatchlistsService(client=None)
+        try:
+            self.server_notifications_service = ServerNotificationsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_notifications_service = ServerNotificationsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        try:
+            self.server_outputs_service = ServerOutputsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_outputs_service = ServerOutputsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        try:
+            self.server_research_service = ServerResearchService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_research_service = ServerResearchService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        try:
+            self.server_research_search_service = ServerResearchSearchService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_research_search_service = ServerResearchSearchService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        try:
+            self.server_sharing_service = ServerSharingService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_sharing_service = ServerSharingService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        try:
+            self.server_web_clipper_service = ServerWebClipperService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_web_clipper_service = ServerWebClipperService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.watchlist_scope_service = WatchlistScopeService(
+            local_service=self.local_watchlists_service,
+            server_service=self.server_watchlists_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.client_notifications_db = ClientNotificationsDB(
+            get_notifications_db_path(),
+            CLI_APP_CLIENT_ID,
+        )
+        self.notification_dispatch_service = NotificationDispatchService(
+            store=self.client_notifications_db,
             policy_enforcer=self.service_policy_enforcer,
         )
 

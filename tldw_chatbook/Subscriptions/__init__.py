@@ -67,3 +67,22 @@ if _BRIEFING_AVAILABLE:
 # Version info
 __version__ = '1.0.0'
 __author__ = 'TLDW ChatBook Team'
+
+from .local_watchlists_service import LocalWatchlistsService
+from .server_watchlists_service import ServerWatchlistsService
+from .watchlist_normalizers import (
+    normalize_local_subscription_row,
+    normalize_server_delete_response,
+    normalize_server_watchlist_source,
+)
+from .watchlist_scope_service import WatchlistBackend, WatchlistScopeService
+
+__all__.extend([
+    "LocalWatchlistsService",
+    "ServerWatchlistsService",
+    "WatchlistBackend",
+    "WatchlistScopeService",
+    "normalize_local_subscription_row",
+    "normalize_server_delete_response",
+    "normalize_server_watchlist_source",
+])

@@ -3255,6 +3255,16 @@ def get_subscriptions_db_path() -> Path:
         db_path = user_dir / "tldw_chatbook_subscriptions.db"
     return db_path
 
+def get_notifications_db_path() -> Path:
+    # Check if a custom path is configured
+    custom_path = get_cli_setting("database", "notifications_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("notifications_db_path"):
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "tldw_chatbook_notifications.db"
+    return db_path
+
 def get_cli_log_file_path() -> Path:
     # Use user-specific folder for logs
     user_dir = get_user_data_dir()

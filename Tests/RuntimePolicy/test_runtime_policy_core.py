@@ -239,6 +239,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         notifications.dispatch.launch.local
         notifications.queue.list.local
         notifications.queue.observe.local
+        notifications.queue.update.local
         notifications.settings.update.local
     """),
     "collections_outputs_templates_artifacts": _action_ids("""
@@ -327,6 +328,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         mcp.runtime.trigger.local
     """),
     "media_reading_ingestion_sources": _action_ids("""
+        media.ingestion_jobs.cancel.local
+        media.ingestion_jobs.cancel.server
         media.ingestion_jobs.detail.local
         media.ingestion_jobs.detail.server
         media.ingestion_jobs.launch.local

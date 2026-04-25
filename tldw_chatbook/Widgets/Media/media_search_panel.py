@@ -137,6 +137,13 @@ class MediaSearchPanel(Container):
         width: 24;
         margin-left: 1;
     }
+
+    MediaSearchPanel .saved-view-status {
+        width: 1fr;
+        height: 1;
+        margin-left: 1;
+        color: $warning;
+    }
     
     MediaSearchPanel Collapsible {
         margin-top: 0;
@@ -163,6 +170,7 @@ class MediaSearchPanel(Container):
     active_type: reactive[Optional[str]] = reactive(None)
     browse_subview: reactive[str] = reactive("all")
     saved_view_enabled: reactive[bool] = reactive(True)
+    saved_view_disabled_reason: reactive[str] = reactive("")
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the search panel."""
@@ -224,6 +232,7 @@ class MediaSearchPanel(Container):
                             classes="saved-view-select",
                             value="all",
                         )
+                        yield Static("", id="saved-view-status", classes="saved-view-status")
                     
                     # Active filters display on separate line
                     yield Static("", id="active-filters", classes="active-filters")
@@ -279,6 +288,14 @@ class MediaSearchPanel(Container):
         try:
             browse_select = self.query_one("#browse-subview-select", Select)
             browse_select.disabled = not saved_view_enabled
+        except Exception:
+            pass
+
+    def watch_saved_view_disabled_reason(self, saved_view_disabled_reason: str) -> None:
+        """Show why the saved-view selector is disabled."""
+        try:
+            status = self.query_one("#saved-view-status", Static)
+            status.update(saved_view_disabled_reason if not self.saved_view_enabled else "")
         except Exception:
             pass
     
@@ -367,7 +384,12 @@ class MediaSearchPanel(Container):
 
     def set_saved_view_enabled(self, enabled: bool) -> None:
         """Toggle saved-view browsing for the current context."""
+        self.set_saved_view_capability(enabled, "")
+
+    def set_saved_view_capability(self, enabled: bool, disabled_reason: str = "") -> None:
+        """Toggle saved-view browsing and expose the disabled reason to the user."""
         self.saved_view_enabled = bool(enabled)
+        self.saved_view_disabled_reason = "" if enabled else str(disabled_reason or "")
     
     def clear_filters(self) -> None:
         """Clear all search filters."""

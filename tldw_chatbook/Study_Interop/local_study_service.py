@@ -129,3 +129,35 @@ class LocalStudyService:
 
     def end_review_session(self, review_session_id: int) -> None:
         return None
+
+    @staticmethod
+    def _unsupported_study_packs() -> None:
+        raise ValueError("Study packs are server-only.")
+
+    @staticmethod
+    def _unsupported_study_suggestions() -> None:
+        raise ValueError("Study suggestions are server-only.")
+
+    def create_study_pack_job(self, **kwargs: Any) -> None:
+        self._unsupported_study_packs()
+
+    def get_study_pack_job_status(self, job_id: int) -> None:
+        self._unsupported_study_packs()
+
+    def get_study_pack(self, pack_id: int) -> None:
+        self._unsupported_study_packs()
+
+    def regenerate_study_pack(self, pack_id: int) -> None:
+        self._unsupported_study_packs()
+
+    def get_study_suggestion_status(self, **kwargs: Any) -> None:
+        self._unsupported_study_suggestions()
+
+    def get_study_suggestion_snapshot(self, snapshot_id: int) -> None:
+        self._unsupported_study_suggestions()
+
+    def refresh_study_suggestion_snapshot(self, snapshot_id: int, **kwargs: Any) -> None:
+        self._unsupported_study_suggestions()
+
+    def trigger_study_suggestion_action(self, snapshot_id: int, **kwargs: Any) -> None:
+        self._unsupported_study_suggestions()

@@ -168,31 +168,81 @@ class MediaWindow(Container):
             return "all"
         return str(getattr(runtime_state, "active_browse_subview", "all") or "all")
 
+    def _saved_view_capability_for_context(self) -> Dict[str, Any]:
+        """Resolve saved-view availability through the shared media scope seam."""
+        mode = self._runtime_backend()
+        media_type_context = self.active_media_type or "all-media"
+        scope_service = self._scope_service()
+        capability_getter = getattr(scope_service, "read_it_later_browse_capability", None)
+        if callable(capability_getter):
+            capability = capability_getter(mode=mode, media_type_context=media_type_context)
+            if isinstance(capability, dict):
+                return {
+                    "available": bool(capability.get("available", True)),
+                    "reason": str(capability.get("reason") or ""),
+                }
+
+        if mode == "server" and media_type_context != "all-media":
+            return {
+                "available": False,
+                "reason": "Read-it-later is only available in server mode from All Media.",
+            }
+        return {"available": True, "reason": ""}
+
     def _saved_view_available_for_context(self) -> bool:
-        """Saved-view browsing is aggregate-only for server mode."""
-        if self._runtime_backend() != "server":
-            return True
-        return (self.active_media_type or "all-media") == "all-media"
+        """Return whether saved-view browsing is available for the current context."""
+        return bool(self._saved_view_capability_for_context()["available"])
 
     def _sync_saved_view_controls(self) -> None:
         """Keep the search panel's browse-subview controls aligned with runtime state."""
         if not hasattr(self, "search_panel"):
             return
-        self.search_panel.set_saved_view_enabled(self._saved_view_available_for_context())
+        capability = self._saved_view_capability_for_context()
+        if hasattr(self.search_panel, "set_saved_view_capability"):
+            self.search_panel.set_saved_view_capability(
+                bool(capability["available"]),
+                str(capability.get("reason") or ""),
+            )
+        else:
+            self.search_panel.set_saved_view_enabled(bool(capability["available"]))
         self.search_panel.set_browse_subview(self._active_browse_subview())
+
+    def _clear_browse_state_after_saved_view_reset(self) -> None:
+        """Clear stale saved-view list/detail state after an invalid context reset."""
+        self.selected_media_id = None
+        if self.runtime_state is not None:
+            self.runtime_state.selected_record_id = None
+            self.runtime_state.browse_items.clear()
+            self.runtime_state.detail_by_record_id.clear()
+            self.runtime_state.reading_progress_by_record_id.clear()
+        if hasattr(self, "list_panel"):
+            if hasattr(self.list_panel, "selected_id"):
+                self.list_panel.selected_id = None
+            if hasattr(self.list_panel, "current_page"):
+                self.list_panel.current_page = 1
+            if hasattr(self.list_panel, "load_items"):
+                self.list_panel.load_items([], 1, 1)
+        if hasattr(self, "viewer_panel"):
+            self.viewer_panel.clear_display()
+            try:
+                self._show_empty_state()
+            except Exception:
+                pass
 
     def _reset_invalid_saved_view_for_context(self) -> bool:
         """Reset invalid saved-view state and notify the user once."""
         if self._active_browse_subview() != "read-it-later":
             return False
-        if self._saved_view_available_for_context():
+        capability = self._saved_view_capability_for_context()
+        if capability["available"]:
             return False
 
         if self.runtime_state is not None:
             self.runtime_state.active_browse_subview = "all"
+        self._clear_browse_state_after_saved_view_reset()
         self._sync_saved_view_controls()
         self.app_instance.notify(
-            "Read-it-later is only available in server mode from All Media.",
+            str(capability.get("reason") or "Read-it-later is not available in this context."),
             severity="warning",
         )
         return True
@@ -357,6 +407,7 @@ class MediaWindow(Container):
         if scope_service is None:
             return [], 0
 
+        self._reset_invalid_saved_view_for_context()
         mode = self._runtime_backend()
         search_filters = self._build_browse_filters(type_slug, keyword_filter, mode)
         offset = max(self.list_panel.current_page - 1, 0) * self.list_panel.items_per_page
@@ -367,6 +418,7 @@ class MediaWindow(Container):
                 query=search_term if search_term else None,
                 limit=self.list_panel.items_per_page,
                 offset=offset,
+                media_type_context=type_slug,
                 **search_filters,
             )
         else:

@@ -42,6 +42,17 @@ from .notes_workspace_schemas import (
     WorkspaceUpdateRequest,
 )
 from .media_reading_schemas import (
+    DocumentAnnotationCreate,
+    DocumentAnnotationListResponse,
+    DocumentAnnotationResponse,
+    DocumentAnnotationSyncRequest,
+    DocumentAnnotationSyncResponse,
+    DocumentAnnotationUpdate,
+    DocumentFiguresResponse,
+    DocumentInsightsRequest,
+    DocumentInsightsResponse,
+    DocumentOutlineResponse,
+    DocumentReferencesResponse,
     FileCreateRequest,
     IngestionSourceCreateRequest,
     IngestionSourceItemListResponse,
@@ -50,8 +61,24 @@ from .media_reading_schemas import (
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
     IngestionSourceSyncTriggerResponse,
+    MediaIngestBatchCancelResponse,
+    MediaIngestJobCancelResponse,
+    MediaIngestJobListResponse,
+    MediaIngestJobStatus,
+    MediaIngestSubmitRequest,
+    MediaIngestSubmitResponse,
+    MediaAdvancedVersionUpsertRequest,
+    MediaMetadataPatchRequest,
+    MediaVersionCreateRequest,
+    MediaVersionDetail,
+    MediaVersionRollbackRequest,
+    ReadingHighlight,
+    ReadingHighlightCreateRequest,
+    ReadingHighlightUpdateRequest,
     ReadingProgressUpdate,
     ReadingUpdateRequest,
+    ReprocessMediaRequest,
+    ReprocessMediaResponse,
 )
 from .prompt_chatbook_schemas import (
     ChatbookExportRequest,
@@ -95,6 +122,34 @@ from .flashcards_schemas import (
     FlashcardReviewSessionEndRequest,
     FlashcardReviewSessionSummary,
     FlashcardUpdateRequest,
+    StudyPackCreateJobRequest,
+    StudyPackJobAcceptedResponse,
+    StudyPackJobStatusResponse,
+    StudyPackSummaryResponse,
+)
+from .study_suggestions_schemas import (
+    SuggestionActionRequest,
+    SuggestionActionResponse,
+    SuggestionJobAcceptedResponse,
+    SuggestionRefreshRequest,
+    SuggestionSnapshotResponse,
+    SuggestionStatusResponse,
+)
+from .writing_manuscript_schemas import (
+    ManuscriptChapterCreate,
+    ManuscriptChapterResponse,
+    ManuscriptChapterUpdate,
+    ManuscriptPartCreate,
+    ManuscriptPartResponse,
+    ManuscriptPartUpdate,
+    ManuscriptProjectCreate,
+    ManuscriptProjectListResponse,
+    ManuscriptProjectResponse,
+    ManuscriptProjectUpdate,
+    ManuscriptSceneCreate,
+    ManuscriptSceneResponse,
+    ManuscriptSceneUpdate,
+    ManuscriptStructureResponse,
 )
 from .quizzes_schemas import (
     QuizAttemptListResponse,
@@ -137,6 +192,88 @@ from .character_persona_schemas import (
     PresetListResponse,
     PresetCreate,
     PresetUpdate,
+)
+from .watchlists_schemas import (
+    SourceCreateRequest,
+    SourceDeleteResponse,
+    SourceListResponse,
+    SourceResponse,
+    SourceUpdateRequest,
+)
+from .notifications_reminders_schemas import (
+    NotificationCancelSnoozeResponse,
+    NotificationDismissResponse,
+    NotificationPreferencesResponse,
+    NotificationPreferencesUpdateRequest,
+    NotificationSnoozeRequest,
+    NotificationSnoozeResponse,
+    NotificationStreamEvent,
+    NotificationsListResponse,
+    NotificationsMarkReadRequest,
+    NotificationsMarkReadResponse,
+    NotificationsUnreadCountResponse,
+    ReminderTaskCreateRequest,
+    ReminderTaskDeleteResponse,
+    ReminderTaskListResponse,
+    ReminderTaskResponse,
+    ReminderTaskUpdateRequest,
+)
+from .outputs_schemas import (
+    OutputArtifact,
+    OutputCreateRequest,
+    OutputDeleteResponse,
+    OutputListResponse,
+    OutputTemplate,
+    OutputTemplateCreate,
+    OutputTemplateList,
+    OutputTemplateUpdate,
+    OutputUpdateRequest,
+    OutputsPurgeRequest,
+    OutputsPurgeResponse,
+    TemplatePreviewRequest,
+    TemplatePreviewResponse,
+)
+from .research_runs_schemas import (
+    ResearchArtifactResponse,
+    ResearchCheckpointPatchApproveRequest,
+    ResearchRunCreateRequest,
+    ResearchRunListItemResponse,
+    ResearchRunResponse,
+    ResearchRunStreamEvent,
+)
+from .research_search_schemas import (
+    ArxivSearchResponse,
+    SemanticScholarSearchResponse,
+    WebSearchAggregateResponse,
+    WebSearchRawResponse,
+    WebSearchRequest,
+)
+from .sharing_schemas import (
+    CloneWorkspaceRequest,
+    CloneWorkspaceResponse,
+    CreateTokenRequest,
+    PublicShareImportResponse,
+    PublicSharePreview,
+    ShareListResponse,
+    ShareResponse,
+    ShareWorkspaceRequest,
+    SharedChatRequest,
+    SharedMediaResponse,
+    SharedWithMeResponse,
+    SharedWorkspaceResponse,
+    SharedWorkspaceSourceResponse,
+    TokenListResponse,
+    TokenResponse,
+    UpdateShareRequest,
+    VerifyPasswordRequest,
+    VerifyPasswordResponse,
+)
+from .web_clipper_schemas import (
+    WebClipperEnrichmentPayload,
+    WebClipperEnrichmentResponse,
+    WebClipperSaveRequest,
+    WebClipperSaveResponse,
+    WebClipperStatusResponse,
 )
 from .exceptions import APIConnectionError, APIRequestError, APIResponseError, AuthenticationError
 from .utils import model_to_form_data, prepare_files_for_httpx, cleanup_file_objects
@@ -280,6 +417,82 @@ class TLDWAPIClient:
                     response_data=response_data if isinstance(response_data, dict) else None,
                 )
             raise APIResponseError(e.response.status_code, error_detail, response_data={"raw_text": response_text})
+        except httpx.RequestError as e:
+            raise APIConnectionError(f"Connection error to {url}: {e}")
+
+    async def _sse_request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        client = await self._get_client()
+        url = f"{self.base_url}{endpoint}"
+        event_name = "message"
+        event_id: str | None = None
+        data_lines: list[str] = []
+
+        async def _flush_event() -> Dict[str, Any] | None:
+            nonlocal event_name, event_id, data_lines
+            if not data_lines:
+                event_name = "message"
+                event_id = None
+                return None
+            raw_data = "\n".join(data_lines)
+            try:
+                payload = json.loads(raw_data)
+            except json.JSONDecodeError:
+                payload = {"raw": raw_data}
+            event = {"event": event_name, "data": payload, "event_id": event_id}
+            event_name = "message"
+            event_id = None
+            data_lines = []
+            return event
+
+        try:
+            async with client.stream(
+                method,
+                endpoint,
+                params=params,
+                headers=headers,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if line == "":
+                        event = await _flush_event()
+                        if event is not None:
+                            yield event
+                        continue
+                    if line.startswith(":"):
+                        continue
+                    field, _, value = line.partition(":")
+                    if value.startswith(" "):
+                        value = value[1:]
+                    if field == "event":
+                        event_name = value or "message"
+                    elif field == "id":
+                        event_id = value
+                    elif field == "data":
+                        data_lines.append(value)
+                event = await _flush_event()
+                if event is not None:
+                    yield event
+        except httpx.HTTPStatusError as e:
+            error_detail = str(e)
+            response_data = None
+            try:
+                response_data = e.response.json()
+                if isinstance(response_data, dict) and isinstance(response_data.get("detail"), str):
+                    error_detail = response_data["detail"]
+            except Exception:
+                pass
+            if e.response.status_code == 401:
+                raise AuthenticationError(
+                    f"Authentication failed: {error_detail}",
+                    response_data=response_data,
+                )
+            raise APIResponseError(e.response.status_code, error_detail, response_data=response_data)
         except httpx.RequestError as e:
             raise APIConnectionError(f"Connection error to {url}: {e}")
 
@@ -481,6 +694,176 @@ class TLDWAPIClient:
             params={"hard": str(hard).lower(), "delete_file": str(delete_file).lower()},
         )
 
+    async def submit_media_ingest_jobs(
+        self,
+        request_data: MediaIngestSubmitRequest,
+        file_paths: Optional[List[str]] = None,
+    ) -> MediaIngestSubmitResponse:
+        httpx_files = prepare_files_for_httpx(file_paths or []) if file_paths else None
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/media/ingest/jobs",
+                data=request_data.model_dump(exclude_none=True, mode="json"),
+                files=httpx_files,
+            )
+            return MediaIngestSubmitResponse.model_validate(response)
+        finally:
+            if httpx_files:
+                cleanup_file_objects(httpx_files)
+
+    async def get_media_ingest_job(self, job_id: int) -> MediaIngestJobStatus:
+        response = await self._request("GET", f"/api/v1/media/ingest/jobs/{job_id}")
+        return MediaIngestJobStatus.model_validate(response)
+
+    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100) -> MediaIngestJobListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/media/ingest/jobs",
+            params={"batch_id": batch_id, "limit": limit},
+        )
+        return MediaIngestJobListResponse.model_validate(response)
+
+    async def stream_media_ingest_job_events(
+        self,
+        *,
+        batch_id: str | None = None,
+        after_id: int = 0,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        params = {"batch_id": batch_id, "after_id": after_id}
+        async for event in self._sse_request(
+            "GET",
+            "/api/v1/media/ingest/jobs/events/stream",
+            params={key: value for key, value in params.items() if value is not None},
+        ):
+            yield event
+
+    async def cancel_media_ingest_job(self, job_id: int, *, reason: str | None = None) -> MediaIngestJobCancelResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/media/ingest/jobs/{job_id}",
+            params={key: value for key, value in {"reason": reason}.items() if value is not None},
+        )
+        return MediaIngestJobCancelResponse.model_validate(response)
+
+    async def cancel_media_ingest_batch(
+        self,
+        *,
+        batch_id: str | None = None,
+        session_id: str | None = None,
+        reason: str | None = None,
+    ) -> MediaIngestBatchCancelResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/media/ingest/jobs/cancel",
+            params={
+                key: value
+                for key, value in {"batch_id": batch_id, "session_id": session_id, "reason": reason}.items()
+                if value is not None
+            },
+        )
+        return MediaIngestBatchCancelResponse.model_validate(response)
+
+    async def reprocess_media(self, media_id: int, request_data: ReprocessMediaRequest) -> ReprocessMediaResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/reprocess",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReprocessMediaResponse.model_validate(response)
+
+    async def list_media_versions(
+        self,
+        media_id: int,
+        *,
+        include_content: bool = False,
+        limit: int = 10,
+        page: int = 1,
+    ) -> list[MediaVersionDetail]:
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/versions",
+            params={
+                "include_content": str(include_content).lower(),
+                "limit": limit,
+                "page": page,
+            },
+        )
+        return [MediaVersionDetail.model_validate(item) for item in response]
+
+    async def get_media_version(
+        self,
+        media_id: int,
+        version_number: int,
+        *,
+        include_content: bool = True,
+    ) -> MediaVersionDetail:
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/versions/{version_number}",
+            params={"include_content": str(include_content).lower()},
+        )
+        return MediaVersionDetail.model_validate(response)
+
+    async def create_media_version(
+        self,
+        media_id: int,
+        request_data: MediaVersionCreateRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/versions",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def delete_media_version(self, media_id: int, version_number: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/media/{media_id}/versions/{version_number}")
+
+    async def rollback_media_version(
+        self,
+        media_id: int,
+        request_data: MediaVersionRollbackRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/versions/rollback",
+            json_data=request_data.model_dump(mode="json"),
+        )
+
+    async def patch_media_metadata(
+        self,
+        media_id: int,
+        request_data: MediaMetadataPatchRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/media/{media_id}/metadata",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def put_media_version_metadata(
+        self,
+        media_id: int,
+        version_number: int,
+        request_data: MediaMetadataPatchRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/media/{media_id}/versions/{version_number}/metadata",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def upsert_media_version_advanced(
+        self,
+        media_id: int,
+        request_data: MediaAdvancedVersionUpsertRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/versions/advanced",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
     async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
         response = await self._request(
             "POST",
@@ -596,6 +979,740 @@ class TLDWAPIClient:
 
     async def delete_reading_progress(self, media_id: int) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/media/{media_id}/progress")
+
+    async def create_reading_highlight(
+        self,
+        item_id: int,
+        request_data: ReadingHighlightCreateRequest,
+    ) -> ReadingHighlight:
+        response = await self._request(
+            "POST",
+            f"/api/v1/reading/items/{item_id}/highlight",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReadingHighlight.model_validate(response)
+
+    async def list_reading_highlights(self, item_id: int) -> list[ReadingHighlight]:
+        response = await self._request("GET", f"/api/v1/reading/items/{item_id}/highlights")
+        return [ReadingHighlight.model_validate(item) for item in response]
+
+    async def update_reading_highlight(
+        self,
+        highlight_id: int,
+        request_data: ReadingHighlightUpdateRequest,
+    ) -> ReadingHighlight:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/reading/highlights/{highlight_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReadingHighlight.model_validate(response)
+
+    async def delete_reading_highlight(self, highlight_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/reading/highlights/{highlight_id}")
+
+    async def list_document_annotations(self, media_id: int) -> DocumentAnnotationListResponse:
+        response = await self._request("GET", f"/api/v1/media/{media_id}/annotations")
+        return DocumentAnnotationListResponse.model_validate(response)
+
+    async def create_document_annotation(
+        self,
+        media_id: int,
+        request_data: DocumentAnnotationCreate,
+    ) -> DocumentAnnotationResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/annotations",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return DocumentAnnotationResponse.model_validate(response)
+
+    async def update_document_annotation(
+        self,
+        media_id: int,
+        annotation_id: str,
+        request_data: DocumentAnnotationUpdate,
+    ) -> DocumentAnnotationResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/media/{media_id}/annotations/{annotation_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return DocumentAnnotationResponse.model_validate(response)
+
+    async def delete_document_annotation(self, media_id: int, annotation_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/media/{media_id}/annotations/{annotation_id}")
+
+    async def sync_document_annotations(
+        self,
+        media_id: int,
+        request_data: DocumentAnnotationSyncRequest,
+    ) -> DocumentAnnotationSyncResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/annotations/sync",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return DocumentAnnotationSyncResponse.model_validate(response)
+
+    async def get_document_outline(self, media_id: int) -> DocumentOutlineResponse:
+        response = await self._request("GET", f"/api/v1/media/{media_id}/outline")
+        return DocumentOutlineResponse.model_validate(response)
+
+    async def get_document_figures(self, media_id: int, *, min_size: int = 50) -> DocumentFiguresResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/figures",
+            params={"min_size": min_size},
+        )
+        return DocumentFiguresResponse.model_validate(response)
+
+    async def get_document_references(
+        self,
+        media_id: int,
+        *,
+        enrich: bool = False,
+        reference_index: int | None = None,
+        offset: int = 0,
+        limit: int = 50,
+        parse_cap: int | None = None,
+        search: str | None = None,
+    ) -> DocumentReferencesResponse:
+        params = {
+            "enrich": str(enrich).lower(),
+            "reference_index": reference_index,
+            "offset": offset,
+            "limit": limit,
+            "parse_cap": parse_cap,
+            "search": search,
+        }
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/references",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return DocumentReferencesResponse.model_validate(response)
+
+    async def generate_document_insights(
+        self,
+        media_id: int,
+        request_data: DocumentInsightsRequest | None = None,
+    ) -> DocumentInsightsResponse:
+        payload = (request_data or DocumentInsightsRequest()).model_dump(exclude_none=True, mode="json")
+        response = await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/insights",
+            json_data=payload,
+        )
+        return DocumentInsightsResponse.model_validate(response)
+
+    async def list_watchlist_sources(
+        self,
+        *,
+        q: str | None = None,
+        tags: list[str] | None = None,
+        source_type: str | None = None,
+        active: bool | None = None,
+        page: int = 1,
+        size: int = 50,
+        offset: int | None = None,
+        limit: int | None = None,
+    ) -> SourceListResponse:
+        params: dict[str, Any] = {
+            "q": q,
+            "tags": tags,
+            "source_type": source_type,
+            "active": active,
+        }
+        if offset is not None or limit is not None:
+            params["offset"] = offset
+            params["limit"] = limit
+        else:
+            params["page"] = page
+            params["size"] = size
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/sources",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        if isinstance(response, list):
+            response = {"items": response, "total": len(response), "page": page, "size": size}
+        return SourceListResponse.model_validate(response)
+
+    async def get_watchlist_source(self, source_id: int) -> SourceResponse:
+        response = await self._request("GET", f"/api/v1/watchlists/sources/{source_id}")
+        return SourceResponse.model_validate(response)
+
+    async def create_watchlist_source(self, request_data: SourceCreateRequest) -> SourceResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/sources",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SourceResponse.model_validate(response)
+
+    async def update_watchlist_source(
+        self,
+        source_id: int,
+        request_data: SourceUpdateRequest,
+    ) -> SourceResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/watchlists/sources/{source_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SourceResponse.model_validate(response)
+
+    async def delete_watchlist_source(self, source_id: int) -> SourceDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/watchlists/sources/{source_id}")
+        if not response:
+            response = {"success": True, "source_id": source_id}
+        elif isinstance(response, dict) and "source_id" not in response:
+            response = {**response, "source_id": source_id}
+        return SourceDeleteResponse.model_validate(response)
+
+    async def list_notifications(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        include_archived: bool = False,
+        only_snoozed: bool = False,
+    ) -> NotificationsListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/notifications",
+            params={
+                "limit": limit,
+                "offset": offset,
+                "include_archived": include_archived,
+                "only_snoozed": only_snoozed,
+            },
+        )
+        return NotificationsListResponse.model_validate(response)
+
+    async def get_notifications_unread_count(self) -> NotificationsUnreadCountResponse:
+        response = await self._request("GET", "/api/v1/notifications/unread-count")
+        return NotificationsUnreadCountResponse.model_validate(response)
+
+    async def mark_notifications_read(self, ids: list[int]) -> NotificationsMarkReadResponse:
+        request = NotificationsMarkReadRequest(ids=ids)
+        response = await self._request(
+            "POST",
+            "/api/v1/notifications/mark-read",
+            json_data=request.model_dump(mode="json"),
+        )
+        return NotificationsMarkReadResponse.model_validate(response)
+
+    async def dismiss_notification(self, notification_id: int) -> NotificationDismissResponse:
+        response = await self._request("POST", f"/api/v1/notifications/{notification_id}/dismiss")
+        return NotificationDismissResponse.model_validate(response)
+
+    async def snooze_notification(
+        self,
+        notification_id: int,
+        request_data: NotificationSnoozeRequest,
+    ) -> NotificationSnoozeResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/notifications/{notification_id}/snooze",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return NotificationSnoozeResponse.model_validate(response)
+
+    async def cancel_notification_snooze(self, notification_id: int) -> NotificationCancelSnoozeResponse:
+        response = await self._request("DELETE", f"/api/v1/notifications/{notification_id}/snooze")
+        return NotificationCancelSnoozeResponse.model_validate(response)
+
+    async def get_notification_preferences(self) -> NotificationPreferencesResponse:
+        response = await self._request("GET", "/api/v1/notifications/preferences")
+        return NotificationPreferencesResponse.model_validate(response)
+
+    async def update_notification_preferences(
+        self,
+        request_data: NotificationPreferencesUpdateRequest,
+    ) -> NotificationPreferencesResponse:
+        response = await self._request(
+            "PATCH",
+            "/api/v1/notifications/preferences",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+        return NotificationPreferencesResponse.model_validate(response)
+
+    async def stream_notification_events(
+        self,
+        *,
+        after: int = 0,
+        last_event_id: str | None = None,
+    ) -> AsyncGenerator[NotificationStreamEvent, None]:
+        headers = {"Last-Event-ID": last_event_id} if last_event_id else None
+        async for event in self._sse_request(
+            "GET",
+            "/api/v1/notifications/stream",
+            params={"after": after},
+            headers=headers,
+        ):
+            yield NotificationStreamEvent.model_validate(event)
+
+    async def create_reminder_task(self, request_data: ReminderTaskCreateRequest) -> ReminderTaskResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/tasks",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ReminderTaskResponse.model_validate(response)
+
+    async def list_reminder_tasks(self) -> ReminderTaskListResponse:
+        response = await self._request("GET", "/api/v1/tasks")
+        return ReminderTaskListResponse.model_validate(response)
+
+    async def get_reminder_task(self, task_id: str) -> ReminderTaskResponse:
+        response = await self._request("GET", f"/api/v1/tasks/{task_id}")
+        return ReminderTaskResponse.model_validate(response)
+
+    async def update_reminder_task(
+        self,
+        task_id: str,
+        request_data: ReminderTaskUpdateRequest,
+    ) -> ReminderTaskResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/tasks/{task_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+        return ReminderTaskResponse.model_validate(response)
+
+    async def delete_reminder_task(self, task_id: str) -> ReminderTaskDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/tasks/{task_id}")
+        return ReminderTaskDeleteResponse.model_validate(response)
+
+    async def list_output_templates(
+        self,
+        *,
+        q: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> OutputTemplateList:
+        response = await self._request(
+            "GET",
+            "/api/v1/outputs/templates",
+            params={key: value for key, value in {"q": q, "limit": limit, "offset": offset}.items() if value is not None},
+        )
+        return OutputTemplateList.model_validate(response)
+
+    async def create_output_template(self, request_data: OutputTemplateCreate) -> OutputTemplate:
+        response = await self._request(
+            "POST",
+            "/api/v1/outputs/templates",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return OutputTemplate.model_validate(response)
+
+    async def get_output_template(self, template_id: int) -> OutputTemplate:
+        response = await self._request("GET", f"/api/v1/outputs/templates/{template_id}")
+        return OutputTemplate.model_validate(response)
+
+    async def update_output_template(
+        self,
+        template_id: int,
+        request_data: OutputTemplateUpdate,
+    ) -> OutputTemplate:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/outputs/templates/{template_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+        return OutputTemplate.model_validate(response)
+
+    async def delete_output_template(self, template_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/outputs/templates/{template_id}")
+
+    async def preview_output_template(
+        self,
+        template_id: int,
+        request_data: TemplatePreviewRequest,
+    ) -> TemplatePreviewResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/outputs/templates/{template_id}/preview",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return TemplatePreviewResponse.model_validate(response)
+
+    async def list_outputs(
+        self,
+        *,
+        page: int = 1,
+        size: int = 50,
+        job_id: int | None = None,
+        run_id: int | None = None,
+        type: str | None = None,
+        workspace_tag: str | None = None,
+        include_deleted: bool | None = None,
+    ) -> OutputListResponse:
+        params = {
+            "page": page,
+            "size": size,
+            "job_id": job_id,
+            "run_id": run_id,
+            "type": type,
+            "workspace_tag": workspace_tag,
+            "include_deleted": include_deleted,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/outputs",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return OutputListResponse.model_validate(response)
+
+    async def list_deleted_outputs(self, *, page: int = 1, size: int = 50) -> OutputListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/outputs/deleted",
+            params={"page": page, "size": size},
+        )
+        return OutputListResponse.model_validate(response)
+
+    async def create_output(self, request_data: OutputCreateRequest) -> OutputArtifact:
+        response = await self._request(
+            "POST",
+            "/api/v1/outputs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return OutputArtifact.model_validate(response)
+
+    async def get_output(self, output_id: int) -> OutputArtifact:
+        response = await self._request("GET", f"/api/v1/outputs/{output_id}")
+        return OutputArtifact.model_validate(response)
+
+    async def update_output(
+        self,
+        output_id: int,
+        request_data: OutputUpdateRequest,
+    ) -> OutputArtifact:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/outputs/{output_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+        return OutputArtifact.model_validate(response)
+
+    async def delete_output(
+        self,
+        output_id: int,
+        *,
+        hard: bool = False,
+        delete_file: bool = False,
+    ) -> OutputDeleteResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/outputs/{output_id}",
+            params={"hard": hard, "delete_file": delete_file},
+        )
+        return OutputDeleteResponse.model_validate(response)
+
+    async def purge_outputs(
+        self,
+        *,
+        delete_files: bool = False,
+        soft_deleted_grace_days: int = 30,
+        include_retention: bool = True,
+    ) -> OutputsPurgeResponse:
+        request = OutputsPurgeRequest(
+            delete_files=delete_files,
+            soft_deleted_grace_days=soft_deleted_grace_days,
+            include_retention=include_retention,
+        )
+        response = await self._request(
+            "POST",
+            "/api/v1/outputs/purge",
+            json_data=request.model_dump(mode="json"),
+        )
+        return OutputsPurgeResponse.model_validate(response)
+
+    async def create_research_run(self, request_data: ResearchRunCreateRequest) -> ResearchRunResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/research/runs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ResearchRunResponse.model_validate(response)
+
+    async def list_research_runs(self, *, limit: int = 25) -> list[ResearchRunListItemResponse]:
+        response = await self._request(
+            "GET",
+            "/api/v1/research/runs",
+            params={"limit": limit},
+        )
+        return [ResearchRunListItemResponse.model_validate(item) for item in response]
+
+    async def get_research_run(self, session_id: str) -> ResearchRunResponse:
+        response = await self._request("GET", f"/api/v1/research/runs/{session_id}")
+        return ResearchRunResponse.model_validate(response)
+
+    async def stream_research_run_events(
+        self,
+        session_id: str,
+        *,
+        after_id: int = 0,
+    ) -> AsyncGenerator[ResearchRunStreamEvent, None]:
+        async for event in self._sse_request(
+            "GET",
+            f"/api/v1/research/runs/{session_id}/events/stream",
+            params={"after_id": after_id},
+        ):
+            yield ResearchRunStreamEvent.model_validate(event)
+
+    async def pause_research_run(self, session_id: str) -> ResearchRunResponse:
+        response = await self._request("POST", f"/api/v1/research/runs/{session_id}/pause")
+        return ResearchRunResponse.model_validate(response)
+
+    async def resume_research_run(self, session_id: str) -> ResearchRunResponse:
+        response = await self._request("POST", f"/api/v1/research/runs/{session_id}/resume")
+        return ResearchRunResponse.model_validate(response)
+
+    async def cancel_research_run(self, session_id: str) -> ResearchRunResponse:
+        response = await self._request("POST", f"/api/v1/research/runs/{session_id}/cancel")
+        return ResearchRunResponse.model_validate(response)
+
+    async def get_research_bundle(self, session_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/research/runs/{session_id}/bundle")
+
+    async def get_research_artifact(
+        self,
+        session_id: str,
+        artifact_name: str,
+    ) -> ResearchArtifactResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/research/runs/{session_id}/artifacts/{artifact_name}",
+        )
+        return ResearchArtifactResponse.model_validate(response)
+
+    async def patch_and_approve_research_checkpoint(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+        request_data: ResearchCheckpointPatchApproveRequest,
+    ) -> ResearchRunResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/research/runs/{session_id}/checkpoints/{checkpoint_id}/patch-and-approve",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ResearchRunResponse.model_validate(response)
+
+    async def research_websearch(
+        self,
+        request_data: WebSearchRequest,
+    ) -> WebSearchRawResponse | WebSearchAggregateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/research/websearch",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        if isinstance(response, dict) and "final_answer" in response:
+            return WebSearchAggregateResponse.model_validate(response)
+        return WebSearchRawResponse.model_validate(response)
+
+    async def search_arxiv_papers(
+        self,
+        *,
+        query: str | None = None,
+        author: str | None = None,
+        year: str | None = None,
+        page: int = 1,
+        results_per_page: int = 10,
+    ) -> ArxivSearchResponse:
+        params = {
+            "query": query,
+            "author": author,
+            "year": year,
+            "page": page,
+            "results_per_page": results_per_page,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/paper-search/arxiv",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return ArxivSearchResponse.model_validate(response)
+
+    async def search_semantic_scholar_papers(
+        self,
+        *,
+        query: str,
+        fields_of_study: list[str] | str | None = None,
+        publication_types: list[str] | str | None = None,
+        year_range: str | None = None,
+        venue: list[str] | str | None = None,
+        min_citations: int | None = None,
+        page: int = 1,
+        results_per_page: int = 10,
+    ) -> SemanticScholarSearchResponse:
+        params = {
+            "query": query,
+            "fields_of_study": self._csv_param(fields_of_study),
+            "publication_types": self._csv_param(publication_types),
+            "year_range": year_range,
+            "venue": self._csv_param(venue),
+            "min_citations": min_citations,
+            "page": page,
+            "results_per_page": results_per_page,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/paper-search/semantic-scholar",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return SemanticScholarSearchResponse.model_validate(response)
+
+    async def share_workspace(
+        self,
+        workspace_id: str,
+        request_data: ShareWorkspaceRequest,
+    ) -> ShareResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/sharing/workspaces/{workspace_id}/share",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ShareResponse.model_validate(response)
+
+    async def list_workspace_shares(
+        self,
+        workspace_id: str,
+        *,
+        include_revoked: bool = False,
+    ) -> ShareListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/sharing/workspaces/{workspace_id}/shares",
+            params={"include_revoked": include_revoked},
+        )
+        return ShareListResponse.model_validate(response)
+
+    async def update_share(
+        self,
+        share_id: int,
+        request_data: UpdateShareRequest,
+    ) -> ShareResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/sharing/shares/{share_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ShareResponse.model_validate(response)
+
+    async def revoke_share(self, share_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/sharing/shares/{share_id}")
+
+    async def list_shared_with_me(self) -> SharedWithMeResponse:
+        response = await self._request("GET", "/api/v1/sharing/shared-with-me")
+        return SharedWithMeResponse.model_validate(response)
+
+    async def get_shared_workspace(self, share_id: int) -> SharedWorkspaceResponse:
+        response = await self._request("GET", f"/api/v1/sharing/shared-with-me/{share_id}/workspace")
+        return SharedWorkspaceResponse.model_validate(response)
+
+    async def clone_shared_workspace(
+        self,
+        share_id: int,
+        request_data: CloneWorkspaceRequest,
+    ) -> CloneWorkspaceResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/sharing/shared-with-me/{share_id}/clone",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return CloneWorkspaceResponse.model_validate(response)
+
+    async def list_shared_workspace_sources(self, share_id: int) -> list[SharedWorkspaceSourceResponse]:
+        response = await self._request("GET", f"/api/v1/sharing/shared-with-me/{share_id}/sources")
+        return [SharedWorkspaceSourceResponse.model_validate(item) for item in response]
+
+    async def get_shared_workspace_media(self, share_id: int, media_id: int) -> SharedMediaResponse:
+        response = await self._request("GET", f"/api/v1/sharing/shared-with-me/{share_id}/media/{media_id}")
+        return SharedMediaResponse.model_validate(response)
+
+    async def chat_with_shared_workspace(
+        self,
+        share_id: int,
+        request_data: SharedChatRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/sharing/shared-with-me/{share_id}/chat",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def create_share_token(self, request_data: CreateTokenRequest) -> TokenResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/sharing/tokens",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return TokenResponse.model_validate(response)
+
+    async def list_share_tokens(self) -> TokenListResponse:
+        response = await self._request("GET", "/api/v1/sharing/tokens")
+        return TokenListResponse.model_validate(response)
+
+    async def revoke_share_token(self, token_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/sharing/tokens/{token_id}")
+
+    async def preview_public_share(self, token: str) -> PublicSharePreview:
+        response = await self._request("GET", f"/api/v1/sharing/public/{token}")
+        return PublicSharePreview.model_validate(response)
+
+    async def verify_public_share_password(
+        self,
+        token: str,
+        request_data: VerifyPasswordRequest,
+    ) -> VerifyPasswordResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/sharing/public/{token}/verify",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return VerifyPasswordResponse.model_validate(response)
+
+    async def import_public_share(self, token: str) -> PublicShareImportResponse:
+        response = await self._request("POST", f"/api/v1/sharing/public/{token}/import")
+        return PublicShareImportResponse.model_validate(response)
+
+    async def save_web_clip(self, request_data: WebClipperSaveRequest) -> WebClipperSaveResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/web-clipper/save",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WebClipperSaveResponse.model_validate(response)
+
+    async def get_web_clip_status(self, clip_id: str) -> WebClipperStatusResponse:
+        response = await self._request("GET", f"/api/v1/web-clipper/{clip_id}")
+        return WebClipperStatusResponse.model_validate(response)
+
+    async def persist_web_clip_enrichment(
+        self,
+        clip_id: str,
+        request_data: WebClipperEnrichmentPayload,
+    ) -> WebClipperEnrichmentResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/web-clipper/{clip_id}/enrichments",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WebClipperEnrichmentResponse.model_validate(response)
+
+    @staticmethod
+    def _csv_param(value: list[str] | str | None) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return ",".join(str(item).strip() for item in value if str(item).strip())
 
     async def list_chunking_templates(
         self,
@@ -950,6 +2067,267 @@ class TLDWAPIClient:
             json_data=FlashcardReviewSessionEndRequest(review_session_id=review_session_id).model_dump(mode="json"),
         )
         return FlashcardReviewSessionSummary.model_validate(response)
+
+    async def create_study_pack_job(
+        self,
+        request_data: StudyPackCreateJobRequest,
+    ) -> StudyPackJobAcceptedResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/study-packs/jobs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return StudyPackJobAcceptedResponse.model_validate(response)
+
+    async def get_study_pack_job_status(self, job_id: int) -> StudyPackJobStatusResponse:
+        response = await self._request("GET", f"/api/v1/flashcards/study-packs/jobs/{job_id}")
+        return StudyPackJobStatusResponse.model_validate(response)
+
+    async def get_study_pack(self, pack_id: int) -> StudyPackSummaryResponse:
+        response = await self._request("GET", f"/api/v1/flashcards/study-packs/{pack_id}")
+        return StudyPackSummaryResponse.model_validate(response)
+
+    async def regenerate_study_pack(self, pack_id: int) -> StudyPackJobAcceptedResponse:
+        response = await self._request("POST", f"/api/v1/flashcards/study-packs/{pack_id}/regenerate")
+        return StudyPackJobAcceptedResponse.model_validate(response)
+
+    async def get_study_suggestion_status(
+        self,
+        *,
+        anchor_type: str,
+        anchor_id: int,
+    ) -> SuggestionStatusResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/study-suggestions/anchors/{anchor_type}/{anchor_id}/status",
+        )
+        return SuggestionStatusResponse.model_validate(response)
+
+    async def get_study_suggestion_snapshot(self, snapshot_id: int) -> SuggestionSnapshotResponse:
+        response = await self._request("GET", f"/api/v1/study-suggestions/snapshots/{snapshot_id}")
+        return SuggestionSnapshotResponse.model_validate(response)
+
+    async def refresh_study_suggestion_snapshot(
+        self,
+        snapshot_id: int,
+        request_data: SuggestionRefreshRequest,
+    ) -> SuggestionJobAcceptedResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/study-suggestions/snapshots/{snapshot_id}/refresh",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SuggestionJobAcceptedResponse.model_validate(response)
+
+    async def trigger_study_suggestion_action(
+        self,
+        snapshot_id: int,
+        request_data: SuggestionActionRequest,
+    ) -> SuggestionActionResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/study-suggestions/snapshots/{snapshot_id}/actions",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SuggestionActionResponse.model_validate(response)
+
+    async def list_manuscript_projects(
+        self,
+        *,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> ManuscriptProjectListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/writing/manuscripts/projects",
+            params={
+                key: value
+                for key, value in {"status": status, "limit": limit, "offset": offset}.items()
+                if value is not None
+            },
+        )
+        return ManuscriptProjectListResponse.model_validate(response)
+
+    async def create_manuscript_project(
+        self,
+        request_data: ManuscriptProjectCreate,
+    ) -> ManuscriptProjectResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/writing/manuscripts/projects",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ManuscriptProjectResponse.model_validate(response)
+
+    async def get_manuscript_project(self, project_id: str) -> ManuscriptProjectResponse:
+        response = await self._request("GET", f"/api/v1/writing/manuscripts/projects/{project_id}")
+        return ManuscriptProjectResponse.model_validate(response)
+
+    async def update_manuscript_project(
+        self,
+        project_id: str,
+        request_data: ManuscriptProjectUpdate,
+        *,
+        expected_version: int,
+    ) -> ManuscriptProjectResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/writing/manuscripts/projects/{project_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"expected-version": str(expected_version)},
+        )
+        return ManuscriptProjectResponse.model_validate(response)
+
+    async def delete_manuscript_project(self, project_id: str, *, expected_version: int) -> bool:
+        await self._request(
+            "DELETE",
+            f"/api/v1/writing/manuscripts/projects/{project_id}",
+            headers={"expected-version": str(expected_version)},
+        )
+        return True
+
+    async def create_manuscript(
+        self,
+        project_id: str,
+        request_data: ManuscriptPartCreate,
+    ) -> ManuscriptPartResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/writing/manuscripts/projects/{project_id}/parts",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ManuscriptPartResponse.model_validate(response)
+
+    async def list_manuscripts(self, project_id: str) -> list[ManuscriptPartResponse]:
+        response = await self._request("GET", f"/api/v1/writing/manuscripts/projects/{project_id}/parts")
+        return [ManuscriptPartResponse.model_validate(item) for item in list(response or [])]
+
+    async def get_manuscript(self, manuscript_id: str) -> ManuscriptPartResponse:
+        response = await self._request("GET", f"/api/v1/writing/manuscripts/parts/{manuscript_id}")
+        return ManuscriptPartResponse.model_validate(response)
+
+    async def update_manuscript(
+        self,
+        manuscript_id: str,
+        request_data: ManuscriptPartUpdate,
+        *,
+        expected_version: int,
+    ) -> ManuscriptPartResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/writing/manuscripts/parts/{manuscript_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"expected-version": str(expected_version)},
+        )
+        return ManuscriptPartResponse.model_validate(response)
+
+    async def delete_manuscript(self, manuscript_id: str, *, expected_version: int) -> bool:
+        await self._request(
+            "DELETE",
+            f"/api/v1/writing/manuscripts/parts/{manuscript_id}",
+            headers={"expected-version": str(expected_version)},
+        )
+        return True
+
+    async def create_manuscript_chapter(
+        self,
+        project_id: str,
+        request_data: ManuscriptChapterCreate,
+    ) -> ManuscriptChapterResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/writing/manuscripts/projects/{project_id}/chapters",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ManuscriptChapterResponse.model_validate(response)
+
+    async def list_manuscript_chapters(
+        self,
+        project_id: str,
+        *,
+        part_id: Optional[str] = None,
+    ) -> list[ManuscriptChapterResponse]:
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/projects/{project_id}/chapters",
+            params={key: value for key, value in {"part_id": part_id}.items() if value is not None},
+        )
+        return [ManuscriptChapterResponse.model_validate(item) for item in list(response or [])]
+
+    async def get_manuscript_chapter(self, chapter_id: str) -> ManuscriptChapterResponse:
+        response = await self._request("GET", f"/api/v1/writing/manuscripts/chapters/{chapter_id}")
+        return ManuscriptChapterResponse.model_validate(response)
+
+    async def update_manuscript_chapter(
+        self,
+        chapter_id: str,
+        request_data: ManuscriptChapterUpdate,
+        *,
+        expected_version: int,
+    ) -> ManuscriptChapterResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/writing/manuscripts/chapters/{chapter_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"expected-version": str(expected_version)},
+        )
+        return ManuscriptChapterResponse.model_validate(response)
+
+    async def delete_manuscript_chapter(self, chapter_id: str, *, expected_version: int) -> bool:
+        await self._request(
+            "DELETE",
+            f"/api/v1/writing/manuscripts/chapters/{chapter_id}",
+            headers={"expected-version": str(expected_version)},
+        )
+        return True
+
+    async def create_manuscript_scene(
+        self,
+        chapter_id: str,
+        request_data: ManuscriptSceneCreate,
+    ) -> ManuscriptSceneResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/writing/manuscripts/chapters/{chapter_id}/scenes",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ManuscriptSceneResponse.model_validate(response)
+
+    async def list_manuscript_scenes(self, chapter_id: str) -> list[ManuscriptSceneResponse]:
+        response = await self._request("GET", f"/api/v1/writing/manuscripts/chapters/{chapter_id}/scenes")
+        return [ManuscriptSceneResponse.model_validate(item) for item in list(response or [])]
+
+    async def get_manuscript_scene(self, scene_id: str) -> ManuscriptSceneResponse:
+        response = await self._request("GET", f"/api/v1/writing/manuscripts/scenes/{scene_id}")
+        return ManuscriptSceneResponse.model_validate(response)
+
+    async def update_manuscript_scene(
+        self,
+        scene_id: str,
+        request_data: ManuscriptSceneUpdate,
+        *,
+        expected_version: int,
+    ) -> ManuscriptSceneResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/writing/manuscripts/scenes/{scene_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"expected-version": str(expected_version)},
+        )
+        return ManuscriptSceneResponse.model_validate(response)
+
+    async def delete_manuscript_scene(self, scene_id: str, *, expected_version: int) -> bool:
+        await self._request(
+            "DELETE",
+            f"/api/v1/writing/manuscripts/scenes/{scene_id}",
+            headers={"expected-version": str(expected_version)},
+        )
+        return True
+
+    async def get_manuscript_structure(self, project_id: str) -> ManuscriptStructureResponse:
+        response = await self._request("GET", f"/api/v1/writing/manuscripts/projects/{project_id}/structure")
+        return ManuscriptStructureResponse.model_validate(response)
 
     async def create_quiz(
         self,

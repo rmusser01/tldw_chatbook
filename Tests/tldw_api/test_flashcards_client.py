@@ -14,6 +14,11 @@ from tldw_chatbook.tldw_api import (
     FlashcardReviewRequest,
     FlashcardReviewResponse,
     FlashcardUpdateRequest,
+    StudyPackCreateJobRequest,
+    StudyPackJobAcceptedResponse,
+    StudyPackJobStatusResponse,
+    StudyPackSourceSelection,
+    StudyPackSummaryResponse,
     TLDWAPIClient,
 )
 
@@ -258,3 +263,76 @@ async def test_flashcard_update_and_delete_routes_wire_correctly(monkeypatch):
     assert mocked.await_args_list[1].kwargs["params"] == {"expected_version": 4}
     assert isinstance(updated, FlashcardResponse)
     assert deleted == {"deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_study_pack_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    study_pack_payload = {
+        "id": 9,
+        "workspace_id": "ws-1",
+        "title": "Cell biology pack",
+        "deck_id": 7,
+        "source_bundle_json": {"source_items": [{"source_type": "note", "source_id": "note-1"}]},
+        "generation_options_json": None,
+        "status": "active",
+        "superseded_by_pack_id": None,
+        "created_at": "2026-04-21T00:00:00Z",
+        "last_modified": "2026-04-21T00:01:00Z",
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 1,
+    }
+    job_payload = {
+        "job": {
+            "id": 42,
+            "status": "queued",
+            "domain": "study_pack",
+            "queue": "study",
+            "job_type": "generate_study_pack",
+        }
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            job_payload,
+            {**job_payload, "job": {**job_payload["job"], "status": "completed"}, "study_pack": study_pack_payload},
+            study_pack_payload,
+            {**job_payload, "job": {**job_payload["job"], "id": 43}},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    request = StudyPackCreateJobRequest(
+        title="Cell biology pack",
+        workspace_id="ws-1",
+        source_items=[StudyPackSourceSelection(source_type="note", source_id="note-1", label="Chapter notes")],
+    )
+    created = await client.create_study_pack_job(request)
+    status = await client.get_study_pack_job_status(42)
+    pack = await client.get_study_pack(9)
+    regenerated = await client.regenerate_study_pack(9)
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/flashcards/study-packs/jobs")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "title": "Cell biology pack",
+        "workspace_id": "ws-1",
+        "deck_mode": "new",
+        "source_items": [
+            {
+                "source_type": "note",
+                "source_id": "note-1",
+                "label": "Chapter notes",
+                "locator": {},
+            }
+        ],
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/flashcards/study-packs/jobs/42")
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/flashcards/study-packs/9")
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/flashcards/study-packs/9/regenerate")
+
+    assert isinstance(created, StudyPackJobAcceptedResponse)
+    assert isinstance(status, StudyPackJobStatusResponse)
+    assert isinstance(pack, StudyPackSummaryResponse)
+    assert isinstance(regenerated, StudyPackJobAcceptedResponse)
+    assert status.study_pack is not None
+    assert status.study_pack.id == 9

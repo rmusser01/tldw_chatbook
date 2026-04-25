@@ -166,6 +166,70 @@ class FakeServerStudyService:
         self.calls.append(("end_review_session", review_session_id))
         return {"id": review_session_id, "status": "completed"}
 
+    async def create_study_pack_job(self, *, title, workspace_id=None, source_items):
+        self.calls.append(("create_study_pack_job", title, workspace_id, source_items))
+        return {
+            "job": {
+                "id": 42,
+                "status": "queued",
+                "domain": "study_pack",
+                "queue": "study",
+                "job_type": "generate_study_pack",
+            }
+        }
+
+    async def get_study_pack_job_status(self, job_id):
+        self.calls.append(("get_study_pack_job_status", job_id))
+        return {
+            "job": {
+                "id": job_id,
+                "status": "completed",
+                "domain": "study_pack",
+                "queue": "study",
+                "job_type": "generate_study_pack",
+            },
+            "study_pack": {"id": 9, "title": "Cell biology pack"},
+        }
+
+    async def get_study_pack(self, pack_id):
+        self.calls.append(("get_study_pack", pack_id))
+        return {"id": pack_id, "title": "Cell biology pack"}
+
+    async def regenerate_study_pack(self, pack_id):
+        self.calls.append(("regenerate_study_pack", pack_id))
+        return {
+            "job": {
+                "id": 43,
+                "status": "queued",
+                "domain": "study_pack",
+                "queue": "study",
+                "job_type": "regenerate_study_pack",
+            }
+        }
+
+    async def get_study_suggestion_status(self, *, anchor_type, anchor_id):
+        self.calls.append(("get_study_suggestion_status", anchor_type, anchor_id))
+        return {"anchor_type": anchor_type, "anchor_id": anchor_id, "status": "ready", "snapshot_id": 11}
+
+    async def get_study_suggestion_snapshot(self, snapshot_id):
+        self.calls.append(("get_study_suggestion_snapshot", snapshot_id))
+        return {"snapshot": {"id": snapshot_id, "payload": {}}, "live_evidence": {}}
+
+    async def refresh_study_suggestion_snapshot(self, snapshot_id, *, reason=None):
+        self.calls.append(("refresh_study_suggestion_snapshot", snapshot_id, reason))
+        return {"job": {"id": 44, "status": "queued"}}
+
+    async def trigger_study_suggestion_action(self, snapshot_id, **request):
+        self.calls.append(("trigger_study_suggestion_action", snapshot_id, request))
+        return {
+            "disposition": "generated",
+            "snapshot_id": snapshot_id,
+            "selection_fingerprint": "fp-1",
+            "target_service": request["target_service"],
+            "target_type": request["target_type"],
+            "target_id": "quiz-9",
+        }
+
 
 class PagedFakeServerStudyService:
     def __init__(self, pages, *, fail_on_offset=None):
@@ -649,3 +713,126 @@ async def test_scope_service_does_not_swallow_server_deck_delete_unsupported_err
         match="Flashcard deck deletion is not supported by the current server API\\.",
     ):
         await scope.delete_deck(mode="server", deck_id=7, expected_version=2)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_study_pack_jobs_to_server_with_policy():
+    server = FakeServerStudyService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    created = await scope.create_study_pack_job(
+        mode="server",
+        title="Cell biology pack",
+        workspace_id="ws-1",
+        source_items=[{"source_type": "note", "source_id": "note-1"}],
+    )
+    status = await scope.get_study_pack_job_status(mode="server", job_id=42)
+    pack = await scope.get_study_pack(mode="server", pack_id=9)
+    regenerated = await scope.regenerate_study_pack(mode="server", pack_id=9)
+
+    assert created["job"]["id"] == 42
+    assert status["study_pack"]["id"] == 9
+    assert pack["id"] == 9
+    assert regenerated["job"]["id"] == 43
+    assert policy_enforcer.calls == [
+        "study.packs.jobs.launch.server",
+        "study.packs.jobs.observe.server",
+        "study.packs.jobs.observe.server",
+        "study.packs.jobs.launch.server",
+    ]
+    assert server.calls[-4:] == [
+        ("create_study_pack_job", "Cell biology pack", "ws-1", [{"source_type": "note", "source_id": "note-1"}]),
+        ("get_study_pack_job_status", 42),
+        ("get_study_pack", 9),
+        ("regenerate_study_pack", 9),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_study_pack_jobs_in_local_mode_before_dispatch():
+    local = FakeLocalStudyService()
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=local, server_service=server)
+
+    with pytest.raises(ValueError, match="Study packs are server-only"):
+        await scope.create_study_pack_job(
+            mode="local",
+            title="Cell biology pack",
+            source_items=[{"source_type": "note", "source_id": "note-1"}],
+        )
+
+    assert local.calls == []
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_study_suggestions_to_server_with_policy():
+    server = FakeServerStudyService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    status = await scope.get_study_suggestion_status(mode="server", anchor_type="deck", anchor_id=7)
+    snapshot = await scope.get_study_suggestion_snapshot(mode="server", snapshot_id=11)
+    refresh = await scope.refresh_study_suggestion_snapshot(mode="server", snapshot_id=11, reason="manual")
+    action = await scope.trigger_study_suggestion_action(
+        mode="server",
+        snapshot_id=11,
+        target_service="quiz",
+        target_type="quiz",
+        action_kind="generate",
+        selected_topic_ids=["mitosis"],
+        has_explicit_selection=True,
+    )
+
+    assert status["snapshot_id"] == 11
+    assert snapshot["snapshot"]["id"] == 11
+    assert refresh["job"]["id"] == 44
+    assert action["target_id"] == "quiz-9"
+    assert policy_enforcer.calls == [
+        "study.suggestions.list.server",
+        "study.suggestions.observe.server",
+        "study.suggestions.launch.server",
+        "study.suggestions.configure.server",
+    ]
+    assert server.calls[-4:] == [
+        ("get_study_suggestion_status", "deck", 7),
+        ("get_study_suggestion_snapshot", 11),
+        ("refresh_study_suggestion_snapshot", 11, "manual"),
+        (
+            "trigger_study_suggestion_action",
+            11,
+            {
+                "target_service": "quiz",
+                "target_type": "quiz",
+                "action_kind": "generate",
+                "selected_topic_ids": ["mitosis"],
+                "selected_topic_edits": [],
+                "manual_topic_labels": [],
+                "has_explicit_selection": True,
+                "generator_version": "v1",
+                "force_regenerate": False,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_study_suggestions_in_local_mode_before_dispatch():
+    local = FakeLocalStudyService()
+    server = FakeServerStudyService()
+    scope = StudyScopeService(local_service=local, server_service=server)
+
+    with pytest.raises(ValueError, match="Study suggestions are server-only"):
+        await scope.get_study_suggestion_status(mode="local", anchor_type="deck", anchor_id=7)
+
+    assert local.calls == []
+    assert server.calls == []

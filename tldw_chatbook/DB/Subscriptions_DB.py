@@ -426,7 +426,7 @@ class SubscriptionsDB(BaseDB):
             
             # Build update query
             allowed_fields = [
-                'name', 'description', 'tags', 'priority', 'folder',
+                'name', 'type', 'source', 'description', 'tags', 'priority', 'folder',
                 'check_frequency', 'is_active', 'is_paused', 'auth_config',
                 'custom_headers', 'rate_limit_config', 'extraction_method',
                 'extraction_rules', 'processing_options', 'auto_ingest',

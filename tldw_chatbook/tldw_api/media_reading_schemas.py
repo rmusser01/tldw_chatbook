@@ -19,6 +19,8 @@ FileType = Literal["ical", "markdown_table", "html_table", "xlsx", "data_table",
 ExportFormat = Literal["ics", "md", "html", "xlsx", "csv", "json", "png", "jpg", "webp"]
 ExportMode = Literal["url", "inline"]
 AsyncMode = Literal["auto", "sync", "async"]
+ReadingHighlightAnchorStrategy = Literal["fuzzy_quote", "exact_offset"]
+ReadingHighlightState = Literal["active", "stale"]
 
 
 class FileExportRequest(BaseModel):
@@ -113,6 +115,74 @@ class FileArtifactsPurgeRequest(BaseModel):
 class FileArtifactsPurgeResponse(BaseModel):
     removed: int
     files_deleted: int
+
+
+class MediaIngestSubmitRequest(BaseModel):
+    media_type: str
+    urls: list[str] | None = None
+    keywords: list[str] | None = None
+    chunk_size: int = Field(default=500, gt=0)
+    chunk_overlap: int = Field(default=200, ge=0)
+    perform_chunking: bool = True
+    generate_embeddings: bool = False
+    force_regenerate_embeddings: bool = False
+
+
+class MediaIngestJobItem(BaseModel):
+    id: int
+    uuid: str | None = None
+    source: str
+    source_kind: str
+    status: str
+
+
+class MediaIngestSubmitResponse(BaseModel):
+    batch_id: str
+    jobs: list[MediaIngestJobItem] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+class MediaIngestJobStatus(BaseModel):
+    id: int
+    uuid: str | None = None
+    status: str
+    job_type: str
+    owner_user_id: str | None = None
+    created_at: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    cancelled_at: str | None = None
+    cancellation_reason: str | None = None
+    progress_percent: float | None = None
+    progress_message: str | None = None
+    result: dict[str, Any] | None = None
+    error_message: str | None = None
+    media_type: str | None = None
+    source: str | None = None
+    source_kind: str | None = None
+    batch_id: str | None = None
+
+
+class MediaIngestJobListResponse(BaseModel):
+    batch_id: str
+    jobs: list[MediaIngestJobStatus] = Field(default_factory=list)
+
+
+class MediaIngestJobCancelResponse(BaseModel):
+    success: bool
+    job_id: int
+    status: str
+    message: str | None = None
+
+
+class MediaIngestBatchCancelResponse(BaseModel):
+    success: bool
+    batch_id: str
+    requested: int
+    cancelled: int
+    already_terminal: int
+    failed: int = 0
+    message: str | None = None
 
 
 class IngestionSourceCreateRequest(BaseModel):
@@ -271,8 +341,287 @@ class ReadingProgressNotFound(BaseModel):
     has_progress: bool = False
 
 
+class ReadingHighlightCreateRequest(BaseModel):
+    item_id: int = Field(..., ge=1)
+    quote: str = Field(..., min_length=1)
+    start_offset: int | None = Field(default=None, ge=0)
+    end_offset: int | None = Field(default=None, ge=0)
+    color: str | None = Field(default=None, max_length=32)
+    note: str | None = Field(default=None, max_length=2000)
+    anchor_strategy: ReadingHighlightAnchorStrategy = "fuzzy_quote"
+
+
+class ReadingHighlightUpdateRequest(BaseModel):
+    color: str | None = Field(default=None, max_length=32)
+    note: str | None = Field(default=None, max_length=2000)
+    state: ReadingHighlightState | None = None
+
+
+class ReadingHighlight(BaseModel):
+    id: int
+    item_id: int
+    quote: str
+    start_offset: int | None = None
+    end_offset: int | None = None
+    color: str | None = None
+    note: str | None = None
+    created_at: datetime
+    anchor_strategy: ReadingHighlightAnchorStrategy
+    content_hash_ref: str | None = None
+    context_before: str | None = None
+    context_after: str | None = None
+    state: ReadingHighlightState = "active"
+
+
+class DocumentAnnotationColor(str, Enum):
+    yellow = "yellow"
+    green = "green"
+    blue = "blue"
+    pink = "pink"
+
+
+class DocumentAnnotationType(str, Enum):
+    highlight = "highlight"
+    page_note = "page_note"
+
+
+class DocumentAnnotationCreate(BaseModel):
+    location: str
+    text: str
+    color: DocumentAnnotationColor = DocumentAnnotationColor.yellow
+    note: str | None = None
+    annotation_type: DocumentAnnotationType = DocumentAnnotationType.highlight
+    chapter_title: str | None = None
+    percentage: float | None = Field(default=None, ge=0, le=100)
+
+
+class DocumentAnnotationUpdate(BaseModel):
+    text: str | None = None
+    color: DocumentAnnotationColor | None = None
+    note: str | None = None
+
+
+class DocumentAnnotationResponse(BaseModel):
+    id: str
+    media_id: int
+    location: str
+    text: str
+    color: DocumentAnnotationColor
+    note: str | None = None
+    annotation_type: DocumentAnnotationType = DocumentAnnotationType.highlight
+    chapter_title: str | None = None
+    percentage: float | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocumentAnnotationListResponse(BaseModel):
+    media_id: int
+    annotations: list[DocumentAnnotationResponse] = Field(default_factory=list)
+    total_count: int = Field(..., ge=0)
+
+
+class DocumentAnnotationSyncRequest(BaseModel):
+    annotations: list[DocumentAnnotationCreate]
+    client_ids: list[str] | None = None
+
+
+class DocumentAnnotationSyncResponse(BaseModel):
+    media_id: int
+    synced_count: int = Field(..., ge=0)
+    annotations: list[DocumentAnnotationResponse] = Field(default_factory=list)
+    id_mapping: dict[str, str] | None = None
+
+
+class DocumentOutlineEntry(BaseModel):
+    level: int = Field(..., ge=1, le=6)
+    title: str
+    page: int = Field(..., ge=1)
+
+
+class DocumentOutlineResponse(BaseModel):
+    media_id: int
+    has_outline: bool
+    entries: list[DocumentOutlineEntry] = Field(default_factory=list)
+    total_pages: int = Field(..., ge=0)
+
+
+class DocumentFigure(BaseModel):
+    id: str
+    page: int = Field(..., ge=1)
+    width: int = Field(..., ge=1)
+    height: int = Field(..., ge=1)
+    format: str
+    data_url: str | None = None
+    caption: str | None = None
+
+
+class DocumentFiguresResponse(BaseModel):
+    media_id: int
+    has_figures: bool
+    figures: list[DocumentFigure] = Field(default_factory=list)
+    total_count: int = Field(..., ge=0)
+
+
+class DocumentReferenceEntry(BaseModel):
+    raw_text: str
+    title: str | None = None
+    authors: str | None = None
+    year: int | None = Field(default=None, ge=1000, le=2100)
+    venue: str | None = None
+    doi: str | None = None
+    arxiv_id: str | None = None
+    url: str | None = None
+    citation_count: int | None = Field(default=None, ge=0)
+    semantic_scholar_id: str | None = None
+    open_access_pdf: str | None = None
+
+
+class DocumentReferencesResponse(BaseModel):
+    media_id: int
+    has_references: bool
+    references: list[DocumentReferenceEntry] = Field(default_factory=list)
+    enrichment_source: str | None = None
+    enriched_count: int = Field(default=0, ge=0)
+    enrichment_limited: bool = False
+    total_detected: int = Field(default=0, ge=0)
+    truncated: bool = False
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=0, ge=0)
+    returned_count: int = Field(default=0, ge=0)
+    total_available: int = Field(default=0, ge=0)
+    has_more: bool = False
+    next_offset: int | None = Field(default=None, ge=0)
+
+
+class DocumentInsightCategory(str, Enum):
+    research_gap = "research_gap"
+    research_question = "research_question"
+    motivation = "motivation"
+    methods = "methods"
+    key_findings = "key_findings"
+    limitations = "limitations"
+    future_work = "future_work"
+    summary = "summary"
+
+
+class DocumentInsightItem(BaseModel):
+    category: DocumentInsightCategory
+    title: str
+    content: str
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class DocumentInsightsRequest(BaseModel):
+    categories: list[DocumentInsightCategory] | None = None
+    model: str | None = None
+    max_content_length: int | None = Field(default=5000, ge=500, le=50000)
+    force: bool | None = False
+
+
+class DocumentInsightsResponse(BaseModel):
+    media_id: int
+    insights: list[DocumentInsightItem] = Field(default_factory=list)
+    model_used: str
+    cached: bool = False
+
+
+class MediaVersionDetail(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    uuid: str | None = None
+    media_id: int
+    version_number: int
+    created_at: datetime
+    prompt: str | None = None
+    analysis_content: str | None = None
+    safe_metadata: dict[str, Any] | None = None
+    content: str | None = None
+
+
+class MediaVersionCreateRequest(BaseModel):
+    content: str = Field(..., max_length=5_000_000)
+    prompt: str = Field(..., max_length=10_000)
+    analysis_content: str = Field(..., max_length=100_000)
+    safe_metadata: dict[str, Any] | None = None
+
+
+class MediaVersionRollbackRequest(BaseModel):
+    version_number: int = Field(..., ge=1)
+
+
+class MediaMetadataPatchRequest(BaseModel):
+    safe_metadata: dict[str, Any]
+    merge: bool = True
+    new_version: bool = False
+
+
+class MediaAdvancedVersionUpsertRequest(BaseModel):
+    content: str | None = None
+    prompt: str | None = None
+    analysis_content: str | None = None
+    safe_metadata: dict[str, Any] | None = None
+    merge: bool = True
+    new_version: bool = True
+
+
+class ReprocessMediaRequest(BaseModel):
+    perform_chunking: bool = True
+    chunk_method: str | None = None
+    use_adaptive_chunking: bool = False
+    use_multi_level_chunking: bool = False
+    chunk_language: str | None = None
+    chunk_size: int = Field(default=500, gt=0)
+    chunk_overlap: int = Field(default=200, ge=0)
+    custom_chapter_pattern: str | None = None
+    proposition_engine: str | None = None
+    proposition_aggressiveness: int | None = Field(default=None, ge=0)
+    proposition_min_proposition_length: int | None = Field(default=None, ge=1)
+    proposition_prompt_profile: str | None = None
+    auto_apply_template: bool = False
+    chunking_template_name: str | None = None
+    enable_contextual_chunking: bool = False
+    contextual_llm_model: str | None = None
+    context_window_size: int | None = Field(default=None, ge=100, le=2000)
+    context_strategy: Literal["auto", "full", "window", "outline_window"] | None = None
+    context_token_budget: int | None = Field(default=None, ge=1000, le=200000)
+    hierarchical_chunking: bool = False
+    hierarchical_template: dict[str, Any] | None = None
+    generate_embeddings: bool = False
+    embedding_model: str | None = None
+    embedding_provider: str | None = None
+    force_regenerate_embeddings: bool = False
+
+
+class ReprocessMediaResponse(BaseModel):
+    media_id: int
+    status: str
+    message: str
+    chunks_created: int | None = None
+    embeddings_started: bool = False
+    job_id: str | None = None
+
+
 __all__ = [
     "AsyncMode",
+    "DocumentAnnotationColor",
+    "DocumentAnnotationCreate",
+    "DocumentAnnotationListResponse",
+    "DocumentAnnotationResponse",
+    "DocumentAnnotationSyncRequest",
+    "DocumentAnnotationSyncResponse",
+    "DocumentAnnotationType",
+    "DocumentAnnotationUpdate",
+    "DocumentFigure",
+    "DocumentFiguresResponse",
+    "DocumentInsightCategory",
+    "DocumentInsightItem",
+    "DocumentInsightsRequest",
+    "DocumentInsightsResponse",
+    "DocumentOutlineEntry",
+    "DocumentOutlineResponse",
+    "DocumentReferenceEntry",
+    "DocumentReferencesResponse",
     "FileArtifact",
     "FileArtifactResponse",
     "FileArtifactsPurgeRequest",
@@ -293,7 +642,24 @@ __all__ = [
     "IngestionSourcePatchRequest",
     "IngestionSourceResponse",
     "IngestionSourceSyncTriggerResponse",
+    "MediaIngestBatchCancelResponse",
+    "MediaIngestJobCancelResponse",
+    "MediaIngestJobItem",
+    "MediaIngestJobListResponse",
+    "MediaIngestJobStatus",
+    "MediaIngestSubmitRequest",
+    "MediaIngestSubmitResponse",
+    "MediaAdvancedVersionUpsertRequest",
+    "MediaMetadataPatchRequest",
+    "MediaVersionCreateRequest",
+    "MediaVersionDetail",
+    "MediaVersionRollbackRequest",
     "ReadingDeleteResponse",
+    "ReadingHighlight",
+    "ReadingHighlightAnchorStrategy",
+    "ReadingHighlightCreateRequest",
+    "ReadingHighlightState",
+    "ReadingHighlightUpdateRequest",
     "ReadingItem",
     "ReadingItemDetail",
     "ReadingItemsListResponse",
@@ -303,5 +669,7 @@ __all__ = [
     "ReadingUpdateRequest",
     "ReferenceImageListItem",
     "ReferenceImageListResponse",
+    "ReprocessMediaRequest",
+    "ReprocessMediaResponse",
     "ViewMode",
 ]

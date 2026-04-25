@@ -136,6 +136,7 @@ PREVIEW = _action("preview", "detail")
 CREATE = _action("create", "create")
 UPDATE = _action("update", "update")
 DELETE = _action("delete", "delete")
+CANCEL = _action("cancel", "delete")
 LAUNCH = _action("launch", "launch")
 OBSERVE = _action("observe", "observe")
 CONFIGURE = _action("configure", "update")
@@ -238,7 +239,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("media.reading", actions=CRUD_ACTIONS),
             _resource("media.reading_progress", actions=(DETAIL, UPDATE)),
             _resource("media.ingestion_sources", actions=CRUD_ACTIONS),
-            _resource("media.ingestion_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE)),
+            _resource("media.ingestion_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE, CANCEL)),
         ),
     ),
     _capability(
@@ -360,7 +361,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "notifications",
         sources=LOCAL_ONLY_SOURCES,
         resources=(
-            _resource("notifications.queue", actions=(LIST, OBSERVE)),
+            _resource("notifications.queue", actions=(LIST, UPDATE, OBSERVE)),
             _resource("notifications.settings", actions=(UPDATE,)),
             _resource("notifications.dispatch", actions=(LAUNCH,)),
         ),

@@ -24,6 +24,9 @@ class LocalMediaReadingService:
     def _unsupported_ingestion_sources(self) -> ValueError:
         return ValueError("Local ingestion sources are not available yet.")
 
+    def _unsupported_ingestion_jobs(self) -> ValueError:
+        return ValueError("Local ingestion jobs are not available through this scope yet.")
+
     def _normalize_media_id_filter(self, media_ids: Any) -> list[int]:
         normalized: list[int] = []
         for media_id in media_ids or []:
@@ -172,6 +175,33 @@ class LocalMediaReadingService:
 
     def upload_ingestion_source_archive(self, source_id: Any, archive_path: str) -> Any:
         raise self._unsupported_ingestion_sources()
+
+    def submit_ingest_jobs(self, **kwargs: Any) -> Any:
+        raise self._unsupported_ingestion_jobs()
+
+    def get_ingest_job(self, job_id: Any) -> Any:
+        raise self._unsupported_ingestion_jobs()
+
+    def list_ingest_jobs(self, batch_id: str, *, limit: int = 100) -> Any:
+        raise self._unsupported_ingestion_jobs()
+
+    def stream_ingest_job_events(self, *, batch_id: str | None = None, after_id: int = 0) -> Any:
+        raise self._unsupported_ingestion_jobs()
+
+    def cancel_ingest_job(self, job_id: Any, *, reason: str | None = None) -> Any:
+        raise self._unsupported_ingestion_jobs()
+
+    def cancel_ingest_batch(
+        self,
+        *,
+        batch_id: str | None = None,
+        session_id: str | None = None,
+        reason: str | None = None,
+    ) -> Any:
+        raise self._unsupported_ingestion_jobs()
+
+    def reprocess_media(self, media_id: Any, **options: Any) -> Any:
+        raise self._unsupported_ingestion_jobs()
 
     def list_document_versions(self, media_id: Any, *, include_deleted: bool = False) -> Any:
         return self._require_db().get_all_document_versions(

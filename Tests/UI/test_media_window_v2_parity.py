@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Collapsible
+from textual.widgets import Button, Collapsible, Select, Static
 
 from tldw_chatbook.Event_Handlers.media_events import (
     MediaAnalysisSaveEvent,
@@ -512,6 +512,25 @@ async def test_media_search_panel_programmatic_browse_sync_does_not_emit_change_
         await pilot.pause()
 
         assert app.events == []
+
+
+@pytest.mark.asyncio
+async def test_media_search_panel_shows_saved_view_disabled_reason():
+    class MediaSearchPanelApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield MediaSearchPanel(SimpleNamespace())
+
+    app = MediaSearchPanelApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one(MediaSearchPanel)
+
+        panel.set_saved_view_capability(False, "Only available in server mode.")
+        await pilot.pause()
+
+        status = panel.query_one("#saved-view-status", Static)
+        assert str(status.content) == "Only available in server mode."
+        browse_select = panel.query_one("#browse-subview-select", Select)
+        assert browse_select.disabled is True
 
 
 def test_media_viewer_metadata_display_includes_reading_progress_for_backed_records():

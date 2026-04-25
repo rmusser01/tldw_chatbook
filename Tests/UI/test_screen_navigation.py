@@ -13,15 +13,40 @@ from tldw_chatbook.Media import (
     MediaReadingScopeService,
     ServerMediaReadingService,
 )
+from tldw_chatbook.Notifications import (
+    ClientNotificationsDB,
+    NotificationDispatchService,
+    ServerNotificationsService,
+)
+from tldw_chatbook.Outputs_Interop import ServerOutputsService
+from tldw_chatbook.Research_Interop import ServerResearchSearchService, ServerResearchService
+from tldw_chatbook.Sharing_Interop import ServerSharingService
+from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService
+from tldw_chatbook.Subscriptions import (
+    LocalWatchlistsService,
+    ServerWatchlistsService,
+    WatchlistScopeService,
+)
 from tldw_chatbook.Constants import ALL_TABS
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 
 def _build_test_app() -> TldwCli:
+    def fake_runtime_policy(app):
+        context = SimpleNamespace(
+            state=RuntimeSourceState(active_source="local", server_configured=True),
+            persist=lambda: None,
+        )
+        app.runtime_policy = context
+        app.current_runtime_source = "local"
+        app.current_runtime_backend = "local"
+        return context
+
     with patch("tldw_chatbook.app.load_settings", return_value={"tldw_api": {"base_url": "http://localhost:8000"}}):
         with patch("tldw_chatbook.app.get_cli_setting", side_effect=lambda _section, _key, default=None: default):
             with patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None):
@@ -31,7 +56,10 @@ def _build_test_app() -> TldwCli:
                             with patch.object(TldwCli, "_init_prompts_service", lambda self: setattr(self, "prompts_service_initialized", False)):
                                 with patch.object(TldwCli, "_init_providers_models", lambda self: setattr(self, "providers_models", {})):
                                     with patch.object(TldwCli, "_init_media_db", lambda self: (setattr(self, "media_db", None), setattr(self, "_media_types_for_ui", ["All Media"]))):
-                                        return TldwCli()
+                                        with patch("tldw_chatbook.app.load_runtime_policy_for_app", side_effect=fake_runtime_policy):
+                                            with patch("tldw_chatbook.app.get_notifications_db_path", return_value=":memory:"):
+                                                with patch("tldw_chatbook.app.get_subscriptions_db_path", return_value=":memory:"):
+                                                    return TldwCli()
 
 
 def test_app_uses_screen_navigation_and_wires_media_services():
@@ -42,6 +70,22 @@ def test_app_uses_screen_navigation_and_wires_media_services():
     assert isinstance(app.server_media_reading_service, ServerMediaReadingService)
     assert isinstance(app.media_reading_scope_service, MediaReadingScopeService)
     assert app.media_runtime_state.runtime_backend == "local"
+
+
+def test_app_initializes_watchlists_and_notifications_services():
+    app = _build_test_app()
+
+    assert isinstance(app.local_watchlists_service, LocalWatchlistsService)
+    assert isinstance(app.server_watchlists_service, ServerWatchlistsService)
+    assert isinstance(app.watchlist_scope_service, WatchlistScopeService)
+    assert isinstance(app.client_notifications_db, ClientNotificationsDB)
+    assert isinstance(app.notification_dispatch_service, NotificationDispatchService)
+    assert isinstance(app.server_notifications_service, ServerNotificationsService)
+    assert isinstance(app.server_outputs_service, ServerOutputsService)
+    assert isinstance(app.server_research_service, ServerResearchService)
+    assert isinstance(app.server_research_search_service, ServerResearchSearchService)
+    assert isinstance(app.server_sharing_service, ServerSharingService)
+    assert isinstance(app.server_web_clipper_service, ServerWebClipperService)
 
 
 def test_media_screen_uses_shared_runtime_state():
