@@ -167,6 +167,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": FULL_CRUD_AND_LAUNCH,
         },
     },
+    "user_governance": {
+        "expected_domain_ids": {"user_governance"},
+        "expected_action_kinds_by_source": {
+            "server": _action_kinds("browse", "detail", "update"),
+        },
+    },
     "workflows": {
         "expected_domain_ids": {"workflows"},
         "expected_action_kinds_by_source": {
@@ -682,6 +688,12 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         notifications.reminders.list.server
         notifications.reminders.observe.server
     """),
+    "user_governance": _action_ids("""
+        user_governance.consent.list.server
+        user_governance.consent.update.server
+        user_governance.privileges.detail.server
+        user_governance.privileges.list.server
+    """),
     "sharing": _action_ids("""
         sharing.links.create.server
         sharing.links.inspect.server
@@ -935,7 +947,7 @@ def test_runtime_policy_registry_contains_full_audited_rows():
     actual_entries_by_capability = _group_registry_entries_by_capability()
 
     assert set(actual_entries_by_capability) == expected_capability_ids, (
-        "Audited capability seed coverage must match the full 26-row parity matrix."
+        "Audited capability seed coverage must match the full parity matrix."
     )
 
     for capability_id, expected in EXPECTED_AUDITED_CAPABILITIES.items():

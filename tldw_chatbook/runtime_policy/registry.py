@@ -194,6 +194,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "server_reminders_notification_feeds",
         "external_connectors",
         "server_skills",
+        "user_governance",
         "workflows",
         "scheduler_workflows",
         "chat_workflows",
@@ -497,6 +498,16 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("skills.export", actions=(LAUNCH,)),
             _resource("skills.execute", actions=(LAUNCH,)),
             _resource("skills.seed", actions=(LAUNCH,)),
+        ),
+    ),
+    _capability(
+        "user_governance",
+        "User Governance / Consent",
+        "user_governance",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("user_governance.consent", actions=(LIST, UPDATE)),
+            _resource("user_governance.privileges", actions=(LIST, DETAIL)),
         ),
     ),
     _capability(
