@@ -142,6 +142,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 2
 - Notes: Priority 54. This row supports server switching and connected-mode capability gating without requiring the UI/UX layer to infer server capabilities from unrelated domain calls.
 
+### Auth / Profile / Sessions: Login, refresh, logout, self sessions, registration, and user profile
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Discover / Configure / Observe
+- Current state: Chatbook now has typed direct API-client wrappers for OAuth2-compatible login, token refresh, logout with local bearer-token clearing, auth-scoped session list/revoke/revoke-all, registration, profile catalog fetch, self profile fetch, and self profile updates. The client now updates its bearer token on login/refresh without overloading the existing sharing token schema.
+- Gap: MFA setup/login, password reset/change, user API-key management, BYOK OAuth/provider keys, storage quota, durable local credential storage, token auto-refresh policy, server switching cache invalidation, and UX adoption remain pending.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/auth.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/users.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/auth_user_schemas.py`; Verification: `Tests/tldw_api/test_auth_user_client.py`.
+- Recommended tranche: Tranche 2
+- Notes: Priority 56. This row is required for Chatbook-as-standalone-client access to multi-user servers, but server identity must stay remote-owned and separate from Chatbook's local single-user identity.
+
 ### Prompts / Chatbooks: Prompt library, prompt workflows, and chatbook import/export jobs
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD

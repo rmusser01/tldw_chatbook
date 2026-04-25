@@ -142,6 +142,20 @@ from .server_runtime_schemas import (
     TokenizerConfigResponse,
     TokenizerUpdateRequest,
 )
+from .auth_user_schemas import (
+    AuthTokenResponse,
+    LogoutRequest,
+    MessageResponse,
+    MFAChallengeResponse,
+    RefreshTokenRequest,
+    RegisterRequest,
+    RegistrationResponse,
+    SessionResponse,
+    UserProfileCatalogResponse,
+    UserProfileResponse,
+    UserProfileUpdateRequest,
+    UserProfileUpdateResponse,
+)
 from .data_tables_schemas import (
     DataTableContentUpdateRequest,
     DataTableDeleteResponse,
@@ -471,6 +485,15 @@ class TLDWAPIClient:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
         self._client = None
+
+    def set_bearer_token(self, token: str | None) -> None:
+        self.bearer_token = token
+        if self._client is None or self._client.is_closed:
+            return
+        if token:
+            self._client.headers["Authorization"] = f"Bearer {token}"
+        elif "Authorization" in self._client.headers:
+            del self._client.headers["Authorization"]
 
     def _normalize_conversation_scope_params(
         self,
@@ -1035,6 +1058,112 @@ class TLDWAPIClient:
     async def list_vlm_backends(self) -> VLMBackendsResponse:
         response = await self._request("GET", "/api/v1/vlm/backends")
         return VLMBackendsResponse.model_validate(response)
+
+    async def login(
+        self,
+        username: str,
+        password: str,
+        *,
+        set_bearer_token: bool = True,
+    ) -> AuthTokenResponse | MFAChallengeResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/login",
+            data={"username": username, "password": password, "grant_type": "password"},
+        )
+        if isinstance(response, dict) and response.get("mfa_required"):
+            return MFAChallengeResponse.model_validate(response)
+        token_response = AuthTokenResponse.model_validate(response)
+        if set_bearer_token:
+            self.set_bearer_token(token_response.access_token)
+        return token_response
+
+    async def refresh_auth_token(
+        self,
+        request_data: RefreshTokenRequest,
+        *,
+        set_bearer_token: bool = True,
+    ) -> AuthTokenResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/refresh",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        token_response = AuthTokenResponse.model_validate(response)
+        if set_bearer_token:
+            self.set_bearer_token(token_response.access_token)
+        return token_response
+
+    async def logout(self, *, all_devices: bool = False, clear_bearer_token: bool = True) -> MessageResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/logout",
+            json_data=LogoutRequest(all_devices=all_devices).model_dump(mode="json"),
+        )
+        message = MessageResponse.model_validate(response)
+        if clear_bearer_token:
+            self.set_bearer_token(None)
+        return message
+
+    async def list_auth_sessions(self) -> list[SessionResponse]:
+        response = await self._request("GET", "/api/v1/auth/sessions")
+        return [SessionResponse.model_validate(item) for item in response]
+
+    async def revoke_auth_session(self, session_id: int) -> MessageResponse:
+        response = await self._request("DELETE", f"/api/v1/auth/sessions/{session_id}")
+        return MessageResponse.model_validate(response)
+
+    async def revoke_all_auth_sessions(self) -> MessageResponse:
+        response = await self._request("POST", "/api/v1/auth/sessions/revoke-all")
+        return MessageResponse.model_validate(response)
+
+    async def get_user_profile_catalog(self, *, if_none_match: str | None = None) -> UserProfileCatalogResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/users/profile/catalog",
+            headers={"If-None-Match": if_none_match} if if_none_match is not None else None,
+        )
+        return UserProfileCatalogResponse.model_validate(response)
+
+    async def get_current_user_profile(
+        self,
+        *,
+        sections: str | list[str] | None = None,
+        include_sources: bool = False,
+    ) -> UserProfileResponse:
+        section_param = ",".join(sections) if isinstance(sections, list) else sections
+        params = {
+            "sections": section_param,
+            "include_sources": str(include_sources).lower() if include_sources else None,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/users/me/profile",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return UserProfileResponse.model_validate(response)
+
+    async def update_current_user_profile(
+        self,
+        request_data: UserProfileUpdateRequest,
+    ) -> UserProfileUpdateResponse:
+        payload = request_data.model_dump(mode="json")
+        if request_data.profile_version is None:
+            payload.pop("profile_version", None)
+        response = await self._request(
+            "PATCH",
+            "/api/v1/users/me/profile",
+            json_data=payload,
+        )
+        return UserProfileUpdateResponse.model_validate(response)
+
+    async def register_user(self, request_data: RegisterRequest) -> RegistrationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/auth/register",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return RegistrationResponse.model_validate(response)
 
     async def get_server_health(self) -> ServerHealthResponse:
         response = await self._request("GET", "/api/v1/health")
