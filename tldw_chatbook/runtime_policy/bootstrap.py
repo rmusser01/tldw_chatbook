@@ -76,10 +76,21 @@ def build_runtime_api_client_from_config(app_config: Mapping[str, Any] | None) -
     return build_runtime_api_client(app_config=app_config)
 
 
-def build_server_chatbook_service(*, app_config: Mapping[str, Any] | None) -> Any:
+def build_server_chatbook_service(
+    *,
+    app_config: Mapping[str, Any] | None,
+    policy_enforcer: Any | None = None,
+    allow_unconfigured: bool = False,
+) -> Any:
     from ..Chatbooks.server_chatbook_service import ServerChatbookService
 
-    return ServerChatbookService(build_runtime_api_client(app_config=app_config))
+    try:
+        client = build_runtime_api_client(app_config=app_config)
+    except ValueError:
+        if not allow_unconfigured:
+            raise
+        client = None
+    return ServerChatbookService(client, policy_enforcer=policy_enforcer)
 
 
 def load_runtime_policy_for_app(

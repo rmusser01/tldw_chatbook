@@ -240,6 +240,7 @@ from tldw_chatbook.Evaluations_Interop import (
 )
 from tldw_chatbook.runtime_policy.bootstrap import (
     add_runtime_policy_snapshot,
+    build_server_chatbook_service,
     load_runtime_policy_for_app,
     reconcile_saved_screen_state,
     set_authoritative_runtime_source,
@@ -1532,16 +1533,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
 
         self.local_chatbook_service = LocalChatbookService(self._build_chatbook_db_paths())
-        try:
-            self.server_chatbook_service = ServerChatbookService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_chatbook_service = ServerChatbookService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        self.server_chatbook_service = build_server_chatbook_service(
+            app_config=self.app_config,
+            policy_enforcer=self.service_policy_enforcer,
+            allow_unconfigured=True,
+        )
 
         self.prompt_chatbook_scope_service = PromptChatbookScopeService(
             local_prompt_service=self.local_prompt_service,

@@ -127,6 +127,21 @@ def test_build_server_chatbook_service_wraps_authoritative_client_builder():
     assert service.client.token == "secret-key"
 
 
+def test_build_server_chatbook_service_can_return_disconnected_service_when_unconfigured():
+    from tldw_chatbook.runtime_policy.bootstrap import build_server_chatbook_service
+
+    policy_enforcer = object()
+
+    service = build_server_chatbook_service(
+        app_config={},
+        policy_enforcer=policy_enforcer,
+        allow_unconfigured=True,
+    )
+
+    assert service.client is None
+    assert service.policy_enforcer is policy_enforcer
+
+
 def test_load_runtime_policy_for_app_derives_and_persists_authoritative_server_binding_from_app_config(
     tmp_path,
 ):

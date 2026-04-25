@@ -39,6 +39,18 @@ Representative former bypasses that now route through that boundary:
 - `tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py`
 - server-facing wrappers that previously imported chatbook-local client helpers directly
 
+## Shared Unsupported-Capability Contract
+
+Later parity work added `tldw_chatbook/runtime_policy/unsupported_capabilities.py` as the shared validation and collection seam for source-scoped unsupported capability reports.
+
+It now owns:
+
+- `validate_unsupported_capability_report(...)`
+- `collect_unsupported_capability_reports(...)`
+- `UnsupportedCapabilityReportError`
+
+The contract requires each report item to provide `operation_id`, `source`, `supported=False`, `reason_code`, `user_message`, and `affected_action_ids`. Affected action IDs are validated against the authoritative runtime-policy registry, so future UI panes can render local/server/workspace gaps without each screen redefining report shape or accepting stale action IDs.
+
 ## Representative UI Callers
 
 The tranche intentionally does not migrate every UI caller. It lands representative restore-precedence and preflight behavior in the most important screen-level seams:

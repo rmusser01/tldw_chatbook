@@ -6,7 +6,7 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 
 ## Status Update After Tranche 0
 
-- `Cross-cutting Runtime Policy` is no longer an unlanded blocker. The foundational runtime-policy package, capability registry, hard-stop seams, representative UI preflight, and raw-client boundary were landed and verified in [runtime-policy-tranche-0.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Docs/Development/runtime-policy-tranche-0.md).
+- `Cross-cutting Runtime Policy` is no longer an unlanded blocker. The foundational runtime-policy package, capability registry, hard-stop seams, representative UI preflight, raw-client boundary, and shared unsupported-capability report validator were landed and verified in [runtime-policy-tranche-0.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Docs/Development/runtime-policy-tranche-0.md).
 - The remaining runtime-policy work is breadth and adoption across more domains and screens, not absence of the authority model itself.
 - The active parity focus should therefore shift to the next user-priority standalone and remote-interop rows rather than treating runtime policy as still missing.
 
@@ -71,9 +71,9 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Cross-cutting Runtime Policy: Auth, feature flags, rate limits, persona policy hooks, and MCP policy context
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Discover / Configure / Trigger / Observe
-- Current state: The runtime-policy foundation is now in place with one authoritative source-state model, action-level capability registry, hard-stop enforcement for approved seams, representative UI preflight, and raw-client boundary cleanup.
+- Current state: The runtime-policy foundation is now in place with one authoritative source-state model, action-level capability registry, hard-stop enforcement for approved seams, representative UI preflight, raw-client boundary cleanup, and a shared unsupported-capability report validator/collector that checks source-scoped gap reports against the registry.
 - Remaining gap: Broader rollout is still needed across the rest of the product surface, but this is no longer a missing prerequisite.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/core/feature_flags.py`, `../tldw_server/tldw_Server_API/app/api/v1/API_Deps/auth_deps.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/workspaces_rate_limit_policy.py`, `../tldw_server/tldw_Server_API/app/core/MCP_unified/server.py`; Chatbook: `tldw_chatbook/runtime_policy/`, `tldw_chatbook/app.py`, `tldw_chatbook/tldw_api/client.py`; Verification: [runtime-policy-tranche-0.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Docs/Development/runtime-policy-tranche-0.md) records the passing verification matrix and boundary guard coverage.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/core/feature_flags.py`, `../tldw_server/tldw_Server_API/app/api/v1/API_Deps/auth_deps.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/workspaces_rate_limit_policy.py`, `../tldw_server/tldw_Server_API/app/core/MCP_unified/server.py`; Chatbook: `tldw_chatbook/runtime_policy/`, `tldw_chatbook/app.py`, `tldw_chatbook/tldw_api/client.py`; Verification: [runtime-policy-tranche-0.md](/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Docs/Development/runtime-policy-tranche-0.md) records the passing verification matrix and boundary guard coverage; `Tests/RuntimePolicy/test_unsupported_capabilities.py` verifies the shared report contract and current scope-service report outputs.
 - Recommended tranche: Landed in Tranche 0; extend incrementally in Tranche 1+
 - Notes: Priority 70. This remains leverage work, but it should no longer be treated as an open critical blocker.
 
