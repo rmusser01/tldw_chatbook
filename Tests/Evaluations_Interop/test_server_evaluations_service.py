@@ -22,6 +22,14 @@ class FakeEvaluationsClient:
         self.calls.append(("list_evaluation_datasets", kwargs))
         return {"data": []}
 
+    async def create_evaluation_dataset(self, request_data):
+        self.calls.append(("create_evaluation_dataset", request_data.model_dump(exclude_none=True, mode="json")))
+        return {"id": "dataset_1", "name": "Dataset", "sample_count": 1}
+
+    async def delete_evaluation_dataset(self, dataset_id):
+        self.calls.append(("delete_evaluation_dataset", dataset_id))
+        return None
+
     async def create_evaluation_run(self, eval_id, request_data):
         self.calls.append(("create_evaluation_run", eval_id, request_data.model_dump(exclude_none=True, mode="json")))
         return {"id": "run_1", "eval_id": eval_id, "status": "queued"}
@@ -44,6 +52,8 @@ async def test_server_evaluations_service_enforces_policy_actions():
         eval_spec={"metric": "accuracy"},
     )
     await service.list_datasets(limit=10)
+    await service.create_dataset(name="Dataset", samples=[{"input": "Q", "expected": "A"}])
+    await service.delete_dataset("dataset_1")
     await service.create_run("eval_1", target_model="openai:gpt-4.1-mini")
     await service.cancel_run("run_1")
 
@@ -51,6 +61,8 @@ async def test_server_evaluations_service_enforces_policy_actions():
         "evaluations.dataset.list.server",
         "evaluations.dataset.create.server",
         "evaluations.dataset.list.server",
+        "evaluations.dataset.create.server",
+        "evaluations.dataset.delete.server",
         "evaluations.run.launch.server",
         "evaluations.run.update.server",
     ]

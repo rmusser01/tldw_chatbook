@@ -204,6 +204,28 @@ class LocalEvaluationsService:
             raise ValueError(f"Local evaluation dataset '{dataset_id}' was not found.")
         return dict(record)
 
+    def create_dataset(
+        self,
+        *,
+        name: str,
+        format: str = "custom",
+        source_path: str,
+        description: str | None = None,
+        metadata: Any = None,
+    ) -> str:
+        return self._require_db().create_dataset(
+            name=name,
+            format=format,
+            source_path=source_path,
+            description=description,
+            metadata=self._as_mapping(metadata),
+        )
+
+    def delete_dataset(self, dataset_id: str) -> None:
+        deleted = self._require_db().delete_dataset(dataset_id)
+        if not deleted:
+            raise ValueError(f"Local evaluation dataset '{dataset_id}' could not be deleted.")
+
     def list_targets(
         self,
         *,

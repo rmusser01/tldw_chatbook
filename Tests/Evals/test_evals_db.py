@@ -241,6 +241,20 @@ class TestDatasetOperations:
         for dataset_id in dataset_ids:
             assert dataset_id in retrieved_ids
 
+    def test_delete_dataset_soft_deletes_dataset(self, in_memory_db):
+        """Test dataset soft deletion."""
+        dataset_id = in_memory_db.create_dataset(
+            name="delete_me",
+            format="custom",
+            source_path="/path/to/delete_me",
+        )
+
+        deleted = in_memory_db.delete_dataset(dataset_id)
+
+        assert deleted is True
+        assert in_memory_db.get_dataset(dataset_id) is None
+        assert dataset_id not in [dataset["id"] for dataset in in_memory_db.list_datasets()]
+
 class TestModelOperations:
     """Test CRUD operations for model configurations."""
     

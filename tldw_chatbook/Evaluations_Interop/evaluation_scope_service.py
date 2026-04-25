@@ -235,6 +235,57 @@ class EvaluationScopeService:
         record = await self._maybe_await(self._service_for_mode(normalized_mode).get_dataset(dataset_id))
         return normalize_evaluation_dataset_record(normalized_mode.value, record)
 
+    async def create_dataset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+        samples: list[Any] | None = None,
+        format: str = "custom",
+        source_path: str | None = None,
+        description: str | None = None,
+        metadata: Any = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._dataset_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        if normalized_mode == EvaluationBackend.LOCAL:
+            if not source_path:
+                raise ValueError("source_path is required when creating a local evaluation dataset.")
+            record = await self._maybe_await(
+                service.create_dataset(
+                    name=name,
+                    format=format,
+                    source_path=source_path,
+                    description=description,
+                    metadata=metadata,
+                )
+            )
+        else:
+            record = await self._maybe_await(
+                service.create_dataset(
+                    name=name,
+                    samples=samples or [],
+                    description=description,
+                    metadata=metadata,
+                )
+            )
+        if isinstance(record, Mapping):
+            resolved = record
+        else:
+            resolved = await self._resolve_record(record, service.get_dataset, name)
+        return normalize_evaluation_dataset_record(normalized_mode.value, resolved)
+
+    async def delete_dataset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        dataset_id: str,
+    ) -> None:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._dataset_action_id(normalized_mode, "delete"))
+        await self._maybe_await(self._service_for_mode(normalized_mode).delete_dataset(dataset_id))
+
     async def list_targets(
         self,
         *,

@@ -712,6 +712,18 @@ class EvalsDB:
             datasets.append(dataset)
         
         return datasets
+
+    def delete_dataset(self, dataset_id: str) -> bool:
+        """Soft delete a dataset."""
+        conn = self._get_connection()
+        with conn:
+            cursor = conn.execute("""
+                UPDATE eval_datasets
+                SET deleted_at = datetime('now', 'utc'),
+                    updated_at = datetime('now', 'utc')
+                WHERE id = ? AND deleted_at IS NULL
+            """, (dataset_id,))
+            return cursor.rowcount > 0
     
     def search_datasets(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Search datasets using FTS5."""

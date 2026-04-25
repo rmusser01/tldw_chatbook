@@ -110,6 +110,21 @@ class FakeLocalEvaluationService:
         self.calls.append(("cancel_run", run_id))
         return {"status": "cancelled", "id": run_id}
 
+    def create_dataset(self, *, name, format="custom", source_path=None, description=None, metadata=None):
+        self.calls.append(("create_dataset", name, format, source_path, description, metadata))
+        return {
+            "id": "dataset_local_new",
+            "name": name,
+            "description": description,
+            "format": format,
+            "source_path": source_path,
+            "metadata": metadata or {},
+        }
+
+    def delete_dataset(self, dataset_id):
+        self.calls.append(("delete_dataset", dataset_id))
+        return None
+
 
 class FakeServerEvaluationService:
     def __init__(self):
@@ -184,6 +199,20 @@ class FakeServerEvaluationService:
     async def cancel_run(self, run_id):
         self.calls.append(("cancel_run", run_id))
         return {"status": "cancellation_requested", "id": run_id}
+
+    async def create_dataset(self, *, name, samples, description=None, metadata=None):
+        self.calls.append(("create_dataset", name, samples, description, metadata))
+        return {
+            "id": "dataset_server_new",
+            "name": name,
+            "description": description,
+            "sample_count": len(samples),
+            "metadata": metadata or {},
+        }
+
+    async def delete_dataset(self, dataset_id):
+        self.calls.append(("delete_dataset", dataset_id))
+        return None
 
 
 class FakePolicyEnforcer:
@@ -355,3 +384,48 @@ async def test_scope_service_cancel_run_returns_backend_response():
 
     assert local_payload["status"] == "cancelled"
     assert server_payload["status"] == "cancellation_requested"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_dataset_create_delete_by_backend_with_policy():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=local,
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    local_dataset = await scope.create_dataset(
+        mode="local",
+        name="Offline Dataset",
+        format="json",
+        source_path="/tmp/offline.json",
+        metadata={"project": "offline"},
+    )
+    server_dataset = await scope.create_dataset(
+        mode="server",
+        name="Server Dataset",
+        samples=[{"input": "Q", "expected": "A"}],
+        metadata={"project": "server"},
+    )
+    await scope.delete_dataset(mode="local", dataset_id="dataset_local_new")
+    await scope.delete_dataset(mode="server", dataset_id="dataset_server_new")
+
+    assert local_dataset["record_id"] == "local:evaluation_dataset:dataset_local_new"
+    assert server_dataset["record_id"] == "server:evaluation_dataset:dataset_server_new"
+    assert local.calls[-2:] == [
+        ("create_dataset", "Offline Dataset", "json", "/tmp/offline.json", None, {"project": "offline"}),
+        ("delete_dataset", "dataset_local_new"),
+    ]
+    assert server.calls[-2:] == [
+        ("create_dataset", "Server Dataset", [{"input": "Q", "expected": "A"}], None, {"project": "server"}),
+        ("delete_dataset", "dataset_server_new"),
+    ]
+    assert policy_enforcer.calls[-4:] == [
+        "evaluations.dataset.create.local",
+        "evaluations.dataset.create.server",
+        "evaluations.dataset.delete.local",
+        "evaluations.dataset.delete.server",
+    ]

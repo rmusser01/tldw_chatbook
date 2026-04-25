@@ -102,6 +102,14 @@ class FakeEvalsDB:
         self.calls.append(("list_datasets", limit, offset))
         return [dict(self.dataset)]
 
+    def create_dataset(self, **kwargs):
+        self.calls.append(("create_dataset", kwargs))
+        return "dataset_999"
+
+    def delete_dataset(self, dataset_id):
+        self.calls.append(("delete_dataset", dataset_id))
+        return True
+
     def get_model(self, model_id):
         self.calls.append(("get_model", model_id))
         if model_id == self.model["id"]:
@@ -230,3 +238,30 @@ def test_cancel_run_marks_local_run_cancelled():
     service.cancel_run("run_123")
 
     assert db.calls[-1] == ("update_run_status", "run_123", "cancelled", None)
+
+
+def test_local_dataset_create_and_delete_wrap_local_db():
+    db = FakeEvalsDB()
+    service = LocalEvaluationsService(db=db)
+
+    dataset_id = service.create_dataset(
+        name="offline_dataset",
+        format="json",
+        source_path="/tmp/offline.json",
+        description="Offline samples",
+        metadata={"project": "offline-parity"},
+    )
+    service.delete_dataset("dataset_999")
+
+    assert dataset_id == "dataset_999"
+    assert db.calls[-2] == (
+        "create_dataset",
+        {
+            "name": "offline_dataset",
+            "format": "json",
+            "source_path": "/tmp/offline.json",
+            "description": "Offline samples",
+            "metadata": {"project": "offline-parity"},
+        },
+    )
+    assert db.calls[-1] == ("delete_dataset", "dataset_999")
