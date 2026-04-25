@@ -24,7 +24,7 @@ from tldw_chatbook.Notifications import (
     NotificationDispatchService,
     ServerNotificationsService,
 )
-from tldw_chatbook.Outputs_Interop import ServerOutputsService
+from tldw_chatbook.Outputs_Interop import OutputsScopeService, ServerOutputsService
 from tldw_chatbook.Prompt_Management import (
     LocalPromptService,
     PromptChatbookScopeService,
@@ -103,6 +103,7 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.notification_dispatch_service, NotificationDispatchService)
     assert isinstance(app.server_notifications_service, ServerNotificationsService)
     assert isinstance(app.server_outputs_service, ServerOutputsService)
+    assert isinstance(app.outputs_scope_service, OutputsScopeService)
     assert isinstance(app.local_research_service, LocalResearchService)
     assert isinstance(app.server_research_service, ServerResearchService)
     assert isinstance(app.research_scope_service, ResearchScopeService)

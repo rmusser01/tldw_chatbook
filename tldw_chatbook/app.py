@@ -214,7 +214,7 @@ from tldw_chatbook.Notifications import (
     NotificationDispatchService,
     ServerNotificationsService,
 )
-from tldw_chatbook.Outputs_Interop import ServerOutputsService
+from tldw_chatbook.Outputs_Interop import OutputsScopeService, ServerOutputsService
 from tldw_chatbook.Research_Interop import (
     LocalResearchSearchService,
     LocalResearchService,
@@ -1626,6 +1626,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        self.outputs_scope_service = OutputsScopeService(
+            local_service=None,
+            server_service=self.server_outputs_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         try:
             self.local_research_service = LocalResearchService(get_research_db_path())
         except Exception:
