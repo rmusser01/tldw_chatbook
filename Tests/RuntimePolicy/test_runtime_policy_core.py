@@ -161,6 +161,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
         },
     },
+    "kanban_boards_tasks": {
+        "expected_domain_ids": {"kanban"},
+        "expected_action_kinds_by_source": {
+            "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
+        },
+    },
     "client_notifications": {
         "expected_domain_ids": {"notifications"},
         "expected_action_kinds_by_source": {
@@ -556,6 +562,66 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         prompt_studio.test_cases.launch.server
         prompt_studio.test_cases.list.server
         prompt_studio.test_cases.update.server
+    """),
+    "kanban_boards_tasks": _action_ids("""
+        kanban.activities.list.server
+        kanban.boards.archive.server
+        kanban.boards.create.server
+        kanban.boards.delete.server
+        kanban.boards.detail.server
+        kanban.boards.export.server
+        kanban.boards.import.server
+        kanban.boards.list.server
+        kanban.boards.restore.server
+        kanban.boards.update.server
+        kanban.card_labels.create.server
+        kanban.card_labels.delete.server
+        kanban.card_labels.list.server
+        kanban.card_links.create.server
+        kanban.card_links.delete.server
+        kanban.card_links.detail.server
+        kanban.card_links.list.server
+        kanban.cards.archive.server
+        kanban.cards.create.server
+        kanban.cards.delete.server
+        kanban.cards.detail.server
+        kanban.cards.launch.server
+        kanban.cards.list.server
+        kanban.cards.reorder.server
+        kanban.cards.restore.server
+        kanban.cards.update.server
+        kanban.checklist_items.create.server
+        kanban.checklist_items.delete.server
+        kanban.checklist_items.detail.server
+        kanban.checklist_items.list.server
+        kanban.checklist_items.reorder.server
+        kanban.checklist_items.update.server
+        kanban.checklists.create.server
+        kanban.checklists.delete.server
+        kanban.checklists.detail.server
+        kanban.checklists.list.server
+        kanban.checklists.reorder.server
+        kanban.checklists.update.server
+        kanban.comments.create.server
+        kanban.comments.delete.server
+        kanban.comments.detail.server
+        kanban.comments.list.server
+        kanban.comments.update.server
+        kanban.labels.create.server
+        kanban.labels.delete.server
+        kanban.labels.detail.server
+        kanban.labels.list.server
+        kanban.labels.update.server
+        kanban.lists.archive.server
+        kanban.lists.create.server
+        kanban.lists.delete.server
+        kanban.lists.detail.server
+        kanban.lists.list.server
+        kanban.lists.reorder.server
+        kanban.lists.restore.server
+        kanban.lists.update.server
+        kanban.search.detail.server
+        kanban.search.list.server
     """),
     "server_skills": _action_ids("""
         skills.context.list.server

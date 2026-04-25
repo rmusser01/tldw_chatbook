@@ -139,6 +139,7 @@ DELETE = _action("delete", "delete")
 CANCEL = _action("cancel", "delete")
 LAUNCH = _action("launch", "launch")
 OBSERVE = _action("observe", "observe")
+OBSERVE_LIST = _action("list", "observe")
 CONFIGURE = _action("configure", "update")
 TRIGGER = _action("trigger", "launch")
 PROCESS = _action("process", "launch")
@@ -194,6 +195,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "claims_notifications_alerts",
         "meetings",
         "prompt_studio",
+        "kanban_boards_tasks",
         "client_notifications",
         "server_runtime_config_discovery",
         "llm_provider_model_catalog",
@@ -518,6 +520,25 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("prompt_studio.optimization_iterations", actions=(LIST, CREATE)),
             _resource("prompt_studio.status", actions=(DETAIL,)),
             _resource("prompt_studio.events", actions=(OBSERVE,)),
+        ),
+    ),
+    _capability(
+        "kanban_boards_tasks",
+        "Kanban Boards / Tasks",
+        "kanban",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("kanban.boards", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, ARCHIVE, RESTORE, IMPORT, EXPORT)),
+            _resource("kanban.lists", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, ARCHIVE, RESTORE, REORDER)),
+            _resource("kanban.cards", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, ARCHIVE, RESTORE, REORDER, LAUNCH)),
+            _resource("kanban.activities", actions=(OBSERVE_LIST,)),
+            _resource("kanban.labels", actions=CRUD_ACTIONS),
+            _resource("kanban.card_labels", actions=(LIST, CREATE, DELETE)),
+            _resource("kanban.checklists", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, REORDER)),
+            _resource("kanban.checklist_items", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, REORDER)),
+            _resource("kanban.comments", actions=CRUD_ACTIONS),
+            _resource("kanban.search", actions=(LIST, DETAIL)),
+            _resource("kanban.card_links", actions=(LIST, DETAIL, CREATE, DELETE)),
         ),
     ),
     _capability(

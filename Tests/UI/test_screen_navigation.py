@@ -55,6 +55,7 @@ from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Feedback_Interop import FeedbackScopeService, ServerFeedbackService
+from tldw_chatbook.Kanban_Interop import KanbanScopeService, ServerKanbanService
 from tldw_chatbook.LLM_Provider_Catalog import (
     LLMProviderCatalogScopeService,
     LocalLLMProviderCatalogService,
@@ -147,6 +148,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.meetings_scope_service, MeetingsScopeService)
     assert isinstance(app.server_prompt_studio_service, ServerPromptStudioService)
     assert isinstance(app.prompt_studio_scope_service, PromptStudioScopeService)
+    assert isinstance(app.server_kanban_service, ServerKanbanService)
+    assert isinstance(app.kanban_scope_service, KanbanScopeService)
     assert isinstance(app.server_collections_feeds_service, ServerCollectionsFeedsService)
     assert isinstance(app.collections_feeds_scope_service, CollectionsFeedsScopeService)
     assert isinstance(app.server_connectors_service, ServerConnectorsService)

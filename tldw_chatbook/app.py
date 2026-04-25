@@ -212,6 +212,7 @@ from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Feedback_Interop import FeedbackScopeService, ServerFeedbackService
+from tldw_chatbook.Kanban_Interop import KanbanScopeService, ServerKanbanService
 from tldw_chatbook.LLM_Provider_Catalog import (
     LLMProviderCatalogScopeService,
     LocalLLMProviderCatalogService,
@@ -1713,6 +1714,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.prompt_studio_scope_service = PromptStudioScopeService(
             server_service=self.server_prompt_studio_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_kanban_service = ServerKanbanService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_kanban_service = ServerKanbanService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.kanban_scope_service = KanbanScopeService(
+            server_service=self.server_kanban_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
