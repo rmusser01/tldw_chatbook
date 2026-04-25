@@ -865,40 +865,16 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
             "affected_action_ids": ["media.reading.tts.local"],
         },
         {
-            "operation_id": "media.reading.import.execution.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_contract_missing",
-            "user_message": "Local reading imports currently create durable queued jobs, but local import execution/materialization is not implemented yet.",
-            "affected_action_ids": [
-                "media.reading.import.local",
-                "media.reading_import_jobs.detail.local",
-                "media.reading_import_jobs.list.local",
-            ],
-        },
-        {
             "operation_id": "media.ingestion.execution.local",
             "source": "local",
             "supported": False,
             "reason_code": "local_contract_missing",
-            "user_message": "Local ingestion sources and ingest jobs are persisted locally, but actual local ingestion execution is not implemented yet.",
+            "user_message": "Local directory source sync and local file ingest jobs execute locally, but URL media ingest and non-directory source execution are not implemented yet.",
             "affected_action_ids": [
                 "media.ingestion_jobs.detail.local",
                 "media.ingestion_jobs.launch.local",
                 "media.ingestion_jobs.list.local",
                 "media.ingestion_jobs.observe.local",
-            ],
-        },
-        {
-            "operation_id": "media.ingestion_source_items.materialize.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_contract_missing",
-            "user_message": "Local ingestion source item materialization is not implemented beyond queued jobs and reattach metadata.",
-            "affected_action_ids": [
-                "media.ingestion_jobs.launch.local",
-                "media.ingestion_jobs.observe.local",
-                "media.ingestion_source_items.reattach.local",
             ],
         },
     ]

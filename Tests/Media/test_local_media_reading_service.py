@@ -343,24 +343,79 @@ def test_local_service_generates_extractive_reading_summary(memory_db_factory):
     assert summary["generated_at"] is not None
 
 
-def test_local_service_queues_reading_import_jobs(memory_db_factory, tmp_path):
+def test_local_service_executes_csv_reading_import_jobs(memory_db_factory, tmp_path):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
     import_path = tmp_path / "pocket.csv"
     import_path.write_text("title,url\nSaved,https://example.com\n", encoding="utf-8")
 
     submitted = service.import_reading_items(str(import_path), source="pocket", merge_tags=False)
-    listed = service.list_reading_import_jobs(status="queued", limit=25, offset=0)
+    listed = service.list_reading_import_jobs(status="completed", limit=25, offset=0)
     detail = service.get_reading_import_job(submitted["job_id"])
 
     assert submitted["job_id"] == detail["job_id"]
-    assert submitted["status"] == "queued"
+    assert submitted["status"] == "completed"
     assert submitted["job_uuid"]
     assert listed["total"] == 1
     assert listed["jobs"][0]["job_id"] == submitted["job_id"]
-    assert detail["status"] == "queued"
-    assert detail["progress_percent"] == 0
-    assert detail["progress_message"] == "Queued"
+    assert detail["status"] == "completed"
+    assert detail["progress_percent"] == 100
+    assert detail["progress_message"] == "Completed"
+    assert detail["result"]["source"] == "pocket"
+    assert detail["result"]["imported"] == 1
+
+
+def test_local_service_executes_jsonl_reading_import_and_materializes_saved_items(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    import_path = tmp_path / "reading.jsonl"
+    import_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "title": "Saved A",
+                        "url": "https://example.com/a",
+                        "text": "Alpha body",
+                        "tags": ["AI", "research"],
+                        "status": "saved",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "title": "Saved B",
+                        "url": "https://example.com/b",
+                        "text": "Beta body",
+                        "tags": ["notes"],
+                        "status": "saved",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    submitted = service.import_reading_items(str(import_path), source="jsonl", merge_tags=True)
+    detail = service.get_reading_import_job(submitted["job_id"])
+    saved = service.search_media(read_it_later_only=True, limit=10)
+
+    assert submitted["status"] == "completed"
+    assert detail["status"] == "completed"
+    assert detail["progress_percent"] == 100
+    assert detail["result"] == {
+        "source": "jsonl",
+        "imported": 2,
+        "updated": 0,
+        "skipped": 0,
+        "errors": [],
+    }
+    assert {item["title"] for item in saved["items"]} == {"Saved A", "Saved B"}
+    first = db.get_media_by_url("https://example.com/a")
+    assert first is not None
+    assert first["content"] == "Alpha body"
+    assert db.fetch_keywords_for_media_batch([first["id"]])[first["id"]] == ["ai", "research"]
+    assert db.get_media_read_it_later_state(first["id"])["is_read_it_later"] is True
 
 
 def test_local_service_persists_ingestion_sources_and_sync_jobs(memory_db_factory, tmp_path):
@@ -390,13 +445,55 @@ def test_local_service_persists_ingestion_sources_and_sync_jobs(memory_db_factor
     assert patched["enabled"] is False
     assert patched["schedule_enabled"] is True
     assert items == []
-    assert synced["status"] == "queued"
+    assert synced["status"] == "completed"
     assert job["source_id"] == created["id"]
+    assert job["status"] == "completed"
+    assert job["result"]["scanned"] == 0
     assert jobs["jobs"][0]["id"] == job["id"]
-    assert cancelled["status"] == "cancelled"
+    assert cancelled["success"] is False
+    assert cancelled["status"] == "completed"
     assert deleted["deleted"] is True
     with pytest.raises(KeyError):
         service.get_ingestion_source(created["id"])
+
+
+def test_local_service_syncs_local_directory_ingestion_source_items(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    source_path = tmp_path / "source"
+    nested_path = source_path / "nested"
+    nested_path.mkdir(parents=True)
+    (source_path / "alpha.md").write_text("# Alpha\n", encoding="utf-8")
+    (nested_path / "beta.txt").write_text("Beta\n", encoding="utf-8")
+    source = service.create_ingestion_source(
+        source_type="local_directory",
+        sink_type="media",
+        policy="canonical",
+        config={"path": str(source_path)},
+    )
+
+    synced = service.trigger_ingestion_source_sync(source["id"])
+    job = service.get_ingest_job(synced["job_id"])
+    items = service.list_ingestion_source_items(source["id"])
+
+    assert synced["status"] == "completed"
+    assert job["status"] == "completed"
+    assert job["result"] == {
+        "source_id": source["id"],
+        "source_type": "local_directory",
+        "scanned": 2,
+        "created": 2,
+        "updated": 0,
+        "missing": 0,
+        "errors": [],
+    }
+    assert {item["normalized_relative_path"] for item in items} == {"alpha.md", "nested/beta.txt"}
+    assert {item["sync_status"] for item in items} == {"pending"}
+    assert all(item["content_hash"] for item in items)
+    detail = service.get_ingestion_source(source["id"])
+    assert detail["active_job_id"] == str(job["id"])
+    assert detail["last_sync_status"] == "completed"
+    assert detail["last_sync_completed_at"] is not None
 
 
 def test_local_service_reattaches_detached_ingestion_source_item(memory_db_factory):
@@ -443,12 +540,12 @@ def test_local_service_reattaches_detached_ingestion_source_item(memory_db_facto
 def test_local_service_submit_ingest_jobs_queues_url_and_file_jobs(memory_db_factory, tmp_path):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
-    file_path = tmp_path / "doc.pdf"
-    file_path.write_text("pdf placeholder", encoding="utf-8")
+    file_path = tmp_path / "doc.txt"
+    file_path.write_text("text placeholder", encoding="utf-8")
 
     submitted = service.submit_ingest_jobs(
-        media_type="pdf",
-        urls=["https://example.com/a.pdf"],
+        media_type="plaintext",
+        urls=["https://example.com/a.txt"],
         file_paths=[str(file_path)],
         keywords=["paper"],
     )
@@ -456,3 +553,28 @@ def test_local_service_submit_ingest_jobs_queues_url_and_file_jobs(memory_db_fac
     assert submitted["batch_id"].startswith("local-batch-")
     assert [job["source_kind"] for job in submitted["jobs"]] == ["url", "file"]
     assert service.get_ingest_job(submitted["jobs"][0]["id"])["status"] == "queued"
+    assert service.get_ingest_job(submitted["jobs"][1]["id"])["status"] == "completed"
+
+
+def test_local_service_executes_local_file_ingest_jobs(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    file_path = tmp_path / "note.txt"
+    file_path.write_text("Standalone file body", encoding="utf-8")
+
+    submitted = service.submit_ingest_jobs(
+        media_type="plaintext",
+        file_paths=[str(file_path)],
+        keywords=["Offline"],
+    )
+    job = service.get_ingest_job(submitted["jobs"][0]["id"])
+    media = db.get_media_by_url(f"file://{file_path.absolute()}")
+
+    assert submitted["jobs"][0]["status"] == "completed"
+    assert job["status"] == "completed"
+    assert job["result"]["source_kind"] == "file"
+    assert job["result"]["imported"] == 1
+    assert job["result"]["media_id"] == media["id"]
+    assert media["title"] == "note"
+    assert media["content"] == "Standalone file body"
+    assert db.fetch_keywords_for_media_batch([media["id"]])[media["id"]] == ["offline"]

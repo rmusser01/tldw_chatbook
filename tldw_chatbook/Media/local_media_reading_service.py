@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import csv
+import hashlib
 import io
 import json
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
+from pathlib import Path
 import uuid
 import zipfile
 from typing import Any, Mapping, Optional
@@ -287,12 +290,49 @@ class LocalMediaReadingService:
                 "merge_tags": bool(merge_tags),
             },
         )
-        status = self._reading_import_job_status_from_ingest_job(job)
+        status = self.execute_reading_import_job(job["id"])
         return {
             "job_id": status["job_id"],
             "job_uuid": status["job_uuid"],
             "status": status["status"],
+            "result": status["result"],
         }
+
+    def execute_reading_import_job(self, job_id: Any) -> dict[str, Any]:
+        job = self.get_ingest_job(job_id)
+        if job.get("job_type") != "reading_import":
+            raise KeyError(f"Local reading import job not found: {job_id}")
+        if job.get("status") in {"completed", "failed", "cancelled"}:
+            return self._reading_import_job_status_from_ingest_job(job)
+
+        self._mark_ingest_job_started(job_id, progress_message="Importing reading items")
+        try:
+            result = self._execute_reading_import_job(job)
+        except Exception as exc:
+            failed = self._complete_ingest_job(
+                job_id,
+                status="failed",
+                progress_percent=100,
+                progress_message="Failed",
+                error_message=str(exc),
+                result={
+                    "source": str((job.get("result") or {}).get("source") or job.get("source_kind") or "local"),
+                    "imported": 0,
+                    "updated": 0,
+                    "skipped": 0,
+                    "errors": [str(exc)],
+                },
+            )
+            return self._reading_import_job_status_from_ingest_job(failed)
+
+        completed = self._complete_ingest_job(
+            job_id,
+            status="completed",
+            progress_percent=100,
+            progress_message="Completed",
+            result=result,
+        )
+        return self._reading_import_job_status_from_ingest_job(completed)
 
     def create_reading_archive(
         self,
@@ -449,6 +489,174 @@ class LocalMediaReadingService:
         if job.get("job_type") != "reading_import":
             raise KeyError(f"Local reading import job not found: {job_id}")
         return self._reading_import_job_status_from_ingest_job(job)
+
+    def _execute_reading_import_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        options = dict(job.get("options") or {})
+        requested_source = str(options.get("source") or job.get("source_kind") or "auto")
+        rows, resolved_source = self._load_reading_import_rows(str(job.get("source") or ""), requested_source)
+        merge_tags = bool(options.get("merge_tags", True))
+        result = {
+            "source": resolved_source,
+            "imported": 0,
+            "updated": 0,
+            "skipped": 0,
+            "errors": [],
+        }
+        for row_number, row in enumerate(rows, start=1):
+            try:
+                materialized = self._materialize_reading_import_row(row, merge_tags=merge_tags)
+            except Exception as exc:
+                result["skipped"] += 1
+                result["errors"].append({"row": row_number, "error": str(exc)})
+                continue
+            result[materialized] += 1
+        return result
+
+    def _load_reading_import_rows(self, import_path: str, source: str) -> tuple[list[dict[str, Any]], str]:
+        path = Path(import_path).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f"Local reading import file not found: {import_path}")
+        resolved_source = self._resolve_reading_import_source(source, path)
+        if resolved_source == "jsonl":
+            return self._load_reading_import_jsonl(path), resolved_source
+        if resolved_source == "json":
+            return self._load_reading_import_json(path), resolved_source
+        if resolved_source in {"csv", "pocket", "instapaper"}:
+            return self._load_reading_import_csv(path), resolved_source
+        raise ValueError(f"Unsupported local reading import source: {source}")
+
+    @staticmethod
+    def _resolve_reading_import_source(source: str, path: Path) -> str:
+        normalized_source = str(source or "auto").strip().lower()
+        if normalized_source != "auto":
+            return normalized_source
+        suffix = path.suffix.lower()
+        if suffix in {".jsonl", ".ndjson"}:
+            return "jsonl"
+        if suffix == ".json":
+            return "json"
+        if suffix == ".csv":
+            return "csv"
+        raise ValueError(f"Unsupported local reading import file type: {suffix or '<none>'}")
+
+    @staticmethod
+    def _load_reading_import_jsonl(path: Path) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            value = json.loads(stripped)
+            if not isinstance(value, Mapping):
+                raise ValueError(f"JSONL row {line_number} must be an object.")
+            rows.append(dict(value))
+        return rows
+
+    @staticmethod
+    def _load_reading_import_json(path: Path) -> list[dict[str, Any]]:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(value, list):
+            rows = value
+        elif isinstance(value, Mapping):
+            rows = value.get("items") or value.get("rows") or value.get("data") or [value]
+        else:
+            raise ValueError("JSON reading import must be an object or list of objects.")
+        normalized: list[dict[str, Any]] = []
+        for index, row in enumerate(rows, start=1):
+            if not isinstance(row, Mapping):
+                raise ValueError(f"JSON row {index} must be an object.")
+            normalized.append(dict(row))
+        return normalized
+
+    @staticmethod
+    def _load_reading_import_csv(path: Path) -> list[dict[str, Any]]:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            return [dict(row) for row in reader]
+
+    def _materialize_reading_import_row(self, row: Mapping[str, Any], *, merge_tags: bool) -> str:
+        db = self._require_db()
+        url = self._first_import_string(row, "url", "canonical_url", "href", "link")
+        title = self._first_import_string(row, "title", "name", "resolved_title") or url or "Untitled"
+        content = self._first_import_string(row, "text", "content", "body_text", "clean_html", "summary", "notes") or ""
+        media_type = self._first_import_string(row, "origin_type", "media_type", "type") or "article"
+        author = self._first_import_string(row, "author", "byline")
+        ingestion_date = self._first_import_string(row, "created_at", "updated_at", "published_at", "time_added")
+        tags = self._normalize_import_tags(row.get("tags") or row.get("keywords") or row.get("labels"))
+        status = (self._first_import_string(row, "status", "state") or "saved").strip().lower()
+
+        existing = db.get_media_by_url(url) if url else None
+        if existing is not None:
+            media_id = int(existing["id"])
+            if merge_tags and tags:
+                merged_tags = self._merge_import_tags(self._local_keywords_for_media(media_id), tags)
+                db.update_keywords_for_media(media_id, merged_tags)
+            if self._reading_import_status_should_save(status):
+                self.save_to_read_it_later(media_id)
+            return "updated"
+
+        media_id, _, message = db.add_media_with_keywords(
+            url=url,
+            title=title,
+            media_type=media_type,
+            content=content,
+            keywords=tags,
+            author=author,
+            ingestion_date=ingestion_date,
+            overwrite=False,
+        )
+        if media_id is None:
+            return "skipped"
+        if self._reading_import_status_should_save(status):
+            self.save_to_read_it_later(media_id)
+        normalized_message = str(message or "").lower()
+        if "updated" in normalized_message or "canonicalized" in normalized_message:
+            return "updated"
+        return "imported"
+
+    @staticmethod
+    def _first_import_string(row: Mapping[str, Any], *keys: str) -> str | None:
+        for key in keys:
+            value = row.get(key)
+            if value not in (None, ""):
+                return str(value).strip()
+        return None
+
+    @staticmethod
+    def _normalize_import_tags(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            raw_values = value.replace(";", ",").split(",")
+        elif isinstance(value, (list, tuple, set)):
+            raw_values = list(value)
+        else:
+            raw_values = [value]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for tag in raw_values:
+            cleaned = str(tag).strip().lower()
+            if not cleaned or cleaned in seen:
+                continue
+            seen.add(cleaned)
+            normalized.append(cleaned)
+        return normalized
+
+    @staticmethod
+    def _merge_import_tags(existing_tags: list[str], imported_tags: list[str]) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for tag in [*existing_tags, *imported_tags]:
+            normalized = str(tag).strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            merged.append(normalized)
+        return merged
+
+    @staticmethod
+    def _reading_import_status_should_save(status: str) -> bool:
+        return status not in {"archived", "deleted", "trash", "trashed", "removed"}
 
     def create_saved_search(
         self,
@@ -781,7 +989,13 @@ class LocalMediaReadingService:
             source_id=int(source_id),
         )
         self._set_ingestion_source_active_job(source_id, job["id"], status="queued")
-        return {"status": "queued", "source_id": int(source_id), "job_id": job["id"]}
+        executed = self.execute_ingest_job(job["id"])
+        return {
+            "status": executed.get("status"),
+            "source_id": int(source_id),
+            "job_id": job["id"],
+            "result": executed.get("result"),
+        }
 
     def upload_ingestion_source_archive(self, source_id: Any, archive_path: str) -> Any:
         source = self.get_ingestion_source(source_id)
@@ -820,16 +1034,15 @@ class LocalMediaReadingService:
                 )
             )
         for file_path in kwargs.get("file_paths") or []:
-            jobs.append(
-                self._create_ingest_job(
-                    batch_id=batch_id,
-                    job_type="media_ingest",
-                    media_type=media_type,
-                    source=str(file_path),
-                    source_kind="file",
-                    options=kwargs,
-                )
+            job = self._create_ingest_job(
+                batch_id=batch_id,
+                job_type="media_ingest",
+                media_type=media_type,
+                source=str(file_path),
+                source_kind="file",
+                options=kwargs,
             )
+            jobs.append(self.execute_ingest_job(job["id"]))
         if not jobs:
             raise ValueError("At least one URL or file path is required for local ingest jobs.")
         return {"batch_id": batch_id, "jobs": jobs, "errors": []}
@@ -844,6 +1057,213 @@ class LocalMediaReadingService:
         if row is None:
             raise KeyError(f"Local ingestion job not found: {job_id}")
         return self._ingest_job_row_to_dict(row)
+
+    def execute_ingest_job(self, job_id: Any) -> dict[str, Any]:
+        job = self.get_ingest_job(job_id)
+        if job.get("status") in {"completed", "failed", "cancelled"}:
+            return job
+        supported_job = (
+            job.get("job_type") == "ingestion_source_sync"
+            or (job.get("job_type") == "media_ingest" and job.get("source_kind") == "file")
+        )
+        if not supported_job:
+            return job
+
+        progress_message = (
+            "Syncing ingestion source"
+            if job.get("job_type") == "ingestion_source_sync"
+            else "Ingesting local file"
+        )
+        self._mark_ingest_job_started(job_id, progress_message=progress_message)
+        try:
+            if job.get("job_type") == "ingestion_source_sync":
+                result = self._execute_ingestion_source_sync_job(job)
+            else:
+                result = self._execute_local_file_media_ingest_job(job)
+        except Exception as exc:
+            failed_result = self._failed_local_ingest_result(job, exc)
+            failed = self._complete_ingest_job(
+                job_id,
+                status="failed",
+                progress_percent=100,
+                progress_message="Failed",
+                result=failed_result,
+                error_message=str(exc),
+            )
+            if job.get("source_id") is not None:
+                self._set_ingestion_source_sync_finished(
+                    job.get("source_id"),
+                    job_id,
+                    status="failed",
+                    error_message=str(exc),
+                )
+            return failed
+
+        completed = self._complete_ingest_job(
+            job_id,
+            status="completed",
+            progress_percent=100,
+            progress_message="Completed",
+            result=result,
+        )
+        if job.get("source_id") is not None:
+            self._set_ingestion_source_sync_finished(
+                job.get("source_id"),
+                job_id,
+                status="completed",
+                error_message=None,
+            )
+        return completed
+
+    def _execute_local_file_media_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        from tldw_chatbook.Local_Ingestion.local_file_ingestion import ingest_local_file
+
+        options = dict(job.get("options") or {})
+        source_path = str(job.get("source") or "")
+        result = ingest_local_file(
+            source_path,
+            self._require_db(),
+            keywords=list(options.get("keywords") or []),
+            chunk_options=dict(options.get("chunk_options") or {}),
+        )
+        media_id = result.get("media_id")
+        return {
+            "source": source_path,
+            "source_kind": "file",
+            "media_id": media_id,
+            "title": result.get("title"),
+            "file_type": result.get("file_type"),
+            "content_length": int(result.get("content_length") or 0),
+            "imported": 1 if media_id is not None else 0,
+            "updated": 0,
+            "skipped": 0 if media_id is not None else 1,
+            "errors": [],
+        }
+
+    @staticmethod
+    def _failed_local_ingest_result(job: Mapping[str, Any], exc: Exception) -> dict[str, Any]:
+        if job.get("job_type") == "ingestion_source_sync":
+            return {
+                "source_id": job.get("source_id"),
+                "source_type": job.get("source_kind"),
+                "scanned": 0,
+                "created": 0,
+                "updated": 0,
+                "missing": 0,
+                "errors": [str(exc)],
+            }
+        return {
+            "source": job.get("source"),
+            "source_kind": job.get("source_kind"),
+            "media_id": None,
+            "imported": 0,
+            "updated": 0,
+            "skipped": 1,
+            "errors": [str(exc)],
+        }
+
+    def _execute_ingestion_source_sync_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        source_id = job.get("source_id")
+        if source_id is None:
+            raise ValueError("Local ingestion source sync job is missing source_id.")
+        source = self.get_ingestion_source(source_id)
+        source_type = str(source.get("source_type") or "")
+        if source_type != "local_directory":
+            raise ValueError(f"Local ingestion source execution is not implemented for {source_type}.")
+        config = dict(source.get("config") or {})
+        root = Path(str(config.get("path") or "")).expanduser()
+        if not root.is_dir():
+            raise FileNotFoundError(f"Local ingestion source path is not a directory: {root}")
+        result = self._sync_local_directory_source_items(int(source_id), root)
+        return {
+            "source_id": int(source_id),
+            "source_type": source_type,
+            **result,
+        }
+
+    def _sync_local_directory_source_items(self, source_id: int, root: Path) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_ingestion_schema(db)
+        now = db._get_current_utc_timestamp_str()
+        created = 0
+        updated = 0
+        seen_paths: set[str] = set()
+        with db.transaction() as conn:
+            for file_path in sorted(path for path in root.rglob("*") if path.is_file()):
+                relative_path = file_path.relative_to(root).as_posix()
+                seen_paths.add(relative_path)
+                content_hash = self._hash_local_ingestion_file(file_path)
+                row = conn.execute(
+                    """
+                    SELECT id, content_hash, present_in_source
+                    FROM local_ingestion_source_items
+                    WHERE source_id = ? AND normalized_relative_path = ?
+                    """,
+                    (source_id, relative_path),
+                ).fetchone()
+                if row is None:
+                    conn.execute(
+                        """
+                        INSERT INTO local_ingestion_source_items (
+                            source_id, normalized_relative_path, content_hash, sync_status,
+                            binding_json, present_in_source, created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (source_id, relative_path, content_hash, "pending", "{}", 1, now, now),
+                    )
+                    created += 1
+                    continue
+                if row["content_hash"] != content_hash or not bool(row["present_in_source"]):
+                    updated += 1
+                conn.execute(
+                    """
+                    UPDATE local_ingestion_source_items
+                    SET content_hash = ?, sync_status = ?, present_in_source = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (content_hash, "pending", 1, now, row["id"]),
+                )
+
+            existing_rows = conn.execute(
+                """
+                SELECT id, normalized_relative_path, present_in_source
+                FROM local_ingestion_source_items
+                WHERE source_id = ?
+                """,
+                (source_id,),
+            ).fetchall()
+            missing_ids = [
+                row["id"]
+                for row in existing_rows
+                if row["normalized_relative_path"] not in seen_paths and bool(row["present_in_source"])
+            ]
+            if missing_ids:
+                placeholders = ",".join("?" for _ in missing_ids)
+                conn.execute(
+                    f"""
+                    UPDATE local_ingestion_source_items
+                    SET present_in_source = 0, sync_status = 'missing', updated_at = ?
+                    WHERE id IN ({placeholders})
+                    """,
+                    [now, *missing_ids],
+                )
+
+        return {
+            "scanned": len(seen_paths),
+            "created": created,
+            "updated": updated,
+            "missing": len(missing_ids),
+            "errors": [],
+        }
+
+    @staticmethod
+    def _hash_local_ingestion_file(file_path: Path) -> str:
+        digest = hashlib.sha256()
+        with file_path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def list_ingest_jobs(self, batch_id: str, *, limit: int = 100) -> Any:
         db = self._require_db()
@@ -1498,6 +1918,8 @@ class LocalMediaReadingService:
             "source": payload.get("source"),
             "source_kind": payload.get("source_kind"),
             "status": payload.get("status"),
+            "keywords": self._json_loads(payload.get("keywords_json")),
+            "options": self._json_loads(payload.get("options_json")),
             "created_at": payload.get("created_at"),
             "started_at": payload.get("started_at"),
             "completed_at": payload.get("completed_at"),
@@ -1579,6 +2001,53 @@ class LocalMediaReadingService:
             job_id = cursor.lastrowid
         return self.get_ingest_job(job_id)
 
+    def _mark_ingest_job_started(self, job_id: Any, *, progress_message: str) -> dict[str, Any]:
+        db = self._require_db()
+        now = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE local_ingestion_jobs
+                SET status = ?, started_at = COALESCE(started_at, ?),
+                    progress_percent = ?, progress_message = ?
+                WHERE id = ? AND status = 'queued'
+                """,
+                ("running", now, 5, progress_message, int(job_id)),
+            )
+        return self.get_ingest_job(job_id)
+
+    def _complete_ingest_job(
+        self,
+        job_id: Any,
+        *,
+        status: str,
+        progress_percent: int,
+        progress_message: str,
+        result: Mapping[str, Any],
+        error_message: str | None = None,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        now = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE local_ingestion_jobs
+                SET status = ?, completed_at = ?, progress_percent = ?,
+                    progress_message = ?, result_json = ?, error_message = ?
+                WHERE id = ?
+                """,
+                (
+                    status,
+                    now,
+                    progress_percent,
+                    progress_message,
+                    self._json_dumps(dict(result)),
+                    error_message,
+                    int(job_id),
+                ),
+            )
+        return self.get_ingest_job(job_id)
+
     def _set_ingestion_source_active_job(self, source_id: Any, job_id: Any, *, status: str) -> None:
         db = self._require_db()
         now = db._get_current_utc_timestamp_str()
@@ -1590,4 +2059,25 @@ class LocalMediaReadingService:
                 WHERE id = ?
                 """,
                 (str(job_id), now, status, now, int(source_id)),
+            )
+
+    def _set_ingestion_source_sync_finished(
+        self,
+        source_id: Any,
+        job_id: Any,
+        *,
+        status: str,
+        error_message: str | None,
+    ) -> None:
+        db = self._require_db()
+        now = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE local_ingestion_sources
+                SET active_job_id = ?, last_sync_completed_at = ?,
+                    last_sync_status = ?, last_error = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (str(job_id), now, status, error_message, now, int(source_id)),
             )
