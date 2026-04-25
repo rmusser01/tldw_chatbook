@@ -156,6 +156,36 @@ from .auth_user_schemas import (
     UserProfileUpdateRequest,
     UserProfileUpdateResponse,
 )
+from .prompt_studio_schemas import (
+    PromptStudioCompareStrategiesRequest,
+    PromptStudioDeleteMessage,
+    PromptStudioEvaluationCreate,
+    PromptStudioEvaluationListResponse,
+    PromptStudioEvaluationResponse,
+    PromptStudioListResponse,
+    PromptStudioOptimizationCreate,
+    PromptStudioOptimizationIterationCreate,
+    PromptStudioOptimizationSimpleCreateRequest,
+    PromptStudioPromptConvertRequest,
+    PromptStudioPromptCreate,
+    PromptStudioPromptExecuteRequest,
+    PromptStudioPromptExecutionResponse,
+    PromptStudioPromptPreviewRequest,
+    PromptStudioPromptUpdate,
+    PromptStudioProjectCreate,
+    PromptStudioProjectUpdate,
+    PromptStudioRunTestCasesRequest,
+    PromptStudioRunTestCasesResponse,
+    PromptStudioSimpleJobResponse,
+    PromptStudioStandardResponse,
+    PromptStudioStatusResponse,
+    PromptStudioTestCaseBulkCreate,
+    PromptStudioTestCaseExportRequest,
+    PromptStudioTestCaseGenerateRequest,
+    PromptStudioTestCaseImportRequest,
+    PromptStudioTestCaseCreate,
+    PromptStudioTestCaseUpdate,
+)
 from .data_tables_schemas import (
     DataTableContentUpdateRequest,
     DataTableDeleteResponse,
@@ -1293,6 +1323,470 @@ class TLDWAPIClient:
             params={key: value for key, value in params.items() if value is not None},
         )
         return [str(model) for model in response]
+
+    async def create_prompt_studio_project(
+        self,
+        request_data: PromptStudioProjectCreate,
+        *,
+        idempotency_key: str | None = None,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/projects/",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def list_prompt_studio_projects(
+        self,
+        *,
+        page: int = 1,
+        per_page: int = 20,
+        status: str | None = None,
+        include_deleted: bool = False,
+        search: str | None = None,
+    ) -> PromptStudioListResponse:
+        params = {
+            "page": page,
+            "per_page": per_page,
+            "status": status,
+            "include_deleted": str(include_deleted).lower(),
+            "search": search,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/prompt-studio/projects/",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return PromptStudioListResponse.model_validate(response)
+
+    async def get_prompt_studio_project(self, project_id: int) -> PromptStudioStandardResponse:
+        response = await self._request("GET", f"/api/v1/prompt-studio/projects/get/{project_id}")
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def update_prompt_studio_project(
+        self,
+        project_id: int,
+        request_data: PromptStudioProjectUpdate,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/prompt-studio/projects/update/{project_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def delete_prompt_studio_project(
+        self,
+        project_id: int,
+        *,
+        permanent: bool = False,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/prompt-studio/projects/delete/{project_id}",
+            params={"permanent": str(permanent).lower()},
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def archive_prompt_studio_project(self, project_id: int) -> PromptStudioStandardResponse:
+        response = await self._request("POST", f"/api/v1/prompt-studio/projects/archive/{project_id}")
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def unarchive_prompt_studio_project(self, project_id: int) -> PromptStudioStandardResponse:
+        response = await self._request("POST", f"/api/v1/prompt-studio/projects/unarchive/{project_id}")
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def get_prompt_studio_project_stats(self, project_id: int) -> PromptStudioStandardResponse:
+        response = await self._request("GET", f"/api/v1/prompt-studio/projects/stats/{project_id}")
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def create_prompt_studio_prompt(
+        self,
+        request_data: PromptStudioPromptCreate,
+        *,
+        idempotency_key: str | None = None,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/prompts/create",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def list_prompt_studio_prompts(
+        self,
+        project_id: int,
+        *,
+        page: int = 1,
+        per_page: int = 20,
+        include_deleted: bool = False,
+    ) -> PromptStudioListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/prompt-studio/prompts/list/{project_id}",
+            params={
+                "page": page,
+                "per_page": per_page,
+                "include_deleted": str(include_deleted).lower(),
+            },
+        )
+        return PromptStudioListResponse.model_validate(response)
+
+    async def get_prompt_studio_prompt(self, prompt_id: int) -> PromptStudioStandardResponse:
+        response = await self._request("GET", f"/api/v1/prompt-studio/prompts/get/{prompt_id}")
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def update_prompt_studio_prompt(
+        self,
+        prompt_id: int,
+        request_data: PromptStudioPromptUpdate,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/prompt-studio/prompts/update/{prompt_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def get_prompt_studio_prompt_history(self, prompt_id: int) -> PromptStudioStandardResponse:
+        response = await self._request("GET", f"/api/v1/prompt-studio/prompts/history/{prompt_id}")
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def revert_prompt_studio_prompt(self, prompt_id: int, version: int) -> PromptStudioStandardResponse:
+        response = await self._request("POST", f"/api/v1/prompt-studio/prompts/revert/{prompt_id}/{version}")
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def preview_prompt_studio_prompt(
+        self,
+        request_data: PromptStudioPromptPreviewRequest,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/prompts/preview",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def convert_prompt_studio_prompt(
+        self,
+        request_data: PromptStudioPromptConvertRequest,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/prompts/convert",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def execute_prompt_studio_prompt(
+        self,
+        request_data: PromptStudioPromptExecuteRequest,
+    ) -> PromptStudioPromptExecutionResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/prompts/execute",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioPromptExecutionResponse.model_validate(response)
+
+    async def create_prompt_studio_test_case(
+        self,
+        request_data: PromptStudioTestCaseCreate,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/test-cases/create",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def create_prompt_studio_test_cases_bulk(
+        self,
+        request_data: PromptStudioTestCaseBulkCreate,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/test-cases/bulk",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def list_prompt_studio_test_cases(
+        self,
+        project_id: int,
+        *,
+        page: int = 1,
+        per_page: int = 20,
+        is_golden: bool | None = None,
+        tags: list[str] | str | None = None,
+        search: str | None = None,
+        signature_id: int | None = None,
+    ) -> PromptStudioListResponse:
+        tags_param = ",".join(tags) if isinstance(tags, list) else tags
+        params = {
+            "page": page,
+            "per_page": per_page,
+            "is_golden": str(is_golden).lower() if is_golden is not None else None,
+            "tags": tags_param,
+            "search": search,
+            "signature_id": signature_id,
+        }
+        response = await self._request(
+            "GET",
+            f"/api/v1/prompt-studio/test-cases/list/{project_id}",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return PromptStudioListResponse.model_validate(response)
+
+    async def get_prompt_studio_test_case(self, test_case_id: int) -> PromptStudioStandardResponse:
+        response = await self._request("GET", f"/api/v1/prompt-studio/test-cases/get/{test_case_id}")
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def update_prompt_studio_test_case(
+        self,
+        test_case_id: int,
+        request_data: PromptStudioTestCaseUpdate,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/prompt-studio/test-cases/update/{test_case_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def delete_prompt_studio_test_case(
+        self,
+        test_case_id: int,
+        *,
+        permanent: bool = False,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/prompt-studio/test-cases/delete/{test_case_id}",
+            params={"permanent": str(permanent).lower()},
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def import_prompt_studio_test_cases(
+        self,
+        request_data: PromptStudioTestCaseImportRequest,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/test-cases/import",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def export_prompt_studio_test_cases(
+        self,
+        project_id: int,
+        request_data: PromptStudioTestCaseExportRequest,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/prompt-studio/test-cases/export/{project_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def generate_prompt_studio_test_cases(
+        self,
+        request_data: PromptStudioTestCaseGenerateRequest | None = None,
+        *,
+        project_id: int | None = None,
+        prompt_id: int | None = None,
+        signature_id: int | None = None,
+        num_cases: int = 5,
+        generation_strategy: str = "diverse",
+        base_on_description: str | None = None,
+    ) -> PromptStudioStandardResponse:
+        if request_data is None:
+            if project_id is None:
+                raise ValueError("project_id is required when request_data is not provided")
+            request_data = PromptStudioTestCaseGenerateRequest(
+                project_id=project_id,
+                prompt_id=prompt_id,
+                signature_id=signature_id,
+                num_cases=num_cases,
+                generation_strategy=generation_strategy,
+                base_on_description=base_on_description,
+            )
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/test-cases/generate",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def run_prompt_studio_test_cases(
+        self,
+        request_data: PromptStudioRunTestCasesRequest,
+    ) -> PromptStudioRunTestCasesResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/test-cases/run",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioRunTestCasesResponse.model_validate(response)
+
+    async def create_prompt_studio_evaluation(
+        self,
+        request_data: PromptStudioEvaluationCreate,
+    ) -> PromptStudioEvaluationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/evaluations",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioEvaluationResponse.model_validate(response)
+
+    async def list_prompt_studio_evaluations(
+        self,
+        *,
+        project_id: int,
+        prompt_id: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> PromptStudioEvaluationListResponse:
+        params = {
+            "project_id": project_id,
+            "prompt_id": prompt_id,
+            "limit": limit,
+            "offset": offset,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/prompt-studio/evaluations",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return PromptStudioEvaluationListResponse.model_validate(response)
+
+    async def get_prompt_studio_evaluation(self, evaluation_id: int) -> PromptStudioEvaluationResponse:
+        response = await self._request("GET", f"/api/v1/prompt-studio/evaluations/{evaluation_id}")
+        return PromptStudioEvaluationResponse.model_validate(response)
+
+    async def delete_prompt_studio_evaluation(self, evaluation_id: int) -> PromptStudioDeleteMessage:
+        response = await self._request("DELETE", f"/api/v1/prompt-studio/evaluations/{evaluation_id}")
+        return PromptStudioDeleteMessage.model_validate(response)
+
+    async def create_prompt_studio_optimization(
+        self,
+        request_data: PromptStudioOptimizationCreate,
+        *,
+        idempotency_key: str | None = None,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/optimizations/create",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def create_prompt_studio_optimization_simple(
+        self,
+        request_data: PromptStudioOptimizationSimpleCreateRequest,
+    ) -> PromptStudioSimpleJobResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/optimizations",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioSimpleJobResponse.model_validate(response)
+
+    async def list_prompt_studio_optimizations(
+        self,
+        project_id: int,
+        *,
+        page: int = 1,
+        per_page: int = 20,
+        status: str | None = None,
+    ) -> PromptStudioListResponse:
+        params = {"page": page, "per_page": per_page, "status": status}
+        response = await self._request(
+            "GET",
+            f"/api/v1/prompt-studio/optimizations/list/{project_id}",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return PromptStudioListResponse.model_validate(response)
+
+    async def get_prompt_studio_optimization(self, optimization_id: int) -> PromptStudioStandardResponse:
+        response = await self._request("GET", f"/api/v1/prompt-studio/optimizations/get/{optimization_id}")
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def get_prompt_studio_optimization_job_status(self, job_id: str) -> dict[str, Any]:
+        response = await self._request("GET", f"/api/v1/prompt-studio/optimizations/{job_id}")
+        return dict(response)
+
+    async def cancel_prompt_studio_optimization(
+        self,
+        optimization_id: int,
+        *,
+        reason: str | None = None,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/prompt-studio/optimizations/cancel/{optimization_id}",
+            json_data=reason,
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def get_prompt_studio_optimization_strategies(self) -> PromptStudioStandardResponse:
+        response = await self._request("GET", "/api/v1/prompt-studio/optimizations/strategies")
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def get_prompt_studio_optimization_history(self, optimization_id: int) -> PromptStudioStandardResponse:
+        response = await self._request("GET", f"/api/v1/prompt-studio/optimizations/history/{optimization_id}")
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def add_prompt_studio_optimization_iteration(
+        self,
+        optimization_id: int,
+        request_data: PromptStudioOptimizationIterationCreate,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/prompt-studio/optimizations/iterations/{optimization_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def list_prompt_studio_optimization_iterations(
+        self,
+        optimization_id: int,
+        *,
+        page: int = 1,
+        per_page: int = 50,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/prompt-studio/optimizations/iterations/{optimization_id}",
+            params={"page": page, "per_page": per_page},
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def compare_prompt_studio_optimization_strategies(
+        self,
+        request_data: PromptStudioCompareStrategiesRequest,
+    ) -> PromptStudioStandardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/prompt-studio/optimizations/compare",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PromptStudioStandardResponse.model_validate(response)
+
+    async def get_prompt_studio_status(self, *, warn_seconds: int = 30) -> PromptStudioStatusResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/prompt-studio/status",
+            params={"warn_seconds": warn_seconds},
+        )
+        return PromptStudioStatusResponse.model_validate(response)
 
     async def generate_data_table(
         self,

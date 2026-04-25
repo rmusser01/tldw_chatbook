@@ -160,6 +160,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 1
 - Notes: Priority 67. This remains important, but it does not outrank the standalone-first gaps above.
 
+### Prompt Studio: Server prompt experimentation projects, prompts, test cases, evaluations, optimizations, and status
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Full CRUD + Observe
+- Current state: Chatbook now has typed direct API-client wrappers for Prompt Studio projects, prompts, preview/convert/execute helpers, test cases including bulk/import/export/generate/run, evaluations, optimizations including simple/canonical create, cancel, strategies, history, iterations, strategy comparison, and queue status. The schemas intentionally tolerate the server's current mixed canonical and compatibility response shapes while preserving route-level typing for callers.
+- Gap: Dedicated UX adoption, source-aware service routing, SSE/websocket realtime updates, CSV multipart upload import, background ping diagnostics, local Prompt Studio project mirrors, and sync/mirror semantics remain pending. Existing local prompt/evaluation data should stay separate until a deliberate identity bridge is designed.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/prompt_studio/prompt_studio_projects.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/prompt_studio/prompt_studio_prompts.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/prompt_studio/prompt_studio_test_cases.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/prompt_studio/prompt_studio_evaluations.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/prompt_studio/prompt_studio_optimization.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/prompt_studio/prompt_studio_status.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/prompt_studio_schemas.py`; Verification: `Tests/tldw_api/test_prompt_studio_client.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 43. This is a connected-server product surface rather than a standalone-first blocker, but the backend client contract is now present for future UX work.
+
 ### Study Core: Flashcards, quizzes, and study guides
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
