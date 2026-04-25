@@ -23,7 +23,7 @@ Additional backend foundations have since landed for media/read-it-later, watchl
 3. `Local MCP Runtime`
    The runtime-policy layer is now in place, and Chatbook already has local MCP modules; the next gap is turning that into a first-class local runtime, approvals, status, and governance surface.
 4. `Writing Suite`
-   This remains a high-value standalone row with a clear server contract. The backend seam now exists for project/manuscript/chapter/scene CRUD, structure retrieval, source routing, local direct manuscript-level scenes, local manual version snapshots/restores, local trash listing/restores, reorder/move helpers, and Markdown-preserving server scene writes, so the next useful work is unsupported-capability reporting and eventual UX adoption.
+   This remains a high-value standalone row with a clear server contract. The backend seam is now app-wired and covers project/manuscript/chapter/scene CRUD, source-scoped structure retrieval, local direct manuscript-level scenes, local manual version snapshots/restores, local trash listing/restores, reorder/move helpers, and Markdown-preserving server scene writes, so the next useful work is unsupported-capability reporting and eventual UX adoption.
 5. `Research Sessions / Runs`
    Research is a user-priority local-first domain, but it depends on several adjacent capabilities becoming less fragmented first: local notifications, stronger collection/media seams, and a clearer execution/status model.
 6. `Workflows`, `Scheduler Workflows`, and `Chat Workflows`

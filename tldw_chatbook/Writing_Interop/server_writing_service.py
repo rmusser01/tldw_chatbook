@@ -292,7 +292,7 @@ class ServerWritingService:
         )
 
     async def get_structure(self, project_id: str) -> dict[str, Any]:
-        self._enforce(self._action_id("projects", "detail"))
+        self._enforce(self._action_id("projects", "structure"))
         response = await self._require_client().get_manuscript_structure(project_id)
         return normalize_writing_structure("server", self._model_to_dict(response))
 

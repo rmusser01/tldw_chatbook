@@ -69,6 +69,7 @@ from .config import (
     get_notifications_db_path,
     get_research_db_path,
     get_subscriptions_db_path,
+    get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
@@ -225,6 +226,7 @@ from tldw_chatbook.Research_Interop import (
 )
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
+from tldw_chatbook.Writing_Interop import LocalWritingService, ServerWritingService, WritingScopeService
 from tldw_chatbook.Subscriptions import (
     LocalWatchlistsService,
     ServerWatchlistsService,
@@ -1318,6 +1320,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
         self._wire_prompt_chatbook_services()
         self._wire_watchlists_and_notifications_services()
+        self._wire_writing_services()
 
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}")
@@ -1482,6 +1485,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.chat_conversation_scope_service = ChatConversationScopeService(
             local_service=self.local_chat_conversation_service,
             server_service=self.server_chat_conversation_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_writing_services(self) -> None:
+        try:
+            self.local_writing_service = LocalWritingService(get_writing_db_path())
+        except Exception:
+            logger.warning("Local writing service unavailable during app wiring", exc_info=True)
+            self.local_writing_service = None
+        try:
+            self.server_writing_service = ServerWritingService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_writing_service = ServerWritingService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.writing_scope_service = WritingScopeService(
+            local_service=self.local_writing_service,
+            server_service=self.server_writing_service,
             policy_enforcer=self.service_policy_enforcer,
         )
 

@@ -179,7 +179,7 @@ async def test_server_writing_service_enforces_policy_actions():
         "writing.manuscripts.create.server",
         "writing.chapters.create.server",
         "writing.scenes.create.server",
-        "writing.projects.detail.server",
+        "writing.projects.structure.server",
         "writing.outline.reorder.server",
         "writing.versions.create.server",
     ]

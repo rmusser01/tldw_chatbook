@@ -6,7 +6,7 @@ import inspect
 from enum import Enum
 from typing import Any
 
-from .writing_normalizers import normalize_writing_record
+from .writing_normalizers import normalize_writing_record, normalize_writing_structure
 
 
 _UNSET = object()
@@ -107,6 +107,19 @@ class WritingScopeService:
             self._service_for_mode(normalized_mode).get_project(project_id)
         )
         return self._normalize_result(normalized_mode, "project", result)
+
+    async def get_structure(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("projects", "structure", normalized_mode))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_structure(project_id)
+        )
+        return normalize_writing_structure(normalized_mode.value, result)
 
     async def update_project(
         self,

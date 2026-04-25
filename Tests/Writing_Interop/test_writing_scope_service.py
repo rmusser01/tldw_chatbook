@@ -151,6 +151,29 @@ class FakeWritingService:
         self.calls.append(("reorder_entities", project_id, entity_type, items))
         return True
 
+    async def get_structure(self, project_id):
+        self.calls.append(("get_structure", project_id))
+        return {
+            "project_id": project_id,
+            "manuscripts": [
+                {
+                    "id": f"{self.source}-manuscript-1",
+                    "title": "Book One",
+                    "chapters": [],
+                    "scenes": [],
+                }
+            ],
+            "unassigned_chapters": [
+                {
+                    "id": f"{self.source}-chapter-loose",
+                    "title": "Loose Chapter",
+                    "part_id": None,
+                    "version": 1,
+                    "scenes": [],
+                }
+            ],
+        }
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
@@ -370,3 +393,23 @@ async def test_writing_scope_service_routes_reorder_actions():
         )
     ]
     assert policy.calls == ["writing.outline.reorder.server"]
+
+
+@pytest.mark.asyncio
+async def test_writing_scope_service_routes_structure_actions():
+    server = FakeWritingService("server")
+    policy = FakePolicyEnforcer()
+    scope = WritingScopeService(
+        local_service=FakeWritingService("local"),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    structure = await scope.get_structure(mode="server", project_id="server-project-1")
+
+    assert structure["source"] == "server"
+    assert structure["manuscripts"][0]["record_id"] == "server:writing_manuscript:server-manuscript-1"
+    assert structure["unassigned_chapters"][0]["record_id"] == "server:writing_chapter:server-chapter-loose"
+    assert structure["unassigned_chapters"][0]["outline_bucket"] == "unassigned_chapters"
+    assert server.calls == [("get_structure", "server-project-1")]
+    assert policy.calls == ["writing.projects.structure.server"]

@@ -1414,6 +1414,8 @@ prompts_db_path = "~/.local/share/tldw_cli/tldw_cli_prompts.db"
 media_db_path = "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
 # Path to the local research sessions/runs database.
 research_db_path = "~/.local/share/tldw_cli/tldw_chatbook_research.db"
+# Path to the local writing suite database.
+writing_db_path = "~/.local/share/tldw_cli/tldw_chatbook_writing.db"
 USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
 
 # Database integrity checking
@@ -3275,6 +3277,15 @@ def get_research_db_path() -> Path:
     else:
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_research.db"
+    return db_path
+
+def get_writing_db_path() -> Path:
+    custom_path = get_cli_setting("database", "writing_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("writing_db_path"):
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "tldw_chatbook_writing.db"
     return db_path
 
 def get_cli_log_file_path() -> Path:

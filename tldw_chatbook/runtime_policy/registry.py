@@ -149,6 +149,7 @@ INSPECT = _action("inspect", "detail")
 REVOKE = _action("revoke", "delete")
 CAPTURE = _action("capture", "launch")
 STATUS = _action("status", "detail")
+STRUCTURE = _action("structure", "detail")
 RESTORE = _action("restore", "update")
 REORDER = _action("reorder", "update")
 BULK_UPDATE = _action("bulk_update", "update")
@@ -383,7 +384,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "writing",
         sources=SEPARATED_SOURCES,
         resources=(
-            _resource("writing.projects", actions=CRUD_ACTIONS),
+            _resource("writing.projects", actions=_combine_action_sets(CRUD_ACTIONS, (STRUCTURE,))),
             _resource("writing.manuscripts", actions=CRUD_ACTIONS),
             _resource("writing.chapters", actions=CRUD_ACTIONS),
             _resource("writing.scenes", actions=CRUD_ACTIONS),

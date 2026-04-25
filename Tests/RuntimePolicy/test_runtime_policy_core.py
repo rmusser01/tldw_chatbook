@@ -695,6 +695,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         writing.projects.detail.server
         writing.projects.list.local
         writing.projects.list.server
+        writing.projects.structure.local
+        writing.projects.structure.server
         writing.projects.update.local
         writing.projects.update.server
         writing.scenes.create.local
