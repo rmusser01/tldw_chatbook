@@ -20,6 +20,61 @@ class EvaluationBackend(str, Enum):
     SERVER = "server"
 
 
+_LOCAL_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "evaluations.run.dataset_override.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local evaluation runs do not support per-run dataset overrides yet; create or select a local dataset before launching.",
+        "affected_action_ids": ["evaluations.run.launch.local"],
+    },
+    {
+        "operation_id": "evaluations.run.webhook.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local evaluation runs do not support webhook callbacks; observe the local run record and artifacts instead.",
+        "affected_action_ids": ["evaluations.run.launch.local", "evaluations.run.observe.local"],
+    },
+]
+
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "evaluations.targets.list.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server evaluation API does not expose a target catalog; server runs require an explicit target_model string.",
+        "affected_action_ids": ["evaluations.run.list.server", "evaluations.run.launch.server"],
+    },
+    {
+        "operation_id": "evaluations.run.results.detail.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server unified run detail exposes summary metrics, but not sample-level result artifacts.",
+        "affected_action_ids": ["evaluations.run.detail.server", "evaluations.run.observe.server"],
+    },
+    {
+        "operation_id": "evaluations.rag_pipeline.admin.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "chatbook_contract_missing",
+        "user_message": "Server RAG-pipeline preset admin routes exist, but Chatbook does not yet wrap them in the evaluation client seam.",
+        "affected_action_ids": ["evaluations.dataset.update.server", "evaluations.run.launch.server"],
+    },
+    {
+        "operation_id": "evaluations.embeddings_abtest.admin.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "chatbook_contract_missing",
+        "user_message": "Server embedding A/B test routes exist, but Chatbook does not yet expose create/run/status/results/export controls for them.",
+        "affected_action_ids": ["evaluations.run.launch.server", "evaluations.run.observe.server"],
+    },
+]
+
+
 class EvaluationScopeService:
     """Route evaluation actions to local or server backends and normalize outputs."""
 
@@ -70,6 +125,16 @@ class EvaluationScopeService:
     @staticmethod
     def _run_action_id(mode: EvaluationBackend, action: str) -> str:
         return f"evaluations.run.{action}.{mode.value}"
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == EvaluationBackend.LOCAL:
+            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def _resolve_record(self, record: Any, fetcher: Any, identifier: str) -> Any:
         if isinstance(record, Mapping):

@@ -429,3 +429,66 @@ async def test_scope_service_routes_dataset_create_delete_by_backend_with_policy
         "evaluations.dataset.delete.local",
         "evaluations.dataset.delete.server",
     ]
+
+
+def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=FakeServerEvaluationService(),
+    )
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "evaluations.run.dataset_override.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local evaluation runs do not support per-run dataset overrides yet; create or select a local dataset before launching.",
+            "affected_action_ids": ["evaluations.run.launch.local"],
+        },
+        {
+            "operation_id": "evaluations.run.webhook.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local evaluation runs do not support webhook callbacks; observe the local run record and artifacts instead.",
+            "affected_action_ids": ["evaluations.run.launch.local", "evaluations.run.observe.local"],
+        },
+    ]
+    assert server_report == [
+        {
+            "operation_id": "evaluations.targets.list.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server evaluation API does not expose a target catalog; server runs require an explicit target_model string.",
+            "affected_action_ids": ["evaluations.run.list.server", "evaluations.run.launch.server"],
+        },
+        {
+            "operation_id": "evaluations.run.results.detail.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server unified run detail exposes summary metrics, but not sample-level result artifacts.",
+            "affected_action_ids": ["evaluations.run.detail.server", "evaluations.run.observe.server"],
+        },
+        {
+            "operation_id": "evaluations.rag_pipeline.admin.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "chatbook_contract_missing",
+            "user_message": "Server RAG-pipeline preset admin routes exist, but Chatbook does not yet wrap them in the evaluation client seam.",
+            "affected_action_ids": ["evaluations.dataset.update.server", "evaluations.run.launch.server"],
+        },
+        {
+            "operation_id": "evaluations.embeddings_abtest.admin.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "chatbook_contract_missing",
+            "user_message": "Server embedding A/B test routes exist, but Chatbook does not yet expose create/run/status/results/export controls for them.",
+            "affected_action_ids": ["evaluations.run.launch.server", "evaluations.run.observe.server"],
+        },
+    ]
