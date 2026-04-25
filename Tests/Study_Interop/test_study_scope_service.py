@@ -873,6 +873,18 @@ def test_scope_service_reports_study_pack_and_suggestion_unsupported_capabilitie
             "user_message": "Study suggestions are server-only; use local study review flows offline.",
             "affected_action_ids": [],
         },
+        {
+            "operation_id": "study.workspace.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "scope_not_supported",
+            "user_message": "Workspace-scoped study decks and reviews are unavailable in local mode; use global local decks or server workspace mode.",
+            "affected_action_ids": [
+                "study.deck.create.local",
+                "study.deck.list.local",
+                "study.deck.update.local",
+            ],
+        },
     ]
     assert server_report == [
         {

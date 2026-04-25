@@ -507,6 +507,30 @@ async def test_quiz_scope_service_rejects_workspace_scope_for_attempt_history_lo
         )
 
 
+def test_quiz_scope_service_reports_known_unsupported_capabilities():
+    scope = QuizScopeService(local_service=FakeLocalQuizService(), server_service=FakeServerQuizService())
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "quiz.workspace.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "scope_not_supported",
+            "user_message": "Workspace-scoped quizzes and attempts are unavailable in local mode; use global local quizzes or server workspace mode.",
+            "affected_action_ids": [
+                "quiz.attempt.create.local",
+                "quiz.attempt.observe.local",
+                "quiz.create.local",
+                "quiz.list.local",
+            ],
+        }
+    ]
+    assert server_report == []
+
+
 @pytest.mark.asyncio
 async def test_quiz_scope_service_forwards_workspace_id_on_server_create_and_nulls_global_create():
     server = PagedFakeServerQuizService({0: []})

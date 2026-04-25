@@ -36,6 +36,18 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "user_message": "Study suggestions are server-only; use local study review flows offline.",
         "affected_action_ids": [],
     },
+    {
+        "operation_id": "study.workspace.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "scope_not_supported",
+        "user_message": "Workspace-scoped study decks and reviews are unavailable in local mode; use global local decks or server workspace mode.",
+        "affected_action_ids": [
+            "study.deck.create.local",
+            "study.deck.list.local",
+            "study.deck.update.local",
+        ],
+    },
 ]
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [

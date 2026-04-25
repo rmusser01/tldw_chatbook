@@ -127,8 +127,8 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Study Core: Flashcards, quizzes, and study guides
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
-- Current state: Study seams are already strong across local and server modes, including policy-gated direct server adapters for flashcards/decks/reviews, quizzes/questions/attempts, and study-guide generation.
-- Gap: Full mutation parity and workspace-aware remote alignment still need cleanup.
+- Current state: Study seams are already strong across local and server modes, including policy-gated direct server adapters for flashcards/decks/reviews, quizzes/questions/attempts, study-guide generation, and source-scoped unsupported reporting for the local workspace boundary.
+- Gap: Full mutation parity and workspace-aware remote alignment still need cleanup. Local mode remains global-only for study decks/reviews and quizzes/attempts; workspace-scoped study is currently a server-mode boundary reported by `StudyScopeService` and `QuizScopeService`.
 - Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/flashcards.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/quizzes.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/chat_documents.py`; Chatbook: `tldw_chatbook/Study_Interop/local_study_service.py`, `tldw_chatbook/Study_Interop/server_study_service.py`, `tldw_chatbook/Study_Interop/server_quiz_service.py`, `tldw_chatbook/Study_Interop/study_scope_service.py`, `tldw_chatbook/Study_Interop/quiz_scope_service.py`, `tldw_chatbook/UI/Screens/study_screen.py`; Verification: `Tests/Study_Interop/test_server_study_service.py`, `Tests/Study_Interop/test_server_quiz_service.py`, `Tests/Study_Interop/test_study_scope_service.py`, and `Tests/Study_Interop/test_quiz_scope_service.py`.
 - Recommended tranche: Tranche 1
 - Notes: Priority 63. Strong existing seams keep this below the most urgent standalone gaps.

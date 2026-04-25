@@ -19,6 +19,23 @@ class QuizBackend(str, Enum):
     SERVER = "server"
 
 
+_LOCAL_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "quiz.workspace.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "scope_not_supported",
+        "user_message": "Workspace-scoped quizzes and attempts are unavailable in local mode; use global local quizzes or server workspace mode.",
+        "affected_action_ids": [
+            "quiz.attempt.create.local",
+            "quiz.attempt.observe.local",
+            "quiz.create.local",
+            "quiz.list.local",
+        ],
+    }
+]
+
+
 class QuizScopeService:
     """Route quiz actions to local or server backends and normalize outputs."""
 
@@ -60,6 +77,16 @@ class QuizScopeService:
         if self.policy_enforcer is None:
             return
         self.policy_enforcer.require_allowed(action_id=action_id)
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        mode: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        backend = self._resolve_backend(mode)
+        if backend is QuizBackend.LOCAL:
+            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        return []
 
     @staticmethod
     def _quiz_action_id(backend: QuizBackend, action: str) -> str:
