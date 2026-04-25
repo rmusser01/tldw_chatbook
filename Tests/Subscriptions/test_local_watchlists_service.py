@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Notifications import ClientNotificationsDB, NotificationDispatchService
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
 
 
@@ -63,3 +64,53 @@ async def test_local_watchlists_service_persists_alert_rule_crud(tmp_path):
     assert deleted["deleted"] is True
     with pytest.raises(KeyError):
         await service.get_alert_rule(created["rule_id"])
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_evaluates_completed_run_alerts_into_notifications(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    notification_store = ClientNotificationsDB(tmp_path / "notifications.db")
+    dispatcher = NotificationDispatchService(store=notification_store)
+    service = LocalWatchlistsService(db_factory=lambda: db, notification_dispatcher=dispatcher)
+    source = await service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+    failed_rule = await service.create_alert_rule(
+        name="Run failed",
+        condition_type="run_failed",
+        job_id=source["source_id"],
+        severity="critical",
+    )
+    await service.create_alert_rule(
+        name="Bad threshold",
+        condition_type="items_above",
+        condition_value={"threshold": "abc"},
+        job_id=source["source_id"],
+    )
+
+    completed = await service.record_run_result(
+        launched["run_id"],
+        status="failed",
+        stats={"items_found": 4, "items_ingested": 1},
+        error_msg="boom",
+    )
+
+    notifications = notification_store.list_notifications(limit=10)
+    assert completed["status"] == "failed"
+    assert completed["error_msg"] == "boom"
+    assert len(completed["triggered_alerts"]) == 1
+    assert completed["triggered_alerts"][0]["rule_id"] == failed_rule["rule_id"]
+    assert len(notifications) == 1
+    assert notifications[0]["category"] == "watchlists"
+    assert notifications[0]["severity"] == "critical"
+    assert notifications[0]["source_backend"] == "local"
+    assert notifications[0]["source_entity_kind"] == "watchlist_run"
+    assert notifications[0]["source_entity_id"] == str(launched["run_id"])
+    assert notifications[0]["payload"]["dedupe_key"] == (
+        f"watchlist-alert:{failed_rule['rule_id']}:{launched['run_id']}"
+    )

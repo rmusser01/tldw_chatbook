@@ -28,8 +28,16 @@ _ALERT_CONDITION_TYPES = frozenset(
 class LocalWatchlistsService:
     """Thin adapter over `SubscriptionsDB` for the shared watchlists seam."""
 
-    def __init__(self, *, db_factory: Callable[[], SubscriptionsDB]):
+    def __init__(
+        self,
+        *,
+        db_factory: Callable[[], SubscriptionsDB],
+        notification_dispatcher: Any | None = None,
+        notification_app: Any | None = None,
+    ):
         self.db_factory = db_factory
+        self.notification_dispatcher = notification_dispatcher
+        self.notification_app = notification_app
 
     def _db(self) -> SubscriptionsDB:
         return self.db_factory()
@@ -174,6 +182,61 @@ class LocalWatchlistsService:
             if cursor.rowcount == 0:
                 raise KeyError(f"Watchlist run not found: {run_id}")
         return await self.get_run(run_id)
+
+    async def record_run_result(
+        self,
+        run_id: Any,
+        *,
+        status: str,
+        stats: Mapping[str, Any] | None = None,
+        error_msg: str | None = None,
+        log_text: str | None = None,
+        dispatch_notifications: bool = True,
+    ) -> dict[str, Any]:
+        """Persist a completed local run and emit notifications for matching alert rules."""
+        db = self._db()
+        self._ensure_run_schema(db)
+        current = await self.get_run(run_id)
+        now = self._utc_now()
+        stats_payload = dict(stats or {})
+        if error_msg and "error_msg" not in stats_payload:
+            stats_payload["error_msg"] = error_msg
+        with db.transaction() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE local_watchlist_runs
+                SET status = ?, finished_at = ?, stats_json = ?, error_msg = ?, log_text = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    str(status),
+                    now,
+                    json.dumps(stats_payload, sort_keys=True),
+                    error_msg,
+                    log_text,
+                    now,
+                    int(run_id),
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"Watchlist run not found: {run_id}")
+
+        triggered_alerts = self._evaluate_alert_rules_for_run(
+            run_id=int(run_id),
+            job_id=int(current.get("job_id") or current.get("source_id")),
+            stats=stats_payload,
+            status=str(status),
+        )
+        if dispatch_notifications:
+            for alert in triggered_alerts:
+                notification = self._dispatch_alert_notification(alert)
+                if notification is not None:
+                    alert["notification_id"] = notification.get("id")
+
+        updated = await self.get_run(run_id)
+        updated["triggered_alerts"] = triggered_alerts
+        return updated
 
     async def list_alert_rules(self, *, job_id: Any = None, source_id: Any = None) -> list[dict[str, Any]]:
         db = self._db()
@@ -415,3 +478,131 @@ class LocalWatchlistsService:
                 f"Expected one of: {', '.join(sorted(_ALERT_CONDITION_TYPES))}"
             )
         return normalized
+
+    def _evaluate_alert_rules_for_run(
+        self,
+        *,
+        run_id: int,
+        job_id: int,
+        stats: Mapping[str, Any],
+        status: str,
+    ) -> list[dict[str, Any]]:
+        db = self._db()
+        self._ensure_alert_rule_schema(db)
+        rules = db.conn.execute(
+            """
+            SELECT * FROM local_watchlist_alert_rules
+            WHERE enabled = 1 AND (job_id = ? OR job_id IS NULL)
+            ORDER BY created_at DESC
+            """,
+            (job_id,),
+        ).fetchall()
+        triggered: list[dict[str, Any]] = []
+        for row in rules:
+            rule = normalize_watchlist_alert_rule("local", self._alert_rule_row_to_dict(row))
+            message = self._alert_message_for_rule(rule, stats=stats, status=status)
+            if message is None:
+                continue
+            rule_id = int(rule["rule_id"])
+            triggered.append(
+                {
+                    "rule_id": rule_id,
+                    "rule_name": rule["name"],
+                    "condition_type": rule["condition_type"],
+                    "severity": rule["severity"],
+                    "message": message,
+                    "notification_payload": {
+                        "kind": "watchlist_alert",
+                        "source_job_id": str(job_id),
+                        "source_domain": "watchlists",
+                        "source_job_type": "watchlist_run",
+                        "link_type": "watchlist_run",
+                        "link_id": str(run_id),
+                        "dedupe_key": f"watchlist-alert:{rule_id}:{run_id}",
+                    },
+                }
+            )
+        return triggered
+
+    def _dispatch_alert_notification(self, alert: Mapping[str, Any]) -> dict[str, Any] | None:
+        dispatcher = self.notification_dispatcher
+        if dispatcher is None:
+            return None
+        return dispatcher.dispatch(
+            app=self.notification_app,
+            category="watchlists",
+            title=f"Alert: {alert['rule_name']}",
+            message=str(alert["message"]),
+            severity=str(alert["severity"]),
+            source_backend="local",
+            source_entity_kind="watchlist_run",
+            source_entity_id=str(alert["notification_payload"]["link_id"]),
+            payload=dict(alert["notification_payload"]),
+        )
+
+    def _alert_message_for_rule(
+        self,
+        rule: Mapping[str, Any],
+        *,
+        stats: Mapping[str, Any],
+        status: str,
+    ) -> str | None:
+        condition_type = rule.get("condition_type")
+        items_found = self._coerce_int(stats.get("items_found"), default=0)
+        items_ingested = self._coerce_int(stats.get("items_ingested"), default=0)
+        error_rate = 1.0 - (items_ingested / items_found) if items_found > 0 else 0.0
+        condition_value = dict(rule.get("condition_value") or {})
+
+        if condition_type == "no_items":
+            if items_ingested == 0:
+                return f"Run produced 0 items (found {items_found})"
+            return None
+        if condition_type == "error_rate_above":
+            threshold = self._coerce_float(condition_value.get("threshold"), default=0.5)
+            if threshold is None:
+                return None
+            if error_rate > threshold:
+                return f"Error rate {error_rate:.0%} exceeds {threshold:.0%} threshold"
+            return None
+        if condition_type == "items_below":
+            threshold = self._coerce_optional_int(condition_value.get("threshold"), default=1)
+            if threshold is None:
+                return None
+            if items_ingested < threshold:
+                return f"Only {items_ingested} items ingested (threshold: {threshold})"
+            return None
+        if condition_type == "items_above":
+            threshold = self._coerce_optional_int(condition_value.get("threshold"), default=1000)
+            if threshold is None:
+                return None
+            if items_ingested > threshold:
+                return f"{items_ingested} items ingested exceeds {threshold} threshold"
+            return None
+        if condition_type == "run_failed":
+            if status == "failed":
+                return f"Run failed: {stats.get('error_msg') or 'unknown error'}"
+            return None
+        return None
+
+    @staticmethod
+    def _coerce_int(value: Any, *, default: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _coerce_optional_int(value: Any, *, default: int) -> int | None:
+        value = default if value is None else value
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _coerce_float(value: Any, *, default: float) -> float | None:
+        value = default if value is None else value
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None

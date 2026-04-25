@@ -31,17 +31,31 @@ class NotificationDispatchService:
     ) -> dict[str, Any]:
         """Write the local inbox row, then attempt transient delivery."""
         self._enforce_dispatch_allowed()
-        row = self.store.insert_notification(
-            category=category,
-            title=title,
-            message=message,
-            severity=severity,
-            source_backend=source_backend,
-            source_entity_kind=source_entity_kind,
-            source_entity_id=source_entity_id,
-            payload=payload,
-        )
-        if app is not None:
+        settings = self._delivery_settings()
+        if not bool(settings.get("enabled", True)):
+            return {
+                "skipped": True,
+                "reason": "notifications_disabled",
+                "persisted": False,
+                "category": category,
+                "title": title,
+                "message": message,
+                "severity": severity,
+            }
+
+        row: dict[str, Any] | None = None
+        if bool(settings.get("persist_enabled", True)):
+            row = self.store.insert_notification(
+                category=category,
+                title=title,
+                message=message,
+                severity=severity,
+                source_backend=source_backend,
+                source_entity_kind=source_entity_kind,
+                source_entity_id=source_entity_id,
+                payload=payload,
+            )
+        if app is not None and bool(settings.get("toast_enabled", True)):
             self._try_transient_delivery(
                 app=app,
                 title=title,
@@ -49,7 +63,35 @@ class NotificationDispatchService:
                 severity=severity,
                 timeout=timeout,
             )
-        return row
+        if row is not None:
+            return row
+        return {
+            "skipped": False,
+            "persisted": False,
+            "category": category,
+            "title": title,
+            "message": message,
+            "severity": severity,
+            "source_backend": source_backend,
+            "source_entity_kind": source_entity_kind,
+            "source_entity_id": source_entity_id,
+            "payload": dict(payload or {}),
+        }
+
+    def _delivery_settings(self) -> dict[str, Any]:
+        get_settings = getattr(self.store, "get_settings", None)
+        if not callable(get_settings):
+            return {
+                "enabled": True,
+                "toast_enabled": True,
+                "persist_enabled": True,
+            }
+        settings = get_settings()
+        return {
+            "enabled": bool(settings.get("enabled", True)),
+            "toast_enabled": bool(settings.get("toast_enabled", True)),
+            "persist_enabled": bool(settings.get("persist_enabled", True)),
+        }
 
     def _enforce_dispatch_allowed(self) -> None:
         if self.policy_enforcer is None:

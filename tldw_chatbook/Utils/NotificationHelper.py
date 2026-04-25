@@ -31,8 +31,9 @@ def show_notification(
     # Map Textual severity to toast severity
     severity_map = {
         "information": "info",
-        "warning": "warning", 
-        "error": "error"
+        "warning": "warning",
+        "error": "error",
+        "critical": "error",
     }
     
     toast_severity = severity_map.get(severity, "info")
@@ -41,7 +42,7 @@ def show_notification(
     if hasattr(app, 'show_toast'):
         # Default timeout if not specified
         if timeout is None:
-            timeout = 5.0 if severity != "error" else None  # Errors stay longer
+            timeout = 5.0 if toast_severity != "error" else None  # Errors stay longer
             
         app.show_toast(
             message=message,

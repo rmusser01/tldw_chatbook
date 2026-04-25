@@ -95,3 +95,74 @@ def test_notification_dispatch_service_hard_stops_denied_ui_policy(tmp_path):
         raise AssertionError("Expected PolicyDeniedError")
 
     assert store.list_notifications(limit=10) == []
+
+
+def test_notification_dispatch_service_respects_local_delivery_settings(tmp_path):
+    store = ClientNotificationsDB(tmp_path / "notifications.db")
+    app = SimpleNamespace(show_toast=Mock(), notify=Mock())
+    service = NotificationDispatchService(store=store)
+
+    store.update_settings(toast_enabled=False)
+    persisted = service.dispatch(
+        app=app,
+        category="watchlists",
+        title="Persist only",
+        message="No toast should be emitted.",
+    )
+
+    assert persisted["title"] == "Persist only"
+    assert len(store.list_notifications(limit=10)) == 1
+    app.show_toast.assert_not_called()
+    app.notify.assert_not_called()
+
+    store.update_settings(toast_enabled=True, persist_enabled=False)
+    transient_only = service.dispatch(
+        app=app,
+        category="watchlists",
+        title="Toast only",
+        message="No durable row should be written.",
+    )
+
+    assert transient_only["persisted"] is False
+    assert transient_only["skipped"] is False
+    assert len(store.list_notifications(limit=10)) == 1
+    app.show_toast.assert_called_once_with(
+        message="Toast only: No durable row should be written.",
+        severity="info",
+        timeout=5.0,
+        persistent=False,
+    )
+
+    store.update_settings(enabled=False)
+    disabled = service.dispatch(
+        app=app,
+        category="watchlists",
+        title="Disabled",
+        message="Nothing should be delivered.",
+    )
+
+    assert disabled["skipped"] is True
+    assert disabled["reason"] == "notifications_disabled"
+    assert len(store.list_notifications(limit=10)) == 1
+    assert app.show_toast.call_count == 1
+
+
+def test_notification_dispatch_service_maps_critical_to_error_toast(tmp_path):
+    store = ClientNotificationsDB(tmp_path / "notifications.db")
+    app = SimpleNamespace(show_toast=Mock(), notify=Mock())
+    service = NotificationDispatchService(store=store)
+
+    service.dispatch(
+        app=app,
+        category="watchlists",
+        title="Critical alert",
+        message="A watchlist failed.",
+        severity="critical",
+    )
+
+    app.show_toast.assert_called_once_with(
+        message="Critical alert: A watchlist failed.",
+        severity="error",
+        timeout=None,
+        persistent=True,
+    )

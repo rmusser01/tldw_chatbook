@@ -1690,6 +1690,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             store=self.client_notifications_db,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self.local_watchlists_service.notification_dispatcher = self.notification_dispatch_service
+        self.local_watchlists_service.notification_app = self
 
     def _resolve_initial_media_runtime_backend(self) -> str:
         """Default media backend to local when no valid runtime value is available."""
