@@ -482,6 +482,30 @@ from .ocr_vlm_schemas import (
     OCRPointsPreloadResponse,
     VLMBackendsResponse,
 )
+from .data_tables_schemas import (
+    ColumnType,
+    DataTableColumn,
+    DataTableColumnHint,
+    DataTableColumnInput,
+    DataTableContentUpdateRequest,
+    DataTableDeleteResponse,
+    DataTableDetailResponse,
+    DataTableExportFormat,
+    DataTableExportResponse,
+    DataTableGenerateRequest,
+    DataTableGenerateResponse,
+    DataTableJobCancelResponse,
+    DataTableJobStatus,
+    DataTableRegenerateRequest,
+    DataTableRow,
+    DataTableRowData,
+    DataTablesListResponse,
+    DataTableSource,
+    DataTableSourceInput,
+    DataTableSummary,
+    DataTableUpdateRequest,
+    SourceType,
+)
 
 __all__ = [
     "TLDWAPIClient",
@@ -620,4 +644,10 @@ __all__ = [
     "WebClipperWorkspacePayload", "WebClipperWorkspacePlacement",
     "TranslateRequest", "TranslateResponse",
     "OCRBackendDiscoveryEntry", "OCRBackendsResponse", "OCRPointsPreloadResponse", "VLMBackendsResponse",
+    "ColumnType", "DataTableColumn", "DataTableColumnHint", "DataTableColumnInput",
+    "DataTableContentUpdateRequest", "DataTableDeleteResponse", "DataTableDetailResponse",
+    "DataTableExportFormat", "DataTableExportResponse", "DataTableGenerateRequest",
+    "DataTableGenerateResponse", "DataTableJobCancelResponse", "DataTableJobStatus",
+    "DataTableRegenerateRequest", "DataTableRow", "DataTableRowData", "DataTablesListResponse",
+    "DataTableSource", "DataTableSourceInput", "DataTableSummary", "DataTableUpdateRequest", "SourceType",
 ]

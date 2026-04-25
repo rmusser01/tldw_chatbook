@@ -44,6 +44,7 @@ from .notes_workspace_schemas import (
     WorkspaceUpdateRequest,
 )
 from .media_reading_schemas import (
+    AsyncMode,
     DocumentAnnotationCreate,
     DocumentAnnotationListResponse,
     DocumentAnnotationResponse,
@@ -55,6 +56,7 @@ from .media_reading_schemas import (
     DocumentInsightsResponse,
     DocumentOutlineResponse,
     DocumentReferencesResponse,
+    ExportMode,
     FileArtifactsPurgeRequest,
     FileCreateRequest,
     IngestionSourceCreateRequest,
@@ -118,6 +120,21 @@ from .ocr_vlm_schemas import (
     OCRBackendsResponse,
     OCRPointsPreloadResponse,
     VLMBackendsResponse,
+)
+from .data_tables_schemas import (
+    DataTableContentUpdateRequest,
+    DataTableDeleteResponse,
+    DataTableDetailResponse,
+    DataTableExportFormat,
+    DataTableExportResponse,
+    DataTableGenerateRequest,
+    DataTableGenerateResponse,
+    DataTableJobCancelResponse,
+    DataTableJobStatus,
+    DataTableRegenerateRequest,
+    DataTablesListResponse,
+    DataTableSummary,
+    DataTableUpdateRequest,
 )
 from .rag_admin_schemas import (
     ChunkingTemplateApplyRequest,
@@ -931,6 +948,157 @@ class TLDWAPIClient:
     async def list_vlm_backends(self) -> VLMBackendsResponse:
         response = await self._request("GET", "/api/v1/vlm/backends")
         return VLMBackendsResponse.model_validate(response)
+
+    async def generate_data_table(
+        self,
+        request_data: DataTableGenerateRequest,
+        *,
+        wait_for_completion: bool = False,
+        wait_timeout_seconds: int = 300,
+    ) -> DataTableGenerateResponse | DataTableDetailResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/data-tables/generate",
+            params={
+                "wait_for_completion": str(wait_for_completion).lower(),
+                "wait_timeout_seconds": wait_timeout_seconds,
+            },
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        if isinstance(response, dict) and "job_id" in response:
+            return DataTableGenerateResponse.model_validate(response)
+        return DataTableDetailResponse.model_validate(response)
+
+    async def list_data_tables(
+        self,
+        *,
+        status_filter: str | None = None,
+        search: str | None = None,
+        workspace_tag: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> DataTablesListResponse:
+        params = {
+            "status": status_filter,
+            "search": search,
+            "workspace_tag": workspace_tag,
+            "limit": limit,
+            "offset": offset,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/data-tables",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return DataTablesListResponse.model_validate(response)
+
+    async def get_data_table(
+        self,
+        table_uuid: str,
+        *,
+        rows_limit: int = 200,
+        rows_offset: int = 0,
+        include_rows: bool = True,
+        include_sources: bool = True,
+    ) -> DataTableDetailResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/data-tables/{table_uuid}",
+            params={
+                "rows_limit": rows_limit,
+                "rows_offset": rows_offset,
+                "include_rows": str(include_rows).lower(),
+                "include_sources": str(include_sources).lower(),
+            },
+        )
+        return DataTableDetailResponse.model_validate(response)
+
+    async def export_data_table(
+        self,
+        table_uuid: str,
+        *,
+        format: DataTableExportFormat,
+        async_mode: AsyncMode = "auto",
+        mode: ExportMode = "url",
+        download: bool = False,
+    ) -> DataTableExportResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/data-tables/{table_uuid}/export",
+            params={
+                "format": format,
+                "async_mode": async_mode,
+                "mode": mode,
+                "download": str(download).lower(),
+            },
+        )
+        return DataTableExportResponse.model_validate(response)
+
+    async def update_data_table_content(
+        self,
+        table_uuid: str,
+        request_data: DataTableContentUpdateRequest,
+    ) -> DataTableDetailResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/data-tables/{table_uuid}/content",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return DataTableDetailResponse.model_validate(response)
+
+    async def update_data_table(
+        self,
+        table_uuid: str,
+        request_data: DataTableUpdateRequest,
+    ) -> DataTableSummary:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/data-tables/{table_uuid}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return DataTableSummary.model_validate(response)
+
+    async def delete_data_table(self, table_uuid: str) -> DataTableDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/data-tables/{table_uuid}")
+        return DataTableDeleteResponse.model_validate(response)
+
+    async def regenerate_data_table(
+        self,
+        table_uuid: str,
+        request_data: DataTableRegenerateRequest,
+        *,
+        wait_for_completion: bool = False,
+        wait_timeout_seconds: int = 300,
+    ) -> DataTableGenerateResponse | DataTableDetailResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/data-tables/{table_uuid}/regenerate",
+            params={
+                "wait_for_completion": str(wait_for_completion).lower(),
+                "wait_timeout_seconds": wait_timeout_seconds,
+            },
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        if isinstance(response, dict) and "job_id" in response:
+            return DataTableGenerateResponse.model_validate(response)
+        return DataTableDetailResponse.model_validate(response)
+
+    async def get_data_table_job(self, job_id: int) -> DataTableJobStatus:
+        response = await self._request("GET", f"/api/v1/data-tables/jobs/{job_id}")
+        return DataTableJobStatus.model_validate(response)
+
+    async def cancel_data_table_job(
+        self,
+        job_id: int,
+        *,
+        reason: str | None = None,
+    ) -> DataTableJobCancelResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/data-tables/jobs/{job_id}",
+            params={key: value for key, value in {"reason": reason}.items() if value is not None},
+        )
+        return DataTableJobCancelResponse.model_validate(response)
 
     async def submit_media_ingest_jobs(
         self,
