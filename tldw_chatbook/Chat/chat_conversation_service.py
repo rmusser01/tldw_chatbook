@@ -248,6 +248,57 @@ class ChatConversationService:
     def normalize_message_row(self, message_row: Mapping[str, Any] | None) -> dict[str, Any] | None:
         return normalize_message_row(message_row)
 
+    def create_conversation(
+        self,
+        *,
+        title: str | None = None,
+        conversation_title: str | None = None,
+        character_id: int | None = None,
+        assistant_kind: str | None = None,
+        assistant_id: str | None = None,
+        persona_memory_mode: str | None = None,
+        runtime_backend: str | None = None,
+        discovery_owner: str | None = None,
+        discovery_entity_id: str | None = None,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
+        state: str | None = None,
+        topic_label: str | None = None,
+        source: str | None = None,
+        external_ref: str | None = None,
+        **extra_fields: Any,
+    ) -> str:
+        resolved_title = derive_conversation_title(
+            assistant_kind=assistant_kind,
+            assistant_name=None,
+            fallback_title=conversation_title or title,
+            character_id=character_id,
+        )
+        conversation_data = {
+            **extra_fields,
+            "title": resolved_title,
+            "character_id": character_id,
+            "assistant_kind": assistant_kind,
+            "assistant_id": assistant_id,
+            "persona_memory_mode": persona_memory_mode,
+            "runtime_backend": runtime_backend,
+            "discovery_owner": discovery_owner,
+            "discovery_entity_id": discovery_entity_id,
+            "scope_type": scope_type,
+            "workspace_id": workspace_id,
+            "state": state,
+            "topic_label": topic_label,
+            "source": source,
+            "external_ref": external_ref,
+        }
+        conversation_id = self.db.add_conversation(conversation_data)
+        if conversation_id is None:
+            raise ValueError("Unable to create chat conversation.")
+        return str(conversation_id)
+
+    def delete_conversation(self, conversation_id: str, *, expected_version: int) -> bool:
+        return bool(self.db.soft_delete_conversation(conversation_id, expected_version))
+
     def _fetch_keywords_for_conversations(self, conversation_ids: list[str]) -> dict[str, list[str]]:
         if not conversation_ids:
             return {}

@@ -8,6 +8,8 @@ import pytest
 
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api.character_persona_schemas import (
+    CharacterChatSessionCreate,
+    CharacterChatSessionUpdate,
     CharacterCreateRequest,
     CharacterExemplarCreate,
     CharacterExemplarSearchRequest,
@@ -24,6 +26,7 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     PersonaSessionRequest,
     PersonaSetupState,
     PersonaVoiceDefaults,
+    ChatSettingsUpdate,
     PresetCreate,
     PresetUpdate,
 )
@@ -250,6 +253,200 @@ class TestCharacterPersonaClient:
             ),
             ("PUT", "/api/v1/chats/presets/custom", {"json_data": {"name": "Updated"}}),
             ("DELETE", "/api/v1/chats/presets/custom", {}),
+        ]
+        assert len(mocked.await_args_list) == len(expected_calls)
+        for call_args, expected in zip(mocked.await_args_list, expected_calls):
+            _assert_request_call(call_args, *expected)
+
+    async def test_character_chat_session_crud_endpoint_wiring(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.create_character_chat_session(
+            CharacterChatSessionCreate(character_id=12, title="Evening Chat"),
+            seed_first_message=True,
+            greeting_strategy="alternate_index",
+            alternate_index=1,
+        )
+        await client.list_character_chat_sessions(
+            character_id=12,
+            character_scope="character",
+            include_deleted=True,
+            deleted_only=True,
+            include_settings=True,
+            include_message_counts=False,
+            limit=7,
+            offset=3,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.get_character_chat_session(
+            "chat-1",
+            include_settings=True,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.update_character_chat_session(
+            "chat-1",
+            CharacterChatSessionUpdate(title="Evening Chat 2", state="Resolved"),
+            expected_version=4,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.delete_character_chat_session(
+            "chat-1",
+            expected_version=5,
+            hard_delete=True,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.restore_character_chat_session(
+            "chat-1",
+            expected_version=6,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+
+        expected_calls = [
+            (
+                "POST",
+                "/api/v1/chats/",
+                {
+                    "json_data": {
+                        "character_id": 12,
+                        "assistant_kind": "character",
+                        "assistant_id": "12",
+                        "title": "Evening Chat",
+                    },
+                    "params": {
+                        "seed_first_message": "true",
+                        "greeting_strategy": "alternate_index",
+                        "alternate_index": 1,
+                    },
+                },
+            ),
+            (
+                "GET",
+                "/api/v1/chats/",
+                {
+                    "params": {
+                        "character_id": 12,
+                        "character_scope": "character",
+                        "include_deleted": "true",
+                        "deleted_only": "true",
+                        "include_settings": "true",
+                        "include_message_counts": "false",
+                        "limit": 7,
+                        "offset": 3,
+                        "scope_type": "workspace",
+                        "workspace_id": "ws-1",
+                    }
+                },
+            ),
+            (
+                "GET",
+                "/api/v1/chats/chat-1",
+                {
+                    "params": {
+                        "include_settings": "true",
+                        "scope_type": "workspace",
+                        "workspace_id": "ws-1",
+                    }
+                },
+            ),
+            (
+                "PUT",
+                "/api/v1/chats/chat-1",
+                {
+                    "json_data": {"title": "Evening Chat 2", "state": "resolved"},
+                    "params": {"expected_version": 4, "scope_type": "workspace", "workspace_id": "ws-1"},
+                },
+            ),
+            (
+                "DELETE",
+                "/api/v1/chats/chat-1",
+                {
+                    "params": {
+                        "expected_version": 5,
+                        "hard_delete": "true",
+                        "scope_type": "workspace",
+                        "workspace_id": "ws-1",
+                    }
+                },
+            ),
+            (
+                "POST",
+                "/api/v1/chats/chat-1/restore",
+                {
+                    "params": {
+                        "expected_version": 6,
+                        "scope_type": "workspace",
+                        "workspace_id": "ws-1",
+                    }
+                },
+            ),
+        ]
+        assert len(mocked.await_args_list) == len(expected_calls)
+        for call_args, expected in zip(mocked.await_args_list, expected_calls):
+            _assert_request_call(call_args, *expected)
+
+    async def test_character_chat_settings_export_and_diagnostics_endpoint_wiring(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.get_chat_settings("chat-1", scope_type="workspace", workspace_id="ws-1")
+        await client.update_chat_settings(
+            "chat-1",
+            ChatSettingsUpdate(settings={"authorNote": "Stay concise."}),
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        await client.export_chat_history(
+            "chat-1",
+            format="markdown",
+            include_metadata=False,
+            include_character=False,
+            page=2,
+            page_size=25,
+        )
+        await client.get_author_note_info("chat-1")
+        await client.export_lorebook_diagnostics("chat-1", page=2, size=10, order="desc")
+
+        expected_calls = [
+            (
+                "GET",
+                "/api/v1/chats/chat-1/settings",
+                {"params": {"scope_type": "workspace", "workspace_id": "ws-1"}},
+            ),
+            (
+                "PUT",
+                "/api/v1/chats/chat-1/settings",
+                {
+                    "json_data": {"settings": {"authorNote": "Stay concise."}},
+                    "params": {"scope_type": "workspace", "workspace_id": "ws-1"},
+                },
+            ),
+            (
+                "GET",
+                "/api/v1/chats/chat-1/export",
+                {
+                    "params": {
+                        "format": "markdown",
+                        "include_metadata": "false",
+                        "include_character": "false",
+                        "page": 2,
+                        "page_size": 25,
+                    }
+                },
+            ),
+            ("GET", "/api/v1/chats/chat-1/author-note/info", {}),
+            (
+                "GET",
+                "/api/v1/chats/chat-1/diagnostics/lorebook",
+                {"params": {"page": 2, "size": 10, "order": "desc"}},
+            ),
         ]
         assert len(mocked.await_args_list) == len(expected_calls)
         for call_args, expected in zip(mocked.await_args_list, expected_calls):

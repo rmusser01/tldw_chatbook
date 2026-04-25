@@ -77,6 +77,11 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_N
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
+from tldw_chatbook.Chat import (
+    ChatConversationScopeService,
+    ChatConversationService,
+    ServerChatConversationService,
+)
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Logging_Config import RichLogHandler
 from tldw_chatbook.Prompt_Management import (
@@ -1384,6 +1389,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self._wire_evaluation_services()
         self._wire_study_services()
         self._wire_character_persona_services()
+        self._wire_chat_conversation_services()
         self._notes_tab_initializer = NotesTabInitializer(self)
 
         # --- Create the master handler map ---
@@ -1440,6 +1446,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.chachanotes_db,
             server_service=self.server_character_persona_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_chat_conversation_services(self) -> None:
+        self.local_chat_conversation_service = (
+            ChatConversationService(self.chachanotes_db)
+            if getattr(self, "chachanotes_db", None) is not None
+            else None
+        )
+        try:
+            self.server_chat_conversation_service = ServerChatConversationService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_chat_conversation_service = ServerChatConversationService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.chat_conversation_scope_service = ChatConversationScopeService(
+            local_service=self.local_chat_conversation_service,
+            server_service=self.server_chat_conversation_service,
             policy_enforcer=self.service_policy_enforcer,
         )
 

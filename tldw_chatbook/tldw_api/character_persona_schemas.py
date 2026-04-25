@@ -20,6 +20,9 @@ PersonaConfirmationMode = Literal["always", "destructive_only", "never"]
 PersonaSetupStatus = Literal["not_started", "in_progress", "completed"]
 PersonaSetupStep = Literal["archetype", "persona", "voice", "commands", "safety", "test"]
 PersonaSetupTestType = Literal["dry_run", "live_session"]
+CharacterChatSessionState = Literal["in-progress", "resolved", "backlog", "non-viable"]
+CharacterAssistantKind = Literal["character", "persona"]
+PersonaMemoryMode = Literal["read_only", "read_write"]
 
 
 def _strip_optional_text(value: Any) -> Any:
@@ -42,6 +45,18 @@ def _parse_jsonish_collection(value: Any, *, field_name: str) -> Any:
         parsed = json.loads(value)
         value = parsed
     return value
+
+
+def _normalize_chat_session_state(value: str | None) -> CharacterChatSessionState | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if not normalized:
+        raise ValueError("state cannot be empty")
+    allowed = {"in-progress", "resolved", "backlog", "non-viable"}
+    if normalized not in allowed:
+        raise ValueError("state must be one of: in-progress, resolved, backlog, non-viable")
+    return normalized  # type: ignore[return-value]
 
 
 class CharacterBase(BaseModel):
@@ -436,6 +451,99 @@ class PersonaSessionDetail(PersonaSessionSummary):
     turns: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class CharacterChatSessionCreate(BaseModel):
+    """Request body for creating a character/persona chat session."""
+
+    character_id: int | None = Field(None, gt=0)
+    assistant_kind: CharacterAssistantKind | None = None
+    assistant_id: str | None = Field(None, min_length=1)
+    persona_memory_mode: PersonaMemoryMode | None = None
+    title: str | None = None
+    parent_conversation_id: str | None = None
+    forked_from_message_id: str | None = None
+    state: CharacterChatSessionState | None = None
+    topic_label: str | None = None
+    cluster_id: str | None = None
+    source: str | None = None
+    external_ref: str | None = None
+    scope_type: Literal["global", "workspace"] | None = None
+    workspace_id: str | None = None
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def _validate_state(cls, value: str | None) -> CharacterChatSessionState | None:
+        return _normalize_chat_session_state(value)
+
+    @field_validator(
+        "assistant_id",
+        "title",
+        "parent_conversation_id",
+        "forked_from_message_id",
+        "topic_label",
+        "cluster_id",
+        "source",
+        "external_ref",
+        "workspace_id",
+        mode="before",
+    )
+    @classmethod
+    def _strip_optional_text_fields(cls, value: Any) -> Any:
+        return _strip_optional_text(value)
+
+    @model_validator(mode="after")
+    def _normalize_assistant_identity(self) -> "CharacterChatSessionCreate":
+        if self.assistant_kind is None:
+            self.assistant_kind = "character" if self.character_id is not None else None
+        if self.assistant_kind is None:
+            raise ValueError("Provide either character_id or assistant_kind + assistant_id.")
+
+        if self.assistant_kind == "character":
+            if self.character_id is None:
+                if not self.assistant_id:
+                    raise ValueError("Character chats require character_id or a numeric assistant_id.")
+                try:
+                    self.character_id = int(self.assistant_id)
+                except ValueError as exc:
+                    raise ValueError("Character assistant_id must be numeric.") from exc
+            self.assistant_id = str(self.character_id)
+            if self.persona_memory_mode is not None:
+                raise ValueError("persona_memory_mode is only valid for persona chats.")
+            return self
+
+        if not self.assistant_id:
+            raise ValueError("Persona chats require assistant_id.")
+        self.character_id = None
+        return self
+
+
+class CharacterChatSessionUpdate(BaseModel):
+    """Request body for updating character/persona chat metadata."""
+
+    title: str | None = None
+    rating: int | None = Field(None, ge=1, le=5)
+    state: CharacterChatSessionState | None = None
+    topic_label: str | None = None
+    cluster_id: str | None = None
+    source: str | None = None
+    external_ref: str | None = None
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def _validate_state(cls, value: str | None) -> CharacterChatSessionState | None:
+        return _normalize_chat_session_state(value)
+
+    @field_validator("title", "topic_label", "cluster_id", "source", "external_ref", mode="before")
+    @classmethod
+    def _strip_optional_text_fields(cls, value: Any) -> Any:
+        return _strip_optional_text(value)
+
+
+class ChatSettingsUpdate(BaseModel):
+    """Request body for replacing or merging server-side character-chat settings."""
+
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
 class PersonaExemplarCreate(BaseModel):
     id: StrictStr | None = Field(default=None, min_length=1, max_length=200)
     kind: PersonaExemplarKind = "style"
@@ -571,6 +679,10 @@ class PresetUpdate(BaseModel):
 
 __all__ = [
     "CharacterBase",
+    "CharacterAssistantKind",
+    "CharacterChatSessionCreate",
+    "CharacterChatSessionState",
+    "CharacterChatSessionUpdate",
     "CharacterCreateRequest",
     "CharacterUpdateRequest",
     "CharacterResponse",
@@ -619,6 +731,7 @@ __all__ = [
     "GreetingListResponse",
     "GreetingSelectRequest",
     "GreetingSelectResponse",
+    "ChatSettingsUpdate",
     "PresetTokenInfo",
     "PresetDetail",
     "PresetListResponse",

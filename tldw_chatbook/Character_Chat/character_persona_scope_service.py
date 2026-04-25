@@ -48,8 +48,8 @@ class CharacterPersonaScopeService:
         return f"character.persona.{action}.{mode}"
 
     @staticmethod
-    def _session_action_id(mode: str) -> str:
-        return f"character.sessions.launch.{mode}"
+    def _session_action_id(mode: str, action: str = "launch") -> str:
+        return f"character.sessions.{action}.{mode}"
 
     async def _invoke_backend_method(
         self,
@@ -255,4 +255,197 @@ class CharacterPersonaScopeService:
             ("delete_chat_preset", "delete_preset"),
             preset_id,
             missing_message=missing_message,
+        )
+
+    async def create_character_chat_session(self, request_data: Any, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._session_action_id(normalized_mode, "create"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character chat session creation is not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide create_character_chat_session()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("create_character_chat_session", "create_chat_session"),
+            request_data,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def list_character_chat_sessions(self, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._session_action_id(normalized_mode, "list"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character chat session listing is not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide list_character_chat_sessions()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("list_character_chat_sessions", "list_chat_sessions"),
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def get_character_chat_session(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._session_action_id(normalized_mode, "detail"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character chat session detail is not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide get_character_chat_session()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("get_character_chat_session", "get_chat_session"),
+            chat_id,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def update_character_chat_session(
+        self,
+        chat_id: str,
+        request_data: Any,
+        mode: str = "local",
+        **kwargs: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._session_action_id(normalized_mode, "update"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character chat session updates are not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide update_character_chat_session()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("update_character_chat_session", "update_chat_session"),
+            chat_id,
+            request_data,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def delete_character_chat_session(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._session_action_id(normalized_mode, "delete"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character chat session deletion is not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide delete_character_chat_session()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("delete_character_chat_session", "delete_chat_session"),
+            chat_id,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def restore_character_chat_session(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._session_action_id(normalized_mode, "restore"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character chat session restore is not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide restore_character_chat_session()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("restore_character_chat_session", "restore_chat_session"),
+            chat_id,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def get_chat_settings(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._session_action_id(normalized_mode, "detail"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character chat settings are not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide get_chat_settings()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("get_chat_settings",),
+            chat_id,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def update_chat_settings(self, chat_id: str, request_data: Any, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._session_action_id(normalized_mode, "update"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character chat settings updates are not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide update_chat_settings()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("update_chat_settings",),
+            chat_id,
+            request_data,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def export_chat_history(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._session_action_id(normalized_mode, "export"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character chat export is not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide export_chat_history()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("export_chat_history", "export_chat_session"),
+            chat_id,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def get_author_note_info(self, chat_id: str, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._session_action_id(normalized_mode, "detail"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character author-note info is not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide get_author_note_info()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("get_author_note_info",),
+            chat_id,
+            missing_message=missing_message,
+        )
+
+    async def export_lorebook_diagnostics(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._session_action_id(normalized_mode, "observe"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character lorebook diagnostics are not available through this scope service yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide export_lorebook_diagnostics()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("export_lorebook_diagnostics",),
+            chat_id,
+            missing_message=missing_message,
+            **kwargs,
         )

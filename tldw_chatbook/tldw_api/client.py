@@ -171,6 +171,8 @@ from .chat_conversation_schemas import (
     normalize_conversation_state,
 )
 from .character_persona_schemas import (
+    CharacterChatSessionCreate,
+    CharacterChatSessionUpdate,
     CharacterCreateRequest,
     CharacterExemplarCreate,
     CharacterExemplarSearchRequest,
@@ -179,6 +181,7 @@ from .character_persona_schemas import (
     CharacterQueryRequest,
     CharacterResponse,
     CharacterUpdateRequest,
+    ChatSettingsUpdate,
     GreetingListResponse,
     GreetingSelectRequest,
     PersonaExemplarResponse,
@@ -330,6 +333,21 @@ class TLDWAPIClient:
             return None
         effective_scope_type = scope_type or ("workspace" if workspace_id else "global")
         return ConversationScopeParams(scope_type=effective_scope_type, workspace_id=workspace_id)
+
+    @staticmethod
+    def _dump_request_payload(
+        request_data: Any,
+        *,
+        exclude_none: bool = True,
+        exclude_unset: bool = False,
+    ) -> Dict[str, Any]:
+        if hasattr(request_data, "model_dump"):
+            return request_data.model_dump(
+                exclude_none=exclude_none,
+                exclude_unset=exclude_unset,
+                mode="json",
+            )
+        return dict(request_data)
 
     async def _request(
         self,
@@ -3065,6 +3083,185 @@ class TLDWAPIClient:
     async def delete_preset(self, preset_id: str) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/chats/presets/{preset_id}")
 
+    async def create_character_chat_session(
+        self,
+        request_data: CharacterChatSessionCreate | Dict[str, Any],
+        seed_first_message: bool = False,
+        greeting_strategy: Literal["default", "alternate_random", "alternate_index"] = "default",
+        alternate_index: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            "seed_first_message": str(seed_first_message).lower(),
+            "greeting_strategy": greeting_strategy,
+        }
+        if alternate_index is not None:
+            params["alternate_index"] = alternate_index
+        return await self._request(
+            "POST",
+            "/api/v1/chats/",
+            json_data=self._dump_request_payload(request_data, exclude_none=True),
+            params=params,
+        )
+
+    async def list_character_chat_sessions(
+        self,
+        character_id: Optional[int] = None,
+        character_scope: Literal["all", "character", "non_character"] = "all",
+        limit: int = 50,
+        offset: int = 0,
+        include_deleted: bool = False,
+        deleted_only: bool = False,
+        include_settings: bool = False,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+        include_message_counts: bool = True,
+    ) -> Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {
+            "character_scope": character_scope,
+            "limit": limit,
+            "offset": offset,
+            "include_deleted": str(include_deleted).lower(),
+            "deleted_only": str(deleted_only).lower(),
+            "include_settings": str(include_settings).lower(),
+            "include_message_counts": str(include_message_counts).lower(),
+        }
+        if character_id is not None:
+            params["character_id"] = character_id
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request("GET", "/api/v1/chats/", params=params)
+
+    async def get_character_chat_session(
+        self,
+        chat_id: str,
+        include_settings: bool = False,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {"include_settings": str(include_settings).lower()}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request("GET", f"/api/v1/chats/{chat_id}", params=params)
+
+    async def update_character_chat_session(
+        self,
+        chat_id: str,
+        request_data: CharacterChatSessionUpdate | Dict[str, Any],
+        expected_version: int,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {"expected_version": expected_version}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request(
+            "PUT",
+            f"/api/v1/chats/{chat_id}",
+            json_data=self._dump_request_payload(request_data, exclude_none=True, exclude_unset=True),
+            params=params,
+        )
+
+    async def delete_character_chat_session(
+        self,
+        chat_id: str,
+        expected_version: Optional[int] = None,
+        hard_delete: bool = False,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {"hard_delete": str(hard_delete).lower()}
+        if expected_version is not None:
+            params["expected_version"] = expected_version
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request("DELETE", f"/api/v1/chats/{chat_id}", params=params)
+
+    async def restore_character_chat_session(
+        self,
+        chat_id: str,
+        expected_version: Optional[int] = None,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {}
+        if expected_version is not None:
+            params["expected_version"] = expected_version
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request("POST", f"/api/v1/chats/{chat_id}/restore", params=params or None)
+
+    async def get_chat_settings(
+        self,
+        chat_id: str,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request("GET", f"/api/v1/chats/{chat_id}/settings", params=params or None)
+
+    async def update_chat_settings(
+        self,
+        chat_id: str,
+        request_data: ChatSettingsUpdate | Dict[str, Any],
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request(
+            "PUT",
+            f"/api/v1/chats/{chat_id}/settings",
+            json_data=self._dump_request_payload(request_data, exclude_none=True),
+            params=params or None,
+        )
+
+    async def export_chat_history(
+        self,
+        chat_id: str,
+        format: Literal["json", "markdown", "text"] = "json",
+        include_metadata: bool = True,
+        include_character: bool = True,
+        page: int = 1,
+        page_size: int = 1000,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/chats/{chat_id}/export",
+            params={
+                "format": format,
+                "include_metadata": str(include_metadata).lower(),
+                "include_character": str(include_character).lower(),
+                "page": page,
+                "page_size": page_size,
+            },
+        )
+
+    async def get_author_note_info(self, chat_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/chats/{chat_id}/author-note/info")
+
+    async def export_lorebook_diagnostics(
+        self,
+        chat_id: str,
+        page: int = 1,
+        size: int = 50,
+        order: Literal["asc", "desc"] = "asc",
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/chats/{chat_id}/diagnostics/lorebook",
+            params={"page": page, "size": size, "order": order},
+        )
+
     async def list_chat_conversations(
         self,
         query: Optional[str] = None,
@@ -3165,6 +3362,32 @@ class TLDWAPIClient:
         if scope_params is not None:
             params.update(scope_params.model_dump(exclude_none=True, mode="json"))
         return await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/tree", params=params)
+
+    async def get_chat_conversation_messages_with_context(
+        self,
+        conversation_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        include_rag_context: bool = True,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "include_rag_context": str(include_rag_context).lower(),
+        }
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        return await self._request(
+            "GET",
+            f"/api/v1/chat/conversations/{conversation_id}/messages-with-context",
+            params=params,
+        )
+
+    async def get_chat_conversation_citations(self, conversation_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/citations")
 
     async def list_prompt_versions(self, prompt_identifier: Union[str, int]) -> Dict[str, Any]:
         return await self._request(

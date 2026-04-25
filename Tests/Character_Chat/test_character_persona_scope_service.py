@@ -24,6 +24,17 @@ class FakeCharacterPersonaClient:
         self.create_preset_calls = []
         self.update_preset_calls = []
         self.delete_preset_calls = []
+        self.create_character_chat_session_calls = []
+        self.list_character_chat_sessions_calls = []
+        self.get_character_chat_session_calls = []
+        self.update_character_chat_session_calls = []
+        self.delete_character_chat_session_calls = []
+        self.restore_character_chat_session_calls = []
+        self.get_chat_settings_calls = []
+        self.update_chat_settings_calls = []
+        self.export_chat_history_calls = []
+        self.get_author_note_info_calls = []
+        self.export_lorebook_diagnostics_calls = []
 
     async def list_characters(self, limit=100, offset=0):
         self.list_characters_calls.append({"limit": limit, "offset": offset})
@@ -136,6 +147,50 @@ class FakeCharacterPersonaClient:
             "status": "deleted",
             "preset_id": preset_id,
         }
+
+    async def create_character_chat_session(self, request_data, **kwargs):
+        self.create_character_chat_session_calls.append({"request_data": request_data, "kwargs": kwargs})
+        return {"id": "chat-1", "title": "New Chat"}
+
+    async def list_character_chat_sessions(self, **kwargs):
+        self.list_character_chat_sessions_calls.append(kwargs)
+        return {"chats": [{"id": "chat-1"}], "total": 1, "limit": kwargs.get("limit"), "offset": kwargs.get("offset")}
+
+    async def get_character_chat_session(self, chat_id, **kwargs):
+        self.get_character_chat_session_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        return {"id": chat_id, "title": "Existing Chat"}
+
+    async def update_character_chat_session(self, chat_id, request_data, **kwargs):
+        self.update_character_chat_session_calls.append({"chat_id": chat_id, "request_data": request_data, "kwargs": kwargs})
+        return {"id": chat_id, "title": "Updated Chat"}
+
+    async def delete_character_chat_session(self, chat_id, **kwargs):
+        self.delete_character_chat_session_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        return {"status": "deleted", "chat_id": chat_id}
+
+    async def restore_character_chat_session(self, chat_id, **kwargs):
+        self.restore_character_chat_session_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        return {"id": chat_id, "deleted": False}
+
+    async def get_chat_settings(self, chat_id, **kwargs):
+        self.get_chat_settings_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        return {"conversation_id": chat_id, "settings": {}}
+
+    async def update_chat_settings(self, chat_id, request_data, **kwargs):
+        self.update_chat_settings_calls.append({"chat_id": chat_id, "request_data": request_data, "kwargs": kwargs})
+        return {"conversation_id": chat_id, "settings": getattr(request_data, "settings", {})}
+
+    async def export_chat_history(self, chat_id, **kwargs):
+        self.export_chat_history_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        return {"chat_id": chat_id, "format": kwargs.get("format", "json")}
+
+    async def get_author_note_info(self, chat_id):
+        self.get_author_note_info_calls.append(chat_id)
+        return {"chat_id": chat_id, "text": "note"}
+
+    async def export_lorebook_diagnostics(self, chat_id, **kwargs):
+        self.export_lorebook_diagnostics_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        return {"chat_id": chat_id, "turns": []}
 
 
 class FakeLocalCharacterBackend:
@@ -325,6 +380,68 @@ async def test_scope_service_routes_chat_execution_support_to_server_backend():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_character_chat_session_admin_to_server_backend():
+    server_service = FakeCharacterPersonaClient()
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterBackend(),
+        server_service=server_service,
+    )
+    request_data = Mock()
+    update_data = Mock()
+    settings_data = Mock(settings={"authorNote": "Stay concise."})
+
+    created = await scope_service.create_character_chat_session(
+        request_data,
+        mode="server",
+        seed_first_message=True,
+        greeting_strategy="alternate_index",
+        alternate_index=1,
+    )
+    listed = await scope_service.list_character_chat_sessions(
+        mode="server",
+        character_id=12,
+        include_settings=True,
+        scope_type="workspace",
+        workspace_id="ws-1",
+    )
+    detail = await scope_service.get_character_chat_session("chat-1", mode="server", include_settings=True)
+    updated = await scope_service.update_character_chat_session(
+        "chat-1",
+        update_data,
+        mode="server",
+        expected_version=4,
+    )
+    deleted = await scope_service.delete_character_chat_session(
+        "chat-1",
+        mode="server",
+        expected_version=5,
+        hard_delete=True,
+    )
+    restored = await scope_service.restore_character_chat_session("chat-1", mode="server", expected_version=6)
+    settings = await scope_service.get_chat_settings("chat-1", mode="server")
+    updated_settings = await scope_service.update_chat_settings("chat-1", settings_data, mode="server")
+    exported = await scope_service.export_chat_history("chat-1", mode="server", format="markdown")
+    author_note = await scope_service.get_author_note_info("chat-1", mode="server")
+    diagnostics = await scope_service.export_lorebook_diagnostics("chat-1", mode="server", order="desc")
+
+    assert created["id"] == "chat-1"
+    assert listed["total"] == 1
+    assert detail["id"] == "chat-1"
+    assert updated["title"] == "Updated Chat"
+    assert deleted["status"] == "deleted"
+    assert restored["deleted"] is False
+    assert settings["conversation_id"] == "chat-1"
+    assert updated_settings["settings"] == {"authorNote": "Stay concise."}
+    assert exported["format"] == "markdown"
+    assert author_note["text"] == "note"
+    assert diagnostics["turns"] == []
+    assert server_service.create_character_chat_session_calls[0]["kwargs"]["seed_first_message"] is True
+    assert server_service.list_character_chat_sessions_calls[0]["scope_type"] == "workspace"
+    assert server_service.update_character_chat_session_calls[0]["kwargs"]["expected_version"] == 4
+    assert server_service.delete_character_chat_session_calls[0]["kwargs"]["hard_delete"] is True
+
+
+@pytest.mark.asyncio
 async def test_scope_service_raises_when_local_backend_lacks_persona_method():
     class LocalBackend:
         def list_characters(self, limit=100, offset=0):
@@ -437,6 +554,43 @@ async def test_server_character_persona_service_delegates_chat_execution_support
 
 
 @pytest.mark.asyncio
+async def test_server_character_persona_service_delegates_character_chat_session_admin_to_client():
+    client = FakeCharacterPersonaClient()
+    service = ServerCharacterPersonaService(client=client)
+    request_data = Mock()
+    update_data = Mock()
+    settings_data = Mock(settings={"authorNote": "Stay concise."})
+
+    created = await service.create_character_chat_session(request_data, seed_first_message=True)
+    listed = await service.list_character_chat_sessions(character_id=12, include_settings=True)
+    detail = await service.get_character_chat_session("chat-1", include_settings=True)
+    updated = await service.update_character_chat_session("chat-1", update_data, expected_version=4)
+    deleted = await service.delete_character_chat_session("chat-1", expected_version=5, hard_delete=True)
+    restored = await service.restore_character_chat_session("chat-1", expected_version=6)
+    settings = await service.get_chat_settings("chat-1")
+    updated_settings = await service.update_chat_settings("chat-1", settings_data)
+    exported = await service.export_chat_history("chat-1", format="markdown")
+    author_note = await service.get_author_note_info("chat-1")
+    diagnostics = await service.export_lorebook_diagnostics("chat-1", order="desc")
+
+    assert created["id"] == "chat-1"
+    assert listed["total"] == 1
+    assert detail["id"] == "chat-1"
+    assert updated["title"] == "Updated Chat"
+    assert deleted["status"] == "deleted"
+    assert restored["deleted"] is False
+    assert settings["conversation_id"] == "chat-1"
+    assert updated_settings["settings"] == {"authorNote": "Stay concise."}
+    assert exported["format"] == "markdown"
+    assert author_note["text"] == "note"
+    assert diagnostics["turns"] == []
+    assert client.create_character_chat_session_calls[0]["kwargs"]["seed_first_message"] is True
+    assert client.list_character_chat_sessions_calls[0]["character_id"] == 12
+    assert client.update_character_chat_session_calls[0]["kwargs"]["expected_version"] == 4
+    assert client.delete_character_chat_session_calls[0]["kwargs"]["hard_delete"] is True
+
+
+@pytest.mark.asyncio
 async def test_server_character_persona_service_enforces_policy_actions():
     client = FakeCharacterPersonaClient()
     policy = Mock()
@@ -455,6 +609,17 @@ async def test_server_character_persona_service_enforces_policy_actions():
     )
     await service.update_chat_preset("custom-alpha", Mock(model_dump=lambda **_: {"name": "Custom Beta"}))
     await service.delete_chat_preset("custom-alpha")
+    await service.create_character_chat_session(Mock())
+    await service.list_character_chat_sessions()
+    await service.get_character_chat_session("chat.server.alice")
+    await service.update_character_chat_session("chat.server.alice", Mock(), expected_version=3)
+    await service.delete_character_chat_session("chat.server.alice", expected_version=4)
+    await service.restore_character_chat_session("chat.server.alice", expected_version=5)
+    await service.get_chat_settings("chat.server.alice")
+    await service.update_chat_settings("chat.server.alice", Mock())
+    await service.export_chat_history("chat.server.alice")
+    await service.get_author_note_info("chat.server.alice")
+    await service.export_lorebook_diagnostics("chat.server.alice")
 
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "character.persona.list.server",
@@ -468,6 +633,17 @@ async def test_server_character_persona_service_enforces_policy_actions():
         "character.persona.create.server",
         "character.persona.update.server",
         "character.persona.delete.server",
+        "character.sessions.create.server",
+        "character.sessions.list.server",
+        "character.sessions.detail.server",
+        "character.sessions.update.server",
+        "character.sessions.delete.server",
+        "character.sessions.restore.server",
+        "character.sessions.detail.server",
+        "character.sessions.update.server",
+        "character.sessions.export.server",
+        "character.sessions.detail.server",
+        "character.sessions.observe.server",
     ]
 
 

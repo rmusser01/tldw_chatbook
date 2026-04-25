@@ -66,8 +66,9 @@ class ServerCharacterPersonaService:
         return f"character.persona.{action}.server"
 
     @staticmethod
-    def _session_action_id() -> str:
-        return "character.sessions.launch.server"
+    @staticmethod
+    def _session_action_id(action: str = "launch") -> str:
+        return f"character.sessions.{action}.server"
 
     async def list_characters(
         self,
@@ -147,3 +148,58 @@ class ServerCharacterPersonaService:
         self._enforce(self._persona_action_id("delete"))
         client = self._require_client()
         return await client.delete_preset(preset_id)
+
+    async def create_character_chat_session(self, request_data: Any, **kwargs: Any) -> Any:
+        self._enforce(self._session_action_id("create"))
+        client = self._require_client()
+        return await client.create_character_chat_session(request_data, **kwargs)
+
+    async def list_character_chat_sessions(self, **kwargs: Any) -> Any:
+        self._enforce(self._session_action_id("list"))
+        client = self._require_client()
+        return await client.list_character_chat_sessions(**kwargs)
+
+    async def get_character_chat_session(self, chat_id: str, **kwargs: Any) -> Any:
+        self._enforce(self._session_action_id("detail"))
+        client = self._require_client()
+        return await client.get_character_chat_session(chat_id, **kwargs)
+
+    async def update_character_chat_session(self, chat_id: str, request_data: Any, **kwargs: Any) -> Any:
+        self._enforce(self._session_action_id("update"))
+        client = self._require_client()
+        return await client.update_character_chat_session(chat_id, request_data, **kwargs)
+
+    async def delete_character_chat_session(self, chat_id: str, **kwargs: Any) -> Any:
+        self._enforce(self._session_action_id("delete"))
+        client = self._require_client()
+        return await client.delete_character_chat_session(chat_id, **kwargs)
+
+    async def restore_character_chat_session(self, chat_id: str, **kwargs: Any) -> Any:
+        self._enforce(self._session_action_id("restore"))
+        client = self._require_client()
+        return await client.restore_character_chat_session(chat_id, **kwargs)
+
+    async def get_chat_settings(self, chat_id: str, **kwargs: Any) -> Any:
+        self._enforce(self._session_action_id("detail"))
+        client = self._require_client()
+        return await client.get_chat_settings(chat_id, **kwargs)
+
+    async def update_chat_settings(self, chat_id: str, request_data: Any, **kwargs: Any) -> Any:
+        self._enforce(self._session_action_id("update"))
+        client = self._require_client()
+        return await client.update_chat_settings(chat_id, request_data, **kwargs)
+
+    async def export_chat_history(self, chat_id: str, **kwargs: Any) -> Any:
+        self._enforce(self._session_action_id("export"))
+        client = self._require_client()
+        return await client.export_chat_history(chat_id, **kwargs)
+
+    async def get_author_note_info(self, chat_id: str) -> Any:
+        self._enforce(self._session_action_id("detail"))
+        client = self._require_client()
+        return await client.get_author_note_info(chat_id)
+
+    async def export_lorebook_diagnostics(self, chat_id: str, **kwargs: Any) -> Any:
+        self._enforce(self._session_action_id("observe"))
+        client = self._require_client()
+        return await client.export_lorebook_diagnostics(chat_id, **kwargs)

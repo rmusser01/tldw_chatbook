@@ -6,9 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from tldw_chatbook.tldw_api.character_persona_schemas import (
+    CharacterChatSessionCreate,
+    CharacterChatSessionUpdate,
     CharacterExemplarCreate,
     CharacterListResponse,
     CharacterResponse,
+    ChatSettingsUpdate,
     PersonaBuddySummary,
     PersonaExemplarCreate,
     PersonaInfo,
@@ -110,6 +113,45 @@ class TestCharacterPersonaSchemas:
 
         assert request.persona_id == "persona-1"
         assert summary.persona_id == "persona-1"
+
+    def test_character_chat_session_create_normalizes_character_identity(self):
+        request = CharacterChatSessionCreate(character_id=12, title="Evening Chat")
+
+        assert request.assistant_kind == "character"
+        assert request.assistant_id == "12"
+        assert request.model_dump(exclude_none=True, mode="json") == {
+            "character_id": 12,
+            "assistant_kind": "character",
+            "assistant_id": "12",
+            "title": "Evening Chat",
+        }
+
+    def test_character_chat_session_create_supports_persona_identity(self):
+        request = CharacterChatSessionCreate(
+            assistant_kind="persona",
+            assistant_id="persona-1",
+            persona_memory_mode="read_write",
+        )
+
+        assert request.character_id is None
+        assert request.assistant_kind == "persona"
+        assert request.assistant_id == "persona-1"
+        assert request.persona_memory_mode == "read_write"
+
+    def test_character_chat_session_create_requires_assistant_identity(self):
+        with pytest.raises(ValidationError, match="Provide either character_id or assistant_kind"):
+            CharacterChatSessionCreate()
+
+    def test_character_chat_session_update_normalizes_state_and_settings_payload(self):
+        update = CharacterChatSessionUpdate(title="Evening Chat 2", state="Resolved")
+        settings = ChatSettingsUpdate(settings={"authorNote": "Stay concise."})
+
+        assert update.state == "resolved"
+        assert update.model_dump(exclude_none=True, mode="json") == {
+            "title": "Evening Chat 2",
+            "state": "resolved",
+        }
+        assert settings.model_dump(mode="json") == {"settings": {"authorNote": "Stay concise."}}
 
     def test_preset_create_requires_section_fields(self):
         with pytest.raises(ValidationError):

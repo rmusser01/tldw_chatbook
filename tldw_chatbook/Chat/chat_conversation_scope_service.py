@@ -1,0 +1,152 @@
+"""Source-aware chat conversation service seam."""
+
+from __future__ import annotations
+
+import inspect
+from typing import Any, Mapping
+
+
+class ChatConversationScopeService:
+    """Route chat conversation operations to local or server backends with policy gates."""
+
+    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
+        self.local_service = local_service
+        self.server_service = server_service
+        self.policy_enforcer = policy_enforcer
+
+    @staticmethod
+    def _normalize_mode(mode: str | None) -> str:
+        normalized = str(mode or "local").strip().lower()
+        if normalized not in {"local", "server"}:
+            raise ValueError("mode must be 'local' or 'server'")
+        return normalized
+
+    @staticmethod
+    def _action_id(action: str, mode: str) -> str:
+        return f"chat.{action}.{mode}"
+
+    def _enforce_policy(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=action_id)
+
+    def _service_for_mode(self, mode: str) -> Any:
+        service = self.server_service if mode == "server" else self.local_service
+        if service is None:
+            raise ValueError(f"Chat conversation {mode} service is unavailable.")
+        return service
+
+    @staticmethod
+    async def _maybe_await(value: Any) -> Any:
+        if inspect.isawaitable(value):
+            return await value
+        return value
+
+    async def list_conversations(self, *, mode: str = "local", **kwargs: Any) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("list", normalized_mode))
+        return await self._maybe_await(self._service_for_mode(normalized_mode).list_conversations(**kwargs))
+
+    async def get_conversation(self, conversation_id: str, *, mode: str = "local", **kwargs: Any) -> dict[str, Any] | None:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("detail", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        if normalized_mode == "server":
+            return await self._maybe_await(service.get_conversation(conversation_id, **kwargs))
+        return await self._maybe_await(service.get_conversation_metadata(conversation_id))
+
+    async def update_conversation(
+        self,
+        conversation_id: str,
+        update_data: Mapping[str, Any],
+        *,
+        mode: str = "local",
+        expected_version: int | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("update", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        payload = dict(update_data)
+        if normalized_mode == "server":
+            return await self._maybe_await(service.update_conversation(conversation_id, payload, **kwargs))
+
+        version = expected_version if expected_version is not None else payload.pop("version", None)
+        if version is None:
+            raise ValueError("expected_version or update_data['version'] is required for local conversation updates.")
+
+        keywords = payload.pop("keywords", None)
+        metadata_updated = True
+        if payload:
+            metadata_updated = bool(
+                await self._maybe_await(
+                    service.update_conversation_metadata(conversation_id, payload, int(version))
+                )
+            )
+        if keywords is not None and metadata_updated:
+            await self._maybe_await(service.replace_conversation_keywords(conversation_id, list(keywords)))
+        return metadata_updated
+
+    async def get_conversation_tree(self, conversation_id: str, *, mode: str = "local", **kwargs: Any) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("detail", normalized_mode))
+        service_kwargs = dict(kwargs)
+        if normalized_mode == "local":
+            if "limit" in service_kwargs and "root_limit" not in service_kwargs:
+                service_kwargs["root_limit"] = service_kwargs.pop("limit")
+            if "offset" in service_kwargs and "root_offset" not in service_kwargs:
+                service_kwargs["root_offset"] = service_kwargs.pop("offset")
+            if "max_depth" in service_kwargs and "depth_cap" not in service_kwargs:
+                service_kwargs["depth_cap"] = service_kwargs.pop("max_depth")
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_conversation_tree(conversation_id, **service_kwargs)
+        )
+
+    async def get_messages_with_context(
+        self,
+        conversation_id: str,
+        *,
+        mode: str = "server",
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("detail", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError(
+                "Local RAG-context conversation adjuncts are not implemented in the local chat database service."
+            )
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_messages_with_context(conversation_id, **kwargs)
+        )
+
+    async def get_citations(self, conversation_id: str, *, mode: str = "server") -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("detail", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError(
+                "Local RAG-context conversation adjuncts are not implemented in the local chat database service."
+            )
+        return await self._maybe_await(self._service_for_mode(normalized_mode).get_citations(conversation_id))
+
+    async def create_conversation(self, *, mode: str = "local", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("create", normalized_mode))
+        return await self._maybe_await(self._service_for_mode(normalized_mode).create_conversation(**kwargs))
+
+    async def delete_conversation(
+        self,
+        conversation_id: str,
+        *,
+        expected_version: int,
+        mode: str = "local",
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("delete", normalized_mode))
+        return bool(
+            await self._maybe_await(
+                self._service_for_mode(normalized_mode).delete_conversation(
+                    conversation_id,
+                    expected_version=expected_version,
+                )
+            )
+        )

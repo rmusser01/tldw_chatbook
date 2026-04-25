@@ -1,0 +1,113 @@
+"""Server-backed chat conversation metadata and history service."""
+
+from __future__ import annotations
+
+from typing import Any, Mapping, Optional
+
+from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_from_config
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+from tldw_chatbook.tldw_api import ConversationUpdateRequest, TLDWAPIClient
+
+
+class ServerChatConversationService:
+    """Policy-gated wrapper around tldw_server chat conversation endpoints."""
+
+    def __init__(
+        self,
+        client: Optional[TLDWAPIClient],
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> None:
+        self.client = client
+        self.policy_enforcer = policy_enforcer
+
+    @classmethod
+    def from_config(
+        cls,
+        app_config: Mapping[str, Any] | None,
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerChatConversationService":
+        return cls(
+            client=build_runtime_api_client_from_config(app_config),
+            policy_enforcer=policy_enforcer,
+        )
+
+    def _require_client(self) -> TLDWAPIClient:
+        if self.client is None:
+            raise ValueError("TLDW API client is required for server chat conversation operations.")
+        return self.client
+
+    def _enforce(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
+        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        if callable(require_allowed):
+            require_allowed(action_id=action_id)
+            return
+        if callable(require_ui_action_allowed):
+            decision = require_ui_action_allowed(action_id=action_id)
+            if decision is not None and getattr(decision, "allowed", True) is False:
+                raise PolicyDeniedError(
+                    action_id=action_id,
+                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    user_message=getattr(decision, "user_message", None) or "Server chat action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None) or "server",
+                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                )
+
+    @staticmethod
+    def _action_id(action: str) -> str:
+        return f"chat.{action}.server"
+
+    @staticmethod
+    def _update_request(update_data: ConversationUpdateRequest | Mapping[str, Any]) -> ConversationUpdateRequest:
+        if isinstance(update_data, ConversationUpdateRequest):
+            return update_data
+        return ConversationUpdateRequest(**dict(update_data))
+
+    async def list_conversations(self, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._action_id("list"))
+        return await self._require_client().list_chat_conversations(**kwargs)
+
+    async def get_conversation(self, conversation_id: str, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._action_id("detail"))
+        return await self._require_client().get_chat_conversation(conversation_id, **kwargs)
+
+    async def update_conversation(
+        self,
+        conversation_id: str,
+        update_data: ConversationUpdateRequest | Mapping[str, Any],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        self._enforce(self._action_id("update"))
+        return await self._require_client().update_chat_conversation(
+            conversation_id,
+            self._update_request(update_data),
+            **kwargs,
+        )
+
+    async def get_conversation_tree(self, conversation_id: str, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._action_id("detail"))
+        return await self._require_client().get_chat_conversation_tree(conversation_id, **kwargs)
+
+    async def get_messages_with_context(self, conversation_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("detail"))
+        return await self._require_client().get_chat_conversation_messages_with_context(conversation_id, **kwargs)
+
+    async def get_citations(self, conversation_id: str) -> dict[str, Any]:
+        self._enforce(self._action_id("detail"))
+        return await self._require_client().get_chat_conversation_citations(conversation_id)
+
+    async def create_conversation(self, **_kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._action_id("create"))
+        raise NotImplementedError(
+            "tldw_server does not expose first-class conversation create outside chat launch/persist flows."
+        )
+
+    async def delete_conversation(self, conversation_id: str, *, expected_version: int) -> bool:
+        self._enforce(self._action_id("delete"))
+        raise NotImplementedError(
+            "tldw_server does not expose conversation delete through the chat conversation contract."
+        )

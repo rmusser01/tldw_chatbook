@@ -8,6 +8,10 @@ from textual.app import App
 from unittest.mock import MagicMock, patch
 
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Chat import (
+    ChatConversationScopeService,
+    ServerChatConversationService,
+)
 from tldw_chatbook.Media import (
     LocalMediaReadingService,
     MediaReadingScopeService,
@@ -102,6 +106,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.server_research_search_service, ServerResearchSearchService)
     assert isinstance(app.server_sharing_service, ServerSharingService)
     assert isinstance(app.server_web_clipper_service, ServerWebClipperService)
+    assert isinstance(app.server_chat_conversation_service, ServerChatConversationService)
+    assert isinstance(app.chat_conversation_scope_service, ChatConversationScopeService)
     assert isinstance(app.local_prompt_service, LocalPromptService)
     assert isinstance(app.server_prompt_service, ServerPromptService)
     assert isinstance(app.local_chatbook_service, LocalChatbookService)

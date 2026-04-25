@@ -38,8 +38,8 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "characters_personas_ccp": {
         "expected_domain_ids": {"characters"},
         "expected_action_kinds_by_source": {
-            "local": FULL_CRUD_AND_LAUNCH,
-            "server": FULL_CRUD_AND_LAUNCH,
+            "local": FULL_CRUD_AND_LAUNCH_AND_OBSERVE,
+            "server": FULL_CRUD_AND_LAUNCH_AND_OBSERVE,
         },
     },
     "notes_workspaces": {
@@ -213,8 +213,24 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         character.persona.list.server
         character.persona.update.local
         character.persona.update.server
+        character.sessions.create.local
+        character.sessions.create.server
+        character.sessions.delete.local
+        character.sessions.delete.server
+        character.sessions.detail.local
+        character.sessions.detail.server
+        character.sessions.export.local
+        character.sessions.export.server
         character.sessions.launch.local
         character.sessions.launch.server
+        character.sessions.list.local
+        character.sessions.list.server
+        character.sessions.observe.local
+        character.sessions.observe.server
+        character.sessions.restore.local
+        character.sessions.restore.server
+        character.sessions.update.local
+        character.sessions.update.server
     """),
     "chat": _action_ids("""
         chat.create.local

@@ -134,6 +134,49 @@ class TestChatConversationClient:
             },
         )
 
+    async def test_get_chat_conversation_messages_with_context_forwards_scope_and_context_flag(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value=[])
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.get_chat_conversation_messages_with_context(
+            "conv-1",
+            limit=20,
+            offset=10,
+            include_rag_context=False,
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+
+        _assert_request_call(
+            mocked.await_args,
+            "GET",
+            "/api/v1/chat/conversations/conv-1/messages-with-context",
+            {
+                "params": {
+                    "limit": 20,
+                    "offset": 10,
+                    "include_rag_context": "false",
+                    "scope_type": "workspace",
+                    "workspace_id": "ws-1",
+                }
+            },
+        )
+
+    async def test_get_chat_conversation_citations_forwards_endpoint(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"conversation_id": "conv-1", "citations": [], "total_count": 0})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.get_chat_conversation_citations("conv-1")
+
+        _assert_request_call(
+            mocked.await_args,
+            "GET",
+            "/api/v1/chat/conversations/conv-1/citations",
+            {},
+        )
+
     @pytest.mark.parametrize(
         "method_name, call_args, call_kwargs",
         [
@@ -141,6 +184,7 @@ class TestChatConversationClient:
             ("get_chat_conversation", ("conv-1",), {"scope_type": "workspace"}),
             ("update_chat_conversation", ("conv-1", ConversationUpdateRequest(version=1)), {"scope_type": "workspace"}),
             ("get_chat_conversation_tree", ("conv-1",), {"scope_type": "workspace"}),
+            ("get_chat_conversation_messages_with_context", ("conv-1",), {"scope_type": "workspace"}),
         ],
     )
     async def test_workspace_scope_requires_workspace_id_before_request_dispatch(
