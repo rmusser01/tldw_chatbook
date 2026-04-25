@@ -18,14 +18,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
     {
-        "operation_id": "rag.collections.create.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "server_contract_missing",
-        "user_message": "The current server embedding admin contract lists, inspects, deletes, and reprocesses collections, but does not expose direct collection creation.",
-        "affected_action_ids": ["rag.admin.configure.server", "rag.admin.launch.server"],
-    },
-    {
         "operation_id": "rag.collections.export.server",
         "source": "server",
         "supported": False,
@@ -248,6 +240,31 @@ class RAGAdminScopeService:
         service = self._service_for_mode(normalized_mode)
         detail = await self._maybe_await(service.get_collection_detail(collection_name))
         return normalize_collection_record(normalized_mode.value, detail)
+
+    async def create_collection(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        name: str,
+        metadata: dict[str, Any] | None = None,
+        embedding_model: str | None = None,
+        provider: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._admin_action_id(normalized_mode, "configure"))
+        service = self._service_for_mode(normalized_mode)
+        method = getattr(service, "create_collection", None)
+        if not callable(method):
+            raise ValueError(f"{normalized_mode.value.title()} collection creation is not available yet.")
+        record = await self._maybe_await(
+            method(
+                name=name,
+                metadata=metadata,
+                embedding_model=embedding_model,
+                provider=provider,
+            )
+        )
+        return normalize_collection_record(normalized_mode.value, record)
 
     async def export_collection(
         self,

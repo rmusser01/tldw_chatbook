@@ -10,6 +10,7 @@ from tldw_chatbook.tldw_api import (
     ChunkingTemplateListResponse,
     ChunkingTemplateResponse,
     ChunkingTemplateUpdateRequest,
+    EmbeddingCollectionCreateRequest,
     EmbeddingCollectionResponse,
     EmbeddingCollectionStatsResponse,
     TLDWAPIClient,
@@ -180,6 +181,13 @@ async def test_embedding_collection_routes_wire_and_stats_are_typed(monkeypatch)
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
+            {
+                "name": "new_collection",
+                "metadata": {
+                    "provider": "openai",
+                    "embedding_model": "text-embedding-3-small",
+                },
+            },
             [
                 {
                     "name": "demo_collection",
@@ -197,20 +205,37 @@ async def test_embedding_collection_routes_wire_and_stats_are_typed(monkeypatch)
     )
     monkeypatch.setattr(client, "_request", mocked)
 
+    created = await client.create_embedding_collection(
+        EmbeddingCollectionCreateRequest(
+            name="new_collection",
+            metadata={"purpose": "tests"},
+            embedding_model="text-embedding-3-small",
+            provider="openai",
+        )
+    )
     collections = await client.list_embedding_collections()
     stats = await client.get_embedding_collection_stats("demo_collection")
     await client.delete_embedding_collection("demo_collection")
 
-    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/embeddings/collections")
-    assert mocked.await_args_list[1].args[:2] == (
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/embeddings/collections")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "name": "new_collection",
+        "metadata": {"purpose": "tests"},
+        "embedding_model": "text-embedding-3-small",
+        "provider": "openai",
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/embeddings/collections")
+    assert mocked.await_args_list[2].args[:2] == (
         "GET",
         "/api/v1/embeddings/collections/demo_collection/stats",
     )
-    assert mocked.await_args_list[2].args[:2] == (
+    assert mocked.await_args_list[3].args[:2] == (
         "DELETE",
         "/api/v1/embeddings/collections/demo_collection",
     )
 
+    assert isinstance(created, EmbeddingCollectionResponse)
+    assert created.name == "new_collection"
     assert isinstance(collections, list)
     assert isinstance(collections[0], EmbeddingCollectionResponse)
     assert isinstance(stats, EmbeddingCollectionStatsResponse)

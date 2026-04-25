@@ -11,6 +11,7 @@ from ..tldw_api import (
     ChunkingTemplateApplyRequest,
     ChunkingTemplateCreateRequest,
     ChunkingTemplateUpdateRequest,
+    EmbeddingCollectionCreateRequest,
     ReprocessMediaRequest,
     TLDWAPIClient,
 )
@@ -166,6 +167,23 @@ class ServerRAGAdminService:
     async def list_collections(self) -> list[dict[str, Any]]:
         self._enforce(self._admin_action_id("list"))
         return self._dump_model(await self._require_client().list_embedding_collections())
+
+    async def create_collection(
+        self,
+        *,
+        name: str,
+        metadata: Mapping[str, Any] | None = None,
+        embedding_model: str | None = None,
+        provider: str | None = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._admin_action_id("configure"))
+        request = EmbeddingCollectionCreateRequest(
+            name=name,
+            metadata=dict(metadata) if metadata is not None else None,
+            embedding_model=embedding_model,
+            provider=provider,
+        )
+        return self._dump_model(await self._require_client().create_embedding_collection(request))
 
     async def get_collection_detail(self, collection_name: str) -> dict[str, Any]:
         self._enforce(self._admin_action_id("observe"))

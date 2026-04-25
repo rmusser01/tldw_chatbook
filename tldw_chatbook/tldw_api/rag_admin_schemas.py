@@ -98,6 +98,13 @@ class EmbeddingCollectionResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class EmbeddingCollectionCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    metadata: Optional[dict[str, Any]] = None
+    embedding_model: Optional[str] = None
+    provider: Optional[str] = None
+
+
 EmbeddingCollectionListResponse = list[EmbeddingCollectionResponse]
 
 

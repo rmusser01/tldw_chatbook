@@ -116,6 +116,7 @@ from .rag_admin_schemas import (
     ChunkingTemplateListResponse,
     ChunkingTemplateResponse,
     ChunkingTemplateUpdateRequest,
+    EmbeddingCollectionCreateRequest,
     EmbeddingCollectionListResponse,
     EmbeddingCollectionResponse,
     EmbeddingCollectionStatsResponse,
@@ -2272,6 +2273,17 @@ class TLDWAPIClient:
     async def list_embedding_collections(self) -> EmbeddingCollectionListResponse:
         response = await self._request("GET", "/api/v1/embeddings/collections")
         return [EmbeddingCollectionResponse.model_validate(item) for item in response]
+
+    async def create_embedding_collection(
+        self,
+        request_data: EmbeddingCollectionCreateRequest,
+    ) -> EmbeddingCollectionResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/embeddings/collections",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return EmbeddingCollectionResponse.model_validate(response)
 
     async def delete_embedding_collection(self, collection_name: str) -> None:
         await self._request("DELETE", f"/api/v1/embeddings/collections/{collection_name}")

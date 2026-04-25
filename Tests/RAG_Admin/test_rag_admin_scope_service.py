@@ -45,6 +45,17 @@ class FakeServerService:
         self.calls.append(("get_collection_detail", collection_name))
         return dict(self.collection_detail[collection_name])
 
+    async def create_collection(self, **kwargs):
+        self.calls.append(("create_collection", kwargs))
+        return {
+            "name": kwargs["name"],
+            "metadata": {
+                "provider": kwargs.get("provider"),
+                "embedding_model": kwargs.get("embedding_model"),
+                **dict(kwargs.get("metadata") or {}),
+            },
+        }
+
     async def reprocess_media(self, media_id, **options):
         self.calls.append(("reprocess_media", media_id, options))
         return {"backend": "server", "media_id": media_id, "status": "queued", "options": options}
@@ -151,6 +162,41 @@ async def test_scope_service_uses_stats_endpoint_for_server_collection_detail():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_server_collection_create_as_rag_admin_configure():
+    server = FakeServerService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = RAGAdminScopeService(
+        local_service=FakeLocalService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    created = await scope.create_collection(
+        mode="server",
+        name="new_collection",
+        metadata={"purpose": "tests"},
+        embedding_model="text-embedding-3-small",
+        provider="openai",
+    )
+
+    assert created["backend"] == "server"
+    assert created["name"] == "new_collection"
+    assert created["metadata"]["purpose"] == "tests"
+    assert server.calls == [
+        (
+            "create_collection",
+            {
+                "name": "new_collection",
+                "metadata": {"purpose": "tests"},
+                "embedding_model": "text-embedding-3-small",
+                "provider": "openai",
+            },
+        )
+    ]
+    assert policy_enforcer.calls == ["rag.admin.configure.server"]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_reprocess_media_as_rag_admin_launch():
     local = FakeLocalService()
     server = FakeServerService()
@@ -215,14 +261,6 @@ def test_scope_service_reports_known_rag_admin_capability_gaps():
 
     assert local_report == []
     assert server_report == [
-        {
-            "operation_id": "rag.collections.create.server",
-            "source": "server",
-            "supported": False,
-            "reason_code": "server_contract_missing",
-            "user_message": "The current server embedding admin contract lists, inspects, deletes, and reprocesses collections, but does not expose direct collection creation.",
-            "affected_action_ids": ["rag.admin.configure.server", "rag.admin.launch.server"],
-        },
         {
             "operation_id": "rag.collections.export.server",
             "source": "server",

@@ -10,6 +10,7 @@ from tldw_chatbook.tldw_api import (
     ChunkingTemplateListResponse,
     ChunkingTemplateResponse,
     ChunkingTemplateUpdateRequest,
+    EmbeddingCollectionCreateRequest,
     EmbeddingCollectionResponse,
     EmbeddingCollectionStatsResponse,
     ReprocessMediaRequest,
@@ -93,6 +94,17 @@ class FakeClient:
         self.calls.append(("list_embedding_collections",))
         return [EmbeddingCollectionResponse(name="demo_collection", metadata={"provider": "openai"})]
 
+    async def create_embedding_collection(self, request_data):
+        self.calls.append(("create_embedding_collection", request_data))
+        return EmbeddingCollectionResponse(
+            name=request_data.name,
+            metadata={
+                "provider": request_data.provider,
+                "embedding_model": request_data.embedding_model,
+                **dict(request_data.metadata or {}),
+            },
+        )
+
     async def get_embedding_collection_stats(self, collection_name):
         self.calls.append(("get_embedding_collection_stats", collection_name))
         return EmbeddingCollectionStatsResponse(
@@ -139,6 +151,12 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     )
     diagnostics = await service.get_template_diagnostics()
     collections = await service.list_collections()
+    collection = await service.create_collection(
+        name="new_collection",
+        metadata={"purpose": "tests"},
+        embedding_model="text-embedding-3-small",
+        provider="openai",
+    )
     stats = await service.get_collection_detail("demo_collection")
     await service.delete_collection("demo_collection")
     reprocessed = await service.reprocess_media(
@@ -159,19 +177,24 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     assert client.calls[2][1] == "created"
     assert client.calls[3] == ("get_chunking_template_diagnostics",)
     assert client.calls[4] == ("list_embedding_collections",)
-    assert client.calls[5] == ("get_embedding_collection_stats", "demo_collection")
-    assert client.calls[6] == ("delete_embedding_collection", "demo_collection")
-    assert client.calls[7][0] == "reprocess_media"
-    assert client.calls[7][1] == 7
-    assert isinstance(client.calls[7][2], ReprocessMediaRequest)
-    assert client.calls[7][2].generate_embeddings is True
-    assert client.calls[7][2].chunking_template_name == "server-demo"
+    assert client.calls[5][0] == "create_embedding_collection"
+    assert isinstance(client.calls[5][1], EmbeddingCollectionCreateRequest)
+    assert client.calls[5][1].name == "new_collection"
+    assert client.calls[6] == ("get_embedding_collection_stats", "demo_collection")
+    assert client.calls[7] == ("delete_embedding_collection", "demo_collection")
+    assert client.calls[8][0] == "reprocess_media"
+    assert client.calls[8][1] == 7
+    assert isinstance(client.calls[8][2], ReprocessMediaRequest)
+    assert client.calls[8][2].generate_embeddings is True
+    assert client.calls[8][2].chunking_template_name == "server-demo"
 
     assert listed[0]["name"] == "server-demo"
     assert created["name"] == "created"
     assert updated["description"] == "Updated template"
     assert diagnostics["capability"] == "native"
     assert collections[0]["name"] == "demo_collection"
+    assert collection["name"] == "new_collection"
+    assert collection["metadata"]["purpose"] == "tests"
     assert stats["count"] == 3
     assert reprocessed["status"] == "queued"
     assert reprocessed["job_id"] == "job-7"
