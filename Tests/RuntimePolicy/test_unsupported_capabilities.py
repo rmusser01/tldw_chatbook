@@ -17,6 +17,7 @@ from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.Notifications.notifications_scope_service import NotificationsScopeService
 from tldw_chatbook.Outputs_Interop.outputs_scope_service import OutputsScopeService
 from tldw_chatbook.Prompt_Management.prompt_chatbook_scope_service import PromptChatbookScopeService
+from tldw_chatbook.Prompt_Studio_Interop.prompt_studio_scope_service import PromptStudioScopeService
 from tldw_chatbook.RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
 from tldw_chatbook.Research_Interop.research_scope_service import ResearchScopeService
 from tldw_chatbook.Research_Interop.research_search_scope_service import ResearchSearchScopeService
@@ -135,6 +136,7 @@ def test_collect_unsupported_capability_reports_labels_each_report_scope():
         (FeedbackScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (ClaimsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (MeetingsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (PromptStudioScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (NotificationsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (ServerRuntimeScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (LLMProviderCatalogScopeService(local_service=None, server_service=None), [{"mode": "local"}, {"mode": "server"}]),

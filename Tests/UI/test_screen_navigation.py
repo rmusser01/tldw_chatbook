@@ -40,6 +40,7 @@ from tldw_chatbook.Prompt_Management import (
     PromptChatbookScopeService,
     ServerPromptService,
 )
+from tldw_chatbook.Prompt_Studio_Interop import PromptStudioScopeService, ServerPromptStudioService
 from tldw_chatbook.Research_Interop import (
     LocalResearchSearchService,
     LocalResearchService,
@@ -144,6 +145,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.claims_scope_service, ClaimsScopeService)
     assert isinstance(app.server_meetings_service, ServerMeetingsService)
     assert isinstance(app.meetings_scope_service, MeetingsScopeService)
+    assert isinstance(app.server_prompt_studio_service, ServerPromptStudioService)
+    assert isinstance(app.prompt_studio_scope_service, PromptStudioScopeService)
     assert isinstance(app.server_collections_feeds_service, ServerCollectionsFeedsService)
     assert isinstance(app.collections_feeds_scope_service, CollectionsFeedsScopeService)
     assert isinstance(app.server_connectors_service, ServerConnectorsService)

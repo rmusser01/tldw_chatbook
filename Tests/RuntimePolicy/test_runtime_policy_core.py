@@ -155,6 +155,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": _action_kinds("browse", "detail", "create", "update", "launch", "observe"),
         },
     },
+    "prompt_studio": {
+        "expected_domain_ids": {"prompt_studio"},
+        "expected_action_kinds_by_source": {
+            "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
+        },
+    },
     "client_notifications": {
         "expected_domain_ids": {"notifications"},
         "expected_action_kinds_by_source": {
@@ -508,6 +514,48 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         meetings.templates.create.server
         meetings.templates.detail.server
         meetings.templates.list.server
+    """),
+    "prompt_studio": _action_ids("""
+        prompt_studio.events.observe.server
+        prompt_studio.evaluations.create.server
+        prompt_studio.evaluations.delete.server
+        prompt_studio.evaluations.detail.server
+        prompt_studio.evaluations.list.server
+        prompt_studio.optimization_iterations.create.server
+        prompt_studio.optimization_iterations.list.server
+        prompt_studio.optimization_strategies.launch.server
+        prompt_studio.optimization_strategies.list.server
+        prompt_studio.optimizations.cancel.server
+        prompt_studio.optimizations.create.server
+        prompt_studio.optimizations.detail.server
+        prompt_studio.optimizations.launch.server
+        prompt_studio.optimizations.list.server
+        prompt_studio.project_stats.detail.server
+        prompt_studio.projects.archive.server
+        prompt_studio.projects.create.server
+        prompt_studio.projects.delete.server
+        prompt_studio.projects.detail.server
+        prompt_studio.projects.list.server
+        prompt_studio.projects.restore.server
+        prompt_studio.projects.update.server
+        prompt_studio.prompt_versions.list.server
+        prompt_studio.prompts.create.server
+        prompt_studio.prompts.detail.server
+        prompt_studio.prompts.launch.server
+        prompt_studio.prompts.list.server
+        prompt_studio.prompts.preview.server
+        prompt_studio.prompts.process.server
+        prompt_studio.prompts.restore.server
+        prompt_studio.prompts.update.server
+        prompt_studio.status.detail.server
+        prompt_studio.test_cases.create.server
+        prompt_studio.test_cases.delete.server
+        prompt_studio.test_cases.detail.server
+        prompt_studio.test_cases.export.server
+        prompt_studio.test_cases.import.server
+        prompt_studio.test_cases.launch.server
+        prompt_studio.test_cases.list.server
+        prompt_studio.test_cases.update.server
     """),
     "server_skills": _action_ids("""
         skills.context.list.server
