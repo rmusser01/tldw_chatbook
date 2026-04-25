@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
+from tldw_chatbook.tldw_api.media_reading_schemas import ReadingExportResponse
 from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
     ChatbookContinueExportRequest,
     ChatbookExportRequest,
@@ -127,3 +128,23 @@ class TestPromptChatbookClient:
         assert calls[3].args[:2] == ("DELETE", "/api/v1/chatbooks/import/jobs/import-job-1")
         assert calls[4].args[:2] == ("DELETE", "/api/v1/chatbooks/export/jobs/export-job-2/remove")
         assert calls[5].args[:2] == ("DELETE", "/api/v1/chatbooks/import/jobs/import-job-2/remove")
+
+    async def test_download_chatbook_export_uses_binary_download_endpoint(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(
+            return_value=ReadingExportResponse(
+                content=b"chatbook-bytes",
+                content_type="application/zip",
+                content_disposition="attachment; filename=pack.chatbook.zip",
+                filename="pack.chatbook.zip",
+            )
+        )
+        monkeypatch.setattr(client, "_binary_request", mocked)
+
+        downloaded = await client.download_chatbook_export("export-job-1", token="signed", exp=12345)
+
+        mocked.assert_awaited_once()
+        assert mocked.await_args.args[:2] == ("GET", "/api/v1/chatbooks/download/export-job-1")
+        assert mocked.await_args.kwargs["params"] == {"token": "signed", "exp": 12345}
+        assert downloaded.content == b"chatbook-bytes"
+        assert downloaded.filename == "pack.chatbook.zip"

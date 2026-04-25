@@ -8,7 +8,13 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import ChatbookContinueExportRequest, ChatbookExportRequest, ChatbookImportRequest, TLDWAPIClient
+from ..tldw_api import (
+    ChatbookContinueExportRequest,
+    ChatbookExportRequest,
+    ChatbookImportRequest,
+    ReadingExportResponse,
+    TLDWAPIClient,
+)
 from .chatbook_models import ChatbookManifest, ContentType
 
 
@@ -349,6 +355,32 @@ class ServerChatbookService:
         self._enforce(self._action_id("detail"))
         client = self._require_client()
         return await client.get_chatbook_export_job(job_id)
+
+    @staticmethod
+    def _download_response_to_record(job_id: str, response: ReadingExportResponse | Mapping[str, Any]) -> Dict[str, Any]:
+        if isinstance(response, Mapping):
+            payload = dict(response)
+        else:
+            payload = {
+                "content": response.content,
+                "content_type": response.content_type,
+                "content_disposition": response.content_disposition,
+                "filename": response.filename,
+            }
+        payload.setdefault("job_id", job_id)
+        return payload
+
+    async def download_export(
+        self,
+        job_id: str,
+        *,
+        token: str | None = None,
+        exp: int | str | None = None,
+    ) -> Dict[str, Any]:
+        self._enforce(self._action_id("export"))
+        client = self._require_client()
+        response = await client.download_chatbook_export(job_id, token=token, exp=exp)
+        return self._download_response_to_record(job_id, response)
 
     async def continue_export(self, job_id: str) -> Dict[str, Any]:
         return await self.get_export_job(job_id)

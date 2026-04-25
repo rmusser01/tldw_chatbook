@@ -427,6 +427,25 @@ class PromptChatbookScopeService:
         )
         return normalize_chatbook_result(normalized_mode.value, "chatbook_job", result)
 
+    async def download_export(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        job_id: str,
+        token: str | None = None,
+        exp: int | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("chatbooks", "export", normalized_mode))
+        result = await self._call_service(
+            self._service_for_mode("chatbooks", normalized_mode),
+            "download_export",
+            job_id,
+            token=token,
+            exp=exp,
+        )
+        return normalize_chatbook_result(normalized_mode.value, "chatbook_export", result)
+
     async def get_import_job(
         self,
         *,

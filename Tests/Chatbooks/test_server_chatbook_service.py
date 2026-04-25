@@ -17,6 +17,7 @@ from tldw_chatbook.Chatbooks.server_chatbook_service import (
     record_server_job,
 )
 from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
+from tldw_chatbook.tldw_api import ReadingExportResponse
 
 
 def test_service_rejects_server_unsupported_import_content_types():
@@ -86,6 +87,15 @@ async def test_service_delegates_chatbook_api_calls():
         async def get_chatbook_export_job(self, job_id: str):
             return {"job_id": job_id, "status": "completed", "progress_percentage": 100}
 
+        async def download_chatbook_export(self, job_id: str, *, token=None, exp=None):
+            self.download_args = (job_id, token, exp)
+            return ReadingExportResponse(
+                content=b"chatbook-bytes",
+                content_type="application/zip",
+                content_disposition="attachment; filename=pack.chatbook.zip",
+                filename="pack.chatbook.zip",
+            )
+
         async def get_chatbook_import_job(self, job_id: str):
             return {"job_id": job_id, "status": "completed", "progress_percentage": 100}
 
@@ -134,6 +144,7 @@ async def test_service_delegates_chatbook_api_calls():
     )
     import_result = await service.import_chatbook("/tmp/demo.chatbook.zip", import_request)
     export_job = await service.get_export_job("export-job-1")
+    downloaded = await service.download_export("export-job-1", token="signed", exp=12345)
     import_job = await service.get_import_job("import-job-1")
     export_jobs = await service.list_export_jobs(limit=25, offset=5)
     import_jobs = await service.list_import_jobs(limit=10, offset=2)
@@ -153,6 +164,10 @@ async def test_service_delegates_chatbook_api_calls():
     assert client.import_request.prefix_imported is True
     assert import_result["job_id"] == "import-job-1"
     assert export_job["status"] == "completed"
+    assert client.download_args == ("export-job-1", "signed", 12345)
+    assert downloaded["job_id"] == "export-job-1"
+    assert downloaded["content"] == b"chatbook-bytes"
+    assert downloaded["filename"] == "pack.chatbook.zip"
     assert import_job["status"] == "completed"
     assert export_jobs["items"][0]["job_id"] == "export-job-1"
     assert import_jobs["items"][0]["job_id"] == "import-job-1"
@@ -225,6 +240,10 @@ async def test_server_chatbook_service_enforces_policy_actions():
             self.calls.append(("get_chatbook_export_job", job_id))
             return {"job_id": job_id, "status": "completed"}
 
+        async def download_chatbook_export(self, job_id: str, *, token=None, exp=None):
+            self.calls.append(("download_chatbook_export", job_id, token, exp))
+            return ReadingExportResponse(content=b"chatbook-bytes")
+
         async def get_chatbook_import_job(self, job_id: str):
             self.calls.append(("get_chatbook_import_job", job_id))
             return {"job_id": job_id, "status": "completed"}
@@ -261,6 +280,7 @@ async def test_server_chatbook_service_enforces_policy_actions():
     await service.continue_chatbook_export({"export_id": "exp-1", "continuations": [{"type": "evaluation"}]})
     await service.import_chatbook("/tmp/demo.chatbook.zip", {"content_selections": {"conversation": ["1"]}})
     await service.get_export_job("export-job-1")
+    await service.download_export("export-job-1")
     await service.get_import_job("import-job-1")
     await service.list_export_jobs()
     await service.list_import_jobs()
@@ -275,6 +295,7 @@ async def test_server_chatbook_service_enforces_policy_actions():
         "chatbooks.export.server",
         "chatbooks.import.server",
         "chatbooks.detail.server",
+        "chatbooks.export.server",
         "chatbooks.detail.server",
         "chatbooks.list.server",
         "chatbooks.list.server",

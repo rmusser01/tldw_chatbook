@@ -4233,6 +4233,20 @@ class TLDWAPIClient:
             f"/api/v1/chatbooks/export/jobs/{job_id}",
         )
 
+    async def download_chatbook_export(
+        self,
+        job_id: str,
+        *,
+        token: str | None = None,
+        exp: int | str | None = None,
+    ) -> ReadingExportResponse:
+        params = {key: value for key, value in {"token": token, "exp": exp}.items() if value is not None}
+        return await self._binary_request(
+            "GET",
+            f"/api/v1/chatbooks/download/{job_id}",
+            params=params or None,
+        )
+
     async def get_chatbook_import_job(self, job_id: str) -> Dict[str, Any]:
         return await self._request(
             "GET",

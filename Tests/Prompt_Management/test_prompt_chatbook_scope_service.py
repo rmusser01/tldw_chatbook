@@ -63,6 +63,15 @@ class FakeChatbookBackend:
         self.calls.append(("get_export_job", job_id))
         return {"job_id": job_id, "status": "completed"}
 
+    async def download_export(self, job_id, **kwargs):
+        self.calls.append(("download_export", job_id, kwargs))
+        return {
+            "job_id": job_id,
+            "content": b"chatbook-bytes",
+            "content_type": "application/zip",
+            "filename": "pack.chatbook.zip",
+        }
+
     async def get_import_job(self, job_id):
         self.calls.append(("get_import_job", job_id))
         return {"job_id": job_id, "status": "completed"}
@@ -228,6 +237,7 @@ async def test_prompt_chatbook_scope_service_routes_chatbook_job_management():
 
     export_jobs = await scope.list_export_jobs(mode="server", limit=25, offset=5)
     import_jobs = await scope.list_import_jobs(mode="server", limit=10, offset=2)
+    downloaded = await scope.download_export(mode="server", job_id="server-export-1", token="signed", exp=12345)
     cancelled_export = await scope.cancel_export_job(mode="server", job_id="server-export-1")
     cancelled_import = await scope.cancel_import_job(mode="server", job_id="server-import-1")
     removed_export = await scope.remove_export_job(mode="server", job_id="server-export-1")
@@ -235,6 +245,9 @@ async def test_prompt_chatbook_scope_service_routes_chatbook_job_management():
 
     assert export_jobs["items"][0]["record_id"] == "server:chatbook_job:server-export-1"
     assert import_jobs["items"][0]["record_id"] == "server:chatbook_job:server-import-1"
+    assert downloaded["record_id"] == "server:chatbook_export:server-export-1"
+    assert downloaded["content"] == b"chatbook-bytes"
+    assert downloaded["filename"] == "pack.chatbook.zip"
     assert cancelled_export["record_id"] == "server:chatbook_job:server-export-1"
     assert cancelled_import["record_id"] == "server:chatbook_job:server-import-1"
     assert removed_export["removed"] is True
@@ -242,6 +255,7 @@ async def test_prompt_chatbook_scope_service_routes_chatbook_job_management():
     assert policy.calls == [
         "chatbooks.list.server",
         "chatbooks.list.server",
+        "chatbooks.export.server",
         "chatbooks.update.server",
         "chatbooks.update.server",
         "chatbooks.delete.server",
