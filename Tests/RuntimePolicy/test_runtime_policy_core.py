@@ -563,6 +563,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
     "server_reminders_notification_feeds": _action_ids("""
         notifications.feed.list.server
         notifications.feed.observe.server
+        notifications.feed.update.server
         notifications.reminders.configure.server
         notifications.reminders.launch.server
         notifications.reminders.list.server

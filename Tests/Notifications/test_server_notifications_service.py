@@ -30,6 +30,14 @@ class FakeServerNotificationsClient:
             },
         )()
 
+    async def mark_notifications_read(self, ids):
+        self.calls.append(("mark_notifications_read", ids))
+        return {"updated": len(ids)}
+
+    async def dismiss_notification(self, notification_id):
+        self.calls.append(("dismiss_notification", notification_id))
+        return {"dismissed": True}
+
     async def create_reminder_task(self, request_data):
         self.calls.append(("create_reminder_task", request_data.model_dump(exclude_none=True, mode="json")))
         return type(
@@ -73,6 +81,8 @@ async def test_server_notifications_service_routes_feed_and_reminders_with_polic
     service = ServerNotificationsService(client=client, policy_enforcer=policy)
 
     feed = await service.list_feed(limit=25, offset=5, include_archived=True)
+    marked = await service.mark_read([7])
+    dismissed = await service.dismiss(7)
     created = await service.create_reminder(
         title="Follow up",
         schedule_kind="one_time",
@@ -83,12 +93,16 @@ async def test_server_notifications_service_routes_feed_and_reminders_with_polic
     deleted = await service.delete_reminder("task-1")
 
     assert feed["total"] == 1
+    assert marked["updated"] == 1
+    assert dismissed["dismissed"] is True
     assert created["id"] == "task-1"
     assert reminders["total"] == 1
     assert updated["title"] == "Updated"
     assert deleted["deleted"] is True
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "notifications.feed.list.server",
+        "notifications.feed.update.server",
+        "notifications.feed.update.server",
         "notifications.reminders.configure.server",
         "notifications.reminders.list.server",
         "notifications.reminders.configure.server",
@@ -98,6 +112,8 @@ async def test_server_notifications_service_routes_feed_and_reminders_with_polic
         "list_notifications",
         {"limit": 25, "offset": 5, "include_archived": True, "only_snoozed": False},
     )
+    assert client.calls[1] == ("mark_notifications_read", [7])
+    assert client.calls[2] == ("dismiss_notification", 7)
 
 
 @pytest.mark.asyncio

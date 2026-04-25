@@ -92,11 +92,11 @@ class ServerNotificationsService:
         return self._dump(await self._require_client().get_notifications_unread_count())
 
     async def mark_read(self, ids: list[int]) -> dict[str, Any]:
-        self._enforce("notifications.feed.list.server")
+        self._enforce("notifications.feed.update.server")
         return self._dump(await self._require_client().mark_notifications_read(ids))
 
     async def dismiss(self, notification_id: int) -> dict[str, Any]:
-        self._enforce("notifications.feed.list.server")
+        self._enforce("notifications.feed.update.server")
         return self._dump(await self._require_client().dismiss_notification(notification_id))
 
     async def snooze(self, notification_id: int, *, minutes: int = 30) -> dict[str, Any]:
