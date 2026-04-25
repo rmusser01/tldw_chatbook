@@ -266,6 +266,11 @@ from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
 from tldw_chatbook.state import AppState
 from tldw_chatbook.Auth_Account_Interop import AuthAccountScopeService, ServerAuthAccountService
+from tldw_chatbook.Audio_Services_Interop import (
+    AudioServicesScopeService,
+    LocalAudioServicesService,
+    ServerAudioServicesService,
+)
 from .Evals.eval_orchestrator import EvaluationOrchestrator
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
@@ -1821,6 +1826,27 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.llm_provider_catalog_scope_service = LLMProviderCatalogScopeService(
             local_service=self.local_llm_provider_catalog_service,
             server_service=self.server_llm_provider_catalog_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.local_audio_services_service = LocalAudioServicesService(
+            tts_provider_loader=lambda: {"chatbook_tts": {"available": True, "source": "local"}},
+            stt_provider_loader=lambda: {"chatbook_stt": {"available": True, "source": "local"}},
+            voice_catalog_loader=lambda: {},
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_audio_services_service = ServerAudioServicesService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_audio_services_service = ServerAudioServicesService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.audio_services_scope_service = AudioServicesScopeService(
+            local_service=self.local_audio_services_service,
+            server_service=self.server_audio_services_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:

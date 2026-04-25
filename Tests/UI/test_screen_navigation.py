@@ -13,6 +13,11 @@ from tldw_chatbook.Chat import (
     ServerChatConversationService,
 )
 from tldw_chatbook.Auth_Account_Interop import AuthAccountScopeService, ServerAuthAccountService
+from tldw_chatbook.Audio_Services_Interop import (
+    AudioServicesScopeService,
+    LocalAudioServicesService,
+    ServerAudioServicesService,
+)
 from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
 from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
 from tldw_chatbook.Character_Chat.server_chat_dictionary_service import ServerChatDictionaryService
@@ -146,6 +151,9 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.llm_provider_catalog_scope_service, LLMProviderCatalogScopeService)
     assert isinstance(app.server_auth_account_service, ServerAuthAccountService)
     assert isinstance(app.auth_account_scope_service, AuthAccountScopeService)
+    assert isinstance(app.local_audio_services_service, LocalAudioServicesService)
+    assert isinstance(app.server_audio_services_service, ServerAudioServicesService)
+    assert isinstance(app.audio_services_scope_service, AudioServicesScopeService)
     assert isinstance(app.server_user_governance_service, ServerUserGovernanceService)
     assert isinstance(app.user_governance_scope_service, UserGovernanceScopeService)
     assert isinstance(app.server_sharing_service, ServerSharingService)

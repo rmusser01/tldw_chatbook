@@ -162,6 +162,13 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": _action_kinds("browse", "detail", "update", "observe"),
         },
     },
+    "audio_speech_services": {
+        "expected_domain_ids": {"audio", "audiobooks"},
+        "expected_action_kinds_by_source": {
+            "local": FULL_CRUD_AND_LAUNCH_AND_OBSERVE,
+            "server": FULL_CRUD_AND_LAUNCH_AND_OBSERVE,
+        },
+    },
     "auth_profile_sessions": {
         "expected_domain_ids": {"auth"},
         "expected_action_kinds_by_source": {
@@ -728,6 +735,72 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         llm.catalog.providers.detail.server
         llm.catalog.providers.list.local
         llm.catalog.providers.list.server
+    """),
+    "audio_speech_services": _action_ids("""
+        audio.health.observe.local
+        audio.health.observe.server
+        audio.history.delete.local
+        audio.history.delete.server
+        audio.history.detail.local
+        audio.history.detail.server
+        audio.history.list.local
+        audio.history.list.server
+        audio.history.update.local
+        audio.history.update.server
+        audio.jobs.create.local
+        audio.jobs.create.server
+        audio.jobs.detail.local
+        audio.jobs.detail.server
+        audio.jobs.observe.local
+        audio.jobs.observe.server
+        audio.providers.list.local
+        audio.providers.list.server
+        audio.speech.launch.local
+        audio.speech.launch.server
+        audio.speech_jobs.detail.local
+        audio.speech_jobs.detail.server
+        audio.tokenizer.launch.local
+        audio.tokenizer.launch.server
+        audio.transcriptions.launch.local
+        audio.transcriptions.launch.server
+        audio.translations.launch.local
+        audio.translations.launch.server
+        audio.voices.create.local
+        audio.voices.create.server
+        audio.voices.delete.local
+        audio.voices.delete.server
+        audio.voices.detail.local
+        audio.voices.detail.server
+        audio.voices.launch.local
+        audio.voices.launch.server
+        audio.voices.list.local
+        audio.voices.list.server
+        audio.voices.preview.local
+        audio.voices.preview.server
+        audiobooks.artifacts.list.local
+        audiobooks.artifacts.list.server
+        audiobooks.chapters.list.local
+        audiobooks.chapters.list.server
+        audiobooks.jobs.create.local
+        audiobooks.jobs.create.server
+        audiobooks.jobs.detail.local
+        audiobooks.jobs.detail.server
+        audiobooks.jobs.observe.local
+        audiobooks.jobs.observe.server
+        audiobooks.parse.launch.local
+        audiobooks.parse.launch.server
+        audiobooks.projects.detail.local
+        audiobooks.projects.detail.server
+        audiobooks.projects.list.local
+        audiobooks.projects.list.server
+        audiobooks.subtitles.export.local
+        audiobooks.subtitles.export.server
+        audiobooks.voice_profiles.create.local
+        audiobooks.voice_profiles.create.server
+        audiobooks.voice_profiles.delete.local
+        audiobooks.voice_profiles.delete.server
+        audiobooks.voice_profiles.list.local
+        audiobooks.voice_profiles.list.server
     """),
     "auth_profile_sessions": _action_ids("""
         auth.api_keys.create.server
