@@ -150,7 +150,7 @@ class MediaReadingScopeService:
     def _to_plain(value: Any) -> Any:
         model_dump = getattr(value, "model_dump", None)
         if callable(model_dump):
-            return model_dump(mode="json")
+            return model_dump(mode="python")
         return value
 
     async def search_media(

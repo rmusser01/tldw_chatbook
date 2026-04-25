@@ -8,6 +8,7 @@ from tldw_chatbook.Media.media_reading_scope_service import (
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
+from tldw_chatbook.tldw_api import ReadingExportResponse, ReadingTTSResponse
 
 
 class FakeLocalMediaService:
@@ -643,22 +644,22 @@ class FakeServerMediaService:
 
     async def export_reading_items(self, **kwargs):
         self.calls.append(("export_reading_items", kwargs))
-        return {
-            "content": b'{"id": 1}\n',
-            "content_type": "application/x-ndjson",
-            "content_disposition": "attachment; filename=reading_export.jsonl",
-            "filename": "reading_export.jsonl",
-        }
+        return ReadingExportResponse(
+            content=b'{"id": 1}\n',
+            content_type="application/x-ndjson",
+            content_disposition="attachment; filename=reading_export.jsonl",
+            filename="reading_export.jsonl",
+        )
 
     async def tts_reading_item(self, item_id, **kwargs):
         self.calls.append(("tts_reading_item", item_id, kwargs))
-        return {
-            "item_id": item_id,
-            "content": b"mp3-bytes",
-            "content_type": "audio/mpeg",
-            "content_disposition": f"attachment; filename=reading_{item_id}.mp3",
-            "filename": f"reading_{item_id}.mp3",
-        }
+        return ReadingTTSResponse(
+            item_id=item_id,
+            content=b"mp3-bytes",
+            content_type="audio/mpeg",
+            content_disposition=f"attachment; filename=reading_{item_id}.mp3",
+            filename=f"reading_{item_id}.mp3",
+        )
 
     async def list_reading_import_jobs(self, *, status=None, limit=50, offset=0):
         self.calls.append(("list_reading_import_jobs", status, limit, offset))
@@ -1304,6 +1305,7 @@ async def test_scope_service_routes_server_reading_export_with_policy():
     )
 
     assert exported["filename"] == "reading_export.jsonl"
+    assert exported["content"] == b'{"id": 1}\n'
     assert policy.calls[-1:] == ["media.reading.export.server"]
     assert server.calls[-1] == (
         "export_reading_items",
@@ -1363,6 +1365,7 @@ async def test_scope_service_routes_server_reading_tts_with_policy():
     )
 
     assert audio["filename"] == "reading_41.mp3"
+    assert audio["content"] == b"mp3-bytes"
     assert policy.calls[-1:] == ["media.reading.tts.server"]
     assert server.calls[-1] == (
         "tts_reading_item",
