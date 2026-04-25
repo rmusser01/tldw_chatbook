@@ -472,6 +472,10 @@ from .web_clipper_schemas import (
     WebClipperWorkspacePayload,
     WebClipperWorkspacePlacement,
 )
+from .translation_schemas import (
+    TranslateRequest,
+    TranslateResponse,
+)
 
 __all__ = [
     "TLDWAPIClient",
@@ -608,4 +612,5 @@ __all__ = [
     "WebClipperNotePayload", "WebClipperOutcomeState", "WebClipperSaveRequest",
     "WebClipperSaveResponse", "WebClipperSavedNote", "WebClipperStatusResponse",
     "WebClipperWorkspacePayload", "WebClipperWorkspacePlacement",
+    "TranslateRequest", "TranslateResponse",
 ]

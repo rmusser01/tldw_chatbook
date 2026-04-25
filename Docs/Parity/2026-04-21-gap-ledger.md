@@ -234,6 +234,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 3
 - Notes: Priority 29. This should remain below the standalone-first reading and writing rows.
 
+### Translation Utility: Remote text translation helper
+- Requirement class: Remote-only acceptable
+- Client obligation: Trigger
+- Current state: Chatbook now has typed `TranslateRequest` / `TranslateResponse` schemas and a direct shared API-client wrapper for server text translation.
+- Gap: Dedicated UX/adoption remains pending. There is no local translation backend target yet, so local/offline translation should stay out of parity claims until a Chatbook-owned local model path is intentionally designed.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/translate.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/translation_schemas.py`; Verification: `Tests/tldw_api/test_translation_client.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 24. This is a small remote utility seam, not a standalone-client product surface.
+
 ## Contract-Maturity Holds
 
 ### Research Search / Provider Surfaces: Legacy search entry points and third-party provider adapters

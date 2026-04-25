@@ -110,6 +110,10 @@ from .prompt_chatbook_schemas import (
     PromptCreateRequest,
     PromptPreviewRequest,
 )
+from .translation_schemas import (
+    TranslateRequest,
+    TranslateResponse,
+)
 from .rag_admin_schemas import (
     ChunkingTemplateApplyRequest,
     ChunkingTemplateApplyResponse,
@@ -902,6 +906,14 @@ class TLDWAPIClient:
             "/api/v1/files/purge",
             json_data=payload.model_dump(exclude_none=True, mode="json"),
         )
+
+    async def translate_text(self, request_data: TranslateRequest) -> TranslateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/translate",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return TranslateResponse.model_validate(response)
 
     async def submit_media_ingest_jobs(
         self,
