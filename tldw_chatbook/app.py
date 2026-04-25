@@ -208,6 +208,7 @@ from .UI.Tab_Dropdown import TabDropdown
 from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
 from .UI.SearchWindow import SearchWindow
 from tldw_chatbook.Chat_Grammars_Interop import ChatGrammarsScopeService, ServerChatGrammarsService
+from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Feedback_Interop import FeedbackScopeService, ServerFeedbackService
@@ -1668,6 +1669,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.notifications_scope_service = NotificationsScopeService(
             server_service=self.server_notifications_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_claims_service = ServerClaimsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_claims_service = ServerClaimsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.claims_scope_service = ClaimsScopeService(
+            server_service=self.server_claims_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:

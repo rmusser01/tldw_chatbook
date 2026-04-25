@@ -143,6 +143,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": FULL_CRUD,
         },
     },
+    "claims_notifications_alerts": {
+        "expected_domain_ids": {"claims"},
+        "expected_action_kinds_by_source": {
+            "server": FULL_CRUD_AND_LAUNCH,
+        },
+    },
     "client_notifications": {
         "expected_domain_ids": {"notifications"},
         "expected_action_kinds_by_source": {
@@ -437,6 +443,50 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         feedback.detail.server
         feedback.list.server
         feedback.update.server
+    """),
+    "claims_notifications_alerts": _action_ids("""
+        claims.alerts.create.server
+        claims.alerts.delete.server
+        claims.alerts.launch.server
+        claims.alerts.list.server
+        claims.alerts.update.server
+        claims.analytics.detail.server
+        claims.analytics.export.server
+        claims.analytics.list.server
+        claims.cluster_evidence.list.server
+        claims.cluster_links.create.server
+        claims.cluster_links.delete.server
+        claims.cluster_links.list.server
+        claims.cluster_members.list.server
+        claims.cluster_timeline.list.server
+        claims.clusters.detail.server
+        claims.clusters.launch.server
+        claims.clusters.list.server
+        claims.extractors.list.server
+        claims.fva.launch.server
+        claims.fva.list.server
+        claims.items.detail.server
+        claims.items.launch.server
+        claims.items.list.server
+        claims.items.update.server
+        claims.monitoring.list.server
+        claims.monitoring.update.server
+        claims.notifications.launch.server
+        claims.notifications.list.server
+        claims.notifications.update.server
+        claims.rebuild.detail.server
+        claims.rebuild.launch.server
+        claims.review.launch.server
+        claims.review.list.server
+        claims.review.update.server
+        claims.review_rules.create.server
+        claims.review_rules.delete.server
+        claims.review_rules.list.server
+        claims.review_rules.update.server
+        claims.search.list.server
+        claims.settings.list.server
+        claims.settings.update.server
+        claims.status.detail.server
     """),
     "server_skills": _action_ids("""
         skills.context.list.server
