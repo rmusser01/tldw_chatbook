@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import inspect
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
@@ -34,10 +36,12 @@ class LocalWatchlistsService:
         db_factory: Callable[[], SubscriptionsDB],
         notification_dispatcher: Any | None = None,
         notification_app: Any | None = None,
+        run_executor: Callable[[Mapping[str, Any]], Any] | None = None,
     ):
         self.db_factory = db_factory
         self.notification_dispatcher = notification_dispatcher
         self.notification_app = notification_app
+        self.run_executor = run_executor
 
     def _db(self) -> SubscriptionsDB:
         return self.db_factory()
@@ -120,6 +124,50 @@ class LocalWatchlistsService:
             )
             run_id = cursor.lastrowid
         return await self.get_run(run_id)
+
+    async def execute_run(self, run_id: Any) -> dict[str, Any]:
+        """Execute a queued local watchlist run and persist its observed result."""
+        db = self._db()
+        self._ensure_run_schema(db)
+        current = await self.get_run(run_id)
+        source_id = int(current.get("source_id") or current.get("job_id"))
+        subscription = db.get_subscription(source_id)
+        if subscription is None:
+            raise KeyError(f"Subscription not found: {source_id}")
+
+        self._mark_run_started(db, int(run_id))
+        start_time = time.time()
+        try:
+            result = await self._execute_subscription(subscription, db)
+            items = list(result.get("items") or [])
+            stats = dict(result.get("stats") or {})
+            stats.setdefault("items_found", len(items))
+            stats.setdefault("items_ingested", len(items))
+            stats.setdefault("new_items_found", len(items))
+            stats.setdefault("response_time_ms", int((time.time() - start_time) * 1000))
+            db.record_check_result(source_id, items=items or None, stats=stats)
+            return await self.record_run_result(
+                run_id,
+                status=str(result.get("status") or "completed"),
+                stats=stats,
+                error_msg=result.get("error_msg"),
+                log_text=result.get("log_text"),
+            )
+        except Exception as exc:
+            error_msg = str(exc)
+            db.record_check_error(source_id, error_msg)
+            return await self.record_run_result(
+                run_id,
+                status="failed",
+                stats={
+                    "items_found": 0,
+                    "items_ingested": 0,
+                    "error_msg": error_msg,
+                    "response_time_ms": int((time.time() - start_time) * 1000),
+                },
+                error_msg=error_msg,
+                log_text=f"Local watchlist execution failed: {error_msg}",
+            )
 
     async def list_runs(
         self,
@@ -376,6 +424,65 @@ class LocalWatchlistsService:
     @staticmethod
     def _utc_now() -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    async def _maybe_await(value: Any) -> Any:
+        if inspect.isawaitable(value):
+            return await value
+        return value
+
+    def _mark_run_started(self, db: SubscriptionsDB, run_id: int) -> None:
+        now = self._utc_now()
+        with db.transaction() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE local_watchlist_runs
+                SET status = ?, started_at = COALESCE(started_at, ?), updated_at = ?
+                WHERE id = ?
+                """,
+                ("running", now, now, run_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"Watchlist run not found: {run_id}")
+
+    async def _execute_subscription(
+        self,
+        subscription: Mapping[str, Any],
+        db: SubscriptionsDB,
+    ) -> dict[str, Any]:
+        executor = self.run_executor
+        if executor is None:
+            result = await self._default_run_executor(subscription, db)
+        else:
+            result = await self._maybe_await(executor(subscription))
+        if result is None:
+            return {"items": []}
+        if isinstance(result, list):
+            return {"items": result}
+        if not isinstance(result, Mapping):
+            raise ValueError("Local watchlist run executor must return a mapping or list of items.")
+        return dict(result)
+
+    async def _default_run_executor(
+        self,
+        subscription: Mapping[str, Any],
+        db: SubscriptionsDB,
+    ) -> dict[str, Any]:
+        from .monitoring_engine import FeedMonitor, URLMonitor
+
+        source_type = str(subscription.get("type") or "").strip()
+        if source_type in {"rss", "atom", "json_feed", "podcast"}:
+            items = await FeedMonitor().check_feed(dict(subscription))
+        elif source_type in {"url", "url_list"}:
+            result = await URLMonitor(db).check_url(dict(subscription))
+            items = [result] if result else []
+        else:
+            raise ValueError(f"Unsupported local watchlist source type for execution: {source_type}")
+        return {
+            "items": items,
+            "log_text": f"Local watchlist execution completed with {len(items)} item(s).",
+        }
 
     @staticmethod
     def _ensure_run_schema(db: SubscriptionsDB) -> None:

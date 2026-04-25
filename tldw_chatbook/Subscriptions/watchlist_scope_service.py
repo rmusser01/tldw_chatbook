@@ -156,7 +156,10 @@ class WatchlistScopeService:
     ) -> list[dict[str, Any]]:
         backend = self._normalize_backend(runtime_backend)
         if backend == WatchlistBackend.LOCAL:
-            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+            reports = [dict(_LOCAL_UNSUPPORTED_CAPABILITIES[0])]
+            if not callable(getattr(self.local_service, "execute_run", None)):
+                reports.append(dict(_LOCAL_UNSUPPORTED_CAPABILITIES[1]))
+            return reports
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def list_watch_items(
@@ -234,7 +237,17 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "runs.launch")
         service = self._service_for_backend(backend)
-        return await self._maybe_await(service.launch_run(job_id=job_id, source_id=source_id))
+        launched = await self._maybe_await(service.launch_run(job_id=job_id, source_id=source_id))
+        if backend == WatchlistBackend.LOCAL:
+            execute_run = getattr(service, "execute_run", None)
+            if callable(execute_run):
+                run_id = launched.get("run_id") if isinstance(launched, Mapping) else None
+                if run_id is None and isinstance(launched, Mapping):
+                    run_id = launched.get("id")
+                if run_id is None:
+                    raise ValueError("Local watchlist run launch did not return a run identifier.")
+                return await self._maybe_await(execute_run(self._run_id_from_item_id(run_id)))
+        return launched
 
     async def list_runs(
         self,

@@ -67,6 +67,17 @@ class FakeLocalWatchlists:
         return {"deleted": True, "id": f"local:watchlist_alert_rule:{rule_id}"}
 
 
+class FakeExecutableLocalWatchlists(FakeLocalWatchlists):
+    async def execute_run(self, run_id):
+        self.calls.append(("execute_run", run_id))
+        return {
+            "id": f"local:watchlist_run:{run_id}",
+            "run_id": int(run_id),
+            "backend": "local",
+            "status": "completed",
+        }
+
+
 class FakeServerWatchlists:
     def __init__(self):
         self.calls = []
@@ -293,6 +304,27 @@ def test_scope_service_reports_known_watchlists_capability_gaps():
             ],
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_executes_local_runs_when_local_backend_supports_execution():
+    policy = Mock()
+    local = FakeExecutableLocalWatchlists()
+    scope = WatchlistScopeService(
+        local_service=local,
+        server_service=FakeServerWatchlists(),
+        policy_enforcer=policy,
+    )
+
+    launched = await scope.launch_run(runtime_backend="local", source_id=1)
+    local_report = scope.list_unsupported_capabilities(runtime_backend="local")
+
+    assert launched["status"] == "completed"
+    assert local.calls == [
+        ("launch_run", {"job_id": None, "source_id": 1}),
+        ("execute_run", "1"),
+    ]
+    assert [item["operation_id"] for item in local_report] == ["watchlists.groups.local"]
 
 
 @pytest.mark.asyncio

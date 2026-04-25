@@ -32,6 +32,57 @@ async def test_local_watchlists_service_persists_run_queue_state(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_local_watchlists_service_executes_run_and_records_subscription_items(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    async def fake_run_executor(subscription):
+        return {
+            "items": [
+                {
+                    "url": "https://example.com/post-1",
+                    "title": "Post 1",
+                    "content_hash": "hash-1",
+                    "published_date": "2026-04-25T00:00:00+00:00",
+                }
+            ],
+            "stats": {"bytes_transferred": 512},
+            "log_text": "fetched 1 item",
+        }
+
+    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=fake_run_executor)
+    source = await service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    completed = await service.execute_run(launched["run_id"])
+
+    assert completed["status"] == "completed"
+    assert completed["started_at"] is not None
+    assert completed["finished_at"] is not None
+    assert completed["stats"]["items_found"] == 1
+    assert completed["stats"]["items_ingested"] == 1
+    assert completed["stats"]["bytes_transferred"] == 512
+    assert completed["log_text"] == "fetched 1 item"
+    assert db.get_subscription(source["source_id"])["last_successful_check"] is not None
+    stored_items = db.conn.execute(
+        "SELECT url, title, content_hash FROM subscription_items WHERE subscription_id = ?",
+        (source["source_id"],),
+    ).fetchall()
+    assert [dict(row) for row in stored_items] == [
+        {
+            "url": "https://example.com/post-1",
+            "title": "Post 1",
+            "content_hash": "hash-1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_local_watchlists_service_persists_alert_rule_crud(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
