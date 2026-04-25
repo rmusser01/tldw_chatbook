@@ -310,43 +310,56 @@ class FakeLocalMediaService:
         return True
 
     def create_highlight(self, item_id, **kwargs):
-        raise ValueError("Local reading highlights are not available yet.")
+        self.calls.append(("create_highlight", item_id, kwargs))
+        return {"id": 5, "item_id": item_id, "quote": kwargs["quote"], **kwargs}
 
     def list_highlights(self, item_id):
-        raise ValueError("Local reading highlights are not available yet.")
+        self.calls.append(("list_highlights", item_id))
+        return [{"id": 5, "item_id": item_id, "quote": "important"}]
 
     def update_highlight(self, highlight_id, **changes):
-        raise ValueError("Local reading highlights are not available yet.")
+        self.calls.append(("update_highlight", highlight_id, changes))
+        return {"id": highlight_id, "item_id": 41, "quote": "important", **changes}
 
     def delete_highlight(self, highlight_id):
-        raise ValueError("Local reading highlights are not available yet.")
+        self.calls.append(("delete_highlight", highlight_id))
+        return {"success": True}
 
     def list_annotations(self, media_id):
-        raise ValueError("Local document annotations are not available yet.")
+        self.calls.append(("list_annotations", media_id))
+        return {"media_id": media_id, "annotations": [], "total_count": 0}
 
     def create_annotation(self, media_id, **kwargs):
-        raise ValueError("Local document annotations are not available yet.")
+        self.calls.append(("create_annotation", media_id, kwargs))
+        return {"id": "local-ann-1", "media_id": media_id, **kwargs}
 
     def update_annotation(self, media_id, annotation_id, **changes):
-        raise ValueError("Local document annotations are not available yet.")
+        self.calls.append(("update_annotation", media_id, annotation_id, changes))
+        return {"id": annotation_id, "media_id": media_id, **changes}
 
     def delete_annotation(self, media_id, annotation_id):
-        raise ValueError("Local document annotations are not available yet.")
+        self.calls.append(("delete_annotation", media_id, annotation_id))
+        return {}
 
     def sync_annotations(self, media_id, *, annotations, client_ids=None):
-        raise ValueError("Local document annotations are not available yet.")
+        self.calls.append(("sync_annotations", media_id, annotations, client_ids))
+        return {"media_id": media_id, "synced_count": len(annotations), "annotations": []}
 
     def get_document_outline(self, media_id):
-        raise ValueError("Local document intelligence is not available yet.")
+        self.calls.append(("get_document_outline", media_id))
+        return {"media_id": media_id, "has_outline": True, "entries": [], "total_pages": 1}
 
     def get_document_figures(self, media_id, **params):
-        raise ValueError("Local document intelligence is not available yet.")
+        self.calls.append(("get_document_figures", media_id, params))
+        return {"media_id": media_id, "has_figures": False, "figures": [], "total_count": 0}
 
     def get_document_references(self, media_id, **params):
-        raise ValueError("Local document intelligence is not available yet.")
+        self.calls.append(("get_document_references", media_id, params))
+        return {"media_id": media_id, "has_references": False, "references": []}
 
     def generate_document_insights(self, media_id, **params):
-        raise ValueError("Local document intelligence is not available yet.")
+        self.calls.append(("generate_document_insights", media_id, params))
+        return {"media_id": media_id, "insights": [], "model_used": "local-extractive", "cached": False}
 
     def submit_ingest_jobs(self, **kwargs):
         self.calls.append(("submit_ingest_jobs", kwargs))
@@ -375,6 +388,18 @@ class FakeLocalMediaService:
     def reprocess_media(self, media_id, **options):
         self.calls.append(("reprocess_media", media_id, options))
         return {"status": "queued", "media_id": media_id, "job_id": 303}
+
+    def save_reading_item(self, **kwargs):
+        self.calls.append(("save_reading_item", kwargs))
+        return {
+            "id": 60,
+            "uuid": "local-media-uuid",
+            "title": kwargs.get("title") or "Local Saved URL",
+            "url": kwargs["url"],
+            "media_type": "article",
+            "is_read_it_later": kwargs.get("status") == "saved",
+            "saved_at": "2026-04-21T10:00:00Z",
+        }
 
 
 class FakeServerMediaService:
@@ -887,16 +912,7 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
     local_report = scope_service.list_unsupported_capabilities(mode="local")
     server_report = scope_service.list_unsupported_capabilities(mode="server")
 
-    assert local_report == [
-        {
-            "operation_id": "media.reading.create.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_contract_missing",
-            "user_message": "Local direct URL reading-item creation is not available yet; use local ingest jobs instead.",
-            "affected_action_ids": ["media.reading.create.local"],
-        },
-    ]
+    assert local_report == []
     assert server_report == [
         {
             "operation_id": "collections.reading_list.per_media_type.server",
@@ -1249,6 +1265,47 @@ async def test_scope_service_routes_local_saved_searches_and_note_links_with_pol
         ("link_note", 60, "note-1"),
         ("list_note_links", 60),
         ("unlink_note", 60, "note-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_reading_item_create_with_policy_and_normalization():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    saved = await scope.save_reading_item(
+        mode="local",
+        url="https://example.com/local",
+        title="Local Saved URL",
+        tags=["ai"],
+        content="Local body",
+    )
+
+    assert saved["id"] == "local:media:60"
+    assert saved["backend"] == "local"
+    assert saved["entity_kind"] == "media"
+    assert saved["is_read_it_later"] is True
+    assert policy.calls[-1:] == ["media.reading.create.local"]
+    assert local.calls[-1:] == [
+        (
+            "save_reading_item",
+            {
+                "url": "https://example.com/local",
+                "title": "Local Saved URL",
+                "tags": ["ai"],
+                "status": "saved",
+                "archive_mode": "use_default",
+                "favorite": False,
+                "summary": None,
+                "notes": None,
+                "content": "Local body",
+            },
+        ),
     ]
 
 
@@ -1862,6 +1919,55 @@ async def test_scope_service_routes_server_highlights_with_media_reading_actions
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_local_highlights_with_media_reading_actions():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    created = await scope_service.create_highlight(
+        mode="local",
+        item_id=41,
+        quote="important",
+        color="yellow",
+    )
+    listed = await scope_service.list_highlights(mode="local", item_id=41)
+    updated = await scope_service.update_highlight(mode="local", highlight_id=5, note="recheck")
+    deleted = await scope_service.delete_highlight(mode="local", highlight_id=5)
+
+    assert created["id"] == 5
+    assert listed == [{"id": 5, "item_id": 41, "quote": "important"}]
+    assert updated["note"] == "recheck"
+    assert deleted == {"success": True}
+    assert policy.calls[-4:] == [
+        "media.reading.update.local",
+        "media.reading.detail.local",
+        "media.reading.update.local",
+        "media.reading.delete.local",
+    ]
+    assert local.calls[-4:] == [
+        (
+            "create_highlight",
+            41,
+            {
+                "quote": "important",
+                "start_offset": None,
+                "end_offset": None,
+                "color": "yellow",
+                "note": None,
+                "anchor_strategy": "fuzzy_quote",
+            },
+        ),
+        ("list_highlights", 41),
+        ("update_highlight", 5, {"color": None, "note": "recheck", "state": None}),
+        ("delete_highlight", 5),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_server_document_annotations_with_media_reading_actions():
     policy = FakePolicyEnforcer()
     server = FakeServerMediaService()
@@ -1908,6 +2014,71 @@ async def test_scope_service_routes_server_document_annotations_with_media_readi
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_local_document_annotations_with_media_reading_actions():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    listed = await scope_service.list_annotations(mode="local", media_id=99)
+    created = await scope_service.create_annotation(
+        mode="local",
+        media_id=99,
+        location="12",
+        text="selected text",
+        color="yellow",
+    )
+    updated = await scope_service.update_annotation(
+        mode="local",
+        media_id=99,
+        annotation_id="local-ann-1",
+        note="recheck",
+    )
+    deleted = await scope_service.delete_annotation(mode="local", media_id=99, annotation_id="local-ann-1")
+    synced = await scope_service.sync_annotations(
+        mode="local",
+        media_id=99,
+        annotations=[{"location": "13", "text": "offline note"}],
+        client_ids=["client-1"],
+    )
+
+    assert listed["total_count"] == 0
+    assert created["id"] == "local-ann-1"
+    assert updated["note"] == "recheck"
+    assert deleted == {}
+    assert synced["synced_count"] == 1
+    assert policy.calls[-5:] == [
+        "media.reading.detail.local",
+        "media.reading.update.local",
+        "media.reading.update.local",
+        "media.reading.delete.local",
+        "media.reading.update.local",
+    ]
+    assert local.calls[-5:] == [
+        ("list_annotations", 99),
+        (
+            "create_annotation",
+            99,
+            {
+                "location": "12",
+                "text": "selected text",
+                "color": "yellow",
+                "note": None,
+                "annotation_type": "highlight",
+                "chapter_title": None,
+                "percentage": None,
+            },
+        ),
+        ("update_annotation", 99, "local-ann-1", {"text": None, "color": None, "note": "recheck"}),
+        ("delete_annotation", 99, "local-ann-1"),
+        ("sync_annotations", 99, [{"location": "13", "text": "offline note"}], ["client-1"]),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_server_document_intelligence_with_media_reading_detail_actions():
     policy = FakePolicyEnforcer()
     server = FakeServerMediaService()
@@ -1931,6 +2102,59 @@ async def test_scope_service_routes_server_document_intelligence_with_media_read
         "media.reading.detail.server",
         "media.reading.detail.server",
         "media.reading.detail.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_document_intelligence_with_media_reading_detail_actions():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    outline = await scope_service.get_document_outline(mode="local", media_id=99)
+    figures = await scope_service.get_document_figures(mode="local", media_id=99, min_size=80)
+    references = await scope_service.get_document_references(mode="local", media_id=99, enrich=True)
+    insights = await scope_service.generate_document_insights(mode="local", media_id=99, categories=["summary"])
+
+    assert outline["has_outline"] is True
+    assert figures["has_figures"] is False
+    assert references["has_references"] is False
+    assert insights["model_used"] == "local-extractive"
+    assert policy.calls[-4:] == [
+        "media.reading.detail.local",
+        "media.reading.detail.local",
+        "media.reading.detail.local",
+        "media.reading.detail.local",
+    ]
+    assert local.calls[-4:] == [
+        ("get_document_outline", 99),
+        ("get_document_figures", 99, {"min_size": 80}),
+        (
+            "get_document_references",
+            99,
+            {
+                "enrich": True,
+                "reference_index": None,
+                "offset": 0,
+                "limit": 50,
+                "parse_cap": None,
+                "search": None,
+            },
+        ),
+        (
+            "generate_document_insights",
+            99,
+            {
+                "categories": ["summary"],
+                "model": None,
+                "max_content_length": 5000,
+                "force": False,
+            },
+        ),
     ]
 
 

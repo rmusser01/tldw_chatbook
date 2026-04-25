@@ -17,16 +17,7 @@ from .media_reading_normalizers import (
 
 ALLOWED_SERVER_CREATE_SOURCE_TYPES = ("archive_snapshot", "git_repository")
 
-_LOCAL_UNSUPPORTED_CAPABILITIES = [
-    {
-        "operation_id": "media.reading.create.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_contract_missing",
-        "user_message": "Local direct URL reading-item creation is not available yet; use local ingest jobs instead.",
-        "affected_action_ids": ["media.reading.create.local"],
-    },
-]
+_LOCAL_UNSUPPORTED_CAPABILITIES = []
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
     {
@@ -348,8 +339,6 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_action_id(normalized_mode, "create"))
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            raise ValueError("Local reading item creation is not available yet. Use local ingest jobs instead.")
         service = self._service_for_mode(normalized_mode)
         item = await self._maybe_await(
             service.save_reading_item(

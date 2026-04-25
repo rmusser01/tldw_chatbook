@@ -7,6 +7,7 @@ import hashlib
 import io
 import inspect
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
 from pathlib import Path
@@ -43,12 +44,6 @@ class LocalMediaReadingService:
 
     def _coerce_media_id(self, media_id: Any) -> int:
         return int(media_id)
-
-    def _unsupported_ingestion_sources(self) -> ValueError:
-        return ValueError("Local ingestion sources are not available yet.")
-
-    def _unsupported_ingestion_jobs(self) -> ValueError:
-        return ValueError("Local ingestion jobs are not available through this scope yet.")
 
     def _normalize_media_id_filter(self, media_ids: Any) -> list[int]:
         normalized: list[int] = []
@@ -179,6 +174,492 @@ class LocalMediaReadingService:
             "is_read_it_later": False,
             "saved_at": None,
             "updated_at": current_time,
+        }
+
+    def save_reading_item(
+        self,
+        *,
+        url: str,
+        title: str | None = None,
+        tags: list[str] | None = None,
+        status: str | None = "saved",
+        archive_mode: str = "use_default",
+        favorite: bool = False,
+        summary: str | None = None,
+        notes: str | None = None,
+        content: str | None = None,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        normalized_url = str(url or "").strip()
+        if not normalized_url:
+            raise ValueError("url is required for local reading item creation.")
+        if str(archive_mode or "use_default") != "use_default":
+            raise ValueError("Local reading item creation does not support custom archive_mode.")
+        if favorite:
+            raise ValueError("Local reading item creation does not support favorite=True.")
+        if notes not in (None, ""):
+            raise ValueError("Local reading item creation does not support notes.")
+
+        normalized_status = str(status or "saved").strip().lower()
+        if normalized_status not in {"saved", "archived", "unread", "read"}:
+            raise ValueError(f"Unsupported local reading item status: {normalized_status}")
+
+        article: Mapping[str, Any] = {}
+        body = content
+        if not body or not str(body).strip():
+            scraper = self.url_article_scraper or self._default_url_article_scraper
+            scraped = scraper(normalized_url, custom_cookies=None)
+            if not isinstance(scraped, Mapping):
+                raise ValueError("Local URL article scraper must return a mapping.")
+            if scraped.get("extraction_successful") is False:
+                raise ValueError(str(scraped.get("error") or "URL article extraction failed."))
+            article = scraped
+            body = self._first_present_text(scraped, "content", "text", "markdown", "body")
+
+        if not body or not str(body).strip():
+            raise ValueError("Local reading item creation requires content or extractable URL content.")
+
+        final_title = str(title or article.get("title") or normalized_url)
+        author = article.get("author")
+        if author is not None:
+            author = str(author)
+        keywords = self._merge_keyword_values(tags, article.get("keywords"))
+        media_id, _, _ = db.add_media_with_keywords(
+            url=str(article.get("url") or normalized_url),
+            title=final_title,
+            media_type="article",
+            content=str(body),
+            keywords=keywords,
+            analysis_content=summary,
+            author=author,
+            overwrite=True,
+        )
+        if media_id is None:
+            raise ValueError("Local reading item creation did not produce a media record.")
+        if normalized_status == "saved":
+            db.save_media_to_read_it_later(self._coerce_media_id(media_id))
+        else:
+            self.remove_from_read_it_later(media_id)
+        detail = self.get_media_detail(media_id)
+        detail["media_type"] = detail.get("media_type") or detail.get("type")
+        detail.setdefault("is_read_it_later", False)
+        detail.setdefault("saved_at", None)
+        detail.setdefault("read_it_later_saved_at", detail.get("saved_at"))
+        return detail
+
+    def create_highlight(
+        self,
+        item_id: Any,
+        *,
+        quote: str,
+        start_offset: int | None = None,
+        end_offset: int | None = None,
+        color: str | None = None,
+        note: str | None = None,
+        anchor_strategy: str = "fuzzy_quote",
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_item_id = self._coerce_media_id(item_id)
+        self.get_media_detail(normalized_item_id)
+        normalized_quote = str(quote or "").strip()
+        if not normalized_quote:
+            raise ValueError("highlight quote cannot be blank.")
+        now = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO local_reading_highlights (
+                    item_id,
+                    quote,
+                    start_offset,
+                    end_offset,
+                    color,
+                    note,
+                    anchor_strategy,
+                    state,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                """,
+                (
+                    normalized_item_id,
+                    normalized_quote,
+                    start_offset,
+                    end_offset,
+                    color,
+                    note,
+                    str(anchor_strategy or "fuzzy_quote"),
+                    now,
+                    now,
+                ),
+            )
+            highlight_id = cursor.lastrowid
+        return self._get_highlight(highlight_id)
+
+    def list_highlights(self, item_id: Any) -> list[dict[str, Any]]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_item_id = self._coerce_media_id(item_id)
+        self.get_media_detail(normalized_item_id)
+        cursor = db.get_connection().execute(
+            """
+            SELECT * FROM local_reading_highlights
+            WHERE item_id = ?
+            ORDER BY COALESCE(start_offset, id), id
+            """,
+            (normalized_item_id,),
+        )
+        return [self._highlight_row_to_dict(row) for row in cursor.fetchall()]
+
+    def update_highlight(
+        self,
+        highlight_id: Any,
+        *,
+        color: str | None = None,
+        note: str | None = None,
+        state: str | None = None,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_highlight_id = int(highlight_id)
+        self._get_highlight(normalized_highlight_id)
+        updates: dict[str, Any] = {}
+        if color is not None:
+            updates["color"] = color
+        if note is not None:
+            updates["note"] = note
+        if state is not None:
+            updates["state"] = str(state).strip() or "active"
+        if not updates:
+            return self._get_highlight(normalized_highlight_id)
+
+        updates["updated_at"] = db._get_current_utc_timestamp_str()
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        values = list(updates.values()) + [normalized_highlight_id]
+        with db.transaction() as conn:
+            conn.execute(
+                f"UPDATE local_reading_highlights SET {assignments} WHERE id = ?",
+                values,
+            )
+        return self._get_highlight(normalized_highlight_id)
+
+    def delete_highlight(self, highlight_id: Any) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_highlight_id = int(highlight_id)
+        self._get_highlight(normalized_highlight_id)
+        with db.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM local_reading_highlights WHERE id = ?",
+                (normalized_highlight_id,),
+            )
+        return {"success": cursor.rowcount > 0}
+
+    def list_annotations(self, media_id: Any) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_media_id = self._coerce_media_id(media_id)
+        self.get_media_detail(normalized_media_id)
+        cursor = db.get_connection().execute(
+            """
+            SELECT * FROM local_document_annotations
+            WHERE media_id = ?
+            ORDER BY id
+            """,
+            (normalized_media_id,),
+        )
+        annotations = [self._annotation_row_to_dict(row) for row in cursor.fetchall()]
+        return {
+            "media_id": normalized_media_id,
+            "annotations": annotations,
+            "total_count": len(annotations),
+        }
+
+    def create_annotation(
+        self,
+        media_id: Any,
+        *,
+        location: str,
+        text: str,
+        color: str = "yellow",
+        note: str | None = None,
+        annotation_type: str = "highlight",
+        chapter_title: str | None = None,
+        percentage: float | None = None,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_media_id = self._coerce_media_id(media_id)
+        self.get_media_detail(normalized_media_id)
+        normalized_location = str(location or "").strip()
+        normalized_text = str(text or "").strip()
+        if not normalized_location:
+            raise ValueError("annotation location cannot be blank.")
+        if not normalized_text:
+            raise ValueError("annotation text cannot be blank.")
+        if percentage is not None and not 0 <= float(percentage) <= 100:
+            raise ValueError("annotation percentage must be between 0 and 100.")
+
+        now = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO local_document_annotations (
+                    media_id,
+                    location,
+                    text,
+                    color,
+                    note,
+                    annotation_type,
+                    chapter_title,
+                    percentage,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_media_id,
+                    normalized_location,
+                    normalized_text,
+                    str(color or "yellow"),
+                    note,
+                    str(annotation_type or "highlight"),
+                    chapter_title,
+                    percentage,
+                    now,
+                    now,
+                ),
+            )
+            annotation_id = cursor.lastrowid
+        return self._get_annotation(normalized_media_id, annotation_id)
+
+    def update_annotation(
+        self,
+        media_id: Any,
+        annotation_id: str,
+        *,
+        text: str | None = None,
+        color: str | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_media_id = self._coerce_media_id(media_id)
+        normalized_annotation_id = self._parse_local_annotation_id(annotation_id)
+        self._get_annotation(normalized_media_id, normalized_annotation_id)
+        updates: dict[str, Any] = {}
+        if text is not None:
+            normalized_text = str(text).strip()
+            if not normalized_text:
+                raise ValueError("annotation text cannot be blank.")
+            updates["text"] = normalized_text
+        if color is not None:
+            updates["color"] = color
+        if note is not None:
+            updates["note"] = note
+        if not updates:
+            return self._get_annotation(normalized_media_id, normalized_annotation_id)
+
+        updates["updated_at"] = db._get_current_utc_timestamp_str()
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        values = list(updates.values()) + [normalized_media_id, normalized_annotation_id]
+        with db.transaction() as conn:
+            conn.execute(
+                f"""
+                UPDATE local_document_annotations
+                SET {assignments}
+                WHERE media_id = ? AND id = ?
+                """,
+                values,
+            )
+        return self._get_annotation(normalized_media_id, normalized_annotation_id)
+
+    def delete_annotation(self, media_id: Any, annotation_id: str) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_media_id = self._coerce_media_id(media_id)
+        normalized_annotation_id = self._parse_local_annotation_id(annotation_id)
+        self._get_annotation(normalized_media_id, normalized_annotation_id)
+        with db.transaction() as conn:
+            conn.execute(
+                """
+                DELETE FROM local_document_annotations
+                WHERE media_id = ? AND id = ?
+                """,
+                (normalized_media_id, normalized_annotation_id),
+            )
+        return {}
+
+    def sync_annotations(
+        self,
+        media_id: Any,
+        *,
+        annotations: list[Mapping[str, Any]],
+        client_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_media_id = self._coerce_media_id(media_id)
+        self.get_media_detail(normalized_media_id)
+        with db.transaction() as conn:
+            conn.execute(
+                "DELETE FROM local_document_annotations WHERE media_id = ?",
+                (normalized_media_id,),
+            )
+
+        created = [
+            self.create_annotation(
+                normalized_media_id,
+                location=str(annotation.get("location") or ""),
+                text=str(annotation.get("text") or ""),
+                color=str(annotation.get("color") or "yellow"),
+                note=annotation.get("note"),
+                annotation_type=str(annotation.get("annotation_type") or "highlight"),
+                chapter_title=annotation.get("chapter_title"),
+                percentage=annotation.get("percentage"),
+            )
+            for annotation in annotations
+        ]
+        id_mapping = None
+        if client_ids:
+            id_mapping = {
+                str(client_id): created[index]["id"]
+                for index, client_id in enumerate(client_ids[:len(created)])
+            }
+        return {
+            "media_id": normalized_media_id,
+            "synced_count": len(created),
+            "annotations": created,
+            "id_mapping": id_mapping,
+        }
+
+    def get_document_outline(self, media_id: Any) -> dict[str, Any]:
+        normalized_media_id, text = self._local_document_text(media_id)
+        entries: list[dict[str, Any]] = []
+        for line in text.splitlines():
+            match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+            if not match:
+                continue
+            entries.append(
+                {
+                    "level": len(match.group(1)),
+                    "title": match.group(2).strip(),
+                    "page": 1,
+                }
+            )
+        return {
+            "media_id": normalized_media_id,
+            "has_outline": bool(entries),
+            "entries": entries,
+            "total_pages": self._estimate_local_page_count(text),
+        }
+
+    def get_document_figures(self, media_id: Any, *, min_size: int = 50) -> dict[str, Any]:
+        normalized_media_id, text = self._local_document_text(media_id)
+        size = max(int(min_size or 50), 1)
+        figures: list[dict[str, Any]] = []
+        for index, match in enumerate(re.finditer(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)", text), start=1):
+            source = match.group(2).strip()
+            image_format = self._local_figure_format(source)
+            figures.append(
+                {
+                    "id": f"local-fig-{index}",
+                    "page": 1,
+                    "width": size,
+                    "height": size,
+                    "format": image_format,
+                    "data_url": source if source.startswith("data:image/") else None,
+                    "caption": match.group(1).strip() or None,
+                }
+            )
+        return {
+            "media_id": normalized_media_id,
+            "has_figures": bool(figures),
+            "figures": figures,
+            "total_count": len(figures),
+        }
+
+    def get_document_references(
+        self,
+        media_id: Any,
+        *,
+        enrich: bool = False,
+        reference_index: int | None = None,
+        offset: int = 0,
+        limit: int = 50,
+        parse_cap: int | None = None,
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_media_id, text = self._local_document_text(media_id)
+        references = self._extract_local_references(text)
+        if parse_cap is not None:
+            references = references[:max(int(parse_cap), 0)]
+        if search:
+            needle = str(search).strip().lower()
+            references = [ref for ref in references if needle in ref["raw_text"].lower()]
+        total_detected = len(references)
+        if reference_index is not None:
+            index = int(reference_index)
+            references = [references[index]] if 0 <= index < len(references) else []
+            normalized_offset = 0
+            normalized_limit = 1
+        else:
+            normalized_offset = max(int(offset or 0), 0)
+            normalized_limit = max(int(limit or 50), 0)
+            references = references[normalized_offset:normalized_offset + normalized_limit]
+        returned_count = len(references)
+        total_available = total_detected
+        next_offset = normalized_offset + returned_count if normalized_offset + returned_count < total_available else None
+        return {
+            "media_id": normalized_media_id,
+            "has_references": total_available > 0,
+            "references": references,
+            "enrichment_source": "local-regex" if enrich else None,
+            "enriched_count": 0,
+            "enrichment_limited": False,
+            "total_detected": total_detected,
+            "truncated": parse_cap is not None and total_detected >= int(parse_cap),
+            "offset": normalized_offset,
+            "limit": normalized_limit,
+            "returned_count": returned_count,
+            "total_available": total_available,
+            "has_more": next_offset is not None,
+            "next_offset": next_offset,
+        }
+
+    def generate_document_insights(
+        self,
+        media_id: Any,
+        *,
+        categories: list[str] | None = None,
+        model: str | None = None,
+        max_content_length: int | None = 5000,
+        force: bool | None = False,
+    ) -> dict[str, Any]:
+        normalized_media_id, text = self._local_document_text(media_id)
+        if max_content_length is not None:
+            text = text[:max(int(max_content_length), 0)]
+        selected_categories = categories or ["summary"]
+        insights = []
+        summary = self._extractive_summary(text)
+        for category in selected_categories:
+            normalized_category = str(category or "summary").strip() or "summary"
+            insights.append(
+                {
+                    "category": normalized_category,
+                    "title": self._local_insight_title(normalized_category),
+                    "content": summary,
+                    "confidence": 0.5,
+                }
+            )
+        return {
+            "media_id": normalized_media_id,
+            "insights": insights,
+            "model_used": model or "local-extractive",
+            "cached": False,
         }
 
     def bulk_update_reading_items(
@@ -1818,6 +2299,14 @@ class LocalMediaReadingService:
             return self._first_present_text(detail, "notes")
         return self._local_text_from_row(detail)
 
+    def _local_document_text(self, media_id: Any) -> tuple[int, str]:
+        normalized_media_id = self._coerce_media_id(media_id)
+        detail = self.get_media_detail(normalized_media_id)
+        text = self._local_text_from_row(detail)
+        if not text or not text.strip():
+            raise ValueError("local_document_no_content")
+        return normalized_media_id, text
+
     @staticmethod
     def _first_present_text(row: Mapping[str, Any], *keys: str) -> str | None:
         for key in keys:
@@ -2006,6 +2495,69 @@ class LocalMediaReadingService:
         return candidate.rstrip(" ,;:") + "..."
 
     @staticmethod
+    def _estimate_local_page_count(text: str) -> int:
+        normalized_length = len(str(text or ""))
+        return max(1, (normalized_length + 2999) // 3000)
+
+    @staticmethod
+    def _local_figure_format(source: str) -> str:
+        normalized = str(source or "").strip()
+        if normalized.startswith("data:image/"):
+            media_type = normalized.split(";", 1)[0].removeprefix("data:image/")
+            return media_type or "data-url"
+        suffix = Path(normalized).suffix.lower().lstrip(".")
+        return suffix or "external"
+
+    @staticmethod
+    def _extract_local_references(text: str) -> list[dict[str, Any]]:
+        lines = [line.strip() for line in str(text or "").splitlines()]
+        reference_lines: list[str] = []
+        in_references = False
+        for line in lines:
+            if not line:
+                continue
+            if re.match(r"^#{0,6}\s*references\b", line, flags=re.IGNORECASE):
+                in_references = True
+                continue
+            if in_references:
+                if re.match(r"^#{1,6}\s+", line):
+                    break
+                reference_lines.append(line)
+        if not reference_lines:
+            reference_lines = [
+                line for line in lines
+                if "doi.org/" in line.lower() or re.search(r"\b10\.\d{4,9}/", line)
+            ]
+
+        references: list[dict[str, Any]] = []
+        for line in reference_lines:
+            doi_match = re.search(r"\b(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", line, flags=re.IGNORECASE)
+            urls = [url.rstrip(".,;)") for url in re.findall(r"https?://[^\s)]+", line)]
+            doi = doi_match.group(1).rstrip(".,;)") if doi_match else None
+            non_doi_urls = [url for url in urls if "doi.org/" not in url.lower()]
+            year_match = re.search(r"\b(1[0-9]{3}|20[0-9]{2}|2100)\b", line)
+            references.append(
+                {
+                    "raw_text": line,
+                    "title": None,
+                    "authors": None,
+                    "year": int(year_match.group(1)) if year_match else None,
+                    "venue": None,
+                    "doi": doi,
+                    "arxiv_id": None,
+                    "url": non_doi_urls[0] if non_doi_urls else (urls[0] if urls else None),
+                    "citation_count": None,
+                    "semantic_scholar_id": None,
+                    "open_access_pdf": None,
+                }
+            )
+        return references
+
+    @staticmethod
+    def _local_insight_title(category: str) -> str:
+        return str(category or "summary").replace("_", " ").strip().title() or "Summary"
+
+    @staticmethod
     def _validate_reading_archive_format(value: Any) -> str:
         normalized = str(value or "html").strip().lower()
         if normalized not in {"html", "md"}:
@@ -2171,7 +2723,7 @@ class LocalMediaReadingService:
         if include_text:
             payload["text"] = self._local_text_from_row(row)
         if include_highlights:
-            payload["highlights"] = []
+            payload["highlights"] = self.list_highlights(row.get("id"))
         return payload
 
     @staticmethod
@@ -2256,8 +2808,108 @@ class LocalMediaReadingService:
                     retention_until TEXT,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS local_reading_highlights (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id INTEGER NOT NULL,
+                    quote TEXT NOT NULL,
+                    start_offset INTEGER,
+                    end_offset INTEGER,
+                    color TEXT,
+                    note TEXT,
+                    anchor_strategy TEXT NOT NULL DEFAULT 'fuzzy_quote',
+                    state TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_local_reading_highlights_item_id
+                    ON local_reading_highlights(item_id);
+                CREATE TABLE IF NOT EXISTS local_document_annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    media_id INTEGER NOT NULL,
+                    location TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    color TEXT NOT NULL DEFAULT 'yellow',
+                    note TEXT,
+                    annotation_type TEXT NOT NULL DEFAULT 'highlight',
+                    chapter_title TEXT,
+                    percentage REAL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_local_document_annotations_media_id
+                    ON local_document_annotations(media_id);
                 """
             )
+
+    def _get_highlight(self, highlight_id: Any) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        row = db.get_connection().execute(
+            "SELECT * FROM local_reading_highlights WHERE id = ?",
+            (int(highlight_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Local reading highlight not found: {highlight_id}")
+        return self._highlight_row_to_dict(row)
+
+    @staticmethod
+    def _highlight_row_to_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        return {
+            "id": payload["id"],
+            "item_id": payload["item_id"],
+            "quote": payload["quote"],
+            "start_offset": payload.get("start_offset"),
+            "end_offset": payload.get("end_offset"),
+            "color": payload.get("color"),
+            "note": payload.get("note"),
+            "anchor_strategy": payload.get("anchor_strategy") or "fuzzy_quote",
+            "state": payload.get("state") or "active",
+            "created_at": payload.get("created_at"),
+            "updated_at": payload.get("updated_at"),
+        }
+
+    @staticmethod
+    def _parse_local_annotation_id(annotation_id: Any) -> int:
+        raw = str(annotation_id or "").strip()
+        if raw.startswith("local-ann-"):
+            raw = raw.removeprefix("local-ann-")
+        if not raw:
+            raise ValueError("annotation_id cannot be blank.")
+        return int(raw)
+
+    def _get_annotation(self, media_id: Any, annotation_id: Any) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_media_id = self._coerce_media_id(media_id)
+        normalized_annotation_id = self._parse_local_annotation_id(annotation_id)
+        row = db.get_connection().execute(
+            """
+            SELECT * FROM local_document_annotations
+            WHERE media_id = ? AND id = ?
+            """,
+            (normalized_media_id, normalized_annotation_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Local document annotation not found: {annotation_id}")
+        return self._annotation_row_to_dict(row)
+
+    @staticmethod
+    def _annotation_row_to_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        return {
+            "id": f"local-ann-{payload['id']}",
+            "media_id": payload["media_id"],
+            "location": payload["location"],
+            "text": payload["text"],
+            "color": payload.get("color") or "yellow",
+            "note": payload.get("note"),
+            "annotation_type": payload.get("annotation_type") or "highlight",
+            "chapter_title": payload.get("chapter_title"),
+            "percentage": payload.get("percentage"),
+            "created_at": payload.get("created_at"),
+            "updated_at": payload.get("updated_at"),
+        }
 
     @staticmethod
     def _ensure_local_ingestion_schema(db: Any) -> None:

@@ -164,6 +164,217 @@ def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_facto
     assert db.get_media_read_it_later_state(media_id) is None
 
 
+def test_local_service_saves_direct_reading_item_with_content(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    item = service.save_reading_item(
+        url="https://example.com/local-direct",
+        title="Local Direct",
+        tags=["AI", "reading"],
+        status="saved",
+        content="Direct local reading body",
+    )
+
+    stored = db.get_media_by_url("https://example.com/local-direct")
+    assert stored is not None
+    assert item["id"] == stored["id"]
+    assert item["title"] == "Local Direct"
+    assert item["media_type"] == "article"
+    assert item["url"] == "https://example.com/local-direct"
+    assert item["is_read_it_later"] is True
+    assert item["saved_at"] is not None
+    assert db.get_media_read_it_later_state(stored["id"])["is_read_it_later"] is True
+
+
+def test_local_service_saves_direct_reading_item_with_injected_scraper(memory_db_factory):
+    db = memory_db_factory()
+    calls = []
+
+    def fake_scraper(url, *, custom_cookies=None):
+        calls.append((url, custom_cookies))
+        return {
+            "url": url,
+            "title": "Scraped Title",
+            "content": "Scraped local reading body",
+            "author": "Local Author",
+            "keywords": ["scraped"],
+        }
+
+    service = LocalMediaReadingService(db, url_article_scraper=fake_scraper)
+
+    item = service.save_reading_item(
+        url="https://example.com/scraped",
+        title="Caller Title",
+        tags=["manual"],
+    )
+
+    stored = db.get_media_by_url("https://example.com/scraped")
+    assert stored is not None
+    assert calls == [("https://example.com/scraped", None)]
+    assert item["id"] == stored["id"]
+    assert item["title"] == "Caller Title"
+    assert item["author"] == "Local Author"
+    assert item["is_read_it_later"] is True
+
+
+def test_local_service_direct_reading_item_archived_status_clears_saved_state(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    saved = service.save_reading_item(
+        url="https://example.com/status",
+        title="Saved First",
+        status="saved",
+        content="Saved body",
+    )
+    archived = service.save_reading_item(
+        url="https://example.com/status",
+        title="Archived Next",
+        status="archived",
+        content="Archived body",
+    )
+
+    assert saved["is_read_it_later"] is True
+    assert archived["id"] == saved["id"]
+    assert archived["is_read_it_later"] is False
+    assert db.get_media_read_it_later_state(archived["id"]) is None
+
+
+def test_local_service_persists_reading_highlights(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Highlighted",
+        content="Important local content",
+        media_type="article",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+
+    created = service.create_highlight(
+        media_id,
+        quote="Important",
+        start_offset=0,
+        end_offset=9,
+        color="yellow",
+        note="review",
+    )
+    listed = service.list_highlights(media_id)
+    updated = service.update_highlight(created["id"], color="blue", note="done", state="stale")
+    deleted = service.delete_highlight(created["id"])
+
+    assert created["item_id"] == media_id
+    assert created["quote"] == "Important"
+    assert created["start_offset"] == 0
+    assert created["end_offset"] == 9
+    assert created["anchor_strategy"] == "fuzzy_quote"
+    assert created["state"] == "active"
+    assert listed == [created]
+    assert updated["color"] == "blue"
+    assert updated["note"] == "done"
+    assert updated["state"] == "stale"
+    assert deleted == {"success": True}
+    assert service.list_highlights(media_id) == []
+
+
+def test_local_service_persists_document_annotations(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Annotated",
+        content="Annotated local content",
+        media_type="document",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+
+    created = service.create_annotation(
+        media_id,
+        location="page:12",
+        text="selected text",
+        color="yellow",
+        note="remember",
+        annotation_type="highlight",
+        chapter_title="Chapter 1",
+        percentage=42.5,
+    )
+    listed = service.list_annotations(media_id)
+    updated = service.update_annotation(media_id, created["id"], text="updated", color="blue", note="done")
+    deleted = service.delete_annotation(media_id, created["id"])
+    after_delete = service.list_annotations(media_id)
+    synced = service.sync_annotations(
+        media_id,
+        annotations=[{"location": "page:13", "text": "offline note", "annotation_type": "page_note"}],
+        client_ids=["client-1"],
+    )
+
+    assert created["id"].startswith("local-ann-")
+    assert created["media_id"] == media_id
+    assert created["location"] == "page:12"
+    assert created["text"] == "selected text"
+    assert created["color"] == "yellow"
+    assert created["note"] == "remember"
+    assert created["annotation_type"] == "highlight"
+    assert created["chapter_title"] == "Chapter 1"
+    assert created["percentage"] == 42.5
+    assert listed["media_id"] == media_id
+    assert listed["annotations"] == [created]
+    assert listed["total_count"] == 1
+    assert updated["text"] == "updated"
+    assert updated["color"] == "blue"
+    assert updated["note"] == "done"
+    assert deleted == {}
+    assert after_delete["total_count"] == 0
+    assert synced["media_id"] == media_id
+    assert synced["synced_count"] == 1
+    assert synced["annotations"][0]["text"] == "offline note"
+    assert synced["id_mapping"] == {"client-1": synced["annotations"][0]["id"]}
+
+
+def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Intelligence",
+        content=(
+            "# Introduction\n"
+            "This local paper describes a useful offline result.\n\n"
+            "![Architecture Diagram](https://example.com/figure.png)\n\n"
+            "## Methods\n"
+            "The method is deterministic and local.\n\n"
+            "References\n"
+            "Smith J. 2024. Local Paper. https://doi.org/10.1234/local. https://example.com/paper\n"
+        ),
+        media_type="document",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+
+    outline = service.get_document_outline(media_id)
+    figures = service.get_document_figures(media_id, min_size=80)
+    references = service.get_document_references(media_id, search="Smith", limit=10)
+    insights = service.generate_document_insights(media_id, categories=["summary"], max_content_length=5000)
+
+    assert outline["media_id"] == media_id
+    assert outline["has_outline"] is True
+    assert outline["entries"] == [
+        {"level": 1, "title": "Introduction", "page": 1},
+        {"level": 2, "title": "Methods", "page": 1},
+    ]
+    assert figures["has_figures"] is True
+    assert figures["total_count"] == 1
+    assert figures["figures"][0]["id"] == "local-fig-1"
+    assert figures["figures"][0]["width"] == 80
+    assert figures["figures"][0]["height"] == 80
+    assert figures["figures"][0]["caption"] == "Architecture Diagram"
+    assert references["has_references"] is True
+    assert references["returned_count"] == 1
+    assert references["references"][0]["doi"] == "10.1234/local"
+    assert references["references"][0]["url"] == "https://example.com/paper"
+    assert insights["model_used"] == "local-extractive"
+    assert insights["cached"] is False
+    assert insights["insights"][0]["category"] == "summary"
+    assert "offline result" in insights["insights"][0]["content"]
+
+
 def test_local_service_persists_saved_searches_and_note_links(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
@@ -211,8 +422,14 @@ def test_local_service_exports_saved_reading_items(memory_db_factory):
     )
     db.save_media_to_read_it_later(saved_id)
     service = LocalMediaReadingService(db)
+    highlight = service.create_highlight(saved_id, quote="Saved", color="yellow")
 
-    exported = service.export_reading_items(format="jsonl", include_metadata=True, include_text=True)
+    exported = service.export_reading_items(
+        format="jsonl",
+        include_metadata=True,
+        include_text=True,
+        include_highlights=True,
+    )
     zip_export = service.export_reading_items(format="zip", include_metadata=False)
 
     rows = [json.loads(line) for line in exported["content"].decode("utf-8").splitlines()]
@@ -222,6 +439,7 @@ def test_local_service_exports_saved_reading_items(memory_db_factory):
     assert rows[0]["title"] == "Saved"
     assert rows[0]["status"] == "saved"
     assert rows[0]["text"] == "Saved text"
+    assert rows[0]["highlights"] == [highlight]
     assert "metadata" in rows[0]
     assert all(row["id"] != other_id for row in rows)
 
