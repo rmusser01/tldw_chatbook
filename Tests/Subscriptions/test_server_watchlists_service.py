@@ -250,21 +250,33 @@ async def test_server_watchlists_service_omits_group_ids_and_preserves_settings_
 
 
 @pytest.mark.asyncio
-async def test_server_watchlists_service_blocks_deferred_forum_and_group_editing_before_dispatch():
+async def test_server_watchlists_service_allows_forum_sources_but_blocks_group_editing_before_dispatch():
     client = FakeWatchlistsClient()
     service = ServerWatchlistsService(client=client)
 
-    with pytest.raises(ValueError, match="Forum sources are not supported"):
-        await service.create_source(
-            name="Forum",
-            url="https://example.com/forum",
-            source_type="forum",
-        )
+    created = await service.create_source(
+        name="Forum",
+        url="https://example.com/forum",
+        source_type="forum",
+    )
 
     with pytest.raises(ValueError, match="group editing is deferred"):
         await service.update_source(17, group_ids=[3])
 
-    assert client.calls == []
+    assert created["id"] == "server:watchlist_source:18"
+    assert client.calls == [
+        (
+            "create_watchlist_source",
+            {
+                "name": "Forum",
+                "url": "https://example.com/forum",
+                "source_type": "forum",
+                "active": True,
+                "tags": [],
+                "settings": {},
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

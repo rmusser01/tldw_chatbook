@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-WatchlistSourceType = Literal["rss", "site"]
+WatchlistSourceType = Literal["rss", "site", "forum"]
 
 
 class SourceCreateRequest(BaseModel):

@@ -285,8 +285,6 @@ class ServerWatchlistsService:
     @staticmethod
     def _validate_source_type(source_type: Any) -> str:
         normalized = str(source_type or "").strip()
-        if normalized == "forum":
-            raise ValueError("Forum sources are not supported in the first watchlists slice.")
-        if normalized not in {"rss", "site"}:
-            raise ValueError("Only rss and site watchlist sources are supported in this slice.")
+        if normalized not in {"rss", "site", "forum"}:
+            raise ValueError("Only rss, site, and forum watchlist sources are supported in this slice.")
         return normalized

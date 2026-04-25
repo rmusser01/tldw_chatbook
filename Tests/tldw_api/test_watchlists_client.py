@@ -47,9 +47,9 @@ async def test_watchlist_source_crud_routes_wire_and_return_typed_models(monkeyp
             },
             {
                 "id": 18,
-                "name": "Docs",
-                "url": "https://example.com/docs",
-                "source_type": "site",
+                "name": "Forum",
+                "url": "https://example.com/forum",
+                "source_type": "forum",
             },
             {
                 "id": 18,
@@ -72,9 +72,9 @@ async def test_watchlist_source_crud_routes_wire_and_return_typed_models(monkeyp
     fetched = await client.get_watchlist_source(17)
     created = await client.create_watchlist_source(
         SourceCreateRequest(
-            name="Docs",
-            url="https://example.com/docs",
-            source_type="site",
+            name="Forum",
+            url="https://example.com/forum",
+            source_type="forum",
         )
     )
     updated = await client.update_watchlist_source(
@@ -93,9 +93,9 @@ async def test_watchlist_source_crud_routes_wire_and_return_typed_models(monkeyp
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/watchlists/sources/17")
     assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/watchlists/sources")
     assert mocked.await_args_list[2].kwargs["json_data"] == {
-        "name": "Docs",
-        "url": "https://example.com/docs",
-        "source_type": "site",
+        "name": "Forum",
+        "url": "https://example.com/forum",
+        "source_type": "forum",
         "active": True,
         "tags": [],
         "settings": {},

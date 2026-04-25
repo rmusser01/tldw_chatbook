@@ -292,17 +292,6 @@ def test_scope_service_reports_known_watchlists_capability_gaps():
                 "watchlists.update.server",
             ],
         },
-        {
-            "operation_id": "watchlists.sources.forum.server",
-            "source": "server",
-            "supported": False,
-            "reason_code": "server_contract_missing",
-            "user_message": "Forum watchlist sources are not supported by the current Chatbook server-watchlist slice.",
-            "affected_action_ids": [
-                "watchlists.create.server",
-                "watchlists.update.server",
-            ],
-        },
     ]
 
 

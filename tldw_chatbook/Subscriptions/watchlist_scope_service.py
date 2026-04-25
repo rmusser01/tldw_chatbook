@@ -53,17 +53,6 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
             "watchlists.update.server",
         ],
     },
-    {
-        "operation_id": "watchlists.sources.forum.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "server_contract_missing",
-        "user_message": "Forum watchlist sources are not supported by the current Chatbook server-watchlist slice.",
-        "affected_action_ids": [
-            "watchlists.create.server",
-            "watchlists.update.server",
-        ],
-    },
 ]
 
 
