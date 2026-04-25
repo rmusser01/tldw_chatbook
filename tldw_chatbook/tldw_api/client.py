@@ -2460,6 +2460,78 @@ class TLDWAPIClient:
     async def cleanup_evaluation_rag_pipeline(self) -> Dict[str, Any]:
         return await self._request("POST", "/api/v1/evaluations/rag/pipeline/cleanup")
 
+    async def create_evaluation_embeddings_abtest(
+        self,
+        *,
+        name: str,
+        config: Dict[str, Any],
+        run_immediately: bool | None = False,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/evaluations/embeddings/abtest",
+            json_data={
+                "name": name,
+                "config": config,
+                "run_immediately": run_immediately,
+            },
+        )
+
+    async def run_evaluation_embeddings_abtest(
+        self,
+        test_id: str,
+        *,
+        config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/evaluations/embeddings/abtest/{test_id}/run",
+            json_data={"config": config},
+        )
+
+    async def get_evaluation_embeddings_abtest_status(self, test_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/evaluations/embeddings/abtest/{test_id}")
+
+    async def get_evaluation_embeddings_abtest_results(
+        self,
+        test_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/evaluations/embeddings/abtest/{test_id}/results",
+            params={"page": page, "page_size": page_size},
+        )
+
+    async def get_evaluation_embeddings_abtest_significance(
+        self,
+        test_id: str,
+        *,
+        metric: str = "ndcg",
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/evaluations/embeddings/abtest/{test_id}/significance",
+            params={"metric": metric},
+        )
+
+    async def export_evaluation_embeddings_abtest(
+        self,
+        test_id: str,
+        *,
+        format: Literal["json", "csv"] = "json",
+    ) -> Any:
+        return await self._request(
+            "GET",
+            f"/api/v1/evaluations/embeddings/abtest/{test_id}/export",
+            params={"format": format},
+        )
+
+    async def delete_evaluation_embeddings_abtest(self, test_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/evaluations/embeddings/abtest/{test_id}")
+
     async def create_flashcard_deck(
         self,
         request_data: FlashcardDeckCreateRequest,

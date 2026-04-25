@@ -58,6 +58,34 @@ class FakeEvaluationsClient:
         self.calls.append(("cleanup_evaluation_rag_pipeline",))
         return {"expired_count": 0, "deleted_count": 0}
 
+    async def create_evaluation_embeddings_abtest(self, *, name, config, run_immediately=False):
+        self.calls.append(("create_evaluation_embeddings_abtest", name, config, run_immediately))
+        return {"test_id": "ab_1", "status": "created"}
+
+    async def run_evaluation_embeddings_abtest(self, test_id, *, config):
+        self.calls.append(("run_evaluation_embeddings_abtest", test_id, config))
+        return {"test_id": test_id, "status": "running"}
+
+    async def get_evaluation_embeddings_abtest_status(self, test_id):
+        self.calls.append(("get_evaluation_embeddings_abtest_status", test_id))
+        return {"test_id": test_id, "status": "completed", "arms": []}
+
+    async def get_evaluation_embeddings_abtest_results(self, test_id, **kwargs):
+        self.calls.append(("get_evaluation_embeddings_abtest_results", test_id, kwargs))
+        return {"summary": {"test_id": test_id, "status": "completed", "arms": []}, "results": []}
+
+    async def get_evaluation_embeddings_abtest_significance(self, test_id, **kwargs):
+        self.calls.append(("get_evaluation_embeddings_abtest_significance", test_id, kwargs))
+        return {"metric": kwargs.get("metric"), "p_value": 0.05}
+
+    async def export_evaluation_embeddings_abtest(self, test_id, **kwargs):
+        self.calls.append(("export_evaluation_embeddings_abtest", test_id, kwargs))
+        return {"test_id": test_id, "total": 0, "results": []}
+
+    async def delete_evaluation_embeddings_abtest(self, test_id):
+        self.calls.append(("delete_evaluation_embeddings_abtest", test_id))
+        return {"status": "deleted", "test_id": test_id}
+
 
 @pytest.mark.asyncio
 async def test_server_evaluations_service_enforces_policy_actions():
@@ -81,6 +109,17 @@ async def test_server_evaluations_service_enforces_policy_actions():
     await service.get_rag_pipeline_preset("fast")
     await service.delete_rag_pipeline_preset("fast")
     await service.cleanup_rag_pipeline()
+    await service.create_embeddings_abtest(
+        name="embed-test",
+        config={"retrieval": {"k": 10}},
+        run_immediately=True,
+    )
+    await service.run_embeddings_abtest("ab_1", config={"retrieval": {"k": 10}})
+    await service.get_embeddings_abtest_status("ab_1")
+    await service.get_embeddings_abtest_results("ab_1", page=2, page_size=25)
+    await service.get_embeddings_abtest_significance("ab_1", metric="mrr")
+    await service.export_embeddings_abtest("ab_1", format="json")
+    await service.delete_embeddings_abtest("ab_1")
 
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "evaluations.dataset.list.server",
@@ -95,6 +134,13 @@ async def test_server_evaluations_service_enforces_policy_actions():
         "evaluations.rag_pipeline.detail.server",
         "evaluations.rag_pipeline.delete.server",
         "evaluations.rag_pipeline.launch.server",
+        "evaluations.embeddings_abtest.create.server",
+        "evaluations.embeddings_abtest.launch.server",
+        "evaluations.embeddings_abtest.detail.server",
+        "evaluations.embeddings_abtest.observe.server",
+        "evaluations.embeddings_abtest.observe.server",
+        "evaluations.embeddings_abtest.export.server",
+        "evaluations.embeddings_abtest.delete.server",
     ]
 
 

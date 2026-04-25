@@ -234,6 +234,34 @@ class FakeServerEvaluationService:
         self.calls.append(("cleanup_rag_pipeline",))
         return {"expired_count": 2, "deleted_count": 1}
 
+    async def create_embeddings_abtest(self, *, name, config, run_immediately=False):
+        self.calls.append(("create_embeddings_abtest", name, config, run_immediately))
+        return {"test_id": "ab_1", "status": "created"}
+
+    async def run_embeddings_abtest(self, test_id, *, config):
+        self.calls.append(("run_embeddings_abtest", test_id, config))
+        return {"test_id": test_id, "status": "running"}
+
+    async def get_embeddings_abtest_status(self, test_id):
+        self.calls.append(("get_embeddings_abtest_status", test_id))
+        return {"test_id": test_id, "status": "completed", "arms": []}
+
+    async def get_embeddings_abtest_results(self, test_id, *, page=1, page_size=50):
+        self.calls.append(("get_embeddings_abtest_results", test_id, page, page_size))
+        return {"summary": {"test_id": test_id, "status": "completed", "arms": []}, "results": []}
+
+    async def get_embeddings_abtest_significance(self, test_id, *, metric="ndcg"):
+        self.calls.append(("get_embeddings_abtest_significance", test_id, metric))
+        return {"metric": metric, "p_value": 0.05}
+
+    async def export_embeddings_abtest(self, test_id, *, format="json"):
+        self.calls.append(("export_embeddings_abtest", test_id, format))
+        return {"test_id": test_id, "total": 0, "results": []}
+
+    async def delete_embeddings_abtest(self, test_id):
+        self.calls.append(("delete_embeddings_abtest", test_id))
+        return {"status": "deleted", "test_id": test_id}
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
@@ -491,6 +519,57 @@ async def test_scope_service_routes_server_rag_pipeline_preset_admin_with_policy
     ]
 
 
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_embeddings_abtest_admin_with_policy():
+    server = FakeServerEvaluationService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+    config = {"retrieval": {"k": 10}}
+
+    created = await scope.create_embeddings_abtest(
+        mode="server",
+        name="embed-test",
+        config=config,
+        run_immediately=True,
+    )
+    launched = await scope.run_embeddings_abtest(mode="server", test_id="ab_1", config=config)
+    status = await scope.get_embeddings_abtest_status(mode="server", test_id="ab_1")
+    results = await scope.get_embeddings_abtest_results(mode="server", test_id="ab_1", page=2, page_size=25)
+    significance = await scope.get_embeddings_abtest_significance(mode="server", test_id="ab_1", metric="mrr")
+    exported = await scope.export_embeddings_abtest(mode="server", test_id="ab_1", format="json")
+    deleted = await scope.delete_embeddings_abtest(mode="server", test_id="ab_1")
+
+    assert created["test_id"] == "ab_1"
+    assert launched["status"] == "running"
+    assert status["status"] == "completed"
+    assert results["results"] == []
+    assert significance["metric"] == "mrr"
+    assert exported["test_id"] == "ab_1"
+    assert deleted["status"] == "deleted"
+    assert server.calls[-7:] == [
+        ("create_embeddings_abtest", "embed-test", config, True),
+        ("run_embeddings_abtest", "ab_1", config),
+        ("get_embeddings_abtest_status", "ab_1"),
+        ("get_embeddings_abtest_results", "ab_1", 2, 25),
+        ("get_embeddings_abtest_significance", "ab_1", "mrr"),
+        ("export_embeddings_abtest", "ab_1", "json"),
+        ("delete_embeddings_abtest", "ab_1"),
+    ]
+    assert policy_enforcer.calls[-7:] == [
+        "evaluations.embeddings_abtest.create.server",
+        "evaluations.embeddings_abtest.launch.server",
+        "evaluations.embeddings_abtest.detail.server",
+        "evaluations.embeddings_abtest.observe.server",
+        "evaluations.embeddings_abtest.observe.server",
+        "evaluations.embeddings_abtest.export.server",
+        "evaluations.embeddings_abtest.delete.server",
+    ]
+
+
 def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
     scope = EvaluationScopeService(
         local_service=FakeLocalEvaluationService(),
@@ -534,13 +613,5 @@ def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
             "reason_code": "server_contract_missing",
             "user_message": "The current server unified run detail exposes summary metrics, but not sample-level result artifacts.",
             "affected_action_ids": ["evaluations.run.detail.server", "evaluations.run.observe.server"],
-        },
-        {
-            "operation_id": "evaluations.embeddings_abtest.admin.server",
-            "source": "server",
-            "supported": False,
-            "reason_code": "chatbook_contract_missing",
-            "user_message": "Server embedding A/B test routes exist, but Chatbook does not yet expose create/run/status/results/export controls for them.",
-            "affected_action_ids": ["evaluations.run.launch.server", "evaluations.run.observe.server"],
         },
     ]

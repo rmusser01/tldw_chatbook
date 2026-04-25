@@ -340,6 +340,12 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         evaluations.dataset.list.server
         evaluations.dataset.update.local
         evaluations.dataset.update.server
+        evaluations.embeddings_abtest.create.server
+        evaluations.embeddings_abtest.delete.server
+        evaluations.embeddings_abtest.detail.server
+        evaluations.embeddings_abtest.export.server
+        evaluations.embeddings_abtest.launch.server
+        evaluations.embeddings_abtest.observe.server
         evaluations.rag_pipeline.create.server
         evaluations.rag_pipeline.delete.server
         evaluations.rag_pipeline.detail.server

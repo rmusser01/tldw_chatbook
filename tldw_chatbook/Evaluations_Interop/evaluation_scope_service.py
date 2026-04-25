@@ -56,14 +56,6 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "user_message": "The current server unified run detail exposes summary metrics, but not sample-level result artifacts.",
         "affected_action_ids": ["evaluations.run.detail.server", "evaluations.run.observe.server"],
     },
-    {
-        "operation_id": "evaluations.embeddings_abtest.admin.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "chatbook_contract_missing",
-        "user_message": "Server embedding A/B test routes exist, but Chatbook does not yet expose create/run/status/results/export controls for them.",
-        "affected_action_ids": ["evaluations.run.launch.server", "evaluations.run.observe.server"],
-    },
 ]
 
 
@@ -121,6 +113,10 @@ class EvaluationScopeService:
     @staticmethod
     def _rag_pipeline_action_id(mode: EvaluationBackend, action: str) -> str:
         return f"evaluations.rag_pipeline.{action}.{mode.value}"
+
+    @staticmethod
+    def _abtest_action_id(mode: EvaluationBackend, action: str) -> str:
+        return f"evaluations.embeddings_abtest.{action}.{mode.value}"
 
     def _require_server_only_mode(
         self,
@@ -585,3 +581,127 @@ class EvaluationScopeService:
         self._enforce_policy(self._rag_pipeline_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         return dict(await self._maybe_await(service.cleanup_rag_pipeline()) or {})
+
+    async def create_embeddings_abtest(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+        config: dict[str, Any],
+        run_immediately: bool | None = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Embeddings A/B test administration",
+        )
+        self._enforce_policy(self._abtest_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.create_embeddings_abtest(
+                    name=name,
+                    config=config,
+                    run_immediately=run_immediately,
+                )
+            )
+            or {}
+        )
+
+    async def run_embeddings_abtest(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        test_id: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Embeddings A/B test administration",
+        )
+        self._enforce_policy(self._abtest_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.run_embeddings_abtest(test_id, config=config)) or {})
+
+    async def get_embeddings_abtest_status(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        test_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Embeddings A/B test administration",
+        )
+        self._enforce_policy(self._abtest_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.get_embeddings_abtest_status(test_id)) or {})
+
+    async def get_embeddings_abtest_results(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        test_id: str,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Embeddings A/B test administration",
+        )
+        self._enforce_policy(self._abtest_action_id(normalized_mode, "observe"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.get_embeddings_abtest_results(test_id, page=page, page_size=page_size)
+            )
+            or {}
+        )
+
+    async def get_embeddings_abtest_significance(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        test_id: str,
+        metric: str = "ndcg",
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Embeddings A/B test administration",
+        )
+        self._enforce_policy(self._abtest_action_id(normalized_mode, "observe"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.get_embeddings_abtest_significance(test_id, metric=metric)
+            )
+            or {}
+        )
+
+    async def export_embeddings_abtest(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        test_id: str,
+        format: str = "json",
+    ) -> Any:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Embeddings A/B test administration",
+        )
+        self._enforce_policy(self._abtest_action_id(normalized_mode, "export"))
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(service.export_embeddings_abtest(test_id, format=format))
+
+    async def delete_embeddings_abtest(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        test_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Embeddings A/B test administration",
+        )
+        self._enforce_policy(self._abtest_action_id(normalized_mode, "delete"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.delete_embeddings_abtest(test_id)) or {})

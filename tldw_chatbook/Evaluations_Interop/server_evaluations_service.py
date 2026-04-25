@@ -72,6 +72,10 @@ class ServerEvaluationsService:
     def _rag_pipeline_action_id(action: str) -> str:
         return f"evaluations.rag_pipeline.{action}.server"
 
+    @staticmethod
+    def _abtest_action_id(action: str) -> str:
+        return f"evaluations.embeddings_abtest.{action}.server"
+
     def _dump_model(self, value: Any) -> Any:
         if hasattr(value, "model_dump") and callable(value.model_dump):
             return value.model_dump(mode="json")
@@ -298,3 +302,85 @@ class ServerEvaluationsService:
     async def cleanup_rag_pipeline(self) -> dict[str, Any]:
         self._enforce(self._rag_pipeline_action_id("launch"))
         return self._dump_model(await self._require_client().cleanup_evaluation_rag_pipeline())
+
+    async def create_embeddings_abtest(
+        self,
+        *,
+        name: str,
+        config: Mapping[str, Any],
+        run_immediately: bool | None = False,
+    ) -> dict[str, Any]:
+        self._enforce(self._abtest_action_id("create"))
+        return self._dump_model(
+            await self._require_client().create_evaluation_embeddings_abtest(
+                name=name,
+                config=dict(config),
+                run_immediately=run_immediately,
+            )
+        )
+
+    async def run_embeddings_abtest(
+        self,
+        test_id: str,
+        *,
+        config: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        self._enforce(self._abtest_action_id("launch"))
+        return self._dump_model(
+            await self._require_client().run_evaluation_embeddings_abtest(
+                test_id,
+                config=dict(config),
+            )
+        )
+
+    async def get_embeddings_abtest_status(self, test_id: str) -> dict[str, Any]:
+        self._enforce(self._abtest_action_id("detail"))
+        return self._dump_model(await self._require_client().get_evaluation_embeddings_abtest_status(test_id))
+
+    async def get_embeddings_abtest_results(
+        self,
+        test_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        self._enforce(self._abtest_action_id("observe"))
+        return self._dump_model(
+            await self._require_client().get_evaluation_embeddings_abtest_results(
+                test_id,
+                page=page,
+                page_size=page_size,
+            )
+        )
+
+    async def get_embeddings_abtest_significance(
+        self,
+        test_id: str,
+        *,
+        metric: str = "ndcg",
+    ) -> dict[str, Any]:
+        self._enforce(self._abtest_action_id("observe"))
+        return self._dump_model(
+            await self._require_client().get_evaluation_embeddings_abtest_significance(
+                test_id,
+                metric=metric,
+            )
+        )
+
+    async def export_embeddings_abtest(
+        self,
+        test_id: str,
+        *,
+        format: str = "json",
+    ) -> Any:
+        self._enforce(self._abtest_action_id("export"))
+        return self._dump_model(
+            await self._require_client().export_evaluation_embeddings_abtest(
+                test_id,
+                format=format,
+            )
+        )
+
+    async def delete_embeddings_abtest(self, test_id: str) -> dict[str, Any]:
+        self._enforce(self._abtest_action_id("delete"))
+        return self._dump_model(await self._require_client().delete_evaluation_embeddings_abtest(test_id))

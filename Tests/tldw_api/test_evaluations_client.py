@@ -360,3 +360,61 @@ async def test_evaluation_rag_pipeline_preset_routes_wire(monkeypatch):
     assert listed["total"] == 1
     assert fetched["updated_at"] == 1713571260
     assert cleanup["deleted_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_evaluation_embeddings_abtest_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    config = {
+        "arms": [{"provider": "openai", "model": "text-embedding-3-small"}],
+        "retrieval": {"k": 10},
+        "queries": [{"text": "What is RAG?"}],
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            {"test_id": "ab_123", "status": "created"},
+            {"test_id": "ab_123", "status": "running", "progress": {"phase": 0.1}},
+            {"test_id": "ab_123", "status": "completed", "arms": []},
+            {"summary": {"test_id": "ab_123", "status": "completed", "arms": []}, "results": [], "total": 0},
+            {"metric": "ndcg", "p_value": 0.05},
+            {"test_id": "ab_123", "total": 0, "results": []},
+            {"status": "deleted", "test_id": "ab_123"},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    created = await client.create_evaluation_embeddings_abtest(
+        name="embed-test",
+        config=config,
+        run_immediately=True,
+    )
+    launched = await client.run_evaluation_embeddings_abtest("ab_123", config=config)
+    status = await client.get_evaluation_embeddings_abtest_status("ab_123")
+    results = await client.get_evaluation_embeddings_abtest_results("ab_123", page=2, page_size=25)
+    significance = await client.get_evaluation_embeddings_abtest_significance("ab_123", metric="mrr")
+    exported = await client.export_evaluation_embeddings_abtest("ab_123", format="json")
+    deleted = await client.delete_evaluation_embeddings_abtest("ab_123")
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/evaluations/embeddings/abtest")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "name": "embed-test",
+        "config": config,
+        "run_immediately": True,
+    }
+    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/evaluations/embeddings/abtest/ab_123/run")
+    assert mocked.await_args_list[1].kwargs["json_data"] == {"config": config}
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/evaluations/embeddings/abtest/ab_123")
+    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/evaluations/embeddings/abtest/ab_123/results")
+    assert mocked.await_args_list[3].kwargs["params"] == {"page": 2, "page_size": 25}
+    assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/evaluations/embeddings/abtest/ab_123/significance")
+    assert mocked.await_args_list[4].kwargs["params"] == {"metric": "mrr"}
+    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/evaluations/embeddings/abtest/ab_123/export")
+    assert mocked.await_args_list[5].kwargs["params"] == {"format": "json"}
+    assert mocked.await_args_list[6].args[:2] == ("DELETE", "/api/v1/evaluations/embeddings/abtest/ab_123")
+    assert created["test_id"] == "ab_123"
+    assert launched["progress"]["phase"] == 0.1
+    assert status["status"] == "completed"
+    assert results["total"] == 0
+    assert significance["metric"] == "ndcg"
+    assert exported["test_id"] == "ab_123"
+    assert deleted["status"] == "deleted"

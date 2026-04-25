@@ -513,6 +513,11 @@ AUDITED_CAPABILITY_SEEDS = (
                 actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH,)),
                 sources=(SERVER_SOURCE,),
             ),
+            _resource(
+                "evaluations.embeddings_abtest",
+                actions=(CREATE, LAUNCH, DETAIL, OBSERVE, EXPORT, DELETE),
+                sources=(SERVER_SOURCE,),
+            ),
         ),
     ),
     _capability(
