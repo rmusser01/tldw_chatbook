@@ -68,6 +68,10 @@ class ServerEvaluationsService:
     def _run_action_id(action: str) -> str:
         return f"evaluations.run.{action}.server"
 
+    @staticmethod
+    def _rag_pipeline_action_id(action: str) -> str:
+        return f"evaluations.rag_pipeline.{action}.server"
+
     def _dump_model(self, value: Any) -> Any:
         if hasattr(value, "model_dump") and callable(value.model_dump):
             return value.model_dump(mode="json")
@@ -254,3 +258,43 @@ class ServerEvaluationsService:
     async def cancel_run(self, run_id: str) -> dict[str, Any]:
         self._enforce(self._run_action_id("update"))
         return self._dump_model(await self._require_client().cancel_evaluation_run(run_id))
+
+    async def create_or_update_rag_pipeline_preset(
+        self,
+        *,
+        name: str,
+        config: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        self._enforce(self._rag_pipeline_action_id("create"))
+        return self._dump_model(
+            await self._require_client().create_or_update_evaluation_rag_pipeline_preset(
+                name=name,
+                config=dict(config),
+            )
+        )
+
+    async def list_rag_pipeline_presets(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        self._enforce(self._rag_pipeline_action_id("list"))
+        return self._dump_model(
+            await self._require_client().list_evaluation_rag_pipeline_presets(
+                limit=limit,
+                offset=offset,
+            )
+        )
+
+    async def get_rag_pipeline_preset(self, name: str) -> dict[str, Any]:
+        self._enforce(self._rag_pipeline_action_id("detail"))
+        return self._dump_model(await self._require_client().get_evaluation_rag_pipeline_preset(name))
+
+    async def delete_rag_pipeline_preset(self, name: str) -> None:
+        self._enforce(self._rag_pipeline_action_id("delete"))
+        await self._require_client().delete_evaluation_rag_pipeline_preset(name)
+
+    async def cleanup_rag_pipeline(self) -> dict[str, Any]:
+        self._enforce(self._rag_pipeline_action_id("launch"))
+        return self._dump_model(await self._require_client().cleanup_evaluation_rag_pipeline())

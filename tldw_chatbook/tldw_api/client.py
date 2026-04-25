@@ -2427,6 +2427,39 @@ class TLDWAPIClient:
     async def cancel_evaluation_run(self, run_id: str) -> Dict[str, Any]:
         return await self._request("POST", f"/api/v1/evaluations/runs/{run_id}/cancel")
 
+    async def create_or_update_evaluation_rag_pipeline_preset(
+        self,
+        *,
+        name: str,
+        config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/evaluations/rag/pipeline/presets",
+            json_data={"name": name, "config": config},
+        )
+
+    async def list_evaluation_rag_pipeline_presets(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/api/v1/evaluations/rag/pipeline/presets",
+            params={"limit": limit, "offset": offset},
+        )
+
+    async def get_evaluation_rag_pipeline_preset(self, name: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/evaluations/rag/pipeline/presets/{name}")
+
+    async def delete_evaluation_rag_pipeline_preset(self, name: str) -> None:
+        await self._request("DELETE", f"/api/v1/evaluations/rag/pipeline/presets/{name}")
+
+    async def cleanup_evaluation_rag_pipeline(self) -> Dict[str, Any]:
+        return await self._request("POST", "/api/v1/evaluations/rag/pipeline/cleanup")
+
     async def create_flashcard_deck(
         self,
         request_data: FlashcardDeckCreateRequest,

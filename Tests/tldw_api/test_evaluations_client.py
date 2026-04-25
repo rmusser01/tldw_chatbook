@@ -321,3 +321,42 @@ async def test_evaluation_run_routes_wire_and_return_typed_models(monkeypatch):
     assert isinstance(fetched, EvaluationRunResponse)
     assert cancelled == {"status": "cancelled", "run_id": "run_123"}
     assert fetched.progress.percent_complete == 100.0
+
+
+@pytest.mark.asyncio
+async def test_evaluation_rag_pipeline_preset_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {"name": "fast", "config": {"retriever": "hybrid"}, "created_at": 1713571200},
+            {"items": [{"name": "fast", "config": {"retriever": "hybrid"}}], "total": 1},
+            {"name": "fast", "config": {"retriever": "hybrid"}, "updated_at": 1713571260},
+            {},
+            {"expired_count": 3, "deleted_count": 2, "errors": ["stale: missing"]},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    created = await client.create_or_update_evaluation_rag_pipeline_preset(
+        name="fast",
+        config={"retriever": "hybrid"},
+    )
+    listed = await client.list_evaluation_rag_pipeline_presets(limit=10, offset=5)
+    fetched = await client.get_evaluation_rag_pipeline_preset("fast")
+    await client.delete_evaluation_rag_pipeline_preset("fast")
+    cleanup = await client.cleanup_evaluation_rag_pipeline()
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/evaluations/rag/pipeline/presets")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "name": "fast",
+        "config": {"retriever": "hybrid"},
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/rag/pipeline/presets")
+    assert mocked.await_args_list[1].kwargs["params"] == {"limit": 10, "offset": 5}
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/evaluations/rag/pipeline/presets/fast")
+    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/evaluations/rag/pipeline/presets/fast")
+    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/evaluations/rag/pipeline/cleanup")
+    assert created["name"] == "fast"
+    assert listed["total"] == 1
+    assert fetched["updated_at"] == 1713571260
+    assert cleanup["deleted_count"] == 2

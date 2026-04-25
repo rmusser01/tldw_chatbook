@@ -214,6 +214,26 @@ class FakeServerEvaluationService:
         self.calls.append(("delete_dataset", dataset_id))
         return None
 
+    async def create_or_update_rag_pipeline_preset(self, *, name, config):
+        self.calls.append(("create_or_update_rag_pipeline_preset", name, config))
+        return {"name": name, "config": config}
+
+    async def list_rag_pipeline_presets(self, *, limit=50, offset=0):
+        self.calls.append(("list_rag_pipeline_presets", limit, offset))
+        return {"items": [{"name": "fast", "config": {"retriever": "hybrid"}}], "total": 1}
+
+    async def get_rag_pipeline_preset(self, name):
+        self.calls.append(("get_rag_pipeline_preset", name))
+        return {"name": name, "config": {"retriever": "hybrid"}}
+
+    async def delete_rag_pipeline_preset(self, name):
+        self.calls.append(("delete_rag_pipeline_preset", name))
+        return None
+
+    async def cleanup_rag_pipeline(self):
+        self.calls.append(("cleanup_rag_pipeline",))
+        return {"expired_count": 2, "deleted_count": 1}
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
@@ -431,6 +451,46 @@ async def test_scope_service_routes_dataset_create_delete_by_backend_with_policy
     ]
 
 
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_rag_pipeline_preset_admin_with_policy():
+    server = FakeServerEvaluationService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    created = await scope.create_or_update_rag_pipeline_preset(
+        mode="server",
+        name="fast",
+        config={"retriever": "hybrid"},
+    )
+    listed = await scope.list_rag_pipeline_presets(mode="server", limit=10, offset=5)
+    fetched = await scope.get_rag_pipeline_preset(mode="server", name="fast")
+    await scope.delete_rag_pipeline_preset(mode="server", name="fast")
+    cleanup = await scope.cleanup_rag_pipeline(mode="server")
+
+    assert created["name"] == "fast"
+    assert listed["total"] == 1
+    assert fetched["config"]["retriever"] == "hybrid"
+    assert cleanup["deleted_count"] == 1
+    assert server.calls[-5:] == [
+        ("create_or_update_rag_pipeline_preset", "fast", {"retriever": "hybrid"}),
+        ("list_rag_pipeline_presets", 10, 5),
+        ("get_rag_pipeline_preset", "fast"),
+        ("delete_rag_pipeline_preset", "fast"),
+        ("cleanup_rag_pipeline",),
+    ]
+    assert policy_enforcer.calls[-5:] == [
+        "evaluations.rag_pipeline.create.server",
+        "evaluations.rag_pipeline.list.server",
+        "evaluations.rag_pipeline.detail.server",
+        "evaluations.rag_pipeline.delete.server",
+        "evaluations.rag_pipeline.launch.server",
+    ]
+
+
 def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
     scope = EvaluationScopeService(
         local_service=FakeLocalEvaluationService(),
@@ -474,14 +534,6 @@ def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
             "reason_code": "server_contract_missing",
             "user_message": "The current server unified run detail exposes summary metrics, but not sample-level result artifacts.",
             "affected_action_ids": ["evaluations.run.detail.server", "evaluations.run.observe.server"],
-        },
-        {
-            "operation_id": "evaluations.rag_pipeline.admin.server",
-            "source": "server",
-            "supported": False,
-            "reason_code": "chatbook_contract_missing",
-            "user_message": "Server RAG-pipeline preset admin routes exist, but Chatbook does not yet wrap them in the evaluation client seam.",
-            "affected_action_ids": ["evaluations.dataset.update.server", "evaluations.run.launch.server"],
         },
         {
             "operation_id": "evaluations.embeddings_abtest.admin.server",

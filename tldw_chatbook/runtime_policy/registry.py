@@ -508,6 +508,11 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource("evaluations.dataset", actions=CRUD_ACTIONS),
             _resource("evaluations.run", actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH, OBSERVE))),
+            _resource(
+                "evaluations.rag_pipeline",
+                actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH,)),
+                sources=(SERVER_SOURCE,),
+            ),
         ),
     ),
     _capability(

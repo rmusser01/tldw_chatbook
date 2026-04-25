@@ -57,14 +57,6 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "affected_action_ids": ["evaluations.run.detail.server", "evaluations.run.observe.server"],
     },
     {
-        "operation_id": "evaluations.rag_pipeline.admin.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "chatbook_contract_missing",
-        "user_message": "Server RAG-pipeline preset admin routes exist, but Chatbook does not yet wrap them in the evaluation client seam.",
-        "affected_action_ids": ["evaluations.dataset.update.server", "evaluations.run.launch.server"],
-    },
-    {
         "operation_id": "evaluations.embeddings_abtest.admin.server",
         "source": "server",
         "supported": False,
@@ -125,6 +117,21 @@ class EvaluationScopeService:
     @staticmethod
     def _run_action_id(mode: EvaluationBackend, action: str) -> str:
         return f"evaluations.run.{action}.{mode.value}"
+
+    @staticmethod
+    def _rag_pipeline_action_id(mode: EvaluationBackend, action: str) -> str:
+        return f"evaluations.rag_pipeline.{action}.{mode.value}"
+
+    def _require_server_only_mode(
+        self,
+        mode: EvaluationBackend | str | None,
+        *,
+        capability_name: str,
+    ) -> EvaluationBackend:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != EvaluationBackend.SERVER:
+            raise ValueError(f"{capability_name} is only available from the server evaluation backend.")
+        return normalized_mode
 
     def list_unsupported_capabilities(
         self,
@@ -499,3 +506,82 @@ class EvaluationScopeService:
         result.setdefault("backend", normalized_mode.value)
         result.setdefault("id", run_id)
         return result
+
+    async def create_or_update_rag_pipeline_preset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="RAG pipeline preset administration",
+        )
+        self._enforce_policy(self._rag_pipeline_action_id(normalized_mode, "create"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.create_or_update_rag_pipeline_preset(name=name, config=config)
+            )
+            or {}
+        )
+
+    async def list_rag_pipeline_presets(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="RAG pipeline preset administration",
+        )
+        self._enforce_policy(self._rag_pipeline_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(service.list_rag_pipeline_presets(limit=limit, offset=offset))
+            or {}
+        )
+
+    async def get_rag_pipeline_preset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="RAG pipeline preset administration",
+        )
+        self._enforce_policy(self._rag_pipeline_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.get_rag_pipeline_preset(name)) or {})
+
+    async def delete_rag_pipeline_preset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+    ) -> None:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="RAG pipeline preset administration",
+        )
+        self._enforce_policy(self._rag_pipeline_action_id(normalized_mode, "delete"))
+        service = self._service_for_mode(normalized_mode)
+        await self._maybe_await(service.delete_rag_pipeline_preset(name))
+
+    async def cleanup_rag_pipeline(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="RAG pipeline cleanup",
+        )
+        self._enforce_policy(self._rag_pipeline_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.cleanup_rag_pipeline()) or {})
