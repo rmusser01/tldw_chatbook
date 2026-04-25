@@ -14,6 +14,10 @@ class FakeSearchService:
         self.calls.append(("list_supported_websearch_engines",))
         return list(self.engines)
 
+    async def list_supported_paper_providers(self):
+        self.calls.append(("list_supported_paper_providers",))
+        return ["arxiv", "semantic_scholar"]
+
     async def websearch(self, **kwargs):
         self.calls.append(("websearch", kwargs))
         return {"web_search_results_dict": {"results": [{"source": self.source}]}, "sub_query_dict": {}}
@@ -53,17 +57,19 @@ async def test_research_search_scope_service_builds_source_scoped_provider_catal
     local_catalog = await scope.list_provider_catalog(mode="local")
     server_catalog = await scope.list_provider_catalog(mode="server")
 
-    assert local_catalog == [
-        {
-            "record_id": "local:research_search_provider:websearch:duckduckgo",
-            "backend": "local",
-            "provider_type": "websearch",
-            "provider_id": "duckduckgo",
-            "display_name": "Duckduckgo",
-            "capabilities": ["websearch"],
-            "config_scope": "local",
-        }
-    ]
+    assert local_catalog[0] == {
+        "record_id": "local:research_search_provider:websearch:duckduckgo",
+        "backend": "local",
+        "provider_type": "websearch",
+        "provider_id": "duckduckgo",
+        "display_name": "Duckduckgo",
+        "capabilities": ["websearch"],
+        "config_scope": "local",
+    }
+    assert local_catalog[-2]["provider_id"] == "arxiv"
+    assert local_catalog[-2]["capabilities"] == ["paper_search"]
+    assert local_catalog[-1]["provider_id"] == "semantic_scholar"
+    assert local_catalog[-1]["backend"] == "local"
     assert server_catalog[-2]["provider_id"] == "arxiv"
     assert server_catalog[-2]["capabilities"] == ["paper_search"]
     assert server_catalog[-1]["provider_id"] == "semantic_scholar"
@@ -82,13 +88,19 @@ async def test_research_search_scope_service_routes_searches_by_backend_and_poli
     )
 
     local_result = await scope.websearch(mode="local", query="mcp", engine="duckduckgo")
+    local_papers = await scope.search_arxiv(mode="local", query="agents")
     server_result = await scope.search_arxiv(mode="server", query="agents")
 
     assert local_result["backend"] == "local"
+    assert local_papers["backend"] == "local"
     assert server_result["backend"] == "server"
-    assert local.calls == [("websearch", {"query": "mcp", "engine": "duckduckgo"})]
+    assert local.calls == [
+        ("websearch", {"query": "mcp", "engine": "duckduckgo"}),
+        ("search_arxiv", {"query": "agents"}),
+    ]
     assert server.calls == [("search_arxiv", {"query": "agents"})]
     assert policy.calls == [
+        "research.search.providers.launch.local",
         "research.search.providers.launch.local",
         "research.search.providers.launch.server",
     ]
@@ -121,14 +133,6 @@ def test_research_search_scope_service_reports_known_unsupported_capabilities():
 
     assert local_report == [
         {
-            "operation_id": "research.search.paper.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_contract_missing",
-            "user_message": "Local paper-search providers are not implemented; use server mode for arXiv and Semantic Scholar search.",
-            "affected_action_ids": ["research.search.providers.launch.local"],
-        },
-        {
             "operation_id": "research.search.providers.configure.local",
             "source": "local",
             "supported": False,
@@ -141,7 +145,9 @@ def test_research_search_scope_service_reports_known_unsupported_capabilities():
             "source": "local",
             "supported": False,
             "reason_code": "local_contract_missing",
-            "user_message": "Local research search launches are synchronous and do not expose provider observation events.",
+            "user_message": (
+                "Local research search launches are synchronous and do not expose provider observation events."
+            ),
             "affected_action_ids": ["research.search.providers.observe.local"],
         },
     ]
@@ -159,7 +165,9 @@ def test_research_search_scope_service_reports_known_unsupported_capabilities():
             "source": "server",
             "supported": False,
             "reason_code": "server_contract_missing",
-            "user_message": "The current server research search API is synchronous and does not expose provider observation events.",
+            "user_message": (
+                "The current server research search API is synchronous and does not expose provider observation events."
+            ),
             "affected_action_ids": ["research.search.providers.observe.server"],
         },
     ]

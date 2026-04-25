@@ -14,14 +14,6 @@ class ResearchSearchBackend(str, Enum):
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
-        "operation_id": "research.search.paper.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_contract_missing",
-        "user_message": "Local paper-search providers are not implemented; use server mode for arXiv and Semantic Scholar search.",
-        "affected_action_ids": ["research.search.providers.launch.local"],
-    },
-    {
         "operation_id": "research.search.providers.configure.local",
         "source": "local",
         "supported": False,
@@ -53,7 +45,9 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "source": "server",
         "supported": False,
         "reason_code": "server_contract_missing",
-        "user_message": "The current server research search API is synchronous and does not expose provider observation events.",
+        "user_message": (
+            "The current server research search API is synchronous and does not expose provider observation events."
+        ),
         "affected_action_ids": ["research.search.providers.observe.server"],
     },
 ]
@@ -62,18 +56,16 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
 class ResearchSearchScopeService:
     """Route research search provider actions to local or server backends."""
 
-    SERVER_PAPER_PROVIDERS = (
-        {
-            "provider_id": "arxiv",
+    PAPER_PROVIDER_DEFINITIONS = {
+        "arxiv": {
             "display_name": "arXiv",
             "capabilities": ["paper_search"],
         },
-        {
-            "provider_id": "semantic_scholar",
+        "semantic_scholar": {
             "display_name": "Semantic Scholar",
             "capabilities": ["paper_search"],
         },
-    )
+    }
 
     def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
         self.local_service = local_service
@@ -179,16 +171,22 @@ class ResearchSearchScopeService:
             )
             for engine in engines
         ]
-        if normalized_mode == ResearchSearchBackend.SERVER:
-            records.extend(
+        list_paper_providers = getattr(service, "list_supported_paper_providers", None)
+        paper_provider_ids = (
+            list(await self._maybe_await(list_paper_providers()))
+            if callable(list_paper_providers)
+            else list(self.PAPER_PROVIDER_DEFINITIONS)
+        )
+        for provider_id in paper_provider_ids:
+            provider_definition = self.PAPER_PROVIDER_DEFINITIONS.get(str(provider_id), {})
+            records.append(
                 self._provider_record(
                     mode=normalized_mode,
                     provider_type="paper_search",
-                    provider_id=provider["provider_id"],
-                    display_name=provider["display_name"],
-                    capabilities=provider["capabilities"],
+                    provider_id=str(provider_id),
+                    display_name=provider_definition.get("display_name"),
+                    capabilities=provider_definition.get("capabilities", ["paper_search"]),
                 )
-                for provider in self.SERVER_PAPER_PROVIDERS
             )
         return records
 

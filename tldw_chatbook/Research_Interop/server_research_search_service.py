@@ -56,7 +56,8 @@ class ServerResearchSearchService:
                 raise PolicyDeniedError(
                     action_id=action_id,
                     reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server research search action is not allowed.",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server research search action is not allowed.",
                     effective_source=getattr(decision, "effective_source", None) or "server",
                     authority_owner=getattr(decision, "authority_owner", None) or "server",
                 )
@@ -70,6 +71,10 @@ class ServerResearchSearchService:
     async def list_supported_websearch_engines(self) -> list[str]:
         self._enforce("research.search.providers.list.server")
         return sorted(SUPPORTED_WEBSEARCH_ENGINES)
+
+    async def list_supported_paper_providers(self) -> list[str]:
+        self._enforce("research.search.providers.list.server")
+        return ["arxiv", "semantic_scholar"]
 
     async def websearch(
         self,
