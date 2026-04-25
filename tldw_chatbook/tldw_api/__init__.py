@@ -561,6 +561,28 @@ from .slides_schemas import (
     VisualStyleResponse,
     VisualStyleSelectionMixin,
 )
+from .audio_schemas import (
+    AudioFormat,
+    AudioJobResponse,
+    AudioSpeechArtifact,
+    AudioSpeechJobArtifactsResponse,
+    AudioSpeechJobCreateResponse,
+    AudioTranscriptionRequest,
+    AudioTranscriptionResponse,
+    AudioTranslationRequest,
+    NormalizationOptions,
+    OpenAISpeechRequest,
+    SubmitAudioJobRequest,
+    SubmitAudioJobResponse,
+    TranscriptResponseFormat,
+    TTSHealthResponse,
+    TTSHistoryDetailResponse,
+    TTSHistoryFavoriteUpdate,
+    TTSHistoryListItem,
+    TTSHistoryListResponse,
+    TTSProvidersResponse,
+    TTSVoicesResponse,
+)
 
 __all__ = [
     "TLDWAPIClient",
@@ -721,4 +743,10 @@ __all__ = [
     "SlideLayout", "SlidesExportFormat", "SlidesHealthResponse", "SlidesTemplateListResponse",
     "SlidesTemplateResponse", "VisualStyleBase", "VisualStyleCreateRequest", "VisualStyleListResponse",
     "VisualStylePatchRequest", "VisualStyleResponse", "VisualStyleSelectionMixin",
+    "AudioFormat", "AudioJobResponse", "AudioSpeechArtifact", "AudioSpeechJobArtifactsResponse",
+    "AudioSpeechJobCreateResponse", "AudioTranscriptionRequest", "AudioTranscriptionResponse",
+    "AudioTranslationRequest", "NormalizationOptions", "OpenAISpeechRequest", "SubmitAudioJobRequest",
+    "SubmitAudioJobResponse", "TranscriptResponseFormat", "TTSHealthResponse", "TTSHistoryDetailResponse",
+    "TTSHistoryFavoriteUpdate", "TTSHistoryListItem", "TTSHistoryListResponse", "TTSProvidersResponse",
+    "TTSVoicesResponse",
 ]

@@ -179,6 +179,23 @@ from .slides_schemas import (
     VisualStylePatchRequest,
     VisualStyleResponse,
 )
+from .audio_schemas import (
+    AudioJobResponse,
+    AudioSpeechJobArtifactsResponse,
+    AudioSpeechJobCreateResponse,
+    AudioTranscriptionRequest,
+    AudioTranscriptionResponse,
+    AudioTranslationRequest,
+    OpenAISpeechRequest,
+    SubmitAudioJobRequest,
+    SubmitAudioJobResponse,
+    TTSHealthResponse,
+    TTSHistoryDetailResponse,
+    TTSHistoryFavoriteUpdate,
+    TTSHistoryListResponse,
+    TTSProvidersResponse,
+    TTSVoicesResponse,
+)
 from .rag_admin_schemas import (
     ChunkingTemplateApplyRequest,
     ChunkingTemplateApplyResponse,
@@ -1603,6 +1620,172 @@ class TLDWAPIClient:
             f"/api/v1/slides/presentations/{presentation_id}/export",
             params={key: value for key, value in params.items() if value is not None},
         )
+
+    async def get_tts_health(self) -> TTSHealthResponse:
+        response = await self._request("GET", "/api/v1/audio/health")
+        return TTSHealthResponse.model_validate(response)
+
+    async def get_stt_health(
+        self,
+        *,
+        model: str | None = None,
+        warm: bool = False,
+    ) -> TTSHealthResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/audio/transcriptions/health",
+            params={key: value for key, value in {"model": model, "warm": str(warm).lower()}.items() if value is not None},
+        )
+        return TTSHealthResponse.model_validate(response)
+
+    async def list_tts_providers(self) -> TTSProvidersResponse:
+        response = await self._request("GET", "/api/v1/audio/providers")
+        return TTSProvidersResponse.model_validate(response)
+
+    async def list_tts_voices(self, *, provider: str | None = None) -> TTSVoicesResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/audio/voices/catalog",
+            params={key: value for key, value in {"provider": provider}.items() if value is not None},
+        )
+        return TTSVoicesResponse.model_validate(response)
+
+    async def create_audio_speech(self, request_data: OpenAISpeechRequest) -> ReadingExportResponse:
+        return await self._binary_request(
+            "POST",
+            "/api/v1/audio/speech",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def create_audio_speech_job(self, request_data: OpenAISpeechRequest) -> AudioSpeechJobCreateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/audio/speech/jobs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return AudioSpeechJobCreateResponse.model_validate(response)
+
+    async def list_audio_speech_job_artifacts(self, job_id: int) -> AudioSpeechJobArtifactsResponse:
+        response = await self._request("GET", f"/api/v1/audio/speech/jobs/{job_id}/artifacts")
+        return AudioSpeechJobArtifactsResponse.model_validate(response)
+
+    async def submit_audio_job(self, request_data: SubmitAudioJobRequest) -> SubmitAudioJobResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/audio/jobs/submit",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return SubmitAudioJobResponse.model_validate(response)
+
+    async def get_audio_job(self, job_id: int) -> AudioJobResponse:
+        response = await self._request("GET", f"/api/v1/audio/jobs/{job_id}")
+        return AudioJobResponse.model_validate(response)
+
+    async def stream_audio_job_progress(
+        self,
+        job_id: int,
+        *,
+        after_id: int = 0,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        async for event in self._sse_request(
+            "GET",
+            f"/api/v1/audio/jobs/{job_id}/progress/stream",
+            params={"after_id": after_id},
+        ):
+            yield event
+
+    async def list_tts_history(
+        self,
+        *,
+        q: str | None = None,
+        text_exact: str | None = None,
+        favorite: bool | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        voice_id: str | None = None,
+        voice_name: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        cursor: str | None = None,
+        include_total: bool = False,
+        from_: str | None = None,
+        to: str | None = None,
+    ) -> TTSHistoryListResponse:
+        params = {
+            "q": q,
+            "text_exact": text_exact,
+            "favorite": str(favorite).lower() if favorite is not None else None,
+            "provider": provider,
+            "model": model,
+            "voice_id": voice_id,
+            "voice_name": voice_name,
+            "limit": limit,
+            "offset": offset,
+            "cursor": cursor,
+            "include_total": str(include_total).lower(),
+            "from": from_,
+            "to": to,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/audio/history",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return TTSHistoryListResponse.model_validate(response)
+
+    async def get_tts_history_entry(self, history_id: int) -> TTSHistoryDetailResponse:
+        response = await self._request("GET", f"/api/v1/audio/history/{history_id}")
+        return TTSHistoryDetailResponse.model_validate(response)
+
+    async def update_tts_history_favorite(
+        self,
+        history_id: int,
+        request_data: TTSHistoryFavoriteUpdate,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/audio/history/{history_id}",
+            json_data=request_data.model_dump(mode="json"),
+        )
+
+    async def delete_tts_history_entry(self, history_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/audio/history/{history_id}")
+
+    async def create_audio_transcription(
+        self,
+        file_path: str,
+        request_data: AudioTranscriptionRequest | None = None,
+    ) -> AudioTranscriptionResponse:
+        payload = request_data or AudioTranscriptionRequest()
+        httpx_files = prepare_files_for_httpx([file_path], upload_field_name="file")
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/audio/transcriptions",
+                data=model_to_form_data(payload),
+                files=httpx_files,
+            )
+            return AudioTranscriptionResponse.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
+
+    async def create_audio_translation(
+        self,
+        file_path: str,
+        request_data: AudioTranslationRequest | None = None,
+    ) -> AudioTranscriptionResponse:
+        payload = request_data or AudioTranslationRequest()
+        httpx_files = prepare_files_for_httpx([file_path], upload_field_name="file")
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/audio/translations",
+                data=model_to_form_data(payload),
+                files=httpx_files,
+            )
+            return AudioTranscriptionResponse.model_validate(response)
+        finally:
+            cleanup_file_objects(httpx_files)
 
     async def submit_media_ingest_jobs(
         self,

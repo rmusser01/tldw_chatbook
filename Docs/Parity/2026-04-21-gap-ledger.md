@@ -115,6 +115,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 1
 - Notes: Priority 78. This row underpins the higher-ranked reading-list and research work.
 
+### Audio / Speech Services: TTS/STT health, speech generation, audio jobs, TTS history, and transcription/translation
+- Requirement class: Local parity required + Remote parity required
+- Client obligation: Discover / Trigger / Observe
+- Current state: Chatbook now has typed direct API-client wrappers for server TTS health, STT health, provider/voice catalog discovery, binary speech generation, long-form speech jobs and artifacts, audio job submission/status/SSE progress, TTS history list/detail/favorite/delete, and file-based transcription/translation. Existing local media/TTS behavior remains separate and local-owned.
+- Gap: Dedicated audio UX adoption, source-aware audio scope routing, websocket streaming, tokenizer endpoints, stored voice upload/cloning/encoding, audiobook creation/project/artifact APIs, and admin audio-job controls remain pending. Local/server audio history identity and artifact sync semantics are not defined.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/audio/audio_tts.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/audio/audio_transcriptions.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/audio/audio_health.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/audio/audio_history.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/audio/audio_jobs.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/audio_schemas.py`; Verification: `Tests/tldw_api/test_audio_client.py`.
+- Recommended tranche: Tranche 2
+- Notes: Priority 58. This is a cross-cutting media/chat utility surface, but it should stay source-separated until local audio artifact and history semantics are explicitly designed.
+
 ### Prompts / Chatbooks: Prompt library, prompt workflows, and chatbook import/export jobs
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
