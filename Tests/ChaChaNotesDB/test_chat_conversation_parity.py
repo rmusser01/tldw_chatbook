@@ -501,3 +501,26 @@ class TestConversationParity:
             include_deleted_conversation=True,
         )
         assert [message["id"] for message in child_messages] == [child_message_id]
+
+    def test_restore_conversation_clears_deleted_state_and_reindexes_search(self, db_instance: CharactersRAGDB):
+        conversation_id = db_instance.add_conversation({"title": "Restorable Conversation"})
+        created = db_instance.get_conversation_by_id(conversation_id)
+        assert created is not None
+
+        db_instance.soft_delete_conversation(conversation_id, expected_version=created["version"])
+        assert db_instance.get_conversation_by_id(conversation_id) is None
+        assert db_instance.search_conversations_by_title("Restorable Conversation") == []
+
+        deleted = db_instance.get_conversation_by_id(conversation_id, include_deleted=True)
+        assert deleted is not None
+        assert deleted["deleted"] == 1
+
+        assert db_instance.restore_conversation(conversation_id, expected_version=deleted["version"]) is True
+
+        restored = db_instance.get_conversation_by_id(conversation_id)
+        assert restored is not None
+        assert restored["deleted"] == 0
+        assert restored["version"] == deleted["version"] + 1
+        assert [row["id"] for row in db_instance.search_conversations_by_title("Restorable Conversation")] == [
+            conversation_id
+        ]

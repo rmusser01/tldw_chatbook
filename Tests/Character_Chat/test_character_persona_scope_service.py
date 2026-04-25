@@ -161,7 +161,9 @@ class FakeCharacterPersonaClient:
         return {"id": chat_id, "title": "Existing Chat"}
 
     async def update_character_chat_session(self, chat_id, request_data, **kwargs):
-        self.update_character_chat_session_calls.append({"chat_id": chat_id, "request_data": request_data, "kwargs": kwargs})
+        self.update_character_chat_session_calls.append(
+            {"chat_id": chat_id, "request_data": request_data, "kwargs": kwargs}
+        )
         return {"id": chat_id, "title": "Updated Chat"}
 
     async def delete_character_chat_session(self, chat_id, **kwargs):
@@ -200,6 +202,40 @@ class FakeLocalCharacterBackend:
     def list_character_cards(self, limit=100, offset=0):
         self.list_character_cards_calls.append({"limit": limit, "offset": offset})
         return [{"id": 2, "name": "Local Ada"}]
+
+
+class FakeLocalCharacterSessionBackend(FakeLocalCharacterBackend):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def create_character_chat_session(self, request_data, **kwargs):
+        self.calls.append(("create_character_chat_session", request_data, kwargs))
+        return {"id": "local-chat-1", "backend": "local"}
+
+    def list_character_chat_sessions(self, **kwargs):
+        self.calls.append(("list_character_chat_sessions", kwargs))
+        return {"chats": [{"id": "local-chat-1"}], "total": 1}
+
+    def get_character_chat_session(self, chat_id, **kwargs):
+        self.calls.append(("get_character_chat_session", chat_id, kwargs))
+        return {"id": chat_id, "backend": "local"}
+
+    def update_character_chat_session(self, chat_id, request_data, **kwargs):
+        self.calls.append(("update_character_chat_session", chat_id, request_data, kwargs))
+        return {"id": chat_id, "title": "Updated Local Chat"}
+
+    def delete_character_chat_session(self, chat_id, **kwargs):
+        self.calls.append(("delete_character_chat_session", chat_id, kwargs))
+        return {"status": "deleted", "chat_id": chat_id}
+
+    def restore_character_chat_session(self, chat_id, **kwargs):
+        self.calls.append(("restore_character_chat_session", chat_id, kwargs))
+        return {"id": chat_id, "deleted": False}
+
+    def export_chat_history(self, chat_id, **kwargs):
+        self.calls.append(("export_chat_history", chat_id, kwargs))
+        return {"chat_id": chat_id, "format": kwargs.get("format", "json")}
 
 
 class FakePolicyEnforcer:
@@ -442,6 +478,58 @@ async def test_scope_service_routes_character_chat_session_admin_to_server_backe
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_character_chat_session_admin_to_local_backend():
+    local_service = FakeLocalCharacterSessionBackend()
+    policy = FakePolicyEnforcer()
+    scope_service = CharacterPersonaScopeService(
+        local_service=local_service,
+        server_service=FakeCharacterPersonaClient(),
+        policy_enforcer=policy,
+    )
+    request_data = Mock()
+    update_data = Mock()
+
+    created = await scope_service.create_character_chat_session(request_data, mode="local")
+    listed = await scope_service.list_character_chat_sessions(mode="local", character_id=12)
+    detail = await scope_service.get_character_chat_session("local-chat-1", mode="local")
+    updated = await scope_service.update_character_chat_session(
+        "local-chat-1",
+        update_data,
+        mode="local",
+        expected_version=2,
+    )
+    deleted = await scope_service.delete_character_chat_session("local-chat-1", mode="local", expected_version=3)
+    restored = await scope_service.restore_character_chat_session("local-chat-1", mode="local", expected_version=4)
+    exported = await scope_service.export_chat_history("local-chat-1", mode="local", format="markdown")
+
+    assert created["id"] == "local-chat-1"
+    assert listed["total"] == 1
+    assert detail["backend"] == "local"
+    assert updated["title"] == "Updated Local Chat"
+    assert deleted["status"] == "deleted"
+    assert restored["deleted"] is False
+    assert exported["format"] == "markdown"
+    assert local_service.calls == [
+        ("create_character_chat_session", request_data, {}),
+        ("list_character_chat_sessions", {"character_id": 12}),
+        ("get_character_chat_session", "local-chat-1", {}),
+        ("update_character_chat_session", "local-chat-1", update_data, {"expected_version": 2}),
+        ("delete_character_chat_session", "local-chat-1", {"expected_version": 3}),
+        ("restore_character_chat_session", "local-chat-1", {"expected_version": 4}),
+        ("export_chat_history", "local-chat-1", {"format": "markdown"}),
+    ]
+    assert policy.calls == [
+        "character.sessions.create.local",
+        "character.sessions.list.local",
+        "character.sessions.detail.local",
+        "character.sessions.update.local",
+        "character.sessions.delete.local",
+        "character.sessions.restore.local",
+        "character.sessions.export.local",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_raises_when_local_backend_lacks_persona_method():
     class LocalBackend:
         def list_characters(self, limit=100, offset=0):
@@ -499,7 +587,10 @@ def test_scope_service_reports_known_character_persona_capability_gaps():
             "source": "local",
             "supported": False,
             "reason_code": "local_scope_missing",
-            "user_message": "Local persona profile CRUD is still handled by older CCP/local chat paths and is not wrapped by the source-aware character/persona scope yet.",
+            "user_message": (
+                "Local persona profile CRUD is still handled by older CCP/local chat paths and is not wrapped by "
+                "the source-aware character/persona scope yet."
+            ),
             "affected_action_ids": [
                 "character.persona.create.local",
                 "character.persona.delete.local",
@@ -509,20 +600,18 @@ def test_scope_service_reports_known_character_persona_capability_gaps():
             ],
         },
         {
-            "operation_id": "character.sessions.admin.local",
+            "operation_id": "character.sessions.execution.local",
             "source": "local",
             "supported": False,
             "reason_code": "local_scope_missing",
-            "user_message": "Local character chat sessions, greetings, presets, settings, export, and diagnostics still use legacy local CCP flows instead of this source-aware scope.",
+            "user_message": (
+                "Local character greetings, presets, settings, and lorebook diagnostics still use legacy local CCP "
+                "flows instead of this source-aware scope."
+            ),
             "affected_action_ids": [
-                "character.sessions.create.local",
-                "character.sessions.delete.local",
                 "character.sessions.detail.local",
-                "character.sessions.export.local",
                 "character.sessions.launch.local",
-                "character.sessions.list.local",
                 "character.sessions.observe.local",
-                "character.sessions.restore.local",
                 "character.sessions.update.local",
             ],
         },
@@ -533,10 +622,28 @@ def test_scope_service_reports_known_character_persona_capability_gaps():
             "source": "server",
             "supported": False,
             "reason_code": "chatbook_contract_missing",
-            "user_message": "Server character-message endpoints exist, but Chatbook does not yet wrap message mutation through the source-aware character/persona scope.",
+            "user_message": (
+                "Server character-message endpoints exist, but Chatbook does not yet wrap message mutation through "
+                "the source-aware character/persona scope."
+            ),
             "affected_action_ids": ["character.sessions.detail.server", "character.sessions.update.server"],
         }
     ]
+
+
+def test_scope_service_does_not_report_local_session_crud_when_backend_wraps_it():
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterSessionBackend(),
+        server_service=FakeCharacterPersonaClient(),
+    )
+
+    operation_ids = {
+        item["operation_id"]
+        for item in scope_service.list_unsupported_capabilities(mode="local")
+    }
+
+    assert "character.sessions.admin.local" not in operation_ids
+    assert "character.sessions.execution.local" in operation_ids
 
 
 @pytest.mark.asyncio
@@ -772,6 +879,8 @@ def test_app_wires_character_persona_services(monkeypatch):
     app_module.TldwCli._wire_character_persona_services(fake_app)
 
     assert fake_app.server_character_persona_service is server_service
-    assert captured["local_service"] is fake_app.chachanotes_db
+    assert isinstance(captured["local_service"], app_module.LocalCharacterPersonaService)
+    assert captured["local_service"].db is fake_app.chachanotes_db
+    assert fake_app.local_character_persona_service is captured["local_service"]
     assert captured["server_service"] is server_service
     assert captured["policy_enforcer"] is fake_app.service_policy_enforcer

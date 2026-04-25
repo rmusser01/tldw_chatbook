@@ -4753,6 +4753,84 @@ UPDATE db_schema_version
                 exc_info=True)
             raise
 
+    def restore_conversation(self, conversation_id: str, expected_version: int) -> Optional[bool]:
+        """
+        Restores a soft-deleted conversation using optimistic locking.
+
+        Sets the `deleted` flag to 0, updates `last_modified`, increments
+        `version`, and sets `client_id`. If the conversation is already active,
+        the operation is treated as successful.
+        """
+        now = self._get_current_utc_timestamp_iso()
+        next_version_val = expected_version + 1
+
+        query = (
+            "UPDATE conversations "
+            "SET deleted = 0, last_modified = ?, version = ?, client_id = ? "
+            "WHERE id = ? AND version = ? AND deleted = 1"
+        )
+        params = (now, next_version_val, self.client_id, conversation_id, expected_version)
+
+        try:
+            with self.transaction() as conn:
+                current_state = conn.execute(
+                    "SELECT deleted, version FROM conversations WHERE id = ?",
+                    (conversation_id,),
+                ).fetchone()
+                if not current_state:
+                    raise ConflictError(
+                        f"Conversation ID {conversation_id} not found for restore.",
+                        entity="conversations",
+                        entity_id=conversation_id,
+                    )
+                if not current_state["deleted"]:
+                    logger.info(f"Conversation ID {conversation_id} already active. Restore is idempotent.")
+                    return True
+                if current_state["version"] != expected_version:
+                    raise ConflictError(
+                        f"Restore for Conversation ID {conversation_id} failed: version mismatch "
+                        f"(db has {current_state['version']}, client expected {expected_version}).",
+                        entity="conversations",
+                        entity_id=conversation_id,
+                    )
+
+                cursor = conn.execute(query, params)
+                if cursor.rowcount == 0:
+                    final_state = conn.execute(
+                        "SELECT version, deleted FROM conversations WHERE id = ?",
+                        (conversation_id,),
+                    ).fetchone()
+                    if not final_state:
+                        msg = f"Conversation ID {conversation_id} disappeared."
+                    elif not final_state["deleted"]:
+                        logger.info(f"Conversation ID {conversation_id} was restored concurrently. Success.")
+                        return True
+                    elif final_state["version"] != expected_version:
+                        msg = (
+                            f"Conversation ID {conversation_id} version changed to "
+                            f"{final_state['version']} concurrently."
+                        )
+                    else:
+                        msg = (
+                            f"Restore for conversation ID {conversation_id} "
+                            f"(expected v{expected_version}) affected 0 rows."
+                        )
+                    raise ConflictError(msg, entity="conversations", entity_id=conversation_id)
+
+                logger.info(
+                    f"Restored conversation ID {conversation_id} "
+                    f"(was v{expected_version}), new version {next_version_val}."
+                )
+                return True
+        except ConflictError:
+            raise
+        except CharactersRAGDBError as e:
+            logger.error(
+                f"Database error restoring conversation ID {conversation_id} (expected v{expected_version}): {e}",
+                exc_info=True,
+            )
+            raise
+
     def search_conversations_by_title(self, title_query: str, character_id: Optional[int] = None, limit: int = 10) -> \
             List[Dict[str, Any]]:
         """

@@ -130,6 +130,7 @@ from .Notes.Notes_Library import NotesInteropService
 from .Notes.notes_scope_service import NotesScopeService
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
+from .Character_Chat.local_character_persona_service import LocalCharacterPersonaService
 from .Character_Chat.server_chat_dictionary_service import ServerChatDictionaryService
 from .Character_Chat.server_character_persona_service import ServerCharacterPersonaService
 from .RAG_Admin.local_rag_admin_service import LocalRAGAdminService
@@ -1452,8 +1453,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        self.local_character_persona_service = LocalCharacterPersonaService(self.chachanotes_db)
         self.character_persona_scope_service = CharacterPersonaScopeService(
-            local_service=self.chachanotes_db,
+            local_service=self.local_character_persona_service,
             server_service=self.server_character_persona_service,
             policy_enforcer=self.service_policy_enforcer,
         )

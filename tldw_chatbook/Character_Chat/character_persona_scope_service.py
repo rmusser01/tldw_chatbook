@@ -14,7 +14,10 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "source": "local",
         "supported": False,
         "reason_code": "local_scope_missing",
-        "user_message": "Local persona profile CRUD is still handled by older CCP/local chat paths and is not wrapped by the source-aware character/persona scope yet.",
+        "user_message": (
+            "Local persona profile CRUD is still handled by older CCP/local chat paths and is not wrapped by "
+            "the source-aware character/persona scope yet."
+        ),
         "affected_action_ids": [
             "character.persona.create.local",
             "character.persona.delete.local",
@@ -24,20 +27,18 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         ],
     },
     {
-        "operation_id": "character.sessions.admin.local",
+        "operation_id": "character.sessions.execution.local",
         "source": "local",
         "supported": False,
         "reason_code": "local_scope_missing",
-        "user_message": "Local character chat sessions, greetings, presets, settings, export, and diagnostics still use legacy local CCP flows instead of this source-aware scope.",
+        "user_message": (
+            "Local character greetings, presets, settings, and lorebook diagnostics still use legacy local CCP "
+            "flows instead of this source-aware scope."
+        ),
         "affected_action_ids": [
-            "character.sessions.create.local",
-            "character.sessions.delete.local",
             "character.sessions.detail.local",
-            "character.sessions.export.local",
             "character.sessions.launch.local",
-            "character.sessions.list.local",
             "character.sessions.observe.local",
-            "character.sessions.restore.local",
             "character.sessions.update.local",
         ],
     },
@@ -49,7 +50,10 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "source": "server",
         "supported": False,
         "reason_code": "chatbook_contract_missing",
-        "user_message": "Server character-message endpoints exist, but Chatbook does not yet wrap message mutation through the source-aware character/persona scope.",
+        "user_message": (
+            "Server character-message endpoints exist, but Chatbook does not yet wrap message mutation through "
+            "the source-aware character/persona scope."
+        ),
         "affected_action_ids": ["character.sessions.detail.server", "character.sessions.update.server"],
     }
 ]
@@ -124,7 +128,9 @@ class CharacterPersonaScopeService:
         backend = self._backend(normalized_mode)
         if normalized_mode == "local" and not hasattr(backend, "list_characters"):
             if not hasattr(backend, "list_character_cards"):
-                raise ValueError("Local character backend does not provide list_characters() or list_character_cards().")
+                raise ValueError(
+                    "Local character backend does not provide list_characters() or list_character_cards()."
+                )
             return await self._maybe_await(backend.list_character_cards(limit=limit, offset=offset))
         if not hasattr(backend, "list_characters"):
             raise ValueError("Character backend does not provide list_characters().")

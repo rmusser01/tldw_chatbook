@@ -37,7 +37,11 @@ def _normalize_assistant_kind(value: Any) -> str | None:
 def _normalize_scope(scope_type: Any, workspace_id: Any) -> tuple[str, str | None]:
     normalized_workspace_id = _clean_text(workspace_id)
     raw_scope = _clean_text(scope_type)
-    normalized_scope = raw_scope.lower() if raw_scope is not None else ("workspace" if normalized_workspace_id else "global")
+    normalized_scope = (
+        raw_scope.lower()
+        if raw_scope is not None
+        else ("workspace" if normalized_workspace_id else "global")
+    )
     if normalized_scope == "global":
         return "global", None
     if normalized_scope != "workspace":
@@ -214,7 +218,10 @@ def normalize_conversation_row(
         "bm25_norm": conversation_row.get("bm25_norm"),
         "last_modified": conversation_row.get("last_modified"),
         "created_at": conversation_row.get("created_at"),
-        "message_count": int(message_count if message_count is not None else conversation_row.get("message_count") or 0),
+        "deleted": conversation_row.get("deleted"),
+        "message_count": int(
+            message_count if message_count is not None else conversation_row.get("message_count") or 0
+        ),
         "keywords": normalized_keywords,
         "cluster_id": _clean_text(conversation_row.get("cluster_id")),
         "source": _clean_text(conversation_row.get("source")),
@@ -299,6 +306,9 @@ class ChatConversationService:
     def delete_conversation(self, conversation_id: str, *, expected_version: int) -> bool:
         return bool(self.db.soft_delete_conversation(conversation_id, expected_version))
 
+    def restore_conversation(self, conversation_id: str, *, expected_version: int) -> bool:
+        return bool(self.db.restore_conversation(conversation_id, expected_version))
+
     def _fetch_keywords_for_conversations(self, conversation_ids: list[str]) -> dict[str, list[str]]:
         if not conversation_ids:
             return {}
@@ -308,7 +318,10 @@ class ChatConversationService:
                 conversation_id: _normalize_keywords(keyword_rows_by_conversation.get(conversation_id, []))
                 for conversation_id in conversation_ids
             }
-        return {conversation_id: self.get_conversation_keywords(conversation_id) for conversation_id in conversation_ids}
+        return {
+            conversation_id: self.get_conversation_keywords(conversation_id)
+            for conversation_id in conversation_ids
+        }
 
     def get_conversation_keywords(self, conversation_id: str) -> list[str]:
         keyword_rows = self.db.get_keywords_for_conversation(conversation_id)
@@ -391,7 +404,17 @@ class ChatConversationService:
         for key, value in update_data.items():
             if key == "assistant_kind":
                 normalized_update[key] = _normalize_assistant_kind(value)
-            elif key in {"assistant_id", "persona_memory_mode", "topic_label", "topic_label_source", "topic_last_tagged_message_id", "cluster_id", "source", "external_ref", "title"}:
+            elif key in {
+                "assistant_id",
+                "persona_memory_mode",
+                "topic_label",
+                "topic_label_source",
+                "topic_last_tagged_message_id",
+                "cluster_id",
+                "source",
+                "external_ref",
+                "title",
+            }:
                 normalized_update[key] = _clean_text(value)
             elif key == "character_id":
                 normalized_update[key] = value

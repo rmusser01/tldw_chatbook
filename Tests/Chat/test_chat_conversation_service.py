@@ -24,6 +24,7 @@ class FakeDB:
     calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = field(default_factory=list)
     replaced_keyword_ids: list[tuple[str, list[int]]] = field(default_factory=list)
     updates: list[tuple[str, dict[str, Any], int]] = field(default_factory=list)
+    restores: list[tuple[str, int]] = field(default_factory=list)
 
     def search_conversations_page(self, query, **kwargs):
         self.calls.append(("search_conversations_page", (query,), kwargs))
@@ -42,7 +43,10 @@ class FakeDB:
 
     def get_keywords_for_conversations(self, conversation_ids):
         self.calls.append(("get_keywords_for_conversations", (tuple(conversation_ids),), {}))
-        return {conversation_id: self.keywords_by_conversation.get(conversation_id, []) for conversation_id in conversation_ids}
+        return {
+            conversation_id: self.keywords_by_conversation.get(conversation_id, [])
+            for conversation_id in conversation_ids
+        }
 
     def get_keywords_for_conversation(self, conversation_id):
         self.calls.append(("get_keywords_for_conversation", (conversation_id,), {}))
@@ -66,15 +70,43 @@ class FakeDB:
         return self.conversations_by_id.get(conversation_id)
 
     def update_conversation(self, conversation_id, update_data, expected_version):
-        self.calls.append(("update_conversation", (conversation_id,), {"update_data": update_data, "expected_version": expected_version}))
+        self.calls.append(
+            (
+                "update_conversation",
+                (conversation_id,),
+                {"update_data": update_data, "expected_version": expected_version},
+            )
+        )
         self.updates.append((conversation_id, update_data, expected_version))
         return True
 
-    def count_root_messages_for_conversation(self, conversation_id, include_deleted_conversation=False):
-        self.calls.append(("count_root_messages_for_conversation", (conversation_id,), {"include_deleted_conversation": include_deleted_conversation}))
+    def restore_conversation(self, conversation_id, expected_version):
+        self.calls.append(("restore_conversation", (conversation_id,), {"expected_version": expected_version}))
+        self.restores.append((conversation_id, expected_version))
+        return True
+
+    def count_root_messages_for_conversation(
+        self,
+        conversation_id,
+        include_deleted_conversation=False,
+    ):
+        self.calls.append(
+            (
+                "count_root_messages_for_conversation",
+                (conversation_id,),
+                {"include_deleted_conversation": include_deleted_conversation},
+            )
+        )
         return self.root_counts.get(conversation_id, 0)
 
-    def get_root_messages_for_conversation(self, conversation_id, limit, offset, order_by_timestamp="ASC", include_deleted_conversation=False):
+    def get_root_messages_for_conversation(
+        self,
+        conversation_id,
+        limit,
+        offset,
+        order_by_timestamp="ASC",
+        include_deleted_conversation=False,
+    ):
         self.calls.append(
             (
                 "get_root_messages_for_conversation",
@@ -87,7 +119,13 @@ class FakeDB:
         )
         return self.root_messages.get((conversation_id, limit, offset, order_by_timestamp), [])
 
-    def get_messages_for_conversation_by_parent_ids(self, conversation_id, parent_ids, order_by_timestamp="ASC", include_deleted_conversation=False):
+    def get_messages_for_conversation_by_parent_ids(
+        self,
+        conversation_id,
+        parent_ids,
+        order_by_timestamp="ASC",
+        include_deleted_conversation=False,
+    ):
         self.calls.append(
             (
                 "get_messages_for_conversation_by_parent_ids",
@@ -262,6 +300,14 @@ def test_replace_conversation_keywords_resolves_ids_before_replacing():
     assert db.replaced_keyword_ids == [("conv-1", [11, 22])]
     assert [call[0] for call in db.calls].count("get_keyword_by_text") == 2
     assert [call[0] for call in db.calls].count("add_keyword") == 1
+
+
+def test_restore_conversation_delegates_to_db_restore():
+    db = FakeDB()
+    service = ChatConversationService(db)
+
+    assert service.restore_conversation("conv-1", expected_version=4) is True
+    assert db.restores == [("conv-1", 4)]
 
 
 def test_invalid_state_values_are_rejected_by_the_service_seam():
