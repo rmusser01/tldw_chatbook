@@ -172,11 +172,11 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Server Runtime / Config Discovery: Health, readiness, safe config, tokenizer/jobs config, and provider key status
 - Requirement class: Remote parity required, local parity assessed explicitly
 - Client obligation: Discover / Configure / Observe
-- Current state: Chatbook now has typed direct API-client wrappers for server health, liveness, readiness, metrics, security posture, non-sensitive docs-info capability flags, flashcards import limits, tokenizer config get/update, jobs config, provider key status, and explicit provider-key validation. This stays scoped to active-server discovery and safe client-facing config.
-- Gap: Dedicated UX adoption, server switching cache invalidation, and admin config mutation remain pending. Chatbook local runtime settings remain separate and are not overwritten by server discovery.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/health.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/config_info.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/server_runtime_schemas.py`; Verification: `Tests/tldw_api/test_server_runtime_client.py`.
+- Current state: Chatbook now has typed direct API-client wrappers plus an app-wired, policy-gated remote-only service/scope seam for server health, liveness, readiness, metrics, security posture, non-sensitive docs-info capability flags, flashcards import limits, tokenizer config get/update, jobs config, provider key status, and explicit provider-key validation. This stays scoped to active-server discovery and safe client-facing config.
+- Gap: Dedicated UX adoption, active-server status presentation, server switching cache invalidation, and any admin config mutation remain follow-on. Chatbook local runtime settings stay separate and local/offline mode is centrally reported unavailable.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/health.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/config_info.py`; Chatbook: `tldw_chatbook/Server_Runtime_Interop/server_runtime_service.py`, `tldw_chatbook/Server_Runtime_Interop/server_runtime_scope_service.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/server_runtime_schemas.py`; Verification: `Tests/tldw_api/test_server_runtime_client.py`, `Tests/Server_Runtime/test_server_runtime_service.py`, `Tests/Server_Runtime/test_server_runtime_scope_service.py`, runtime-policy tests, app wiring tests.
 - Recommended tranche: Tranche 2
-- Notes: Priority 54. This row supports server switching and connected-mode capability gating without requiring the UI/UX layer to infer server capabilities from unrelated domain calls.
+- Notes: Priority 58. This row supports server switching and connected-mode capability gating without requiring the UI/UX layer to infer server capabilities from unrelated domain calls.
 
 ### Auth / Profile / Sessions: Login, refresh, logout, self sessions, registration, user profile, account security, BYOK, API keys, and storage
 - Requirement class: Remote parity required, local parity assessed explicitly

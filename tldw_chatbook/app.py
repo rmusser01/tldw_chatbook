@@ -232,6 +232,7 @@ from tldw_chatbook.Research_Interop import (
     ServerResearchSearchService,
     ServerResearchService,
 )
+from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Skills_Interop import ServerSkillsService, SkillsScopeService
 from tldw_chatbook.User_Governance_Interop import ServerUserGovernanceService, UserGovernanceScopeService
@@ -1779,6 +1780,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.skills_scope_service = SkillsScopeService(
             server_service=self.server_skills_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_runtime_service = ServerRuntimeService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_runtime_service = ServerRuntimeService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.server_runtime_scope_service = ServerRuntimeScopeService(
+            server_service=self.server_runtime_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:

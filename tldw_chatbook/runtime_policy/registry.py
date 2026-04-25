@@ -157,6 +157,7 @@ ARCHIVE = _action("archive", "create")
 SUMMARIZE = _action("summarize", "launch")
 TTS = _action("tts", "launch")
 REATTACH = _action("reattach", "update")
+VALIDATE = _action("validate", "launch")
 
 CRUD_ACTIONS = (LIST, DETAIL, CREATE, UPDATE, DELETE)
 DISCOVER_TRIGGER_OBSERVE_ACTIONS = (LIST, LAUNCH, OBSERVE)
@@ -191,6 +192,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "chat_grammars",
         "explicit_feedback",
         "client_notifications",
+        "server_runtime_config_discovery",
         "server_reminders_notification_feeds",
         "external_connectors",
         "server_skills",
@@ -462,6 +464,17 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("notifications.queue", actions=(LIST, UPDATE, OBSERVE)),
             _resource("notifications.settings", actions=(LIST, UPDATE)),
             _resource("notifications.dispatch", actions=(LAUNCH,)),
+        ),
+    ),
+    _capability(
+        "server_runtime_config_discovery",
+        "Server Runtime / Config Discovery",
+        "server_runtime",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("server.runtime.health", actions=(LIST, OBSERVE)),
+            _resource("server.runtime.config", actions=(LIST, UPDATE)),
+            _resource("server.runtime.providers", actions=(LIST, VALIDATE)),
         ),
     ),
     _capability(

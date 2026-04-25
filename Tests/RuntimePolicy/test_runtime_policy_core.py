@@ -149,6 +149,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "local": DISCOVER_CONFIGURE_TRIGGER_OBSERVE,
         },
     },
+    "server_runtime_config_discovery": {
+        "expected_domain_ids": {"server_runtime"},
+        "expected_action_kinds_by_source": {
+            "server": _action_kinds("browse", "update", "launch", "observe"),
+        },
+    },
     "server_reminders_notification_feeds": {
         "expected_domain_ids": {"notifications_server"},
         "expected_action_kinds_by_source": {
@@ -687,6 +693,14 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         notifications.reminders.launch.server
         notifications.reminders.list.server
         notifications.reminders.observe.server
+    """),
+    "server_runtime_config_discovery": _action_ids("""
+        server.runtime.config.list.server
+        server.runtime.config.update.server
+        server.runtime.health.list.server
+        server.runtime.health.observe.server
+        server.runtime.providers.list.server
+        server.runtime.providers.validate.server
     """),
     "user_governance": _action_ids("""
         user_governance.consent.list.server

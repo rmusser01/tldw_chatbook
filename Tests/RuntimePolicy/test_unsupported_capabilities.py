@@ -15,6 +15,7 @@ from tldw_chatbook.Prompt_Management.prompt_chatbook_scope_service import Prompt
 from tldw_chatbook.RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
 from tldw_chatbook.Research_Interop.research_scope_service import ResearchScopeService
 from tldw_chatbook.Research_Interop.research_search_scope_service import ResearchSearchScopeService
+from tldw_chatbook.Server_Runtime_Interop.server_runtime_scope_service import ServerRuntimeScopeService
 from tldw_chatbook.Sharing_Interop.sharing_scope_service import SharingScopeService
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.Study_Interop.quiz_scope_service import QuizScopeService
@@ -128,6 +129,7 @@ def test_collect_unsupported_capability_reports_labels_each_report_scope():
         (ChatGrammarsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (FeedbackScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (NotificationsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (ServerRuntimeScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (CollectionsFeedsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (ConnectorsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (SkillsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),

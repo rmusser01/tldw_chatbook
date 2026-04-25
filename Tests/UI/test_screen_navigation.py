@@ -46,6 +46,7 @@ from tldw_chatbook.Chat_Grammars_Interop import ChatGrammarsScopeService, Server
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Feedback_Interop import FeedbackScopeService, ServerFeedbackService
+from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Skills_Interop import ServerSkillsService, SkillsScopeService
 from tldw_chatbook.User_Governance_Interop import ServerUserGovernanceService, UserGovernanceScopeService
@@ -132,6 +133,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.connectors_scope_service, ConnectorsScopeService)
     assert isinstance(app.server_skills_service, ServerSkillsService)
     assert isinstance(app.skills_scope_service, SkillsScopeService)
+    assert isinstance(app.server_runtime_service, ServerRuntimeService)
+    assert isinstance(app.server_runtime_scope_service, ServerRuntimeScopeService)
     assert isinstance(app.server_user_governance_service, ServerUserGovernanceService)
     assert isinstance(app.user_governance_scope_service, UserGovernanceScopeService)
     assert isinstance(app.server_sharing_service, ServerSharingService)
