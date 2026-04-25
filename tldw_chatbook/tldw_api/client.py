@@ -498,17 +498,37 @@ from .evaluations_schemas import (
     UpdateEvaluationRequest,
 )
 from .flashcards_schemas import (
+    FlashcardAnalyticsSummaryResponse,
+    FlashcardAssetMetadata,
+    FlashcardBulkUpdateItem,
+    FlashcardBulkUpdateResponse,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
     FlashcardDeckResponse,
+    FlashcardDeckUpdateRequest,
+    FlashcardGenerateRequest,
+    FlashcardGenerateResponse,
     FlashcardListResponse,
     FlashcardNextReviewResponse,
     FlashcardResponse,
+    FlashcardResetSchedulingRequest,
     FlashcardReviewRequest,
     FlashcardReviewResponse,
     FlashcardReviewSessionEndRequest,
     FlashcardReviewSessionSummary,
+    FlashcardTagSuggestionsResponse,
+    FlashcardTagsUpdate,
+    FlashcardTemplateCreateRequest,
+    FlashcardTemplateListResponse,
+    FlashcardTemplateResponse,
+    FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
+    FlashcardsImportRequest,
+    StructuredQaImportPreviewRequest,
+    StructuredQaImportPreviewResponse,
+    StudyAssistantContextResponse,
+    StudyAssistantRespondRequest,
+    StudyAssistantRespondResponse,
     StudyPackCreateJobRequest,
     StudyPackJobAcceptedResponse,
     StudyPackJobStatusResponse,
@@ -5099,15 +5119,51 @@ class TLDWAPIClient:
     async def list_flashcard_decks(
         self,
         *,
+        include_deleted: bool | None = None,
+        workspace_id: str | None = None,
+        include_workspace_items: bool | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[FlashcardDeckResponse]:
         response = await self._request(
             "GET",
             "/api/v1/flashcards/decks",
-            params={"limit": limit, "offset": offset},
+            params={
+                key: value
+                for key, value in {
+                    "include_deleted": include_deleted,
+                    "workspace_id": workspace_id,
+                    "include_workspace_items": include_workspace_items,
+                    "limit": limit,
+                    "offset": offset,
+                }.items()
+                if value is not None
+            },
         )
         return [FlashcardDeckResponse.model_validate(item) for item in list(response or [])]
+
+    async def update_flashcard_deck(
+        self,
+        deck_id: int,
+        request_data: FlashcardDeckUpdateRequest,
+    ) -> FlashcardDeckResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/flashcards/decks/{deck_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardDeckResponse.model_validate(response)
+
+    async def upload_flashcard_asset(self, file: tuple[str, bytes, str]) -> FlashcardAssetMetadata:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/assets",
+            files=[("file", file)],
+        )
+        return FlashcardAssetMetadata.model_validate(response)
+
+    async def get_flashcard_asset_content(self, asset_uuid: str) -> ReadingExportResponse:
+        return await self._binary_request("GET", f"/api/v1/flashcards/assets/{asset_uuid}/content")
 
     async def create_flashcard(
         self,
@@ -5119,6 +5175,28 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return FlashcardResponse.model_validate(response)
+
+    async def create_flashcards_bulk(
+        self,
+        request_data: list[FlashcardCreateRequest],
+    ) -> FlashcardListResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/bulk",
+            json_data=[item.model_dump(exclude_none=True, mode="json") for item in request_data],
+        )
+        return FlashcardListResponse.model_validate(response)
+
+    async def update_flashcards_bulk(
+        self,
+        request_data: list[FlashcardBulkUpdateItem],
+    ) -> FlashcardBulkUpdateResponse:
+        response = await self._request(
+            "PATCH",
+            "/api/v1/flashcards/bulk",
+            json_data=[item.model_dump(exclude_none=True, mode="json") for item in request_data],
+        )
+        return FlashcardBulkUpdateResponse.model_validate(response)
 
     async def update_flashcard(
         self,
@@ -5148,9 +5226,14 @@ class TLDWAPIClient:
         self,
         *,
         deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: bool | None = None,
+        tag: Optional[str] = None,
+        due_status: Optional[str] = None,
         q: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        order_by: Optional[str] = None,
     ) -> FlashcardListResponse:
         response = await self._request(
             "GET",
@@ -5159,19 +5242,201 @@ class TLDWAPIClient:
                 key: value
                 for key, value in {
                     "deck_id": deck_id,
+                    "workspace_id": workspace_id,
+                    "include_workspace_items": include_workspace_items,
+                    "tag": tag,
+                    "due_status": due_status,
                     "q": q,
                     "limit": limit,
                     "offset": offset,
+                    "order_by": order_by,
                 }.items()
                 if value is not None
             },
         )
         return FlashcardListResponse.model_validate(response)
 
+    async def list_flashcard_tag_suggestions(
+        self,
+        *,
+        q: Optional[str] = None,
+        limit: int = 50,
+    ) -> FlashcardTagSuggestionsResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/tags",
+            params={key: value for key, value in {"q": q, "limit": limit}.items() if value is not None},
+        )
+        return FlashcardTagSuggestionsResponse.model_validate(response)
+
+    async def get_flashcard_analytics_summary(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: bool | None = None,
+    ) -> FlashcardAnalyticsSummaryResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/analytics/summary",
+            params={
+                key: value
+                for key, value in {
+                    "deck_id": deck_id,
+                    "workspace_id": workspace_id,
+                    "include_workspace_items": include_workspace_items,
+                }.items()
+                if value is not None
+            },
+        )
+        return FlashcardAnalyticsSummaryResponse.model_validate(response)
+
+    async def get_flashcard(self, card_uuid: str) -> FlashcardResponse:
+        response = await self._request("GET", f"/api/v1/flashcards/id/{card_uuid}")
+        return FlashcardResponse.model_validate(response)
+
+    async def reset_flashcard_scheduling(
+        self,
+        card_uuid: str,
+        request_data: FlashcardResetSchedulingRequest,
+    ) -> FlashcardResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/flashcards/{card_uuid}/reset-scheduling",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return FlashcardResponse.model_validate(response)
+
+    async def set_flashcard_tags(
+        self,
+        card_uuid: str,
+        request_data: FlashcardTagsUpdate,
+    ) -> FlashcardResponse:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/flashcards/{card_uuid}/tags",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return FlashcardResponse.model_validate(response)
+
+    async def get_flashcard_tags(self, card_uuid: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/flashcards/{card_uuid}/tags")
+
+    async def preview_structured_qa_import(
+        self,
+        request_data: StructuredQaImportPreviewRequest,
+        *,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> StructuredQaImportPreviewResponse:
+        params = {
+            key: value
+            for key, value in {
+                "max_lines": max_lines,
+                "max_line_length": max_line_length,
+                "max_field_length": max_field_length,
+            }.items()
+            if value is not None
+        }
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/import/structured/preview",
+            params=params or None,
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return StructuredQaImportPreviewResponse.model_validate(response)
+
+    async def import_flashcards(
+        self,
+        request_data: FlashcardsImportRequest,
+        *,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        params = {
+            key: value
+            for key, value in {
+                "max_lines": max_lines,
+                "max_line_length": max_line_length,
+                "max_field_length": max_field_length,
+            }.items()
+            if value is not None
+        }
+        return await self._request(
+            "POST",
+            "/api/v1/flashcards/import",
+            params=params or None,
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def import_flashcards_json(
+        self,
+        file: tuple[str, bytes, str],
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        params = {
+            key: value for key, value in {"max_items": max_items, "max_field_length": max_field_length}.items()
+            if value is not None
+        }
+        return await self._request(
+            "POST",
+            "/api/v1/flashcards/import/json",
+            params=params or None,
+            files=[("file", file)],
+        )
+
+    async def import_flashcards_apkg(
+        self,
+        file: tuple[str, bytes, str],
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        params = {
+            key: value for key, value in {"max_items": max_items, "max_field_length": max_field_length}.items()
+            if value is not None
+        }
+        return await self._request(
+            "POST",
+            "/api/v1/flashcards/import/apkg",
+            params=params or None,
+            files=[("file", file)],
+        )
+
+    async def list_flashcard_review_sessions(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        scope_key: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[FlashcardReviewSessionSummary]:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/review-sessions",
+            params={
+                key: value
+                for key, value in {
+                    "deck_id": deck_id,
+                    "scope_key": scope_key,
+                    "status": status,
+                    "limit": limit,
+                }.items()
+                if value is not None
+            },
+        )
+        return [FlashcardReviewSessionSummary.model_validate(item) for item in response]
+
     async def get_next_flashcard_review(
         self,
         *,
         deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: bool | None = None,
     ) -> FlashcardNextReviewResponse:
         response = await self._request(
             "GET",
@@ -5180,6 +5445,8 @@ class TLDWAPIClient:
                 key: value
                 for key, value in {
                     "deck_id": deck_id,
+                    "workspace_id": workspace_id,
+                    "include_workspace_items": include_workspace_items,
                 }.items()
                 if value is not None
             },
@@ -5204,6 +5471,109 @@ class TLDWAPIClient:
             json_data=FlashcardReviewSessionEndRequest(review_session_id=review_session_id).model_dump(mode="json"),
         )
         return FlashcardReviewSessionSummary.model_validate(response)
+
+    async def get_flashcard_assistant(self, card_uuid: str) -> StudyAssistantContextResponse:
+        response = await self._request("GET", f"/api/v1/flashcards/{card_uuid}/assistant")
+        return StudyAssistantContextResponse.model_validate(response)
+
+    async def respond_flashcard_assistant(
+        self,
+        card_uuid: str,
+        request_data: StudyAssistantRespondRequest,
+    ) -> StudyAssistantRespondResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/flashcards/{card_uuid}/assistant/respond",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return StudyAssistantRespondResponse.model_validate(response)
+
+    async def generate_flashcards(self, request_data: FlashcardGenerateRequest) -> FlashcardGenerateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/generate",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardGenerateResponse.model_validate(response)
+
+    async def export_flashcards(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: bool | None = None,
+        tag: Optional[str] = None,
+        q: Optional[str] = None,
+        format: str = "csv",
+        include_reverse: bool | None = None,
+        delimiter: Optional[str] = None,
+        include_header: bool | None = None,
+        extended_header: bool | None = None,
+    ) -> ReadingExportResponse:
+        params = {
+            key: value
+            for key, value in {
+                "deck_id": deck_id,
+                "workspace_id": workspace_id,
+                "include_workspace_items": include_workspace_items,
+                "tag": tag,
+                "q": q,
+                "format": format,
+                "include_reverse": include_reverse,
+                "delimiter": delimiter,
+                "include_header": include_header,
+                "extended_header": extended_header,
+            }.items()
+            if value is not None
+        }
+        return await self._binary_request("GET", "/api/v1/flashcards/export", params=params)
+
+    async def create_flashcard_template(
+        self,
+        request_data: FlashcardTemplateCreateRequest,
+    ) -> FlashcardTemplateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/flashcards/templates",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardTemplateResponse.model_validate(response)
+
+    async def list_flashcard_templates(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> FlashcardTemplateListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/templates",
+            params={"limit": limit, "offset": offset},
+        )
+        return FlashcardTemplateListResponse.model_validate(response)
+
+    async def get_flashcard_template(self, template_id: int) -> FlashcardTemplateResponse:
+        response = await self._request("GET", f"/api/v1/flashcards/templates/{template_id}")
+        return FlashcardTemplateResponse.model_validate(response)
+
+    async def update_flashcard_template(
+        self,
+        template_id: int,
+        request_data: FlashcardTemplateUpdateRequest,
+    ) -> FlashcardTemplateResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/flashcards/templates/{template_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FlashcardTemplateResponse.model_validate(response)
+
+    async def delete_flashcard_template(self, template_id: int, *, expected_version: int) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/flashcards/templates/{template_id}",
+            params={"expected_version": expected_version},
+        )
 
     async def create_study_pack_job(
         self,

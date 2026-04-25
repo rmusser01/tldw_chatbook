@@ -22,7 +22,9 @@ class FlashcardDeckCreateRequest(BaseModel):
     name: str
     description: Optional[str] = None
     workspace_id: Optional[str] = None
+    review_prompt_side: Optional[Literal["front", "back"]] = None
     scheduler_type: Optional[DeckSchedulerType] = None
+    scheduler_settings: Optional[dict[str, Any]] = None
 
 
 class FlashcardDeckResponse(BaseModel):
@@ -30,6 +32,7 @@ class FlashcardDeckResponse(BaseModel):
     name: str
     description: Optional[str] = None
     workspace_id: Optional[str] = None
+    review_prompt_side: Optional[Literal["front", "back"]] = None
     created_at: Optional[str] = None
     last_modified: Optional[str] = None
     deleted: bool = False
@@ -39,6 +42,18 @@ class FlashcardDeckResponse(BaseModel):
     scheduler_settings: Optional[dict[str, Any]] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardDeckUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    workspace_id: Optional[str] = None
+    review_prompt_side: Optional[Literal["front", "back"]] = None
+    scheduler_type: Optional[DeckSchedulerType] = None
+    scheduler_settings: Optional[dict[str, Any]] = None
+    expected_version: Optional[int] = Field(None, ge=1)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class FlashcardCreateRequest(BaseModel):
@@ -320,3 +335,309 @@ class FlashcardDeepDiveTarget(BaseModel):
     route: Optional[str] = None
     available: bool = True
     fallback_reason: Optional[str] = None
+
+
+class FlashcardAssetMetadata(BaseModel):
+    asset_uuid: UUID
+    reference: str
+    markdown_snippet: str
+    mime_type: str
+    byte_size: int
+    width: Optional[int] = None
+    height: Optional[int] = None
+    original_filename: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardBulkUpdateItem(FlashcardUpdateRequest):
+    uuid: str
+
+
+class FlashcardBulkUpdateError(BaseModel):
+    code: Literal["validation_error", "not_found", "conflict"]
+    message: str
+    invalid_fields: list[str] = Field(default_factory=list)
+    invalid_deck_ids: list[int] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardBulkUpdateResult(BaseModel):
+    uuid: str
+    status: Literal["updated", "validation_error", "not_found", "conflict"]
+    flashcard: Optional[FlashcardResponse] = None
+    error: Optional[FlashcardBulkUpdateError] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardBulkUpdateResponse(BaseModel):
+    results: list[FlashcardBulkUpdateResult] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardResetSchedulingRequest(BaseModel):
+    expected_version: int = Field(..., ge=1)
+
+
+class FlashcardTagSuggestionItem(BaseModel):
+    tag: str
+    count: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardTagSuggestionsResponse(BaseModel):
+    items: list[FlashcardTagSuggestionItem] = Field(default_factory=list)
+    count: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardTagsUpdate(BaseModel):
+    tags: list[str]
+
+
+class FlashcardDeckProgress(BaseModel):
+    deck_id: int
+    deck_name: str
+    total: int
+    new: int
+    learning: int
+    due: int
+    mature: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardAnalyticsSummaryResponse(BaseModel):
+    reviewed_today: int
+    retention_rate_today: Optional[float] = None
+    lapse_rate_today: Optional[float] = None
+    avg_answer_time_ms_today: Optional[float] = None
+    study_streak_days: int
+    generated_at: str
+    decks: list[FlashcardDeckProgress] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardsImportRequest(BaseModel):
+    content: str
+    delimiter: Optional[str] = "\t"
+    has_header: Optional[bool] = False
+
+
+class StructuredQaImportPreviewRequest(BaseModel):
+    content: str = Field(..., min_length=1)
+
+
+class StructuredQaImportPreviewDraft(BaseModel):
+    front: str
+    back: str
+    line_start: int
+    line_end: int
+    notes: Optional[str] = None
+    extra: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StructuredQaImportPreviewError(BaseModel):
+    line: Optional[int] = None
+    error: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StructuredQaImportPreviewResponse(BaseModel):
+    drafts: list[StructuredQaImportPreviewDraft] = Field(default_factory=list)
+    errors: list[StructuredQaImportPreviewError] = Field(default_factory=list)
+    detected_format: Literal["qa_labels"] = "qa_labels"
+    skipped_blocks: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardGenerateRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+    num_cards: int = Field(10, ge=1, le=100)
+    card_type: Literal["basic", "basic_reverse", "cloze"] = "basic"
+    difficulty: Literal["easy", "medium", "hard", "mixed"] = "mixed"
+    focus_topics: list[str] = Field(default_factory=list)
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+class GeneratedFlashcard(BaseModel):
+    front: str
+    back: str
+    tags: list[str] = Field(default_factory=list)
+    model_type: Literal["basic", "basic_reverse", "cloze"] = "basic"
+    notes: Optional[str] = None
+    extra: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardGenerateResponse(BaseModel):
+    flashcards: list[GeneratedFlashcard] = Field(default_factory=list)
+    count: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StudyAssistantThreadSummary(BaseModel):
+    id: int
+    context_type: Literal["flashcard", "quiz_attempt_question"]
+    flashcard_uuid: Optional[str] = None
+    quiz_attempt_id: Optional[int] = None
+    question_id: Optional[int] = None
+    last_message_at: Optional[str] = None
+    message_count: int = 0
+    deleted: bool
+    client_id: str
+    version: int
+    created_at: Optional[str] = None
+    last_modified: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+StudyAssistantAction = Literal["explain", "mnemonic", "follow_up", "fact_check", "freeform"]
+
+
+class StudyAssistantMessage(BaseModel):
+    id: int
+    thread_id: int
+    role: Literal["user", "assistant"]
+    action_type: StudyAssistantAction
+    input_modality: Literal["text", "voice_transcript"]
+    content: str
+    structured_payload: dict[str, Any] = Field(default_factory=dict)
+    context_snapshot: dict[str, Any] = Field(default_factory=dict)
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    created_at: Optional[str] = None
+    client_id: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _populate_json_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        for source_field, target_field in (
+            ("structured_payload_json", "structured_payload"),
+            ("context_snapshot_json", "context_snapshot"),
+        ):
+            if data.get(target_field) is not None:
+                continue
+            raw = data.get(source_field)
+            if isinstance(raw, dict):
+                data[target_field] = raw
+            elif isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                except Exception:
+                    parsed = {}
+                data[target_field] = parsed if isinstance(parsed, dict) else {}
+        data.setdefault("structured_payload", {})
+        data.setdefault("context_snapshot", {})
+        return data
+
+
+class StudyAssistantRespondRequest(BaseModel):
+    action: StudyAssistantAction
+    message: Optional[str] = None
+    input_modality: Literal["text", "voice_transcript"] = "text"
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    expected_thread_version: Optional[int] = Field(None, ge=1)
+
+
+class StudyAssistantContextResponse(BaseModel):
+    thread: StudyAssistantThreadSummary
+    messages: list[StudyAssistantMessage] = Field(default_factory=list)
+    context_snapshot: dict[str, Any] = Field(default_factory=dict)
+    available_actions: list[StudyAssistantAction] = Field(default_factory=list)
+    citations: list[FlashcardCitationResponse] = Field(default_factory=list)
+    primary_citation: Optional[FlashcardCitationResponse] = None
+    deep_dive_target: Optional[FlashcardDeepDiveTarget] = None
+    study_pack: Optional[StudyPackSummaryResponse] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StudyAssistantRespondResponse(BaseModel):
+    thread: StudyAssistantThreadSummary
+    user_message: StudyAssistantMessage
+    assistant_message: StudyAssistantMessage
+    structured_payload: dict[str, Any] = Field(default_factory=dict)
+    context_snapshot: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+FlashcardTemplateModelType = Literal["basic", "basic_reverse", "cloze"]
+FlashcardTemplateFieldTarget = Literal["front_template", "back_template", "notes_template", "extra_template"]
+
+
+class FlashcardTemplatePlaceholderDefinition(BaseModel):
+    key: str = Field(..., min_length=1)
+    label: str = Field(..., min_length=1)
+    help_text: Optional[str] = None
+    default_value: Optional[str] = None
+    required: bool = False
+    targets: list[FlashcardTemplateFieldTarget] = Field(..., min_length=1)
+
+
+class FlashcardTemplateCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    model_type: FlashcardTemplateModelType = "basic"
+    front_template: str = Field(..., min_length=1)
+    back_template: Optional[str] = None
+    notes_template: Optional[str] = None
+    extra_template: Optional[str] = None
+    placeholder_definitions: list[FlashcardTemplatePlaceholderDefinition] = Field(default_factory=list)
+
+
+class FlashcardTemplateUpdateRequest(BaseModel):
+    name: Optional[str] = Field(None, min_length=1)
+    model_type: Optional[FlashcardTemplateModelType] = None
+    front_template: Optional[str] = None
+    back_template: Optional[str] = None
+    notes_template: Optional[str] = None
+    extra_template: Optional[str] = None
+    placeholder_definitions: Optional[list[FlashcardTemplatePlaceholderDefinition]] = None
+    expected_version: Optional[int] = Field(None, ge=1)
+
+
+class FlashcardTemplateResponse(BaseModel):
+    id: int
+    name: str
+    model_type: FlashcardTemplateModelType
+    front_template: str
+    back_template: Optional[str] = None
+    notes_template: Optional[str] = None
+    extra_template: Optional[str] = None
+    placeholder_definitions: list[FlashcardTemplatePlaceholderDefinition] = Field(default_factory=list)
+    created_at: Optional[str] = None
+    last_modified: Optional[str] = None
+    deleted: bool
+    client_id: str
+    version: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FlashcardTemplateListResponse(BaseModel):
+    items: list[FlashcardTemplateResponse]
+    count: int
+    total: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
