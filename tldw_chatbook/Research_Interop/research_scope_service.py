@@ -74,6 +74,25 @@ class ResearchScopeService:
             return normalize_research_record(mode.value, kind, value)
         return value
 
+    def _normalize_bundle(self, mode: ResearchBackend, value: Any, *, run_id: str) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        payload.setdefault("backend", mode.value)
+        if isinstance(payload.get("run"), dict):
+            payload["run"] = normalize_research_record(mode.value, "run", payload["run"])
+        if isinstance(payload.get("artifacts"), list):
+            artifacts = []
+            for item in payload["artifacts"]:
+                if not isinstance(item, dict):
+                    artifacts.append(item)
+                    continue
+                artifact = dict(item)
+                artifact.setdefault("run_id", run_id)
+                artifacts.append(normalize_research_record(mode.value, "artifact", artifact))
+            payload["artifacts"] = artifacts
+        return payload
+
     async def list_sessions(
         self,
         *,
@@ -277,8 +296,14 @@ class ResearchScopeService:
         method_name = "observe_run_events" if hasattr(service, "observe_run_events") else "list_run_events"
         result = getattr(service, method_name)(run_id, after_id=after_id)
         if inspect.isasyncgen(result):
-            return [item async for item in result]
-        return list(await self._maybe_await(result))
+            items = [item async for item in result]
+        else:
+            items = list(await self._maybe_await(result))
+        items = [
+            {**item, "run_id": item.get("run_id") or run_id} if isinstance(item, dict) else item
+            for item in items
+        ]
+        return self._normalize_result(normalized_mode, "event", items)
 
     async def get_bundle(
         self,
@@ -288,7 +313,8 @@ class ResearchScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("runs", "detail", normalized_mode))
-        return await self._call_service(self._service_for_mode(normalized_mode), "get_bundle", run_id)
+        result = await self._call_service(self._service_for_mode(normalized_mode), "get_bundle", run_id)
+        return self._normalize_bundle(normalized_mode, result, run_id=run_id)
 
     async def get_artifact(
         self,
@@ -299,9 +325,12 @@ class ResearchScopeService:
     ) -> dict[str, Any] | None:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("runs", "detail", normalized_mode))
-        return await self._call_service(
+        result = await self._call_service(
             self._service_for_mode(normalized_mode),
             "get_artifact",
             run_id,
             artifact_name,
         )
+        if isinstance(result, dict):
+            result = {**result, "run_id": result.get("run_id") or run_id}
+        return self._normalize_result(normalized_mode, "artifact", result) if result else result

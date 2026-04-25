@@ -46,6 +46,21 @@ class FakeResearchService:
         self.calls.append(("delete_run", run_id, expected_version))
         return True
 
+    async def list_run_events(self, run_id, *, after_id=0):
+        self.calls.append(("list_run_events", run_id, after_id))
+        return [{"id": 1, "run_id": run_id, "event_type": "created"}]
+
+    async def get_bundle(self, run_id):
+        self.calls.append(("get_bundle", run_id))
+        return {
+            "run": {"id": run_id, "query": "MCP", "status": "completed"},
+            "artifacts": [{"run_id": run_id, "artifact_name": "summary", "content_type": "text/markdown"}],
+        }
+
+    async def get_artifact(self, run_id, artifact_name):
+        self.calls.append(("get_artifact", run_id, artifact_name))
+        return {"run_id": run_id, "artifact_name": artifact_name, "content_type": "text/markdown"}
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
@@ -140,3 +155,29 @@ async def test_research_scope_service_can_launch_local_run_from_session_query(tm
 
     assert run["query"] == "Inherited query"
     assert run["record_id"].startswith("local:research_run:")
+
+
+@pytest.mark.asyncio
+async def test_research_scope_service_normalizes_bundle_artifact_and_event_records():
+    server = FakeResearchService("server")
+    policy = FakePolicyEnforcer()
+    scope = ResearchScopeService(
+        local_service=FakeResearchService("local"),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    events = await scope.observe_run_events(mode="server", run_id="server-run-1")
+    bundle = await scope.get_bundle(mode="server", run_id="server-run-1")
+    artifact = await scope.get_artifact(mode="server", run_id="server-run-1", artifact_name="summary")
+
+    assert events[0]["record_id"] == "server:research_run_event:server-run-1:1"
+    assert bundle["backend"] == "server"
+    assert bundle["run"]["record_id"] == "server:research_run:server-run-1"
+    assert bundle["artifacts"][0]["record_id"] == "server:research_artifact:server-run-1:summary"
+    assert artifact["record_id"] == "server:research_artifact:server-run-1:summary"
+    assert policy.calls == [
+        "research.runs.observe.server",
+        "research.runs.detail.server",
+        "research.runs.detail.server",
+    ]
