@@ -172,3 +172,62 @@ async def test_scope_service_routes_reprocess_media_as_rag_admin_launch():
         "rag.admin.launch.local",
         "rag.admin.launch.server",
     ]
+
+
+def test_scope_service_reports_known_rag_admin_capability_gaps():
+    scope = RAGAdminScopeService(
+        local_service=FakeLocalService(),
+        server_service=FakeServerService(),
+    )
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "rag.templates.apply.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local chunking templates can be listed and edited, but the local admin seam does not apply templates to arbitrary text yet.",
+            "affected_action_ids": ["rag.admin.launch.local"],
+        },
+        {
+            "operation_id": "rag.templates.tags.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local chunking templates do not persist or filter server-style tags yet.",
+            "affected_action_ids": [
+                "rag.template.create.local",
+                "rag.template.list.local",
+                "rag.template.update.local",
+            ],
+        },
+        {
+            "operation_id": "rag.collections.export.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local embedding collection export is not exposed by the current RAG admin seam.",
+            "affected_action_ids": ["rag.admin.observe.local"],
+        },
+    ]
+    assert server_report == [
+        {
+            "operation_id": "rag.collections.create.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server embedding admin contract lists, inspects, deletes, and reprocesses collections, but does not expose direct collection creation.",
+            "affected_action_ids": ["rag.admin.configure.server", "rag.admin.launch.server"],
+        },
+        {
+            "operation_id": "rag.collections.export.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server embedding admin contract does not expose embedding collection export.",
+            "affected_action_ids": ["rag.admin.observe.server"],
+        },
+    ]

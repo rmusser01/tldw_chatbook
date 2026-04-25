@@ -14,6 +14,57 @@ class RAGAdminBackend(str, Enum):
     SERVER = "server"
 
 
+_LOCAL_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "rag.templates.apply.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local chunking templates can be listed and edited, but the local admin seam does not apply templates to arbitrary text yet.",
+        "affected_action_ids": ["rag.admin.launch.local"],
+    },
+    {
+        "operation_id": "rag.templates.tags.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local chunking templates do not persist or filter server-style tags yet.",
+        "affected_action_ids": [
+            "rag.template.create.local",
+            "rag.template.list.local",
+            "rag.template.update.local",
+        ],
+    },
+    {
+        "operation_id": "rag.collections.export.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local embedding collection export is not exposed by the current RAG admin seam.",
+        "affected_action_ids": ["rag.admin.observe.local"],
+    },
+]
+
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "rag.collections.create.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server embedding admin contract lists, inspects, deletes, and reprocesses collections, but does not expose direct collection creation.",
+        "affected_action_ids": ["rag.admin.configure.server", "rag.admin.launch.server"],
+    },
+    {
+        "operation_id": "rag.collections.export.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server embedding admin contract does not expose embedding collection export.",
+        "affected_action_ids": ["rag.admin.observe.server"],
+    },
+]
+
+
 class RAGAdminScopeService:
     """Route retrieval-admin actions to local or server backends and normalize outputs."""
 
@@ -58,6 +109,16 @@ class RAGAdminScopeService:
     @staticmethod
     def _admin_action_id(mode: RAGAdminBackend, action: str) -> str:
         return f"rag.admin.{action}.{mode.value}"
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == RAGAdminBackend.LOCAL:
+            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def list_templates(
         self,
