@@ -1075,6 +1075,14 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         study.flashcard.assistant.detail.server
         study.flashcard.assistant.launch.local
         study.flashcard.assistant.launch.server
+        study.flashcard.assets.create.local
+        study.flashcard.assets.create.server
+        study.flashcard.assets.detail.local
+        study.flashcard.assets.detail.server
+        study.flashcard.bulk.create.local
+        study.flashcard.bulk.create.server
+        study.flashcard.bulk.update.local
+        study.flashcard.bulk.update.server
         study.flashcard.create.local
         study.flashcard.create.server
         study.flashcard.delete.local
@@ -1083,6 +1091,12 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         study.flashcard.detail.server
         study.flashcard.generation.launch.local
         study.flashcard.generation.launch.server
+        study.flashcard.export.export.local
+        study.flashcard.export.export.server
+        study.flashcard.import.import.local
+        study.flashcard.import.import.server
+        study.flashcard.import.preview.local
+        study.flashcard.import.preview.server
         study.flashcard.list.local
         study.flashcard.list.server
         study.flashcard.review_sessions.list.local

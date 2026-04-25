@@ -8,6 +8,7 @@ from typing import Any, Optional
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
+    FlashcardBulkUpdateItem,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
     FlashcardDeckUpdateRequest,
@@ -18,8 +19,10 @@ from ..tldw_api import (
     FlashcardTemplateCreateRequest,
     FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
+    FlashcardsImportRequest,
     StudyAssistantRespondRequest,
     StudyPackCreateJobRequest,
+    StructuredQaImportPreviewRequest,
     SuggestionActionRequest,
     SuggestionRefreshRequest,
     TLDWAPIClient,
@@ -102,6 +105,22 @@ class ServerStudyService:
         return f"study.flashcard.templates.{action}.server"
 
     @staticmethod
+    def _flashcard_asset_action_id(action: str) -> str:
+        return f"study.flashcard.assets.{action}.server"
+
+    @staticmethod
+    def _flashcard_bulk_action_id(action: str) -> str:
+        return f"study.flashcard.bulk.{action}.server"
+
+    @staticmethod
+    def _flashcard_import_action_id(action: str) -> str:
+        return f"study.flashcard.import.{action}.server"
+
+    @staticmethod
+    def _flashcard_export_action_id(action: str) -> str:
+        return f"study.flashcard.export.{action}.server"
+
+    @staticmethod
     def _study_pack_action_id(action: str) -> str:
         return f"study.packs.jobs.{action}.server"
 
@@ -120,6 +139,12 @@ class ServerStudyService:
         if deck_id in {None, ""}:
             return None
         return int(deck_id)
+
+    @staticmethod
+    def _flashcard_create_request(card: Mapping[str, Any]) -> FlashcardCreateRequest:
+        payload = dict(card)
+        payload.setdefault("is_cloze", None)
+        return FlashcardCreateRequest(**payload)
 
     async def list_decks(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         self._enforce(self._deck_action_id("list"))
@@ -345,6 +370,124 @@ class ServerStudyService:
             )
         )
         return self._model_to_dict(response)
+
+    async def upload_flashcard_asset(self, file: tuple[str, bytes, str]) -> dict[str, Any]:
+        self._enforce(self._flashcard_asset_action_id("create"))
+        response = await self._require_client().upload_flashcard_asset(file)
+        return self._model_to_dict(response)
+
+    async def get_flashcard_asset_content(self, asset_uuid: str) -> Any:
+        self._enforce(self._flashcard_asset_action_id("detail"))
+        return await self._require_client().get_flashcard_asset_content(asset_uuid)
+
+    async def create_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
+        self._enforce(self._flashcard_bulk_action_id("create"))
+        response = await self._require_client().create_flashcards_bulk(
+            [self._flashcard_create_request(card) for card in cards]
+        )
+        return self._model_to_dict(response)
+
+    async def update_flashcards_bulk(self, updates: list[Mapping[str, Any]]) -> dict[str, Any]:
+        self._enforce(self._flashcard_bulk_action_id("update"))
+        response = await self._require_client().update_flashcards_bulk(
+            [FlashcardBulkUpdateItem(**dict(update)) for update in updates]
+        )
+        return self._model_to_dict(response)
+
+    async def preview_structured_qa_import(
+        self,
+        content: str,
+        *,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_import_action_id("preview"))
+        response = await self._require_client().preview_structured_qa_import(
+            StructuredQaImportPreviewRequest(content=content),
+            max_lines=max_lines,
+            max_line_length=max_line_length,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def import_flashcards(
+        self,
+        content: str,
+        *,
+        delimiter: Optional[str] = "\t",
+        has_header: Optional[bool] = False,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_import_action_id("import"))
+        return await self._require_client().import_flashcards(
+            FlashcardsImportRequest(
+                content=content,
+                delimiter=delimiter,
+                has_header=has_header,
+            ),
+            max_lines=max_lines,
+            max_line_length=max_line_length,
+            max_field_length=max_field_length,
+        )
+
+    async def import_flashcards_json(
+        self,
+        file: tuple[str, bytes, str],
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_import_action_id("import"))
+        return await self._require_client().import_flashcards_json(
+            file,
+            max_items=max_items,
+            max_field_length=max_field_length,
+        )
+
+    async def import_flashcards_apkg(
+        self,
+        file: tuple[str, bytes, str],
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_import_action_id("import"))
+        return await self._require_client().import_flashcards_apkg(
+            file,
+            max_items=max_items,
+            max_field_length=max_field_length,
+        )
+
+    async def export_flashcards(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: Optional[bool] = None,
+        tag: Optional[str] = None,
+        q: Optional[str] = None,
+        format: str = "csv",
+        include_reverse: Optional[bool] = None,
+        delimiter: Optional[str] = None,
+        include_header: Optional[bool] = None,
+        extended_header: Optional[bool] = None,
+    ) -> Any:
+        self._enforce(self._flashcard_export_action_id("export"))
+        return await self._require_client().export_flashcards(
+            deck_id=self._coerce_deck_id(deck_id),
+            workspace_id=workspace_id,
+            include_workspace_items=include_workspace_items,
+            tag=tag,
+            q=q,
+            format=format,
+            include_reverse=include_reverse,
+            delimiter=delimiter,
+            include_header=include_header,
+            extended_header=extended_header,
+        )
 
     async def create_flashcard_template(
         self,

@@ -6,8 +6,11 @@ from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.Study_Interop.server_study_service import ServerStudyService
 from tldw_chatbook.tldw_api.flashcards_schemas import (
     FlashcardAnalyticsSummaryResponse,
+    FlashcardAssetMetadata,
+    FlashcardBulkUpdateResponse,
     FlashcardDeckResponse,
     FlashcardGenerateResponse,
+    FlashcardListResponse,
     FlashcardResponse,
     FlashcardReviewSessionSummary,
     FlashcardTemplateListResponse,
@@ -18,7 +21,9 @@ from tldw_chatbook.tldw_api.flashcards_schemas import (
     FlashcardTagSuggestionsResponse,
     StudyAssistantContextResponse,
     StudyAssistantRespondResponse,
+    StructuredQaImportPreviewResponse,
 )
+from tldw_chatbook.tldw_api import ReadingExportResponse
 from tldw_chatbook.tldw_api.study_suggestions_schemas import (
     SuggestionActionResponse,
     SuggestionJobAcceptedResponse,
@@ -48,6 +53,87 @@ class FakeClient:
                 "client_id": "server-client",
                 "version": 4,
                 "scheduler_type": "fsrs",
+            }
+        )
+
+    async def upload_flashcard_asset(self, file):
+        self.calls.append(("upload_flashcard_asset", file))
+        return FlashcardAssetMetadata.model_validate(
+            {
+                "asset_uuid": CARD_UUID,
+                "reference": f"flashcard-asset://{CARD_UUID}",
+                "markdown_snippet": f"![image](flashcard-asset://{CARD_UUID})",
+                "mime_type": "image/png",
+                "byte_size": 7,
+                "width": 1,
+                "height": 1,
+                "original_filename": "cell.png",
+            }
+        )
+
+    async def get_flashcard_asset_content(self, asset_uuid):
+        self.calls.append(("get_flashcard_asset_content", asset_uuid))
+        return ReadingExportResponse(content=b"pngdata", content_type="image/png", filename="cell.png")
+
+    async def create_flashcards_bulk(self, request_data):
+        self.calls.append(("create_flashcards_bulk", [item.model_dump(mode="json", exclude_none=True) for item in request_data]))
+        return FlashcardListResponse.model_validate(
+            {
+                "items": [
+                    {
+                        "uuid": CARD_UUID,
+                        "deck_id": 9,
+                        "front": "Question",
+                        "back": "Answer",
+                        "tags": ["science"],
+                        "ef": 2.5,
+                        "interval_days": 0,
+                        "repetitions": 0,
+                        "lapses": 0,
+                        "queue_state": "new",
+                        "created_at": "2026-04-20T00:00:00Z",
+                        "last_modified": "2026-04-20T00:01:00Z",
+                        "deleted": False,
+                        "client_id": "server-client",
+                        "version": 1,
+                        "model_type": "basic",
+                        "reverse": False,
+                    }
+                ],
+                "count": 1,
+                "total": 1,
+            }
+        )
+
+    async def update_flashcards_bulk(self, request_data):
+        self.calls.append(("update_flashcards_bulk", [item.model_dump(mode="json", exclude_none=True) for item in request_data]))
+        return FlashcardBulkUpdateResponse.model_validate(
+            {
+                "results": [
+                    {
+                        "uuid": CARD_UUID,
+                        "status": "updated",
+                        "flashcard": {
+                            "uuid": CARD_UUID,
+                            "deck_id": 9,
+                            "front": "Updated",
+                            "back": "Answer",
+                            "tags": ["science"],
+                            "ef": 2.5,
+                            "interval_days": 0,
+                            "repetitions": 0,
+                            "lapses": 0,
+                            "queue_state": "new",
+                            "created_at": "2026-04-20T00:00:00Z",
+                            "last_modified": "2026-04-20T00:02:00Z",
+                            "deleted": False,
+                            "client_id": "server-client",
+                            "version": 2,
+                            "model_type": "basic",
+                            "reverse": False,
+                        },
+                    }
+                ]
             }
         )
 
@@ -86,6 +172,37 @@ class FakeClient:
     async def get_flashcard_tags(self, card_uuid):
         self.calls.append(("get_flashcard_tags", card_uuid))
         return {"uuid": card_uuid, "tags": ["science", "biology"]}
+
+    async def preview_structured_qa_import(self, request_data, **limits):
+        self.calls.append(("preview_structured_qa_import", request_data.model_dump(mode="json"), limits))
+        return StructuredQaImportPreviewResponse.model_validate(
+            {
+                "drafts": [
+                    {
+                        "front": "What powers the cell?",
+                        "back": "ATP",
+                        "line_start": 1,
+                        "line_end": 2,
+                        "tags": ["biology"],
+                    }
+                ],
+                "errors": [],
+                "detected_format": "qa_labels",
+                "skipped_blocks": 0,
+            }
+        )
+
+    async def import_flashcards(self, request_data, **limits):
+        self.calls.append(("import_flashcards", request_data.model_dump(mode="json", exclude_none=True), limits))
+        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 9}], "errors": []}
+
+    async def import_flashcards_json(self, file, **limits):
+        self.calls.append(("import_flashcards_json", file, limits))
+        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 9}], "errors": []}
+
+    async def import_flashcards_apkg(self, file, **limits):
+        self.calls.append(("import_flashcards_apkg", file, limits))
+        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 9}], "errors": []}
 
     async def list_flashcard_tag_suggestions(self, *, q=None, limit=50):
         self.calls.append(("list_flashcard_tag_suggestions", q, limit))
@@ -155,6 +272,14 @@ class FakeClient:
                 ],
                 "available_actions": ["explain", "follow_up"],
             }
+        )
+
+    async def export_flashcards(self, **request):
+        self.calls.append(("export_flashcards", request))
+        return ReadingExportResponse(
+            content=b"Deck\tFront\tBack\nBio\tQ\tA\n",
+            content_type="text/tab-separated-values",
+            filename="flashcards.tsv",
         )
 
     async def respond_flashcard_assistant(self, card_uuid, request_data):
@@ -510,6 +635,61 @@ async def test_server_study_service_wraps_broad_flashcard_helper_endpoints():
                 "card_type": "basic",
                 "difficulty": "mixed",
                 "focus_topics": ["mitosis"],
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_wraps_flashcard_bulk_import_export_and_asset_endpoints():
+    client = FakeClient()
+    service = ServerStudyService(client=client)
+
+    uploaded = await service.upload_flashcard_asset(("cell.png", b"pngdata", "image/png"))
+    content = await service.get_flashcard_asset_content(CARD_UUID)
+    created_bulk = await service.create_flashcards_bulk(
+        [{"deck_id": 9, "front": "Question", "back": "Answer", "tags": ["science"]}]
+    )
+    updated_bulk = await service.update_flashcards_bulk(
+        [{"uuid": CARD_UUID, "front": "Updated", "expected_version": 1}]
+    )
+    preview = await service.preview_structured_qa_import("Q: What powers the cell?\nA: ATP", max_lines=10)
+    imported = await service.import_flashcards("Deck\tFront\tBack\nBio\tQ\tA", has_header=True)
+    imported_json = await service.import_flashcards_json(("cards.json", b"[]", "application/json"), max_items=10)
+    imported_apkg = await service.import_flashcards_apkg(("cards.apkg", b"apkg", "application/octet-stream"))
+    exported = await service.export_flashcards(deck_id=9, format="tsv", delimiter="\t", include_header=True)
+
+    assert uploaded["asset_uuid"] == CARD_UUID
+    assert content.content == b"pngdata"
+    assert created_bulk["items"][0]["uuid"] == CARD_UUID
+    assert updated_bulk["results"][0]["status"] == "updated"
+    assert preview["drafts"][0]["front"] == "What powers the cell?"
+    assert imported["imported"] == 1
+    assert imported_json["imported"] == 1
+    assert imported_apkg["imported"] == 1
+    assert exported.filename == "flashcards.tsv"
+    assert client.calls == [
+        ("upload_flashcard_asset", ("cell.png", b"pngdata", "image/png")),
+        ("get_flashcard_asset_content", CARD_UUID),
+        ("create_flashcards_bulk", [{"deck_id": 9, "front": "Question", "back": "Answer", "tags": ["science"], "source_ref_type": "manual"}]),
+        ("update_flashcards_bulk", [{"front": "Updated", "expected_version": 1, "uuid": CARD_UUID}]),
+        ("preview_structured_qa_import", {"content": "Q: What powers the cell?\nA: ATP"}, {"max_lines": 10, "max_line_length": None, "max_field_length": None}),
+        ("import_flashcards", {"content": "Deck\tFront\tBack\nBio\tQ\tA", "delimiter": "\t", "has_header": True}, {"max_lines": None, "max_line_length": None, "max_field_length": None}),
+        ("import_flashcards_json", ("cards.json", b"[]", "application/json"), {"max_items": 10, "max_field_length": None}),
+        ("import_flashcards_apkg", ("cards.apkg", b"apkg", "application/octet-stream"), {"max_items": None, "max_field_length": None}),
+        (
+            "export_flashcards",
+            {
+                "deck_id": 9,
+                "workspace_id": None,
+                "include_workspace_items": None,
+                "tag": None,
+                "q": None,
+                "format": "tsv",
+                "include_reverse": None,
+                "delimiter": "\t",
+                "include_header": True,
+                "extended_header": None,
             },
         ),
     ]

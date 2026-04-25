@@ -53,12 +53,19 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "source": "local",
         "supported": False,
         "reason_code": "remote_only_surface",
-        "user_message": "Server flashcard helpers such as analytics, tag suggestions, assistant, generation, and review-session discovery are unavailable in local/offline mode.",
+        "user_message": "Server flashcard helpers such as assets, bulk actions, imports, exports, analytics, tag suggestions, assistant, generation, and review-session discovery are unavailable in local/offline mode.",
         "affected_action_ids": [
             "study.flashcard.analytics.observe.local",
             "study.flashcard.assistant.detail.local",
             "study.flashcard.assistant.launch.local",
+            "study.flashcard.assets.create.local",
+            "study.flashcard.assets.detail.local",
+            "study.flashcard.bulk.create.local",
+            "study.flashcard.bulk.update.local",
+            "study.flashcard.export.export.local",
             "study.flashcard.generation.launch.local",
+            "study.flashcard.import.import.local",
+            "study.flashcard.import.preview.local",
             "study.flashcard.review_sessions.list.local",
             "study.flashcard.tags.list.local",
             "study.flashcard.tags.update.local",
@@ -162,6 +169,22 @@ class StudyScopeService:
         return f"study.flashcard.templates.{action}.{mode.value}"
 
     @staticmethod
+    def _study_flashcard_asset_action_id(mode: StudyBackend, action: str) -> str:
+        return f"study.flashcard.assets.{action}.{mode.value}"
+
+    @staticmethod
+    def _study_flashcard_bulk_action_id(mode: StudyBackend, action: str) -> str:
+        return f"study.flashcard.bulk.{action}.{mode.value}"
+
+    @staticmethod
+    def _study_flashcard_import_action_id(mode: StudyBackend, action: str) -> str:
+        return f"study.flashcard.import.{action}.{mode.value}"
+
+    @staticmethod
+    def _study_flashcard_export_action_id(mode: StudyBackend, action: str) -> str:
+        return f"study.flashcard.export.{action}.{mode.value}"
+
+    @staticmethod
     def _study_pack_action_id(action: str) -> str:
         return f"study.packs.jobs.{action}.server"
 
@@ -181,6 +204,16 @@ class StudyScopeService:
                 return bool(result.get("deleted"))
             return str(result.get("status") or "").strip().lower() == "deleted"
         return bool(result)
+
+    @classmethod
+    def _to_plain(cls, value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, Mapping):
+            return {key: cls._to_plain(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._to_plain(item) for item in value]
+        return value
 
     @staticmethod
     def _with_backend_record(
@@ -432,6 +465,150 @@ class StudyScopeService:
             kind="study_flashcard_template_list",
             payload=record,
             source_id=f"{limit}:{offset}",
+        )
+
+    def _normalize_asset_payload(
+        self,
+        *,
+        backend: StudyBackend,
+        payload: Any,
+    ) -> dict[str, Any]:
+        record = self._to_plain(payload)
+        if not isinstance(record, Mapping):
+            record = {"payload": record}
+        record = dict(record)
+        source_id = record.get("asset_uuid") or record.get("uuid")
+        return self._with_backend_record(
+            backend=backend,
+            kind="study_flashcard_asset",
+            payload=record,
+            source_id=source_id,
+        )
+
+    def _normalize_asset_content_payload(
+        self,
+        *,
+        backend: StudyBackend,
+        asset_uuid: str,
+        payload: Any,
+    ) -> dict[str, Any]:
+        record = self._to_plain(payload)
+        if not isinstance(record, Mapping):
+            record = {"content": record}
+        record = dict(record)
+        record.setdefault("asset_uuid", asset_uuid)
+        return self._with_backend_record(
+            backend=backend,
+            kind="study_flashcard_asset_content",
+            payload=record,
+            source_id=asset_uuid,
+        )
+
+    def _normalize_bulk_create_payload(
+        self,
+        *,
+        backend: StudyBackend,
+        payload: Any,
+    ) -> dict[str, Any]:
+        record = self._to_plain(payload)
+        if not isinstance(record, Mapping):
+            record = {"items": list(record or [])}
+        record = dict(record)
+        record["items"] = [
+            normalize_study_flashcard_record(backend.value, item)
+            for item in list(record.get("items") or [])
+        ]
+        return self._with_backend_record(
+            backend=backend,
+            kind="study_flashcard_bulk_create",
+            payload=record,
+            source_id="transient",
+        )
+
+    def _normalize_bulk_update_payload(
+        self,
+        *,
+        backend: StudyBackend,
+        payload: Any,
+    ) -> dict[str, Any]:
+        record = self._to_plain(payload)
+        if not isinstance(record, Mapping):
+            record = {"results": list(record or [])}
+        record = dict(record)
+        normalized_results: list[dict[str, Any]] = []
+        for result in list(record.get("results") or []):
+            if not isinstance(result, Mapping):
+                normalized_results.append({"payload": result})
+                continue
+            normalized_result = dict(result)
+            if isinstance(normalized_result.get("flashcard"), Mapping):
+                normalized_result["flashcard"] = normalize_study_flashcard_record(
+                    backend.value,
+                    normalized_result["flashcard"],
+                )
+            normalized_results.append(normalized_result)
+        record["results"] = normalized_results
+        return self._with_backend_record(
+            backend=backend,
+            kind="study_flashcard_bulk_update",
+            payload=record,
+            source_id="transient",
+        )
+
+    def _normalize_import_preview_payload(
+        self,
+        *,
+        backend: StudyBackend,
+        payload: Any,
+    ) -> dict[str, Any]:
+        record = self._to_plain(payload)
+        if not isinstance(record, Mapping):
+            record = {"drafts": list(record or [])}
+        return self._with_backend_record(
+            backend=backend,
+            kind="study_flashcard_import_preview",
+            payload=dict(record),
+            source_id="transient",
+        )
+
+    def _normalize_import_payload(
+        self,
+        *,
+        backend: StudyBackend,
+        payload: Any,
+        import_kind: str,
+    ) -> dict[str, Any]:
+        record = self._to_plain(payload)
+        if not isinstance(record, Mapping):
+            record = {"items": list(record or [])}
+        record = dict(record)
+        if isinstance(record.get("items"), list):
+            record["items"] = [
+                normalize_study_flashcard_record(backend.value, item)
+                if isinstance(item, Mapping) else item
+                for item in record["items"]
+            ]
+        return self._with_backend_record(
+            backend=backend,
+            kind="study_flashcard_import",
+            payload=record,
+            source_id=import_kind,
+        )
+
+    def _normalize_export_payload(
+        self,
+        *,
+        backend: StudyBackend,
+        payload: Any,
+    ) -> dict[str, Any]:
+        record = self._to_plain(payload)
+        if not isinstance(record, Mapping):
+            record = {"content": record}
+        return self._with_backend_record(
+            backend=backend,
+            kind="study_flashcard_export",
+            payload=dict(record),
+            source_id="transient",
         )
 
     def list_unsupported_capabilities(
@@ -824,6 +1001,200 @@ class StudyScopeService:
             )
         )
         return self._normalize_generation_payload(backend=normalized_mode, payload=result)
+
+    async def upload_flashcard_asset(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        file: tuple[str, bytes, str],
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard asset upload")
+        self._enforce_policy(self._study_flashcard_asset_action_id(normalized_mode, "create"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).upload_flashcard_asset(file)
+        )
+        return self._normalize_asset_payload(backend=normalized_mode, payload=result)
+
+    async def get_flashcard_asset_content(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        asset_uuid: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard asset content")
+        self._enforce_policy(self._study_flashcard_asset_action_id(normalized_mode, "detail"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_flashcard_asset_content(asset_uuid)
+        )
+        return self._normalize_asset_content_payload(
+            backend=normalized_mode,
+            asset_uuid=asset_uuid,
+            payload=result,
+        )
+
+    async def create_flashcards_bulk(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        cards: list[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard bulk create")
+        self._enforce_policy(self._study_flashcard_bulk_action_id(normalized_mode, "create"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).create_flashcards_bulk(cards)
+        )
+        return self._normalize_bulk_create_payload(backend=normalized_mode, payload=result)
+
+    async def update_flashcards_bulk(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        updates: list[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard bulk update")
+        self._enforce_policy(self._study_flashcard_bulk_action_id(normalized_mode, "update"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).update_flashcards_bulk(updates)
+        )
+        return self._normalize_bulk_update_payload(backend=normalized_mode, payload=result)
+
+    async def preview_structured_qa_import(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        content: str,
+        max_lines: int | None = None,
+        max_line_length: int | None = None,
+        max_field_length: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard import preview")
+        self._enforce_policy(self._study_flashcard_import_action_id(normalized_mode, "preview"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).preview_structured_qa_import(
+                content,
+                max_lines=max_lines,
+                max_line_length=max_line_length,
+                max_field_length=max_field_length,
+            )
+        )
+        return self._normalize_import_preview_payload(backend=normalized_mode, payload=result)
+
+    async def import_flashcards(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        content: str,
+        delimiter: str | None = "\t",
+        has_header: bool | None = False,
+        max_lines: int | None = None,
+        max_line_length: int | None = None,
+        max_field_length: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard import")
+        self._enforce_policy(self._study_flashcard_import_action_id(normalized_mode, "import"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).import_flashcards(
+                content,
+                delimiter=delimiter,
+                has_header=has_header,
+                max_lines=max_lines,
+                max_line_length=max_line_length,
+                max_field_length=max_field_length,
+            )
+        )
+        return self._normalize_import_payload(
+            backend=normalized_mode,
+            payload=result,
+            import_kind="structured",
+        )
+
+    async def import_flashcards_json(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        file: tuple[str, bytes, str],
+        max_items: int | None = None,
+        max_field_length: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard JSON import")
+        self._enforce_policy(self._study_flashcard_import_action_id(normalized_mode, "import"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).import_flashcards_json(
+                file,
+                max_items=max_items,
+                max_field_length=max_field_length,
+            )
+        )
+        return self._normalize_import_payload(
+            backend=normalized_mode,
+            payload=result,
+            import_kind="json",
+        )
+
+    async def import_flashcards_apkg(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        file: tuple[str, bytes, str],
+        max_items: int | None = None,
+        max_field_length: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard APKG import")
+        self._enforce_policy(self._study_flashcard_import_action_id(normalized_mode, "import"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).import_flashcards_apkg(
+                file,
+                max_items=max_items,
+                max_field_length=max_field_length,
+            )
+        )
+        return self._normalize_import_payload(
+            backend=normalized_mode,
+            payload=result,
+            import_kind="apkg",
+        )
+
+    async def export_flashcards(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        deck_id: str | int | None = None,
+        workspace_id: str | None = None,
+        include_workspace_items: bool | None = None,
+        tag: str | None = None,
+        q: str | None = None,
+        format: str = "csv",
+        include_reverse: bool | None = None,
+        delimiter: str | None = None,
+        include_header: bool | None = None,
+        extended_header: bool | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Flashcard export")
+        self._enforce_policy(self._study_flashcard_export_action_id(normalized_mode, "export"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).export_flashcards(
+                deck_id=deck_id,
+                workspace_id=workspace_id,
+                include_workspace_items=include_workspace_items,
+                tag=tag,
+                q=q,
+                format=format,
+                include_reverse=include_reverse,
+                delimiter=delimiter,
+                include_header=include_header,
+                extended_header=extended_header,
+            )
+        )
+        return self._normalize_export_payload(backend=normalized_mode, payload=result)
 
     async def create_flashcard_template(
         self,

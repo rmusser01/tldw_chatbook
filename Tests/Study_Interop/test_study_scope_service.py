@@ -119,6 +119,81 @@ class FakeServerStudyService:
             "version": request.get("expected_version", 1) + 1,
         }
 
+    async def upload_flashcard_asset(self, file):
+        self.calls.append(("upload_flashcard_asset", file))
+        return {
+            "asset_uuid": CARD_UUID,
+            "reference": f"flashcard-asset://{CARD_UUID}",
+            "markdown_snippet": f"![image](flashcard-asset://{CARD_UUID})",
+            "mime_type": "image/png",
+            "byte_size": 7,
+            "original_filename": "cell.png",
+        }
+
+    async def get_flashcard_asset_content(self, asset_uuid):
+        self.calls.append(("get_flashcard_asset_content", asset_uuid))
+        return {"content": b"pngdata", "content_type": "image/png", "filename": "cell.png"}
+
+    async def create_flashcards_bulk(self, cards):
+        self.calls.append(("create_flashcards_bulk", cards))
+        return {
+            "items": [
+                {
+                    "uuid": CARD_UUID,
+                    "deck_id": 7,
+                    "front": "Question",
+                    "back": "Answer",
+                    "tags": ["science"],
+                    "is_cloze": False,
+                    "ef": 2.5,
+                    "interval_days": 0,
+                    "repetitions": 0,
+                    "lapses": 0,
+                    "queue_state": "new",
+                    "created_at": "2026-04-20T00:00:00Z",
+                    "last_modified": "2026-04-20T00:01:00Z",
+                    "deleted": False,
+                    "client_id": "server-client",
+                    "version": 1,
+                    "model_type": "basic",
+                    "reverse": False,
+                }
+            ],
+            "count": 1,
+            "total": 1,
+        }
+
+    async def update_flashcards_bulk(self, updates):
+        self.calls.append(("update_flashcards_bulk", updates))
+        return {
+            "results": [
+                {
+                    "uuid": CARD_UUID,
+                    "status": "updated",
+                    "flashcard": {
+                        "uuid": CARD_UUID,
+                        "deck_id": 7,
+                        "front": "Updated",
+                        "back": "Answer",
+                        "tags": ["science"],
+                        "is_cloze": False,
+                        "ef": 2.5,
+                        "interval_days": 0,
+                        "repetitions": 0,
+                        "lapses": 0,
+                        "queue_state": "new",
+                        "created_at": "2026-04-20T00:00:00Z",
+                        "last_modified": "2026-04-20T00:02:00Z",
+                        "deleted": False,
+                        "client_id": "server-client",
+                        "version": 2,
+                        "model_type": "basic",
+                        "reverse": False,
+                    },
+                }
+            ]
+        }
+
     async def get_flashcard(self, card_id):
         self.calls.append(("get_flashcard", card_id))
         return {
@@ -153,6 +228,35 @@ class FakeServerStudyService:
     async def get_flashcard_tags(self, card_id):
         self.calls.append(("get_flashcard_tags", card_id))
         return {"uuid": card_id, "tags": ["science", "biology"]}
+
+    async def preview_structured_qa_import(self, content, **limits):
+        self.calls.append(("preview_structured_qa_import", content, limits))
+        return {
+            "drafts": [
+                {
+                    "front": "What powers the cell?",
+                    "back": "ATP",
+                    "line_start": 1,
+                    "line_end": 2,
+                    "tags": ["biology"],
+                }
+            ],
+            "errors": [],
+            "detected_format": "qa_labels",
+            "skipped_blocks": 0,
+        }
+
+    async def import_flashcards(self, content, **request):
+        self.calls.append(("import_flashcards", content, request))
+        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 7}], "errors": []}
+
+    async def import_flashcards_json(self, file, **limits):
+        self.calls.append(("import_flashcards_json", file, limits))
+        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 7}], "errors": []}
+
+    async def import_flashcards_apkg(self, file, **limits):
+        self.calls.append(("import_flashcards_apkg", file, limits))
+        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 7}], "errors": []}
 
     async def list_flashcard_tag_suggestions(self, *, q=None, limit=50):
         self.calls.append(("list_flashcard_tag_suggestions", q, limit))
@@ -192,6 +296,14 @@ class FakeServerStudyService:
         return {
             "flashcards": [{"front": "Generated Q", "back": "Generated A", "tags": ["generated"]}],
             "count": 1,
+        }
+
+    async def export_flashcards(self, **request):
+        self.calls.append(("export_flashcards", request))
+        return {
+            "content": b"Deck\tFront\tBack\nBio\tQ\tA\n",
+            "content_type": "text/tab-separated-values",
+            "filename": "flashcards.tsv",
         }
 
     async def create_flashcard_template(self, **request):
@@ -560,6 +672,81 @@ async def test_scope_service_routes_server_flashcard_helper_methods_and_normaliz
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_server_flashcard_bulk_import_export_and_assets():
+    server = FakeServerStudyService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    uploaded = await scope.upload_flashcard_asset(
+        mode="server",
+        file=("cell.png", b"pngdata", "image/png"),
+    )
+    content = await scope.get_flashcard_asset_content(mode="server", asset_uuid=CARD_UUID)
+    created_bulk = await scope.create_flashcards_bulk(
+        mode="server",
+        cards=[{"deck_id": 7, "front": "Question", "back": "Answer", "tags": ["science"]}],
+    )
+    updated_bulk = await scope.update_flashcards_bulk(
+        mode="server",
+        updates=[{"uuid": CARD_UUID, "front": "Updated", "expected_version": 1}],
+    )
+    preview = await scope.preview_structured_qa_import(
+        mode="server",
+        content="Q: What powers the cell?\nA: ATP",
+        max_lines=10,
+    )
+    imported = await scope.import_flashcards(
+        mode="server",
+        content="Deck\tFront\tBack\nBio\tQ\tA",
+        has_header=True,
+    )
+    imported_json = await scope.import_flashcards_json(
+        mode="server",
+        file=("cards.json", b"[]", "application/json"),
+        max_items=10,
+    )
+    imported_apkg = await scope.import_flashcards_apkg(
+        mode="server",
+        file=("cards.apkg", b"apkg", "application/octet-stream"),
+    )
+    exported = await scope.export_flashcards(
+        mode="server",
+        deck_id=7,
+        format="tsv",
+        delimiter="\t",
+        include_header=True,
+    )
+
+    assert uploaded["record_id"] == f"server:study_flashcard_asset:{CARD_UUID}"
+    assert content["record_id"] == f"server:study_flashcard_asset_content:{CARD_UUID}"
+    assert created_bulk["record_id"] == "server:study_flashcard_bulk_create:transient"
+    assert created_bulk["items"][0]["record_id"] == f"server:study_flashcard:{CARD_UUID}"
+    assert updated_bulk["record_id"] == "server:study_flashcard_bulk_update:transient"
+    assert updated_bulk["results"][0]["flashcard"]["record_id"] == f"server:study_flashcard:{CARD_UUID}"
+    assert preview["record_id"] == "server:study_flashcard_import_preview:transient"
+    assert imported["record_id"] == "server:study_flashcard_import:structured"
+    assert imported_json["record_id"] == "server:study_flashcard_import:json"
+    assert imported_apkg["record_id"] == "server:study_flashcard_import:apkg"
+    assert exported["record_id"] == "server:study_flashcard_export:transient"
+    assert exported["filename"] == "flashcards.tsv"
+    assert policy_enforcer.calls == [
+        "study.flashcard.assets.create.server",
+        "study.flashcard.assets.detail.server",
+        "study.flashcard.bulk.create.server",
+        "study.flashcard.bulk.update.server",
+        "study.flashcard.import.preview.server",
+        "study.flashcard.import.import.server",
+        "study.flashcard.import.import.server",
+        "study.flashcard.import.import.server",
+        "study.flashcard.export.export.server",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_server_flashcard_template_crud_and_normalizes_payloads():
     server = FakeServerStudyService()
     policy_enforcer = FakePolicyEnforcer()
@@ -606,6 +793,15 @@ async def test_scope_service_routes_server_flashcard_template_crud_and_normalize
     [
         ("list_flashcard_tag_suggestions", {"q": "sci"}),
         ("get_flashcard_analytics_summary", {"deck_id": "deck-local-1"}),
+        ("upload_flashcard_asset", {"file": ("cell.png", b"pngdata", "image/png")}),
+        ("get_flashcard_asset_content", {"asset_uuid": "asset-local-1"}),
+        ("create_flashcards_bulk", {"cards": [{"deck_id": "deck-local-1", "front": "Q", "back": "A"}]}),
+        ("update_flashcards_bulk", {"updates": [{"uuid": "card-local-1", "front": "Updated"}]}),
+        ("preview_structured_qa_import", {"content": "Q: What powers the cell?\nA: ATP"}),
+        ("import_flashcards", {"content": "Deck\tFront\tBack\nBio\tQ\tA"}),
+        ("import_flashcards_json", {"file": ("cards.json", b"[]", "application/json")}),
+        ("import_flashcards_apkg", {"file": ("cards.apkg", b"apkg", "application/octet-stream")}),
+        ("export_flashcards", {}),
         ("list_review_sessions", {"deck_id": "deck-local-1"}),
         ("get_flashcard_assistant", {"card_id": "card-local-1"}),
         ("respond_flashcard_assistant", {"card_id": "card-local-1", "action": "follow_up", "message": "Why?"}),
@@ -1232,12 +1428,19 @@ def test_scope_service_reports_study_pack_and_suggestion_unsupported_capabilitie
             "source": "local",
             "supported": False,
             "reason_code": "remote_only_surface",
-            "user_message": "Server flashcard helpers such as analytics, tag suggestions, assistant, generation, and review-session discovery are unavailable in local/offline mode.",
+            "user_message": "Server flashcard helpers such as assets, bulk actions, imports, exports, analytics, tag suggestions, assistant, generation, and review-session discovery are unavailable in local/offline mode.",
             "affected_action_ids": [
                 "study.flashcard.analytics.observe.local",
                 "study.flashcard.assistant.detail.local",
                 "study.flashcard.assistant.launch.local",
+                "study.flashcard.assets.create.local",
+                "study.flashcard.assets.detail.local",
+                "study.flashcard.bulk.create.local",
+                "study.flashcard.bulk.update.local",
+                "study.flashcard.export.export.local",
                 "study.flashcard.generation.launch.local",
+                "study.flashcard.import.import.local",
+                "study.flashcard.import.preview.local",
                 "study.flashcard.review_sessions.list.local",
                 "study.flashcard.tags.list.local",
                 "study.flashcard.tags.update.local",
