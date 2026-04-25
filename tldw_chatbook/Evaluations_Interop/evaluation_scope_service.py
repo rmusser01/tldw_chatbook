@@ -22,20 +22,12 @@ class EvaluationBackend(str, Enum):
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
-        "operation_id": "evaluations.run.dataset_override.local",
+        "operation_id": "evaluations.run.webhook_delivery.local",
         "source": "local",
         "supported": False,
         "reason_code": "local_contract_missing",
-        "user_message": "Local evaluation runs do not support per-run dataset overrides yet; create or select a local dataset before launching.",
-        "affected_action_ids": ["evaluations.run.launch.local"],
-    },
-    {
-        "operation_id": "evaluations.run.webhook.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_contract_missing",
-        "user_message": "Local evaluation runs do not support webhook callbacks; observe the local run record and artifacts instead.",
-        "affected_action_ids": ["evaluations.run.launch.local", "evaluations.run.observe.local"],
+        "user_message": "Local evaluation runs can persist requested webhook URLs, but do not dispatch webhook callbacks yet; observe the local run record and artifacts instead.",
+        "affected_action_ids": ["evaluations.run.observe.local", "evaluations.run.update.local"],
     },
 ]
 

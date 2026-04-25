@@ -202,6 +202,30 @@ def test_create_run_resolves_provider_model_string_to_local_model_id():
     assert run["model_name"] == "Preferred Local"
 
 
+def test_create_run_persists_dataset_override_and_webhook_url_in_local_run_config():
+    db = FakeEvalsDB()
+    service = LocalEvaluationsService(db=db)
+    dataset_override = {
+        "name": "inline_cases",
+        "samples": [{"input": "Q1", "expected": "A1", "metadata": {"difficulty": "easy"}}],
+        "metadata": {"project": "offline-parity"},
+    }
+
+    run = service.create_run(
+        "task_123",
+        target_id="model_123",
+        run_name="override_run",
+        config={"temperature": 0.2},
+        dataset_override=dataset_override,
+        webhook_url="http://127.0.0.1:9000/eval-callback",
+    )
+
+    assert run["id"] == "run_999"
+    assert db.created_run["config_overrides"]["temperature"] == 0.2
+    assert db.created_run["config_overrides"]["dataset_override"] == dataset_override
+    assert db.created_run["config_overrides"]["webhook_url"] == "http://127.0.0.1:9000/eval-callback"
+
+
 def test_get_run_artifacts_returns_local_metrics_and_sample_results():
     service = LocalEvaluationsService(db=FakeEvalsDB())
 

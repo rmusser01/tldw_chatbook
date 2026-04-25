@@ -44,6 +44,58 @@ class LocalEvaluationsService:
                 return dict(parsed)
         return {}
 
+    def _coerce_json_list(self, value: Any) -> list[Any]:
+        value = self._model_dump(value)
+        if isinstance(value, list):
+            return [self._model_dump(item) for item in value]
+        if isinstance(value, str) and value.strip():
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError):
+                return []
+            if isinstance(parsed, list):
+                return [self._model_dump(item) for item in parsed]
+        return []
+
+    def _normalize_dataset_override(self, dataset_override: Any) -> dict[str, Any]:
+        value = self._model_dump(dataset_override)
+        if isinstance(value, Mapping):
+            normalized = dict(value)
+            samples = self._coerce_json_list(normalized.get("samples"))
+            if "samples" in normalized:
+                normalized["samples"] = samples
+            metadata = self._as_mapping(normalized.get("metadata"))
+            if "metadata" in normalized or metadata:
+                normalized["metadata"] = metadata
+            return normalized
+        if isinstance(value, list):
+            return {"samples": self._coerce_json_list(value)}
+        if isinstance(value, str) and value.strip():
+            return {"dataset_name": value.strip()}
+        raise ValueError("Local evaluation dataset_override must be a mapping, sample list, or dataset path string.")
+
+    def _build_run_config_overrides(
+        self,
+        *,
+        config: Any = None,
+        dataset_override: Any = None,
+        webhook_url: str | None = None,
+    ) -> dict[str, Any]:
+        overrides = self._coerce_json_mapping(config)
+        if dataset_override is not None:
+            normalized_override = self._normalize_dataset_override(dataset_override)
+            overrides["dataset_override"] = normalized_override
+            for key in ("dataset_name", "dataset_path", "source_path", "path"):
+                if normalized_override.get(key):
+                    overrides.setdefault("dataset_name", normalized_override[key])
+                    break
+        if webhook_url is not None:
+            normalized_webhook_url = str(webhook_url).strip()
+            if not normalized_webhook_url:
+                raise ValueError("Local evaluation webhook_url cannot be blank.")
+            overrides["webhook_url"] = normalized_webhook_url
+        return overrides
+
     def _split_task_payload(self, task_record: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         config_data = self._coerce_json_mapping(task_record.get("config_data"))
         metadata = self._as_mapping(config_data.pop(RESERVED_LOCAL_METADATA_KEY, None))
@@ -268,17 +320,16 @@ class LocalEvaluationsService:
         dataset_override: Any = None,
         webhook_url: str | None = None,
     ) -> dict[str, Any]:
-        if dataset_override is not None:
-            raise ValueError("Local evaluation runs do not support dataset overrides yet.")
-        if webhook_url is not None:
-            raise ValueError("Local evaluation runs do not support webhooks.")
-
         model_record = self._find_model(target_id=target_id, target_model=target_model)
         run_id = self._require_db().create_run(
             name=run_name or f"{self.get_evaluation(eval_id).get('name') or 'eval_run'}",
             task_id=eval_id,
             model_id=str(model_record.get("id")),
-            config_overrides=dict(config or {}),
+            config_overrides=self._build_run_config_overrides(
+                config=config,
+                dataset_override=dataset_override,
+                webhook_url=webhook_url,
+            ),
         )
         record = self._require_db().get_run(run_id)
         if not record:

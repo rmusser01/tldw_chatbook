@@ -345,6 +345,35 @@ async def test_scope_service_lists_local_targets_and_routes_run_creation_by_back
 
 
 @pytest.mark.asyncio
+async def test_scope_service_forwards_local_dataset_override_and_webhook_url():
+    local = FakeLocalEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=FakeServerEvaluationService())
+    dataset_override = {
+        "name": "inline_cases",
+        "samples": [{"input": "Q1", "expected": "A1", "metadata": {"difficulty": "easy"}}],
+    }
+
+    await scope.create_run(
+        mode="local",
+        eval_id="task_123",
+        target_id="model_123",
+        dataset_override=dataset_override,
+        webhook_url="http://127.0.0.1:9000/eval-callback",
+    )
+
+    assert local.calls[-1] == (
+        "create_run",
+        "task_123",
+        "model_123",
+        None,
+        None,
+        None,
+        dataset_override,
+        "http://127.0.0.1:9000/eval-callback",
+    )
+
+
+@pytest.mark.asyncio
 async def test_evaluation_scope_service_denies_server_run_creation_in_local_mode():
     policy_enforcer = FakePolicyEnforcer.deny("wrong_source")
     scope = EvaluationScopeService(
@@ -581,20 +610,12 @@ def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
 
     assert local_report == [
         {
-            "operation_id": "evaluations.run.dataset_override.local",
+            "operation_id": "evaluations.run.webhook_delivery.local",
             "source": "local",
             "supported": False,
             "reason_code": "local_contract_missing",
-            "user_message": "Local evaluation runs do not support per-run dataset overrides yet; create or select a local dataset before launching.",
-            "affected_action_ids": ["evaluations.run.launch.local"],
-        },
-        {
-            "operation_id": "evaluations.run.webhook.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_contract_missing",
-            "user_message": "Local evaluation runs do not support webhook callbacks; observe the local run record and artifacts instead.",
-            "affected_action_ids": ["evaluations.run.launch.local", "evaluations.run.observe.local"],
+            "user_message": "Local evaluation runs can persist requested webhook URLs, but do not dispatch webhook callbacks yet; observe the local run record and artifacts instead.",
+            "affected_action_ids": ["evaluations.run.observe.local", "evaluations.run.update.local"],
         },
     ]
     assert server_report == [
