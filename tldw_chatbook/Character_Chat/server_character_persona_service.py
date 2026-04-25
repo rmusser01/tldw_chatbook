@@ -122,6 +122,16 @@ class ServerCharacterPersonaService:
             expected_version=expected_version,
         )
 
+    async def delete_persona_profile(self, persona_id: str, expected_version: Optional[int] = None) -> Any:
+        self._enforce(self._persona_action_id("delete"))
+        client = self._require_client()
+        return await client.delete_persona_profile(persona_id, expected_version=expected_version)
+
+    async def restore_persona_profile(self, persona_id: str, expected_version: int) -> Any:
+        self._enforce(self._persona_action_id("update"))
+        client = self._require_client()
+        return await client.restore_persona_profile(persona_id, expected_version=expected_version)
+
     async def list_chat_greetings(self, chat_id: str) -> Any:
         self._enforce(self._session_action_id())
         client = self._require_client()

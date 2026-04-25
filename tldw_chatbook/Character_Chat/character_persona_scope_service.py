@@ -220,6 +220,53 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
+    async def delete_persona_profile(
+        self,
+        persona_id: str,
+        expected_version: int | None = None,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "delete"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona profiles are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide delete_persona_profile()."
+        )
+        kwargs = {}
+        if expected_version is not None:
+            kwargs["expected_version"] = expected_version
+        return await self._invoke_backend_method(
+            backend,
+            ("delete_persona_profile", "delete_persona"),
+            persona_id,
+            missing_message=missing_message,
+            **kwargs,
+        )
+
+    async def restore_persona_profile(
+        self,
+        persona_id: str,
+        expected_version: int,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "update"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona profiles are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide restore_persona_profile()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("restore_persona_profile", "restore_persona"),
+            persona_id,
+            expected_version,
+            missing_message=missing_message,
+        )
+
     async def list_chat_greetings(self, chat_id: str, mode: str = "local") -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._session_action_id(normalized_mode))
