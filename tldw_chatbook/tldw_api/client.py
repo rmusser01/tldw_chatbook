@@ -236,12 +236,33 @@ from .collections_feeds_schemas import (
     CollectionsFeedUpdateRequest,
 )
 from .claims_schemas import (
+    ClaimReviewBulkRequest,
+    ClaimReviewRequest,
+    ClaimReviewRuleCreate,
+    ClaimReviewRuleUpdate,
     ClaimNotificationsAckRequest,
     ClaimNotificationsDigestResponse,
     ClaimNotificationResponse,
+    ClaimUpdateRequest,
     ClaimsAlertConfigCreate,
     ClaimsAlertConfigResponse,
     ClaimsAlertConfigUpdate,
+    ClaimsAnalyticsDashboardResponse,
+    ClaimsAnalyticsExportListResponse,
+    ClaimsAnalyticsExportRequest,
+    ClaimsAnalyticsExportResponse,
+    ClaimsClusterLinkCreate,
+    ClaimsClusterLinkResponse,
+    ClaimsExtractorCatalogResponse,
+    ClaimsMonitoringSettingsResponse,
+    ClaimsMonitoringSettingsUpdate,
+    ClaimsReviewExtractorMetricsResponse,
+    ClaimsSearchResponse,
+    ClaimsSettingsResponse,
+    ClaimsSettingsUpdate,
+    FVASettingsResponse,
+    FVAVerifyRequest,
+    FVAVerifyResponse,
 )
 from .skills_schemas import (
     SkillContextPayload,
@@ -7809,6 +7830,66 @@ class TLDWAPIClient:
         await self._request("DELETE", f"/api/v1/collections/feeds/{feed_id}")
         return True
 
+    async def get_claims_status(self) -> Dict[str, Any]:
+        return await self._request("GET", "/api/v1/claims/status")
+
+    async def list_all_claims(
+        self,
+        *,
+        media_id: int | None = None,
+        review_status: str | None = None,
+        reviewer_id: int | None = None,
+        review_group: str | None = None,
+        claim_cluster_id: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        include_deleted: bool = False,
+        user_id: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        params = {
+            key: value
+            for key, value in {
+                "media_id": media_id,
+                "review_status": review_status,
+                "reviewer_id": reviewer_id,
+                "review_group": review_group,
+                "claim_cluster_id": claim_cluster_id,
+                "limit": limit,
+                "offset": offset,
+                "include_deleted": include_deleted,
+                "user_id": user_id,
+            }.items()
+            if value is not None
+        }
+        return await self._request("GET", "/api/v1/claims", params=params)
+
+    async def get_claims_settings(self) -> ClaimsSettingsResponse:
+        response = await self._request("GET", "/api/v1/claims/settings")
+        return ClaimsSettingsResponse.model_validate(response)
+
+    async def update_claims_settings(self, request_data: ClaimsSettingsUpdate) -> ClaimsSettingsResponse:
+        response = await self._request(
+            "PUT",
+            "/api/v1/claims/settings",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ClaimsSettingsResponse.model_validate(response)
+
+    async def get_claims_monitoring_config(self) -> ClaimsMonitoringSettingsResponse:
+        response = await self._request("GET", "/api/v1/claims/monitoring/config")
+        return ClaimsMonitoringSettingsResponse.model_validate(response)
+
+    async def update_claims_monitoring_config(
+        self,
+        request_data: ClaimsMonitoringSettingsUpdate,
+    ) -> ClaimsMonitoringSettingsResponse:
+        response = await self._request(
+            "PATCH",
+            "/api/v1/claims/monitoring/config",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ClaimsMonitoringSettingsResponse.model_validate(response)
+
     async def list_claim_notifications(
         self,
         *,
@@ -7933,6 +8014,423 @@ class TLDWAPIClient:
             if value is not None
         }
         return await self._request("POST", "/api/v1/claims/alerts/evaluate", params=params)
+
+    async def get_claims_rebuild_health(self) -> Dict[str, Any]:
+        return await self._request("GET", "/api/v1/claims/rebuild/health")
+
+    async def get_claim_review_queue(
+        self,
+        *,
+        status_filter: str | None = None,
+        reviewer_id: int | None = None,
+        review_group: str | None = None,
+        media_id: int | None = None,
+        extractor: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        include_deleted: bool = False,
+        user_id: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        params = {
+            key: value
+            for key, value in {
+                "status_filter": status_filter,
+                "reviewer_id": reviewer_id,
+                "review_group": review_group,
+                "media_id": media_id,
+                "extractor": extractor,
+                "limit": limit,
+                "offset": offset,
+                "include_deleted": include_deleted,
+                "user_id": user_id,
+            }.items()
+            if value is not None
+        }
+        return await self._request("GET", "/api/v1/claims/review-queue", params=params)
+
+    async def review_claim(
+        self,
+        claim_id: int,
+        request_data: ClaimReviewRequest,
+        *,
+        user_id: int | None = None,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/claims/{claim_id}/review",
+            params={"user_id": user_id} if user_id is not None else None,
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def get_claim_review_history(
+        self,
+        claim_id: int,
+        *,
+        user_id: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        params = {"user_id": user_id} if user_id is not None else None
+        return await self._request("GET", f"/api/v1/claims/{claim_id}/history", params=params)
+
+    async def bulk_review_claims(
+        self,
+        request_data: ClaimReviewBulkRequest,
+        *,
+        user_id: int | None = None,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/claims/review/bulk",
+            params={"user_id": user_id} if user_id is not None else None,
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def list_claim_review_rules(
+        self,
+        *,
+        user_id: int | None = None,
+        active_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        params = {
+            key: value for key, value in {"user_id": user_id, "active_only": active_only}.items() if value is not None
+        }
+        return await self._request("GET", "/api/v1/claims/review/rules", params=params)
+
+    async def create_claim_review_rule(
+        self,
+        request_data: ClaimReviewRuleCreate,
+        *,
+        user_id: int | None = None,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/claims/review/rules",
+            params={"user_id": user_id} if user_id is not None else None,
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+
+    async def update_claim_review_rule(
+        self,
+        rule_id: int,
+        request_data: ClaimReviewRuleUpdate,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/claims/review/rules/{rule_id}",
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        )
+
+    async def delete_claim_review_rule(self, rule_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/claims/review/rules/{rule_id}")
+
+    async def get_claim_review_analytics(self) -> Dict[str, Any]:
+        return await self._request("GET", "/api/v1/claims/review/analytics")
+
+    async def list_claim_extractors(self) -> ClaimsExtractorCatalogResponse:
+        response = await self._request("GET", "/api/v1/claims/extractors")
+        return ClaimsExtractorCatalogResponse.model_validate(response)
+
+    async def list_claim_review_metrics(
+        self,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        extractor: str | None = None,
+        extractor_version: str | None = None,
+        user_id: int | None = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> ClaimsReviewExtractorMetricsResponse:
+        params = {
+            key: value
+            for key, value in {
+                "start_date": start_date,
+                "end_date": end_date,
+                "extractor": extractor,
+                "extractor_version": extractor_version,
+                "user_id": user_id,
+                "limit": limit,
+                "offset": offset,
+            }.items()
+            if value is not None
+        }
+        response = await self._request("GET", "/api/v1/claims/review/metrics", params=params)
+        return ClaimsReviewExtractorMetricsResponse.model_validate(response)
+
+    async def get_claims_analytics_dashboard(
+        self,
+        *,
+        window_days: int = 7,
+        window_sec: int = 3600,
+        baseline_sec: int = 86400,
+    ) -> ClaimsAnalyticsDashboardResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/claims/analytics/dashboard",
+            params={"window_days": window_days, "window_sec": window_sec, "baseline_sec": baseline_sec},
+        )
+        return ClaimsAnalyticsDashboardResponse.model_validate(response)
+
+    async def export_claims_analytics(self, request_data: ClaimsAnalyticsExportRequest) -> ClaimsAnalyticsExportResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/claims/analytics/export",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ClaimsAnalyticsExportResponse.model_validate(response)
+
+    async def list_claims_analytics_exports(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        status: str | None = None,
+        format_filter: str | None = None,
+        workspace_id: str | None = None,
+    ) -> ClaimsAnalyticsExportListResponse:
+        params = {
+            key: value
+            for key, value in {
+                "limit": limit,
+                "offset": offset,
+                "status": status,
+                "format": format_filter,
+                "workspace_id": workspace_id,
+            }.items()
+            if value is not None
+        }
+        response = await self._request("GET", "/api/v1/claims/analytics/exports", params=params)
+        return ClaimsAnalyticsExportListResponse.model_validate(response)
+
+    async def download_claims_analytics_export(self, export_id: str) -> Any:
+        return await self._request("GET", f"/api/v1/claims/analytics/export/{export_id}")
+
+    async def download_claims_analytics_export_file(self, export_id: str) -> ReadingExportResponse:
+        return await self._binary_request("GET", f"/api/v1/claims/analytics/export/{export_id}")
+
+    async def list_claim_clusters(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        since: str | None = None,
+        keyword: str | None = None,
+        min_size: int | None = None,
+        watchlisted: bool | None = None,
+        user_id: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        params = {
+            key: value
+            for key, value in {
+                "limit": limit,
+                "offset": offset,
+                "since": since,
+                "keyword": keyword,
+                "min_size": min_size,
+                "watchlisted": watchlisted,
+                "user_id": user_id,
+            }.items()
+            if value is not None
+        }
+        return await self._request("GET", "/api/v1/claims/clusters", params=params)
+
+    async def rebuild_claim_clusters(
+        self,
+        *,
+        min_size: int = 2,
+        method: str | None = None,
+        similarity_threshold: float | None = None,
+        user_id: int | None = None,
+    ) -> Dict[str, Any]:
+        params = {
+            key: value
+            for key, value in {
+                "min_size": min_size,
+                "method": method,
+                "similarity_threshold": similarity_threshold,
+                "user_id": user_id,
+            }.items()
+            if value is not None
+        }
+        return await self._request("POST", "/api/v1/claims/clusters/rebuild", params=params)
+
+    async def get_claim_cluster(self, cluster_id: int) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/claims/clusters/{cluster_id}")
+
+    async def list_claim_cluster_links(
+        self,
+        cluster_id: int,
+        *,
+        direction: str = "both",
+    ) -> List[ClaimsClusterLinkResponse]:
+        response = await self._request(
+            "GET",
+            f"/api/v1/claims/clusters/{cluster_id}/links",
+            params={"direction": direction},
+        )
+        return [ClaimsClusterLinkResponse.model_validate(item) for item in response]
+
+    async def create_claim_cluster_link(
+        self,
+        cluster_id: int,
+        request_data: ClaimsClusterLinkCreate,
+    ) -> ClaimsClusterLinkResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/claims/clusters/{cluster_id}/links",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ClaimsClusterLinkResponse.model_validate(response)
+
+    async def delete_claim_cluster_link(self, cluster_id: int, child_cluster_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/claims/clusters/{cluster_id}/links/{child_cluster_id}")
+
+    async def list_claim_cluster_members(
+        self,
+        cluster_id: int,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        return await self._request(
+            "GET",
+            f"/api/v1/claims/clusters/{cluster_id}/members",
+            params={"limit": limit, "offset": offset},
+        )
+
+    async def get_claim_cluster_timeline(
+        self,
+        cluster_id: int,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/claims/clusters/{cluster_id}/timeline",
+            params={"limit": limit, "offset": offset},
+        )
+
+    async def get_claim_cluster_evidence(
+        self,
+        cluster_id: int,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/api/v1/claims/clusters/{cluster_id}/evidence",
+            params={"limit": limit, "offset": offset},
+        )
+
+    async def search_claims(
+        self,
+        q: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        group_by_cluster: bool = False,
+        user_id: int | None = None,
+    ) -> ClaimsSearchResponse:
+        params = {
+            key: value
+            for key, value in {
+                "q": q,
+                "limit": limit,
+                "offset": offset,
+                "group_by_cluster": group_by_cluster,
+                "user_id": user_id,
+            }.items()
+            if value is not None
+        }
+        response = await self._request("GET", "/api/v1/claims/search", params=params)
+        return ClaimsSearchResponse.model_validate(response)
+
+    async def list_claims_for_media(
+        self,
+        media_id: int,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        envelope: bool = False,
+        absolute_links: bool = False,
+        user_id: int | None = None,
+    ) -> Any:
+        params = {
+            key: value
+            for key, value in {
+                "limit": limit,
+                "offset": offset,
+                "envelope": envelope,
+                "absolute_links": absolute_links,
+                "user_id": user_id,
+            }.items()
+            if value is not None
+        }
+        return await self._request("GET", f"/api/v1/claims/{media_id}", params=params)
+
+    async def get_claim_item(
+        self,
+        claim_id: int,
+        *,
+        include_deleted: bool = False,
+        user_id: int | None = None,
+    ) -> Dict[str, Any]:
+        params = {
+            key: value
+            for key, value in {"include_deleted": include_deleted, "user_id": user_id}.items()
+            if value is not None
+        }
+        return await self._request("GET", f"/api/v1/claims/items/{claim_id}", params=params)
+
+    async def update_claim_item(
+        self,
+        claim_id: int,
+        request_data: ClaimUpdateRequest,
+        *,
+        user_id: int | None = None,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/claims/items/{claim_id}",
+            params={"user_id": user_id} if user_id is not None else None,
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def rebuild_claims_for_media(self, media_id: int, *, user_id: int | None = None) -> Dict[str, Any]:
+        params = {"user_id": user_id} if user_id is not None else None
+        return await self._request("POST", f"/api/v1/claims/{media_id}/rebuild", params=params)
+
+    async def rebuild_all_claims(
+        self,
+        *,
+        policy: str = "missing",
+        user_id: int | None = None,
+    ) -> Dict[str, Any]:
+        params = {key: value for key, value in {"policy": policy, "user_id": user_id}.items() if value is not None}
+        return await self._request("POST", "/api/v1/claims/rebuild/all", params=params)
+
+    async def rebuild_claims_fts(self, *, user_id: int | None = None) -> Dict[str, Any]:
+        params = {"user_id": user_id} if user_id is not None else None
+        return await self._request("POST", "/api/v1/claims/rebuild_fts", params=params)
+
+    async def verify_claims_fva(
+        self,
+        request_data: FVAVerifyRequest,
+        *,
+        user_id: int | None = None,
+    ) -> FVAVerifyResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/claims/verify/fva",
+            params={"user_id": user_id} if user_id is not None else None,
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return FVAVerifyResponse.model_validate(response)
+
+    async def get_fva_settings(self) -> FVASettingsResponse:
+        response = await self._request("GET", "/api/v1/claims/verify/fva/settings")
+        return FVASettingsResponse.model_validate(response)
 
     async def list_skills(
         self,

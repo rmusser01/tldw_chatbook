@@ -297,14 +297,14 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 3
 - Notes: Priority 45. This is now a remote-client backend/adoption gap rather than an absent client wrapper.
 
-### Claims Notifications / Alerts: Claims event notifications, digest/ack, watchlist evaluation, and alert configuration
+### Claims Notifications / Alerts: Claims event notifications, review, analytics, clusters, and FVA controls
 - Requirement class: Remote parity required, local parity assessed explicitly
 - Client obligation: Discover / Configure / Trigger / Observe
-- Current state: Chatbook now has typed API-client wrappers for server claims notification listing, digest retrieval, acknowledgement, watchlist notification evaluation, alert config list/create/update/delete, and alert evaluation.
-- Gap: Dedicated claims UX, explicit offline-unavailable presentation, local notification bridge adoption, claims settings/status, monitoring config, review queues/rules, analytics/export, cluster search/detail/update/rebuild, and FVA verification remain follow-on. Local notifications remain Chatbook-owned and should not silently become the source of authority for server claim notification records.
+- Current state: Chatbook now has typed API-client wrappers for the server claims endpoint family: status, all-claims listing, settings, monitoring config, notification list/digest/ack/watchlist-evaluate, alert config/evaluation, rebuild health, review queue/history/update/bulk/rules/analytics/metrics, extractor catalog, analytics dashboard/export/list/download, cluster list/detail/rebuild/link/member/timeline/evidence, claim search/detail/update/rebuild, FVA verification, and FVA settings.
+- Gap: Dedicated claims UX, explicit offline-unavailable presentation, source-aware service routing, local notification bridge adoption, and any local/offline claims analytics engine remain follow-on. Server-side role/permission limits are preserved; Chatbook exposes wrappers but does not invent local authority for server claim governance.
 - Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/claims.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/claims_schemas.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/claims_schemas.py`; Verification: `Tests/tldw_api/test_claims_client.py`.
 - Recommended tranche: Tranche 3
-- Notes: Priority 38. This is a connected-server client seam for user-facing claims alerts and notifications; broader claims governance, review, analytics, and verification controls remain separate slices.
+- Notes: Priority 38. This is now a connected-server client seam/adoption gap rather than a missing first-pass Claims API wrapper. Local notifications remain Chatbook-owned and should not silently become the source of authority for server claim notification records.
 
 ### Meetings: Meeting sessions, templates, artifacts, finalization, sharing, and event stream
 - Requirement class: Remote-only acceptable
