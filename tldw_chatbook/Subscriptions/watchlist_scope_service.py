@@ -14,6 +14,59 @@ class WatchlistBackend(str, Enum):
     SERVER = "server"
 
 
+_LOCAL_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "watchlists.groups.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local watchlist group editing is deferred; local sources remain ungrouped/read-only with respect to groups.",
+        "affected_action_ids": [
+            "watchlists.create.local",
+            "watchlists.update.local",
+        ],
+    },
+    {
+        "operation_id": "watchlists.runs.execution.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local watchlist runs are queued and observable locally, but actual scraper execution is not implemented in this scope yet.",
+        "affected_action_ids": [
+            "watchlists.runs.detail.local",
+            "watchlists.runs.launch.local",
+            "watchlists.runs.list.local",
+            "watchlists.runs.observe.local",
+        ],
+    },
+]
+
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "watchlists.groups.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "Server watchlist group editing is deferred in Chatbook; group membership is treated as read-only.",
+        "affected_action_ids": [
+            "watchlists.create.server",
+            "watchlists.update.server",
+        ],
+    },
+    {
+        "operation_id": "watchlists.sources.forum.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "Forum watchlist sources are not supported by the current Chatbook server-watchlist slice.",
+        "affected_action_ids": [
+            "watchlists.create.server",
+            "watchlists.update.server",
+        ],
+    },
+]
+
+
 class WatchlistScopeService:
     """Route watchlist operations to the active local/server authority."""
 
@@ -91,6 +144,21 @@ class WatchlistScopeService:
             return item_id_text.rsplit(":", 1)[-1]
         return item_id_text
 
+    @staticmethod
+    def _reject_deferred_group_editing(payload: Mapping[str, Any]) -> None:
+        if "group_ids" in payload:
+            raise ValueError("Watchlist group editing is deferred in this slice.")
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        backend = self._normalize_backend(runtime_backend)
+        if backend == WatchlistBackend.LOCAL:
+            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+
     async def list_watch_items(
         self,
         *,
@@ -123,6 +191,7 @@ class WatchlistScopeService:
     ) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "create")
+        self._reject_deferred_group_editing(payload)
         service = self._service_for_backend(backend)
         if backend == WatchlistBackend.LOCAL:
             return await self._maybe_await(service.create_source(payload))
@@ -137,6 +206,7 @@ class WatchlistScopeService:
     ) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "update")
+        self._reject_deferred_group_editing(payload)
         service = self._service_for_backend(backend)
         source_id = self._source_id_from_item_id(item_id)
         if backend == WatchlistBackend.LOCAL:

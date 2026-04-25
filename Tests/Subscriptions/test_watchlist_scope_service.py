@@ -198,6 +198,104 @@ async def test_scope_service_routes_create_update_delete_to_active_backend():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_blocks_deferred_group_editing_before_dispatch():
+    policy = Mock()
+    local = FakeLocalWatchlists()
+    server = FakeServerWatchlists()
+    scope = WatchlistScopeService(
+        local_service=local,
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(ValueError, match="Watchlist group editing is deferred"):
+        await scope.create_watch_item(
+            runtime_backend="local",
+            payload={
+                "name": "Docs",
+                "url": "https://example.com/docs",
+                "source_type": "site",
+                "group_ids": [1],
+            },
+        )
+
+    with pytest.raises(ValueError, match="Watchlist group editing is deferred"):
+        await scope.update_watch_item(
+            "server:watchlist_source:18",
+            runtime_backend="server",
+            payload={"group_ids": [3]},
+        )
+
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "watchlists.create.local",
+        "watchlists.update.server",
+    ]
+    assert local.calls == []
+    assert server.calls == []
+
+
+def test_scope_service_reports_known_watchlists_capability_gaps():
+    scope = WatchlistScopeService(
+        local_service=FakeLocalWatchlists(),
+        server_service=FakeServerWatchlists(),
+    )
+
+    local_report = scope.list_unsupported_capabilities(runtime_backend="local")
+    server_report = scope.list_unsupported_capabilities(runtime_backend="server")
+
+    assert local_report == [
+        {
+            "operation_id": "watchlists.groups.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local watchlist group editing is deferred; local sources remain ungrouped/read-only with respect to groups.",
+            "affected_action_ids": [
+                "watchlists.create.local",
+                "watchlists.update.local",
+            ],
+        },
+        {
+            "operation_id": "watchlists.runs.execution.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local watchlist runs are queued and observable locally, but actual scraper execution is not implemented in this scope yet.",
+            "affected_action_ids": [
+                "watchlists.runs.detail.local",
+                "watchlists.runs.launch.local",
+                "watchlists.runs.list.local",
+                "watchlists.runs.observe.local",
+            ],
+        },
+    ]
+    assert server_report == [
+        {
+            "operation_id": "watchlists.groups.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "Server watchlist group editing is deferred in Chatbook; group membership is treated as read-only.",
+            "affected_action_ids": [
+                "watchlists.create.server",
+                "watchlists.update.server",
+            ],
+        },
+        {
+            "operation_id": "watchlists.sources.forum.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "Forum watchlist sources are not supported by the current Chatbook server-watchlist slice.",
+            "affected_action_ids": [
+                "watchlists.create.server",
+                "watchlists.update.server",
+            ],
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_fails_closed_for_invalid_backend_before_dispatch():
     local = FakeLocalWatchlists()
     scope = WatchlistScopeService(local_service=local, server_service=FakeServerWatchlists())
