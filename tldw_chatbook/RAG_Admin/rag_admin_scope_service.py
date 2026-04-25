@@ -14,36 +14,7 @@ class RAGAdminBackend(str, Enum):
     SERVER = "server"
 
 
-_LOCAL_UNSUPPORTED_CAPABILITIES = [
-    {
-        "operation_id": "rag.templates.apply.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_contract_missing",
-        "user_message": "Local chunking templates can be listed and edited, but the local admin seam does not apply templates to arbitrary text yet.",
-        "affected_action_ids": ["rag.admin.launch.local"],
-    },
-    {
-        "operation_id": "rag.templates.tags.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_contract_missing",
-        "user_message": "Local chunking templates do not persist or filter server-style tags yet.",
-        "affected_action_ids": [
-            "rag.template.create.local",
-            "rag.template.list.local",
-            "rag.template.update.local",
-        ],
-    },
-    {
-        "operation_id": "rag.collections.export.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_contract_missing",
-        "user_message": "Local embedding collection export is not exposed by the current RAG admin seam.",
-        "affected_action_ids": ["rag.admin.observe.local"],
-    },
-]
+_LOCAL_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
     {
@@ -277,6 +248,28 @@ class RAGAdminScopeService:
         service = self._service_for_mode(normalized_mode)
         detail = await self._maybe_await(service.get_collection_detail(collection_name))
         return normalize_collection_record(normalized_mode.value, detail)
+
+    async def export_collection(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        collection_name: str,
+        include_embeddings: bool = True,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._admin_action_id(normalized_mode, "observe"))
+        service = self._service_for_mode(normalized_mode)
+        method = getattr(service, "export_collection", None)
+        if not callable(method):
+            raise ValueError(f"{normalized_mode.value.title()} collection export is not available yet.")
+        options: dict[str, Any] = {"include_embeddings": include_embeddings}
+        if limit is not None:
+            options["limit"] = limit
+        if offset is not None:
+            options["offset"] = offset
+        return dict(await self._maybe_await(method(collection_name, **options)) or {})
 
     async def delete_collection(
         self,

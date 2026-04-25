@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Optional
 
@@ -53,6 +54,59 @@ class LocalRAGAdminService:
             "metadata": dict(getattr(collection, "metadata", {}) or {}),
         }
 
+    @staticmethod
+    def _parse_template_config(value: Any) -> dict[str, Any]:
+        if isinstance(value, Mapping):
+            return dict(value)
+        if isinstance(value, str) and value.strip():
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError):
+                return {}
+            if isinstance(parsed, Mapping):
+                return dict(parsed)
+        return {}
+
+    @staticmethod
+    def _normalize_tags(tags: Any) -> list[str]:
+        if tags is None:
+            return []
+        candidates = [tags] if isinstance(tags, str) else list(tags)
+        return [str(tag) for tag in candidates if str(tag).strip()]
+
+    @classmethod
+    def _extract_template_tags(cls, record: Mapping[str, Any], template_config: Mapping[str, Any]) -> list[str]:
+        raw_tags = record.get("tags")
+        if raw_tags is None:
+            raw_tags = template_config.get("tags")
+        if raw_tags is None:
+            metadata = template_config.get("metadata")
+            if isinstance(metadata, Mapping):
+                raw_tags = metadata.get("tags")
+        return cls._normalize_tags(raw_tags)
+
+    def _decorate_template_record(self, record: Mapping[str, Any] | None) -> dict[str, Any]:
+        if not record:
+            return {}
+        decorated = dict(record)
+        template_config = self._parse_template_config(
+            decorated.get("template") or decorated.get("template_json")
+        )
+        decorated["tags"] = self._extract_template_tags(decorated, template_config)
+        return decorated
+
+    @staticmethod
+    def _with_template_tags(template: Mapping[str, Any], tags: Sequence[str] | None) -> dict[str, Any]:
+        payload = dict(template)
+        if tags is None:
+            return payload
+        normalized_tags = LocalRAGAdminService._normalize_tags(tags)
+        metadata = dict(payload.get("metadata") or {})
+        metadata["tags"] = normalized_tags
+        payload["metadata"] = metadata
+        payload["tags"] = normalized_tags
+        return payload
+
     def _get_collection(self, collection_name: str) -> Any:
         manager = self._build_chroma_manager()
         return manager.client.get_collection(name=collection_name)
@@ -89,20 +143,28 @@ class LocalRAGAdminService:
         tags: Optional[Sequence[str]] = None,
         user_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
-        templates = list(self._require_chunking_service().get_all_templates(include_system=True) or [])
+        templates = [
+            self._decorate_template_record(template)
+            for template in list(self._require_chunking_service().get_all_templates(include_system=True) or [])
+        ]
         if not include_builtin:
             templates = [template for template in templates if not bool(template.get("is_system", False))]
         if not include_custom:
             templates = [template for template in templates if bool(template.get("is_system", False))]
         if tags:
-            return templates
+            requested_tags = {str(tag) for tag in tags if str(tag).strip()}
+            templates = [
+                template
+                for template in templates
+                if requested_tags.issubset(set(template.get("tags") or []))
+            ]
         return templates
 
     def get_template(self, template_name: str) -> dict[str, Any]:
         template = self._require_chunking_service().get_template_by_name(template_name)
         if not template:
             raise ValueError(f"Chunking template '{template_name}' was not found.")
-        return dict(template)
+        return self._decorate_template_record(template)
 
     def create_template(
         self,
@@ -114,8 +176,12 @@ class LocalRAGAdminService:
         user_id: Optional[str] = None,
     ) -> dict[str, Any]:
         service = self._require_chunking_service()
-        template_id = service.create_template(name=name, description=description, template_json=dict(template))
-        return service.get_template_by_id(int(template_id))
+        template_id = service.create_template(
+            name=name,
+            description=description,
+            template_json=self._with_template_tags(template, tags),
+        )
+        return self._decorate_template_record(service.get_template_by_id(int(template_id)))
 
     def update_template(
         self,
@@ -127,12 +193,20 @@ class LocalRAGAdminService:
     ) -> dict[str, Any]:
         service = self._require_chunking_service()
         existing = self.get_template(template_name)
+        template_payload: dict[str, Any] | None = None
+        if template is not None:
+            template_payload = self._with_template_tags(template, tags if tags is not None else existing.get("tags"))
+        elif tags is not None:
+            template_payload = self._with_template_tags(
+                self._parse_template_config(existing.get("template_json")),
+                tags,
+            )
         service.update_template(
             int(existing["id"]),
             description=description,
-            template_json=dict(template) if template is not None else None,
+            template_json=template_payload,
         )
-        return service.get_template_by_id(int(existing["id"]))
+        return self._decorate_template_record(service.get_template_by_id(int(existing["id"])))
 
     def delete_template(self, template_name: str, *, hard_delete: bool = False) -> None:
         existing = self.get_template(template_name)
@@ -147,6 +221,61 @@ class LocalRAGAdminService:
             "fallback_enabled": False,
             "hint": "Local chunking templates use the bundled chunking interop service.",
         }
+
+    def apply_template(
+        self,
+        template_name: str,
+        *,
+        text: str,
+        override_options: Optional[Mapping[str, Any]] = None,
+        include_metadata: bool = False,
+    ) -> dict[str, Any]:
+        record = self.get_template(template_name)
+        template_config = self._parse_template_config(record.get("template_json"))
+        method, options = self._chunking_options_from_template(template_config)
+        options.update(dict(override_options or {}))
+
+        from ..Chunking.Chunk_Lib import Chunker
+
+        chunker = Chunker(options=options, template_manager=object())
+        raw_chunks = chunker.chunk_text(text, method=method, use_template=False)
+        chunks = [
+            chunk.get("text") if isinstance(chunk, Mapping) and "text" in chunk else chunk
+            for chunk in list(raw_chunks or [])
+        ]
+        result: dict[str, Any] = {
+            "template_name": template_name,
+            "chunks": chunks,
+        }
+        if include_metadata:
+            result["metadata"] = {
+                "method": method,
+                "options": options,
+                "chunk_count": len(chunks),
+                "tags": list(record.get("tags") or []),
+            }
+        return result
+
+    @staticmethod
+    def _chunking_options_from_template(template_config: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+        chunking = template_config.get("chunking")
+        if isinstance(chunking, Mapping):
+            method = str(chunking.get("method") or "words")
+            config = dict(chunking.get("config") or {})
+            return method, config
+
+        pipeline = template_config.get("pipeline")
+        if isinstance(pipeline, Sequence):
+            for stage in pipeline:
+                if not isinstance(stage, Mapping) or stage.get("stage") != "chunk":
+                    continue
+                method = str(stage.get("method") or template_config.get("base_method") or "words")
+                return method, dict(stage.get("options") or {})
+
+        method = str(template_config.get("base_method") or "words")
+        metadata = template_config.get("metadata")
+        options = dict(metadata.get("default_options") or {}) if isinstance(metadata, Mapping) else {}
+        return method, options
 
     def list_collections(self) -> list[dict[str, Any]]:
         manager = self._build_chroma_manager()
@@ -166,6 +295,54 @@ class LocalRAGAdminService:
             "count": count,
             "embedding_dimension": self._infer_collection_dimension(collection, metadata),
             "metadata": metadata,
+        }
+
+    def export_collection(
+        self,
+        collection_name: str,
+        *,
+        include_embeddings: bool = True,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> dict[str, Any]:
+        collection = self._get_collection(collection_name)
+        metadata = dict(getattr(collection, "metadata", {}) or {})
+        include = ["documents", "metadatas"]
+        if include_embeddings:
+            include.append("embeddings")
+        kwargs: dict[str, Any] = {"include": include}
+        if limit is not None:
+            kwargs["limit"] = int(limit)
+        if offset is not None:
+            kwargs["offset"] = int(offset)
+        payload = dict(collection.get(**kwargs) or {})
+        ids = list(payload.get("ids") or [])
+        documents = list(payload.get("documents") or [])
+        metadatas = list(payload.get("metadatas") or [])
+        embeddings = list(payload.get("embeddings") or [])
+
+        items = []
+        for index, item_id in enumerate(ids):
+            item: dict[str, Any] = {
+                "id": item_id,
+                "document": documents[index] if index < len(documents) else None,
+                "metadata": metadatas[index] if index < len(metadatas) else {},
+            }
+            if include_embeddings:
+                item["embedding"] = embeddings[index] if index < len(embeddings) else None
+            items.append(item)
+
+        try:
+            count = int(collection.count())
+        except Exception:
+            count = len(items)
+
+        return {
+            "name": getattr(collection, "name", collection_name),
+            "metadata": metadata,
+            "count": count,
+            "items": items,
+            "include_embeddings": include_embeddings,
         }
 
     def delete_collection(self, collection_name: str) -> None:

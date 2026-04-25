@@ -22,6 +22,14 @@ class FakeLocalService:
         self.calls.append(("reprocess_media", media_id, options))
         return {"backend": "local", "media_id": media_id, "status": "queued", "options": options}
 
+    def export_collection(self, collection_name, **options):
+        self.calls.append(("export_collection", collection_name, options))
+        return {
+            "backend": "local",
+            "name": collection_name,
+            "items": [{"id": "a", "document": "alpha"}],
+        }
+
 
 class FakeServerService:
     def __init__(self, templates=None, collection_detail=None):
@@ -174,6 +182,28 @@ async def test_scope_service_routes_reprocess_media_as_rag_admin_launch():
     ]
 
 
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_collection_export_as_rag_admin_observe():
+    local = FakeLocalService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = RAGAdminScopeService(
+        local_service=local,
+        server_service=FakeServerService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    exported = await scope.export_collection(
+        mode="local",
+        collection_name="demo",
+        include_embeddings=False,
+    )
+
+    assert exported["backend"] == "local"
+    assert exported["name"] == "demo"
+    assert local.calls == [("export_collection", "demo", {"include_embeddings": False})]
+    assert policy_enforcer.calls == ["rag.admin.observe.local"]
+
+
 def test_scope_service_reports_known_rag_admin_capability_gaps():
     scope = RAGAdminScopeService(
         local_service=FakeLocalService(),
@@ -183,36 +213,7 @@ def test_scope_service_reports_known_rag_admin_capability_gaps():
     local_report = scope.list_unsupported_capabilities(mode="local")
     server_report = scope.list_unsupported_capabilities(mode="server")
 
-    assert local_report == [
-        {
-            "operation_id": "rag.templates.apply.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_contract_missing",
-            "user_message": "Local chunking templates can be listed and edited, but the local admin seam does not apply templates to arbitrary text yet.",
-            "affected_action_ids": ["rag.admin.launch.local"],
-        },
-        {
-            "operation_id": "rag.templates.tags.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_contract_missing",
-            "user_message": "Local chunking templates do not persist or filter server-style tags yet.",
-            "affected_action_ids": [
-                "rag.template.create.local",
-                "rag.template.list.local",
-                "rag.template.update.local",
-            ],
-        },
-        {
-            "operation_id": "rag.collections.export.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_contract_missing",
-            "user_message": "Local embedding collection export is not exposed by the current RAG admin seam.",
-            "affected_action_ids": ["rag.admin.observe.local"],
-        },
-    ]
+    assert local_report == []
     assert server_report == [
         {
             "operation_id": "rag.collections.create.server",
