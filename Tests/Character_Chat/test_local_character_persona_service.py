@@ -20,6 +20,7 @@ class FakeConversationDB:
         self.next_character_id = 8
         self.updated_character_payloads = []
         self.deleted_character_calls = []
+        self.restored_character_calls = []
 
     def list_character_cards(self, limit=100, offset=0):
         records = [dict(record) for record in self.character_cards.values() if not record.get("deleted")]
@@ -65,6 +66,15 @@ class FakeConversationDB:
             return False
         self.deleted_character_calls.append((character_id, expected_version))
         record["deleted"] = 1
+        record["version"] = expected_version + 1
+        return True
+
+    def restore_character_card(self, character_id, expected_version):
+        record = self.character_cards[character_id]
+        if record["version"] != expected_version:
+            return False
+        self.restored_character_calls.append((character_id, expected_version))
+        record["deleted"] = 0
         record["version"] = expected_version + 1
         return True
 
@@ -224,6 +234,7 @@ def test_local_character_persona_service_routes_character_card_crud():
         expected_version=created["version"],
     )
     deleted = service.delete_character(updated["id"], expected_version=updated["version"])
+    restored = service.restore_character(updated["id"], expected_version=updated["version"] + 1)
 
     assert listed == [{"id": 7, "name": "Ada", "version": 1, "deleted": 0}]
     assert searched[0]["id"] == 7
@@ -233,6 +244,10 @@ def test_local_character_persona_service_routes_character_card_crud():
     assert updated["name"] == "Local New v2"
     assert updated["version"] == 2
     assert deleted == {"status": "deleted", "character_id": 8}
+    assert restored["id"] == 8
+    assert restored["deleted"] == 0
+    assert restored["version"] == 4
+    assert db.restored_character_calls == [(8, 3)]
 
 
 def test_local_character_persona_service_supports_persona_session_metadata():

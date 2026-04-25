@@ -74,14 +74,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
             "character.persona.update.local",
         ],
     },
-    {
-        "operation_id": "character.restore.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_scope_missing",
-        "user_message": "Local character restore is not available through the source-aware scope yet.",
-        "affected_action_ids": ["character.persona.update.local"],
-    },
 ]
 
 _SERVER_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []

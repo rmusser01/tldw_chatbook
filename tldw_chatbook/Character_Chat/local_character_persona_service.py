@@ -106,8 +106,14 @@ class LocalCharacterPersonaService:
             raise ValueError(f"Local character '{character_id}' could not be deleted.")
         return {"status": "deleted", "character_id": int(character_id)}
 
-    def restore_character(self, character_id: int, *, expected_version: int) -> Any:
-        raise ValueError("Local character restore is not available yet.")
+    def restore_character(self, character_id: int, *, expected_version: int) -> dict[str, Any]:
+        restored = self._require_db().restore_character_card(int(character_id), int(expected_version))
+        if not restored:
+            raise ValueError(f"Local character '{character_id}' could not be restored.")
+        record = self.get_character(int(character_id))
+        if record is None:
+            raise ValueError(f"Local character '{character_id}' could not be loaded after restore.")
+        return record
 
     def create_character_chat_session(self, request_data: Any, **_: Any) -> dict[str, Any]:
         payload = _model_payload(CharacterChatSessionCreate.model_validate(_model_payload(request_data)))

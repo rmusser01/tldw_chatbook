@@ -1053,14 +1053,6 @@ def test_scope_service_reports_known_character_persona_capability_gaps():
                 "character.persona.update.local",
             ],
         },
-        {
-            "operation_id": "character.restore.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_scope_missing",
-            "user_message": "Local character restore is not available through the source-aware scope yet.",
-            "affected_action_ids": ["character.persona.update.local"],
-        },
     ]
     assert server_report == []
 

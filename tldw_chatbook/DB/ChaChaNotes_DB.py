@@ -219,7 +219,8 @@ CREATE TRIGGER character_cards_au
 AFTER UPDATE ON character_cards BEGIN
   INSERT INTO character_cards_fts(character_cards_fts,rowid,
                                   name,description,personality,scenario,system_prompt)
-  VALUES('delete',old.id,old.name,old.description,old.personality,old.scenario,old.system_prompt);
+  SELECT 'delete',old.id,old.name,old.description,old.personality,old.scenario,old.system_prompt
+  WHERE old.deleted = 0;
 
   INSERT INTO character_cards_fts(rowid,name,description,personality,scenario,system_prompt)
   SELECT new.id,new.name,new.description,new.personality,new.scenario,new.system_prompt
@@ -3662,6 +3663,105 @@ UPDATE db_schema_version
         except Exception as e:
             logger.error(f"Unexpected error deleting character card ID {character_id}: {e}", exc_info=True)
             raise CharactersRAGDBError(f"Error deleting character card: {e}") from e
+
+    @staticmethod
+    def _ensure_character_cards_fts_update_trigger_handles_undelete(conn: sqlite3.Connection) -> None:
+        """Repair older DBs whose character-card FTS update trigger breaks undelete."""
+        conn.execute("DROP TRIGGER IF EXISTS character_cards_au")
+        conn.execute(
+            """
+            CREATE TRIGGER character_cards_au
+            AFTER UPDATE ON character_cards BEGIN
+              INSERT INTO character_cards_fts(character_cards_fts,rowid,
+                                              name,description,personality,scenario,system_prompt)
+              SELECT 'delete',old.id,old.name,old.description,old.personality,old.scenario,old.system_prompt
+              WHERE old.deleted = 0;
+
+              INSERT INTO character_cards_fts(rowid,name,description,personality,scenario,system_prompt)
+              SELECT new.id,new.name,new.description,new.personality,new.scenario,new.system_prompt
+              WHERE new.deleted = 0;
+            END;
+            """
+        )
+
+    def restore_character_card(self, character_id: int, expected_version: int) -> Optional[bool]:
+        """
+        Restores a soft-deleted character card using optimistic locking.
+
+        Sets `deleted = 0`, updates `last_modified`, increments `version`, and
+        sets `client_id`. If the card is already active, the operation is treated
+        as successful.
+        """
+        now = self._get_current_utc_timestamp_iso()
+        next_version_val = expected_version + 1
+
+        query = (
+            "UPDATE character_cards "
+            "SET deleted = 0, last_modified = ?, version = ?, client_id = ? "
+            "WHERE id = ? AND version = ? AND deleted = 1"
+        )
+        params = (now, next_version_val, self.client_id, character_id, expected_version)
+
+        try:
+            with self.transaction() as conn:
+                self._ensure_character_cards_fts_update_trigger_handles_undelete(conn)
+                current_state = conn.execute(
+                    "SELECT deleted, version FROM character_cards WHERE id = ?",
+                    (character_id,),
+                ).fetchone()
+                if not current_state:
+                    raise ConflictError(
+                        f"Character card ID {character_id} not found for restore.",
+                        entity="character_cards",
+                        entity_id=character_id,
+                    )
+                if not current_state["deleted"]:
+                    logger.info(f"Character card ID {character_id} already active. Restore is idempotent.")
+                    return True
+                if current_state["version"] != expected_version:
+                    raise ConflictError(
+                        f"Restore for Character ID {character_id} failed: version mismatch "
+                        f"(db has {current_state['version']}, client expected {expected_version}).",
+                        entity="character_cards",
+                        entity_id=character_id,
+                    )
+
+                cursor = conn.execute(query, params)
+                if cursor.rowcount == 0:
+                    final_state = conn.execute(
+                        "SELECT version, deleted FROM character_cards WHERE id = ?",
+                        (character_id,),
+                    ).fetchone()
+                    if not final_state:
+                        msg = f"Character card ID {character_id} disappeared."
+                    elif not final_state["deleted"]:
+                        logger.info(f"Character card ID {character_id} was restored concurrently. Success.")
+                        return True
+                    elif final_state["version"] != expected_version:
+                        msg = (
+                            f"Character card ID {character_id} version changed to "
+                            f"{final_state['version']} concurrently."
+                        )
+                    else:
+                        msg = (
+                            f"Restore for character card ID {character_id} "
+                            f"(expected v{expected_version}) affected 0 rows."
+                        )
+                    raise ConflictError(msg, entity="character_cards", entity_id=character_id)
+
+                logger.info(
+                    f"Restored character card ID {character_id} "
+                    f"(was v{expected_version}), new version {next_version_val}."
+                )
+                return True
+        except ConflictError:
+            raise
+        except CharactersRAGDBError as e:
+            logger.error(
+                f"Database error restoring character card ID {character_id} (expected v{expected_version}): {e}",
+                exc_info=True,
+            )
+            raise
 
     def search_character_cards(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
