@@ -103,6 +103,7 @@ from .media_reading_schemas import (
     ReprocessMediaResponse,
 )
 from .prompt_chatbook_schemas import (
+    ChatbookContinueExportRequest,
     ChatbookExportRequest,
     ChatbookImportRequest,
     PromptCreateRequest,
@@ -4193,6 +4194,13 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True),
         )
 
+    async def continue_chatbook_export(self, request_data: ChatbookContinueExportRequest) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/v1/chatbooks/export/continue",
+            json_data=request_data.model_dump(exclude_none=True),
+        )
+
     async def preview_chatbook(self, chatbook_file_path: str) -> Dict[str, Any]:
         httpx_files = prepare_files_for_httpx([chatbook_file_path], upload_field_name="file")
         try:
@@ -4229,6 +4237,44 @@ class TLDWAPIClient:
         return await self._request(
             "GET",
             f"/api/v1/chatbooks/import/jobs/{job_id}",
+        )
+
+    async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/api/v1/chatbooks/export/jobs",
+            params={"limit": limit, "offset": offset},
+        )
+
+    async def list_chatbook_import_jobs(self, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/api/v1/chatbooks/import/jobs",
+            params={"limit": limit, "offset": offset},
+        )
+
+    async def cancel_chatbook_export_job(self, job_id: str) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/chatbooks/export/jobs/{job_id}",
+        )
+
+    async def cancel_chatbook_import_job(self, job_id: str) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/chatbooks/import/jobs/{job_id}",
+        )
+
+    async def remove_chatbook_export_job(self, job_id: str) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/chatbooks/export/jobs/{job_id}/remove",
+        )
+
+    async def remove_chatbook_import_job(self, job_id: str) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/chatbooks/import/jobs/{job_id}/remove",
         )
 
 #

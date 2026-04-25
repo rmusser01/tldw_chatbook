@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import ChatbookExportRequest, ChatbookImportRequest, TLDWAPIClient
+from ..tldw_api import ChatbookContinueExportRequest, ChatbookExportRequest, ChatbookImportRequest, TLDWAPIClient
 from .chatbook_models import ChatbookManifest, ContentType
 
 
@@ -253,6 +253,14 @@ class ServerChatbookService:
             payload["content_selections"] = self.normalize_content_selections(payload.get("content_selections"))
         return ChatbookExportRequest(**payload)
 
+    def _coerce_continue_export_request(
+        self,
+        request_data: ChatbookContinueExportRequest | Mapping[str, Any],
+    ) -> ChatbookContinueExportRequest:
+        if isinstance(request_data, ChatbookContinueExportRequest):
+            return request_data
+        return ChatbookContinueExportRequest(**dict(request_data))
+
     def _coerce_import_request(self, request_data: ChatbookImportRequest | Mapping[str, Any]) -> ChatbookImportRequest:
         if isinstance(request_data, ChatbookImportRequest):
             return request_data
@@ -270,6 +278,14 @@ class ServerChatbookService:
         self._enforce(self._action_id("export"))
         client = self._require_client()
         return await client.export_chatbook(self._coerce_export_request(request_data))
+
+    async def continue_chatbook_export(
+        self,
+        request_data: ChatbookContinueExportRequest | Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        self._enforce(self._action_id("export"))
+        client = self._require_client()
+        return await client.continue_chatbook_export(self._coerce_continue_export_request(request_data))
 
     async def export_chatbook_from_selection(
         self,
@@ -344,3 +360,33 @@ class ServerChatbookService:
 
     async def continue_import(self, job_id: str) -> Dict[str, Any]:
         return await self.get_import_job(job_id)
+
+    async def list_export_jobs(self, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        self._enforce(self._action_id("list"))
+        client = self._require_client()
+        return await client.list_chatbook_export_jobs(limit=limit, offset=offset)
+
+    async def list_import_jobs(self, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        self._enforce(self._action_id("list"))
+        client = self._require_client()
+        return await client.list_chatbook_import_jobs(limit=limit, offset=offset)
+
+    async def cancel_export_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce(self._action_id("update"))
+        client = self._require_client()
+        return await client.cancel_chatbook_export_job(job_id)
+
+    async def cancel_import_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce(self._action_id("update"))
+        client = self._require_client()
+        return await client.cancel_chatbook_import_job(job_id)
+
+    async def remove_export_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce(self._action_id("delete"))
+        client = self._require_client()
+        return await client.remove_chatbook_export_job(job_id)
+
+    async def remove_import_job(self, job_id: str) -> Dict[str, Any]:
+        self._enforce(self._action_id("delete"))
+        client = self._require_client()
+        return await client.remove_chatbook_import_job(job_id)

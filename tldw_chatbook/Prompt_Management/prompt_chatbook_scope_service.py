@@ -63,6 +63,14 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
     },
 ]
 
+_CHATBOOK_RECORD_CRUD_METHODS = (
+    "list_chatbooks",
+    "get_chatbook",
+    "create_chatbook",
+    "update_chatbook",
+    "delete_chatbook",
+)
+
 
 class PromptChatbookBackend(str, Enum):
     LOCAL = "local"
@@ -126,6 +134,10 @@ class PromptChatbookScopeService:
     def _prompt_version_action_id(action: str, mode: PromptChatbookBackend) -> str:
         return f"prompts.versions.{action}.{mode.value}"
 
+    @staticmethod
+    def _supports_chatbook_record_crud(service: Any) -> bool:
+        return service is not None and all(callable(getattr(service, method_name, None)) for method_name in _CHATBOOK_RECORD_CRUD_METHODS)
+
     def list_unsupported_capabilities(
         self,
         *,
@@ -133,8 +145,15 @@ class PromptChatbookScopeService:
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == PromptChatbookBackend.LOCAL:
+            if self._supports_chatbook_record_crud(self.local_chatbook_service):
+                return []
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
-        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+
+        reports: list[dict[str, Any]] = []
+        if not self._supports_chatbook_record_crud(self.server_chatbook_service):
+            reports.append(dict(_SERVER_UNSUPPORTED_CAPABILITIES[0]))
+        reports.append(dict(_SERVER_UNSUPPORTED_CAPABILITIES[1]))
+        return reports
 
     async def _call_service(self, service: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
         if not hasattr(service, method_name):
@@ -361,6 +380,21 @@ class PromptChatbookScopeService:
         )
         return normalize_chatbook_result(normalized_mode.value, "chatbook_job", result)
 
+    async def continue_chatbook_export(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        request_data: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("chatbooks", "export", normalized_mode))
+        result = await self._call_service(
+            self._service_for_mode("chatbooks", normalized_mode),
+            "continue_chatbook_export",
+            request_data,
+        )
+        return normalize_chatbook_result(normalized_mode.value, "chatbook_job", result)
+
     async def import_chatbook(
         self,
         *,
@@ -404,6 +438,100 @@ class PromptChatbookScopeService:
         result = await self._call_service(
             self._service_for_mode("chatbooks", normalized_mode),
             "get_import_job",
+            job_id,
+        )
+        return normalize_chatbook_result(normalized_mode.value, "chatbook_job", result)
+
+    async def list_export_jobs(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("chatbooks", "list", normalized_mode))
+        result = await self._call_service(
+            self._service_for_mode("chatbooks", normalized_mode),
+            "list_export_jobs",
+            limit=limit,
+            offset=offset,
+        )
+        return normalize_chatbook_result(normalized_mode.value, "chatbook_job", result)
+
+    async def list_import_jobs(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("chatbooks", "list", normalized_mode))
+        result = await self._call_service(
+            self._service_for_mode("chatbooks", normalized_mode),
+            "list_import_jobs",
+            limit=limit,
+            offset=offset,
+        )
+        return normalize_chatbook_result(normalized_mode.value, "chatbook_job", result)
+
+    async def cancel_export_job(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        job_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("chatbooks", "update", normalized_mode))
+        result = await self._call_service(
+            self._service_for_mode("chatbooks", normalized_mode),
+            "cancel_export_job",
+            job_id,
+        )
+        return normalize_chatbook_result(normalized_mode.value, "chatbook_job", result)
+
+    async def cancel_import_job(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        job_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("chatbooks", "update", normalized_mode))
+        result = await self._call_service(
+            self._service_for_mode("chatbooks", normalized_mode),
+            "cancel_import_job",
+            job_id,
+        )
+        return normalize_chatbook_result(normalized_mode.value, "chatbook_job", result)
+
+    async def remove_export_job(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        job_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("chatbooks", "delete", normalized_mode))
+        result = await self._call_service(
+            self._service_for_mode("chatbooks", normalized_mode),
+            "remove_export_job",
+            job_id,
+        )
+        return normalize_chatbook_result(normalized_mode.value, "chatbook_job", result)
+
+    async def remove_import_job(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        job_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("chatbooks", "delete", normalized_mode))
+        result = await self._call_service(
+            self._service_for_mode("chatbooks", normalized_mode),
+            "remove_import_job",
             job_id,
         )
         return normalize_chatbook_result(normalized_mode.value, "chatbook_job", result)

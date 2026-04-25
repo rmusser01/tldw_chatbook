@@ -51,6 +51,10 @@ class FakeChatbookBackend:
         self.calls.append(("export_chatbook", request_data))
         return {"job_id": f"{self.source}-export-1", "status": "queued"}
 
+    async def continue_chatbook_export(self, request_data):
+        self.calls.append(("continue_chatbook_export", request_data))
+        return {"job_id": f"{self.source}-continue-1", "status": "queued"}
+
     async def import_chatbook(self, chatbook_file_path, request_data):
         self.calls.append(("import_chatbook", chatbook_file_path, request_data))
         return {"job_id": f"{self.source}-import-1", "status": "queued"}
@@ -62,6 +66,52 @@ class FakeChatbookBackend:
     async def get_import_job(self, job_id):
         self.calls.append(("get_import_job", job_id))
         return {"job_id": job_id, "status": "completed"}
+
+    async def list_export_jobs(self, **kwargs):
+        self.calls.append(("list_export_jobs", kwargs))
+        return {"items": [{"job_id": f"{self.source}-export-1", "status": "completed"}]}
+
+    async def list_import_jobs(self, **kwargs):
+        self.calls.append(("list_import_jobs", kwargs))
+        return {"items": [{"job_id": f"{self.source}-import-1", "status": "completed"}]}
+
+    async def cancel_export_job(self, job_id):
+        self.calls.append(("cancel_export_job", job_id))
+        return {"job_id": job_id, "cancelled": True}
+
+    async def cancel_import_job(self, job_id):
+        self.calls.append(("cancel_import_job", job_id))
+        return {"job_id": job_id, "cancelled": True}
+
+    async def remove_export_job(self, job_id):
+        self.calls.append(("remove_export_job", job_id))
+        return {"job_id": job_id, "removed": True}
+
+    async def remove_import_job(self, job_id):
+        self.calls.append(("remove_import_job", job_id))
+        return {"job_id": job_id, "removed": True}
+
+
+class FakeChatbookCrudBackend(FakeChatbookBackend):
+    async def list_chatbooks(self, **kwargs):
+        self.calls.append(("list_chatbooks", kwargs))
+        return [{"id": f"{self.source}-chatbook-1", "name": "Pack"}]
+
+    async def get_chatbook(self, chatbook_id):
+        self.calls.append(("get_chatbook", chatbook_id))
+        return {"id": chatbook_id, "name": "Pack"}
+
+    async def create_chatbook(self, **kwargs):
+        self.calls.append(("create_chatbook", kwargs))
+        return {"id": f"{self.source}-chatbook-2", **kwargs}
+
+    async def update_chatbook(self, chatbook_id, **kwargs):
+        self.calls.append(("update_chatbook", chatbook_id, kwargs))
+        return {"id": chatbook_id, **kwargs}
+
+    async def delete_chatbook(self, chatbook_id):
+        self.calls.append(("delete_chatbook", chatbook_id))
+        return True
 
 
 class FakePolicyEnforcer:
@@ -133,6 +183,13 @@ async def test_prompt_chatbook_scope_service_routes_chatbooks_and_policy_actions
 
     preview = await scope.preview_chatbook(mode="server", chatbook_file_path="/tmp/demo.chatbook.zip")
     export = await scope.export_chatbook(mode="server", request_data={"name": "Pack"})
+    continued = await scope.continue_chatbook_export(
+        mode="server",
+        request_data={
+            "export_id": "exp-1",
+            "continuations": [{"type": "evaluation"}],
+        },
+    )
     imported = await scope.import_chatbook(
         mode="server",
         chatbook_file_path="/tmp/demo.chatbook.zip",
@@ -143,15 +200,52 @@ async def test_prompt_chatbook_scope_service_routes_chatbooks_and_policy_actions
 
     assert preview["record_id"] == "server:chatbook:Pack"
     assert export["record_id"] == "server:chatbook_job:server-export-1"
+    assert continued["record_id"] == "server:chatbook_job:server-continue-1"
     assert imported["record_id"] == "server:chatbook_job:server-import-1"
     assert export_job["status"] == "completed"
     assert import_job["status"] == "completed"
     assert policy.calls == [
         "chatbooks.detail.server",
         "chatbooks.export.server",
+        "chatbooks.export.server",
         "chatbooks.import.server",
         "chatbooks.detail.server",
         "chatbooks.detail.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_chatbook_scope_service_routes_chatbook_job_management():
+    server_chatbooks = FakeChatbookBackend("server")
+    policy = FakePolicyEnforcer()
+    scope = PromptChatbookScopeService(
+        local_prompt_service=FakePromptBackend("local"),
+        server_prompt_service=FakePromptBackend("server"),
+        local_chatbook_service=FakeChatbookBackend("local"),
+        server_chatbook_service=server_chatbooks,
+        policy_enforcer=policy,
+    )
+
+    export_jobs = await scope.list_export_jobs(mode="server", limit=25, offset=5)
+    import_jobs = await scope.list_import_jobs(mode="server", limit=10, offset=2)
+    cancelled_export = await scope.cancel_export_job(mode="server", job_id="server-export-1")
+    cancelled_import = await scope.cancel_import_job(mode="server", job_id="server-import-1")
+    removed_export = await scope.remove_export_job(mode="server", job_id="server-export-1")
+    removed_import = await scope.remove_import_job(mode="server", job_id="server-import-1")
+
+    assert export_jobs["items"][0]["record_id"] == "server:chatbook_job:server-export-1"
+    assert import_jobs["items"][0]["record_id"] == "server:chatbook_job:server-import-1"
+    assert cancelled_export["record_id"] == "server:chatbook_job:server-export-1"
+    assert cancelled_import["record_id"] == "server:chatbook_job:server-import-1"
+    assert removed_export["removed"] is True
+    assert removed_import["removed"] is True
+    assert policy.calls == [
+        "chatbooks.list.server",
+        "chatbooks.list.server",
+        "chatbooks.update.server",
+        "chatbooks.update.server",
+        "chatbooks.delete.server",
+        "chatbooks.delete.server",
     ]
 
 
@@ -245,6 +339,38 @@ async def test_prompt_chatbook_scope_service_exposes_unsupported_chatbook_crud_a
     assert policy.calls == ["chatbooks.list.server"]
 
 
+@pytest.mark.asyncio
+async def test_prompt_chatbook_scope_service_routes_local_chatbook_record_crud_when_available():
+    local_chatbooks = FakeChatbookCrudBackend("local")
+    policy = FakePolicyEnforcer()
+    scope = PromptChatbookScopeService(
+        local_prompt_service=FakePromptBackend("local"),
+        server_prompt_service=FakePromptBackend("server"),
+        local_chatbook_service=local_chatbooks,
+        server_chatbook_service=FakeChatbookBackend("server"),
+        policy_enforcer=policy,
+    )
+
+    listed = await scope.list_chatbooks(mode="local", q="pack")
+    fetched = await scope.get_chatbook(mode="local", chatbook_id="local-chatbook-1")
+    created = await scope.create_chatbook(mode="local", name="Created")
+    updated = await scope.update_chatbook(mode="local", chatbook_id="local-chatbook-2", name="Updated")
+    deleted = await scope.delete_chatbook(mode="local", chatbook_id="local-chatbook-2")
+
+    assert listed[0]["record_id"] == "local:chatbook:local-chatbook-1"
+    assert fetched["record_id"] == "local:chatbook:local-chatbook-1"
+    assert created["record_id"] == "local:chatbook:local-chatbook-2"
+    assert updated["name"] == "Updated"
+    assert deleted is True
+    assert policy.calls == [
+        "chatbooks.list.local",
+        "chatbooks.detail.local",
+        "chatbooks.create.local",
+        "chatbooks.update.local",
+        "chatbooks.delete.local",
+    ]
+
+
 def test_prompt_chatbook_scope_service_reports_known_unsupported_capabilities():
     scope = PromptChatbookScopeService(
         local_prompt_service=FakePromptBackend("local"),
@@ -276,3 +402,16 @@ def test_prompt_chatbook_scope_service_reports_known_unsupported_capabilities():
         "media",
         "prompt",
     ]
+
+
+def test_prompt_chatbook_scope_service_omits_local_record_gap_when_backend_supports_crud():
+    scope = PromptChatbookScopeService(
+        local_prompt_service=FakePromptBackend("local"),
+        server_prompt_service=FakePromptBackend("server"),
+        local_chatbook_service=FakeChatbookCrudBackend("local"),
+        server_chatbook_service=FakeChatbookBackend("server"),
+    )
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+
+    assert [item["operation_id"] for item in local_report] == []

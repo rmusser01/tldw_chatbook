@@ -74,6 +74,10 @@ async def test_service_delegates_chatbook_api_calls():
             self.export_request = request_data
             return {"job_id": "export-job-1", "status": "queued"}
 
+        async def continue_chatbook_export(self, request_data):
+            self.continue_request = request_data
+            return {"job_id": "continue-job-1", "status": "queued"}
+
         async def import_chatbook(self, chatbook_file_path: str, request_data):
             self.import_path = chatbook_file_path
             self.import_request = request_data
@@ -84,6 +88,24 @@ async def test_service_delegates_chatbook_api_calls():
 
         async def get_chatbook_import_job(self, job_id: str):
             return {"job_id": job_id, "status": "completed", "progress_percentage": 100}
+
+        async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0):
+            return {"items": [{"job_id": "export-job-1"}], "limit": limit, "offset": offset}
+
+        async def list_chatbook_import_jobs(self, *, limit: int = 100, offset: int = 0):
+            return {"items": [{"job_id": "import-job-1"}], "limit": limit, "offset": offset}
+
+        async def cancel_chatbook_export_job(self, job_id: str):
+            return {"job_id": job_id, "cancelled": True}
+
+        async def cancel_chatbook_import_job(self, job_id: str):
+            return {"job_id": job_id, "cancelled": True}
+
+        async def remove_chatbook_export_job(self, job_id: str):
+            return {"job_id": job_id, "removed": True}
+
+        async def remove_chatbook_import_job(self, job_id: str):
+            return {"job_id": job_id, "removed": True}
 
     client = FakeClient()
     service = ServerChatbookService(client=client)
@@ -96,6 +118,13 @@ async def test_service_delegates_chatbook_api_calls():
         async_mode=True,
     )
     export_result = await service.export_chatbook(export_request)
+    continue_result = await service.continue_chatbook_export(
+        {
+            "export_id": "exp-1",
+            "continuations": [{"type": "evaluation", "cursor": "next"}],
+            "name": "Continuation",
+        }
+    )
 
     import_request = service.build_import_request_payload(
         {"conversation": ["1"]},
@@ -106,17 +135,31 @@ async def test_service_delegates_chatbook_api_calls():
     import_result = await service.import_chatbook("/tmp/demo.chatbook.zip", import_request)
     export_job = await service.get_export_job("export-job-1")
     import_job = await service.get_import_job("import-job-1")
+    export_jobs = await service.list_export_jobs(limit=25, offset=5)
+    import_jobs = await service.list_import_jobs(limit=10, offset=2)
+    cancelled_export = await service.cancel_export_job("export-job-1")
+    cancelled_import = await service.cancel_import_job("import-job-1")
+    removed_export = await service.remove_export_job("export-job-1")
+    removed_import = await service.remove_import_job("import-job-1")
 
     assert preview["success"] is True
     assert client.preview_path == "/tmp/demo.chatbook.zip"
     assert client.export_request.content_selections == {"conversation": ["1"]}
     assert export_result["job_id"] == "export-job-1"
+    assert client.continue_request.export_id == "exp-1"
+    assert continue_result["job_id"] == "continue-job-1"
     assert client.import_path == "/tmp/demo.chatbook.zip"
     assert client.import_request.conflict_resolution == "rename"
     assert client.import_request.prefix_imported is True
     assert import_result["job_id"] == "import-job-1"
     assert export_job["status"] == "completed"
     assert import_job["status"] == "completed"
+    assert export_jobs["items"][0]["job_id"] == "export-job-1"
+    assert import_jobs["items"][0]["job_id"] == "import-job-1"
+    assert cancelled_export["cancelled"] is True
+    assert cancelled_import["cancelled"] is True
+    assert removed_export["removed"] is True
+    assert removed_import["removed"] is True
 
 
 @pytest.mark.asyncio
@@ -170,6 +213,10 @@ async def test_server_chatbook_service_enforces_policy_actions():
             self.calls.append(("export_chatbook", request_data))
             return {"job_id": "export-job-1", "status": "queued"}
 
+        async def continue_chatbook_export(self, request_data):
+            self.calls.append(("continue_chatbook_export", request_data))
+            return {"job_id": "continue-job-1", "status": "queued"}
+
         async def import_chatbook(self, chatbook_file_path: str, request_data):
             self.calls.append(("import_chatbook", chatbook_file_path, request_data))
             return {"job_id": "import-job-1", "status": "queued"}
@@ -182,21 +229,59 @@ async def test_server_chatbook_service_enforces_policy_actions():
             self.calls.append(("get_chatbook_import_job", job_id))
             return {"job_id": job_id, "status": "completed"}
 
+        async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0):
+            self.calls.append(("list_chatbook_export_jobs", limit, offset))
+            return {"items": []}
+
+        async def list_chatbook_import_jobs(self, *, limit: int = 100, offset: int = 0):
+            self.calls.append(("list_chatbook_import_jobs", limit, offset))
+            return {"items": []}
+
+        async def cancel_chatbook_export_job(self, job_id: str):
+            self.calls.append(("cancel_chatbook_export_job", job_id))
+            return {"job_id": job_id, "cancelled": True}
+
+        async def cancel_chatbook_import_job(self, job_id: str):
+            self.calls.append(("cancel_chatbook_import_job", job_id))
+            return {"job_id": job_id, "cancelled": True}
+
+        async def remove_chatbook_export_job(self, job_id: str):
+            self.calls.append(("remove_chatbook_export_job", job_id))
+            return {"job_id": job_id, "removed": True}
+
+        async def remove_chatbook_import_job(self, job_id: str):
+            self.calls.append(("remove_chatbook_import_job", job_id))
+            return {"job_id": job_id, "removed": True}
+
     policy = Mock()
     service = ServerChatbookService(client=FakeClient(), policy_enforcer=policy)
 
     await service.preview_chatbook("/tmp/demo.chatbook.zip")
     await service.export_chatbook({"name": "Pack", "description": "Desc", "content_selections": {"conversation": ["1"]}})
+    await service.continue_chatbook_export({"export_id": "exp-1", "continuations": [{"type": "evaluation"}]})
     await service.import_chatbook("/tmp/demo.chatbook.zip", {"content_selections": {"conversation": ["1"]}})
     await service.get_export_job("export-job-1")
     await service.get_import_job("import-job-1")
+    await service.list_export_jobs()
+    await service.list_import_jobs()
+    await service.cancel_export_job("export-job-1")
+    await service.cancel_import_job("import-job-1")
+    await service.remove_export_job("export-job-1")
+    await service.remove_import_job("import-job-1")
 
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "chatbooks.detail.server",
         "chatbooks.export.server",
+        "chatbooks.export.server",
         "chatbooks.import.server",
         "chatbooks.detail.server",
         "chatbooks.detail.server",
+        "chatbooks.list.server",
+        "chatbooks.list.server",
+        "chatbooks.update.server",
+        "chatbooks.update.server",
+        "chatbooks.delete.server",
+        "chatbooks.delete.server",
     ]
 
 

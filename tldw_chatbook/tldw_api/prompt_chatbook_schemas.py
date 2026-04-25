@@ -78,6 +78,15 @@ class ChatbookExportRequest(BaseModel):
     async_mode: bool = False
 
 
+class ChatbookContinueExportRequest(BaseModel):
+    """Request for continuing a truncated portable chatbook export."""
+
+    export_id: str
+    continuations: List[Dict[str, Any]]
+    name: Optional[str] = None
+    async_mode: bool = False
+
+
 class ChatbookImportRequest(BaseModel):
     """Request for importing a portable chatbook archive."""
 

@@ -8,6 +8,7 @@ import pytest
 
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
+    ChatbookContinueExportRequest,
     ChatbookExportRequest,
     ChatbookImportRequest,
     PromptCreateRequest,
@@ -71,6 +72,26 @@ class TestPromptChatbookClient:
         args, kwargs = mocked.await_args
         assert args[:2] == ("POST", "/api/v1/chatbooks/export")
 
+    async def test_continue_chatbook_export_posts_to_continue_endpoint(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"success": True, "job_id": "job_456"})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.continue_chatbook_export(
+            ChatbookContinueExportRequest(
+                export_id="exp-1",
+                continuations=[{"type": "evaluation", "cursor": "next"}],
+                name="Continuation",
+                async_mode=False,
+            )
+        )
+
+        mocked.assert_awaited_once()
+        args, kwargs = mocked.await_args
+        assert args[:2] == ("POST", "/api/v1/chatbooks/export/continue")
+        assert kwargs["json_data"]["export_id"] == "exp-1"
+        assert kwargs["json_data"]["continuations"] == [{"type": "evaluation", "cursor": "next"}]
+
     async def test_import_chatbook_posts_to_import_endpoint(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")
         mocked = AsyncMock(return_value={"success": True, "job_id": "job_123"})
@@ -84,3 +105,25 @@ class TestPromptChatbookClient:
         mocked.assert_awaited_once()
         args, kwargs = mocked.await_args
         assert args[:2] == ("POST", "/api/v1/chatbooks/import")
+
+    async def test_chatbook_job_management_uses_server_job_endpoints(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"success": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.list_chatbook_export_jobs(limit=25, offset=5)
+        await client.list_chatbook_import_jobs(limit=10, offset=2)
+        await client.cancel_chatbook_export_job("export-job-1")
+        await client.cancel_chatbook_import_job("import-job-1")
+        await client.remove_chatbook_export_job("export-job-2")
+        await client.remove_chatbook_import_job("import-job-2")
+
+        calls = mocked.await_args_list
+        assert calls[0].args[:2] == ("GET", "/api/v1/chatbooks/export/jobs")
+        assert calls[0].kwargs["params"] == {"limit": 25, "offset": 5}
+        assert calls[1].args[:2] == ("GET", "/api/v1/chatbooks/import/jobs")
+        assert calls[1].kwargs["params"] == {"limit": 10, "offset": 2}
+        assert calls[2].args[:2] == ("DELETE", "/api/v1/chatbooks/export/jobs/export-job-1")
+        assert calls[3].args[:2] == ("DELETE", "/api/v1/chatbooks/import/jobs/import-job-1")
+        assert calls[4].args[:2] == ("DELETE", "/api/v1/chatbooks/export/jobs/export-job-2/remove")
+        assert calls[5].args[:2] == ("DELETE", "/api/v1/chatbooks/import/jobs/import-job-2/remove")
