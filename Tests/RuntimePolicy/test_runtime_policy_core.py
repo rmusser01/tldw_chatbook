@@ -167,6 +167,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
         },
     },
+    "translation_utility": {
+        "expected_domain_ids": {"translation"},
+        "expected_action_kinds_by_source": {
+            "server": _action_kinds("launch"),
+        },
+    },
     "client_notifications": {
         "expected_domain_ids": {"notifications"},
         "expected_action_kinds_by_source": {
@@ -622,6 +628,9 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         kanban.lists.update.server
         kanban.search.detail.server
         kanban.search.list.server
+    """),
+    "translation_utility": _action_ids("""
+        translation.text.launch.server
     """),
     "server_skills": _action_ids("""
         skills.context.list.server

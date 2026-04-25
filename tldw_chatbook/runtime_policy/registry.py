@@ -196,6 +196,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "meetings",
         "prompt_studio",
         "kanban_boards_tasks",
+        "translation_utility",
         "client_notifications",
         "server_runtime_config_discovery",
         "llm_provider_model_catalog",
@@ -539,6 +540,15 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("kanban.comments", actions=CRUD_ACTIONS),
             _resource("kanban.search", actions=(LIST, DETAIL)),
             _resource("kanban.card_links", actions=(LIST, DETAIL, CREATE, DELETE)),
+        ),
+    ),
+    _capability(
+        "translation_utility",
+        "Translation Utility",
+        "translation",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("translation.text", actions=(LAUNCH,)),
         ),
     ),
     _capability(

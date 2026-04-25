@@ -363,9 +363,9 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 ### Translation Utility: Remote text translation helper
 - Requirement class: Remote-only acceptable
 - Client obligation: Trigger
-- Current state: Chatbook now has typed `TranslateRequest` / `TranslateResponse` schemas and a direct shared API-client wrapper for server text translation.
-- Gap: Dedicated UX/adoption remains pending. There is no local translation backend target yet, so local/offline translation should stay out of parity claims until a Chatbook-owned local model path is intentionally designed.
-- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/translate.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/translation_schemas.py`; Verification: `Tests/tldw_api/test_translation_client.py`.
+- Current state: Chatbook now has typed `TranslateRequest` / `TranslateResponse` schemas, a direct shared API-client wrapper for server text translation, and an app-wired policy-gated `ServerTranslationService` plus `TranslationScopeService` source boundary.
+- Gap: Dedicated UX/adoption remains pending. There is no local translation backend target yet, so local/offline translation stays an explicit unsupported capability until a Chatbook-owned local model path is intentionally designed.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/translate.py`; Chatbook: `tldw_chatbook/Translation_Interop/server_translation_service.py`, `tldw_chatbook/Translation_Interop/translation_scope_service.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/translation_schemas.py`, `tldw_chatbook/runtime_policy/registry.py`, `tldw_chatbook/app.py`; Verification: `Tests/tldw_api/test_translation_client.py`, `Tests/Translation/test_server_translation_service.py`, `Tests/Translation/test_translation_scope_service.py`, `Tests/RuntimePolicy/test_runtime_policy_core.py`, `Tests/RuntimePolicy/test_unsupported_capabilities.py`, and app wiring assertions in `Tests/UI/test_screen_navigation.py`.
 - Recommended tranche: Tranche 3
 - Notes: Priority 24. This is a small remote utility seam, not a standalone-client product surface.
 

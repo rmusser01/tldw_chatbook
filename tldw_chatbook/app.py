@@ -252,6 +252,7 @@ from tldw_chatbook.Subscriptions import (
     ServerWatchlistsService,
     WatchlistScopeService,
 )
+from tldw_chatbook.Translation_Interop import ServerTranslationService, TranslationScopeService
 from tldw_chatbook.Evaluations_Interop import (
     EvaluationScopeService,
     LocalEvaluationsService,
@@ -1728,6 +1729,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.kanban_scope_service = KanbanScopeService(
             server_service=self.server_kanban_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_translation_service = ServerTranslationService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_translation_service = ServerTranslationService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.translation_scope_service = TranslationScopeService(
+            server_service=self.server_translation_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
