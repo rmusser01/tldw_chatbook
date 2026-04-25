@@ -106,3 +106,50 @@ async def test_outputs_scope_service_blocks_denied_server_action_before_dispatch
 
     assert exc.value.reason_code == "wrong_source"
     assert server.calls == []
+
+
+def test_outputs_scope_service_reports_known_unsupported_capabilities():
+    scope = OutputsScopeService(local_service=None, server_service=FakeOutputsService())
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "outputs.local_backend.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_backend_unavailable",
+            "user_message": "Local managed output templates, artifacts, and render jobs are not wired in the current Chatbook client.",
+            "affected_action_ids": [
+                "outputs.templates.list.local",
+                "outputs.templates.detail.local",
+                "outputs.templates.create.local",
+                "outputs.templates.update.local",
+                "outputs.templates.delete.local",
+                "outputs.artifacts.list.local",
+                "outputs.artifacts.detail.local",
+                "outputs.artifacts.create.local",
+                "outputs.artifacts.update.local",
+                "outputs.artifacts.delete.local",
+                "outputs.render_jobs.launch.local",
+                "outputs.render_jobs.list.local",
+                "outputs.render_jobs.detail.local",
+                "outputs.render_jobs.observe.local",
+            ],
+        }
+    ]
+    assert server_report == [
+        {
+            "operation_id": "outputs.render_jobs.observe.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server output API supports synchronous template preview and artifact creation, but not first-class render-job listing, detail, or observation.",
+            "affected_action_ids": [
+                "outputs.render_jobs.list.server",
+                "outputs.render_jobs.detail.server",
+                "outputs.render_jobs.observe.server",
+            ],
+        }
+    ]

@@ -12,6 +12,46 @@ class OutputsBackend(str, Enum):
     SERVER = "server"
 
 
+_LOCAL_BACKEND_UNAVAILABLE_CAPABILITY = {
+    "operation_id": "outputs.local_backend.local",
+    "source": "local",
+    "supported": False,
+    "reason_code": "local_backend_unavailable",
+    "user_message": "Local managed output templates, artifacts, and render jobs are not wired in the current Chatbook client.",
+    "affected_action_ids": [
+        "outputs.templates.list.local",
+        "outputs.templates.detail.local",
+        "outputs.templates.create.local",
+        "outputs.templates.update.local",
+        "outputs.templates.delete.local",
+        "outputs.artifacts.list.local",
+        "outputs.artifacts.detail.local",
+        "outputs.artifacts.create.local",
+        "outputs.artifacts.update.local",
+        "outputs.artifacts.delete.local",
+        "outputs.render_jobs.launch.local",
+        "outputs.render_jobs.list.local",
+        "outputs.render_jobs.detail.local",
+        "outputs.render_jobs.observe.local",
+    ],
+}
+
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "outputs.render_jobs.observe.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "The current server output API supports synchronous template preview and artifact creation, but not first-class render-job listing, detail, or observation.",
+        "affected_action_ids": [
+            "outputs.render_jobs.list.server",
+            "outputs.render_jobs.detail.server",
+            "outputs.render_jobs.observe.server",
+        ],
+    },
+]
+
+
 class OutputsScopeService:
     """Route output/template actions to the selected backend and normalize records."""
 
@@ -77,6 +117,18 @@ class OutputsScopeService:
         if kind:
             return self._normalize_record(mode, kind, payload)
         return payload
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        mode: OutputsBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == OutputsBackend.LOCAL:
+            if self.local_service is None:
+                return [dict(_LOCAL_BACKEND_UNAVAILABLE_CAPABILITY)]
+            return []
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def _call(
         self,
