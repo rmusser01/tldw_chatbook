@@ -11,6 +11,44 @@ from .writing_normalizers import normalize_writing_record, normalize_writing_str
 
 _UNSET = object()
 
+_SERVER_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "writing.scenes.direct_manuscript_level.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "Direct manuscript-level scenes are not exposed by the current server writing contract.",
+        "affected_action_ids": [
+            "writing.scenes.create.server",
+            "writing.scenes.list.server",
+        ],
+    },
+    {
+        "operation_id": "writing.versions.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "Server writing version history is not exposed by the current server writing contract.",
+        "affected_action_ids": [
+            "writing.versions.create.server",
+            "writing.versions.list.server",
+            "writing.versions.detail.server",
+            "writing.versions.restore.server",
+        ],
+    },
+    {
+        "operation_id": "writing.trash.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "Server writing trash listing and restore are not exposed by the current server writing contract.",
+        "affected_action_ids": [
+            "writing.trash.list.server",
+            "writing.trash.restore.server",
+        ],
+    },
+]
+
 
 class WritingBackend(str, Enum):
     LOCAL = "local"
@@ -65,6 +103,16 @@ class WritingScopeService:
         if isinstance(value, dict):
             return normalize_writing_record(mode.value, kind, value)
         return value
+
+    def list_unsupported_capabilities(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == WritingBackend.LOCAL:
+            return []
+        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def list_projects(
         self,

@@ -413,3 +413,25 @@ async def test_writing_scope_service_routes_structure_actions():
     assert structure["unassigned_chapters"][0]["outline_bucket"] == "unassigned_chapters"
     assert server.calls == [("get_structure", "server-project-1")]
     assert policy.calls == ["writing.projects.structure.server"]
+
+
+def test_writing_scope_service_reports_known_unsupported_server_capabilities():
+    scope = WritingScopeService(
+        local_service=FakeWritingService("local"),
+        server_service=FakeWritingService("server"),
+    )
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert local_report == []
+    assert [item["operation_id"] for item in server_report] == [
+        "writing.scenes.direct_manuscript_level.server",
+        "writing.versions.server",
+        "writing.trash.server",
+    ]
+    assert server_report[0]["reason_code"] == "server_contract_missing"
+    assert server_report[0]["affected_action_ids"] == [
+        "writing.scenes.create.server",
+        "writing.scenes.list.server",
+    ]
