@@ -243,6 +243,27 @@ from .data_tables_schemas import (
     DataTableSummary,
     DataTableUpdateRequest,
 )
+from .kanban_schemas import (
+    KanbanBoardCreate,
+    KanbanBoardListResponse,
+    KanbanBoardResponse,
+    KanbanBoardUpdate,
+    KanbanBoardWithListsResponse,
+    KanbanCardCopyRequest,
+    KanbanCardCreate,
+    KanbanCardMoveRequest,
+    KanbanCardResponse,
+    KanbanCardsListResponse,
+    KanbanCardUpdate,
+    KanbanCardWithDetailsResponse,
+    KanbanDetailResponse,
+    KanbanListCreate,
+    KanbanListResponse,
+    KanbanListsListResponse,
+    KanbanListUpdate,
+    KanbanReorderRequest,
+    KanbanReorderResponse,
+)
 from .meetings_schemas import (
     MeetingArtifactCreate,
     MeetingArtifactResponse,
@@ -597,6 +618,12 @@ class TLDWAPIClient:
         if if_match is None:
             return None
         return {"If-Match": if_match}
+
+    @staticmethod
+    def _expected_version_header(expected_version: int | None) -> Optional[Dict[str, str]]:
+        if expected_version is None:
+            return None
+        return {"X-Expected-Version": str(expected_version)}
 
     async def _request(
         self,
@@ -6344,6 +6371,238 @@ class TLDWAPIClient:
             "DELETE",
             f"/api/v1/chatbooks/import/jobs/{job_id}/remove",
         )
+
+    async def create_kanban_board(self, request_data: KanbanBoardCreate) -> KanbanBoardResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/kanban/boards",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return KanbanBoardResponse.model_validate(response)
+
+    async def list_kanban_boards(
+        self,
+        *,
+        include_archived: bool = False,
+        include_deleted: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> KanbanBoardListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/kanban/boards",
+            params={
+                "include_archived": include_archived,
+                "include_deleted": include_deleted,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        return KanbanBoardListResponse.model_validate(response)
+
+    async def get_kanban_board(
+        self,
+        board_id: int,
+        *,
+        include_lists: bool = True,
+        include_cards: bool = True,
+        include_archived: bool = False,
+    ) -> KanbanBoardWithListsResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/kanban/boards/{board_id}",
+            params={
+                "include_lists": include_lists,
+                "include_cards": include_cards,
+                "include_archived": include_archived,
+            },
+        )
+        return KanbanBoardWithListsResponse.model_validate(response)
+
+    async def update_kanban_board(
+        self,
+        board_id: int,
+        request_data: KanbanBoardUpdate,
+        *,
+        expected_version: int | None = None,
+    ) -> KanbanBoardResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/kanban/boards/{board_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers=self._expected_version_header(expected_version),
+        )
+        return KanbanBoardResponse.model_validate(response)
+
+    async def archive_kanban_board(self, board_id: int) -> KanbanBoardResponse:
+        response = await self._request("POST", f"/api/v1/kanban/boards/{board_id}/archive")
+        return KanbanBoardResponse.model_validate(response)
+
+    async def unarchive_kanban_board(self, board_id: int) -> KanbanBoardResponse:
+        response = await self._request("POST", f"/api/v1/kanban/boards/{board_id}/unarchive")
+        return KanbanBoardResponse.model_validate(response)
+
+    async def delete_kanban_board(self, board_id: int) -> KanbanDetailResponse:
+        response = await self._request("DELETE", f"/api/v1/kanban/boards/{board_id}")
+        return KanbanDetailResponse.model_validate(response)
+
+    async def restore_kanban_board(self, board_id: int) -> KanbanBoardResponse:
+        response = await self._request("POST", f"/api/v1/kanban/boards/{board_id}/restore")
+        return KanbanBoardResponse.model_validate(response)
+
+    async def create_kanban_list(self, board_id: int, request_data: KanbanListCreate) -> KanbanListResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/kanban/boards/{board_id}/lists",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return KanbanListResponse.model_validate(response)
+
+    async def list_kanban_lists(
+        self,
+        board_id: int,
+        *,
+        include_archived: bool = False,
+        include_deleted: bool = False,
+    ) -> KanbanListsListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/kanban/boards/{board_id}/lists",
+            params={"include_archived": include_archived, "include_deleted": include_deleted},
+        )
+        return KanbanListsListResponse.model_validate(response)
+
+    async def reorder_kanban_lists(
+        self,
+        board_id: int,
+        request_data: KanbanReorderRequest,
+    ) -> KanbanReorderResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/kanban/boards/{board_id}/lists/reorder",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return KanbanReorderResponse.model_validate(response)
+
+    async def get_kanban_list(self, list_id: int) -> KanbanListResponse:
+        response = await self._request("GET", f"/api/v1/kanban/lists/{list_id}")
+        return KanbanListResponse.model_validate(response)
+
+    async def update_kanban_list(
+        self,
+        list_id: int,
+        request_data: KanbanListUpdate,
+        *,
+        expected_version: int | None = None,
+    ) -> KanbanListResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/kanban/lists/{list_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers=self._expected_version_header(expected_version),
+        )
+        return KanbanListResponse.model_validate(response)
+
+    async def archive_kanban_list(self, list_id: int) -> KanbanListResponse:
+        response = await self._request("POST", f"/api/v1/kanban/lists/{list_id}/archive")
+        return KanbanListResponse.model_validate(response)
+
+    async def unarchive_kanban_list(self, list_id: int) -> KanbanListResponse:
+        response = await self._request("POST", f"/api/v1/kanban/lists/{list_id}/unarchive")
+        return KanbanListResponse.model_validate(response)
+
+    async def delete_kanban_list(self, list_id: int) -> KanbanDetailResponse:
+        response = await self._request("DELETE", f"/api/v1/kanban/lists/{list_id}")
+        return KanbanDetailResponse.model_validate(response)
+
+    async def restore_kanban_list(self, list_id: int) -> KanbanListResponse:
+        response = await self._request("POST", f"/api/v1/kanban/lists/{list_id}/restore")
+        return KanbanListResponse.model_validate(response)
+
+    async def create_kanban_card(self, list_id: int, request_data: KanbanCardCreate) -> KanbanCardResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/kanban/lists/{list_id}/cards",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return KanbanCardResponse.model_validate(response)
+
+    async def list_kanban_cards(
+        self,
+        list_id: int,
+        *,
+        include_archived: bool = False,
+        include_deleted: bool = False,
+    ) -> KanbanCardsListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/kanban/lists/{list_id}/cards",
+            params={"include_archived": include_archived, "include_deleted": include_deleted},
+        )
+        return KanbanCardsListResponse.model_validate(response)
+
+    async def reorder_kanban_cards(
+        self,
+        list_id: int,
+        request_data: KanbanReorderRequest,
+    ) -> KanbanReorderResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/kanban/lists/{list_id}/cards/reorder",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return KanbanReorderResponse.model_validate(response)
+
+    async def get_kanban_card(self, card_id: int) -> KanbanCardWithDetailsResponse:
+        response = await self._request("GET", f"/api/v1/kanban/cards/{card_id}")
+        return KanbanCardWithDetailsResponse.model_validate(response)
+
+    async def update_kanban_card(
+        self,
+        card_id: int,
+        request_data: KanbanCardUpdate,
+        *,
+        expected_version: int | None = None,
+    ) -> KanbanCardResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/kanban/cards/{card_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers=self._expected_version_header(expected_version),
+        )
+        return KanbanCardResponse.model_validate(response)
+
+    async def move_kanban_card(self, card_id: int, request_data: KanbanCardMoveRequest) -> KanbanCardResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/kanban/cards/{card_id}/move",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return KanbanCardResponse.model_validate(response)
+
+    async def copy_kanban_card(self, card_id: int, request_data: KanbanCardCopyRequest) -> KanbanCardResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/kanban/cards/{card_id}/copy",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return KanbanCardResponse.model_validate(response)
+
+    async def archive_kanban_card(self, card_id: int) -> KanbanCardResponse:
+        response = await self._request("POST", f"/api/v1/kanban/cards/{card_id}/archive")
+        return KanbanCardResponse.model_validate(response)
+
+    async def unarchive_kanban_card(self, card_id: int) -> KanbanCardResponse:
+        response = await self._request("POST", f"/api/v1/kanban/cards/{card_id}/unarchive")
+        return KanbanCardResponse.model_validate(response)
+
+    async def delete_kanban_card(self, card_id: int) -> KanbanDetailResponse:
+        response = await self._request("DELETE", f"/api/v1/kanban/cards/{card_id}")
+        return KanbanDetailResponse.model_validate(response)
+
+    async def restore_kanban_card(self, card_id: int) -> KanbanCardResponse:
+        response = await self._request("POST", f"/api/v1/kanban/cards/{card_id}/restore")
+        return KanbanCardResponse.model_validate(response)
 
 #
 # End of client.py

@@ -187,6 +187,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 3
 - Notes: Priority 39. This is worth tracking, but the matrix keeps it below the local-first reading, watchlist, writing, and research gaps.
 
+### Kanban Boards / Tasks: Boards, lists, cards, labels, comments, checklists, links, search, and workflow controls
+- Requirement class: Remote parity required, local parity optional/deferred
+- Client obligation: Full CRUD + Observe
+- Current state: Chatbook now has typed direct API-client wrappers for the core Kanban board/list/card REST subset, including board/list/card create/list/detail/update/delete, archive/unarchive, restore, list/card reorder, card move/copy, nested board/card detail response shapes, and optimistic-lock update headers.
+- Gap: Labels, comments, checklists, content links, card search/filter, activity feeds, import/export, bulk operations, workflow policy/state controls, source-aware service routing, dedicated UX adoption, and any optional local Kanban model remain pending. Workflow-specific routes are intentionally not implemented in this slice because broader workflows are currently deferred.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/kanban/kanban_boards.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/kanban/kanban_lists.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/kanban/kanban_cards.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/kanban/kanban_labels.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/kanban/kanban_comments.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/kanban/kanban_checklists.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/kanban/kanban_links.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/kanban/kanban_search.py`, `../tldw_server/tldw_Server_API/app/api/v1/endpoints/kanban/kanban_workflow.py`; Chatbook: `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/kanban_schemas.py`; Verification: `Tests/tldw_api/test_kanban_client.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 29. This is a server-owned task-board surface for now; Chatbook should report local/offline unavailability until a separate local task-board model is intentionally approved.
+
 ### Evaluations: Evaluation CRUD, RAG evals, embedding A/B tests, and run history
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD
