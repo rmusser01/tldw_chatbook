@@ -2,6 +2,8 @@ from tldw_chatbook.Character_Chat.local_character_persona_service import LocalCh
 from tldw_chatbook.tldw_api.character_persona_schemas import (
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
+    CharacterCreateRequest,
+    CharacterUpdateRequest,
 )
 
 
@@ -12,9 +14,59 @@ class FakeConversationDB:
         self.deleted = set()
         self.created_payloads = []
         self.updated_payloads = []
+        self.character_cards = {
+            7: {"id": 7, "name": "Ada", "version": 1, "deleted": 0},
+        }
+        self.next_character_id = 8
+        self.updated_character_payloads = []
+        self.deleted_character_calls = []
 
     def list_character_cards(self, limit=100, offset=0):
-        return [{"id": 7, "name": "Ada"}][offset : offset + limit]
+        records = [dict(record) for record in self.character_cards.values() if not record.get("deleted")]
+        return records[offset : offset + limit]
+
+    def search_character_cards(self, search_term, limit=10):
+        records = [
+            dict(record)
+            for record in self.character_cards.values()
+            if not record.get("deleted") and search_term.lower() in record.get("name", "").lower()
+        ]
+        return records[:limit]
+
+    def get_character_card_by_id(self, character_id):
+        record = self.character_cards.get(character_id)
+        if record is None or record.get("deleted"):
+            return None
+        return dict(record)
+
+    def add_character_card(self, payload):
+        character_id = self.next_character_id
+        self.next_character_id += 1
+        self.character_cards[character_id] = {
+            "id": character_id,
+            "version": 1,
+            "deleted": 0,
+            **payload,
+        }
+        return character_id
+
+    def update_character_card(self, character_id, payload, expected_version):
+        record = self.character_cards[character_id]
+        if record["version"] != expected_version:
+            return False
+        self.updated_character_payloads.append((character_id, payload, expected_version))
+        record.update(payload)
+        record["version"] = expected_version + 1
+        return True
+
+    def soft_delete_character_card(self, character_id, expected_version):
+        record = self.character_cards[character_id]
+        if record["version"] != expected_version:
+            return False
+        self.deleted_character_calls.append((character_id, expected_version))
+        record["deleted"] = 1
+        record["version"] = expected_version + 1
+        return True
 
     def add_conversation(self, payload):
         conversation_id = payload.get("id") or f"conv-{len(self.conversations) + 1}"
@@ -156,6 +208,31 @@ def test_local_character_persona_service_routes_character_session_metadata_crud(
     assert deleted == {"status": "deleted", "chat_id": created["id"]}
     assert restored["deleted"] == 0
     assert restored["version"] == updated["version"] + 2
+
+
+def test_local_character_persona_service_routes_character_card_crud():
+    db = FakeConversationDB()
+    service = LocalCharacterPersonaService(db)
+
+    listed = service.list_characters()
+    searched = service.search_characters("Ada")
+    detail = service.get_character(7)
+    created = service.create_character(CharacterCreateRequest(name="Local New", description="created"))
+    updated = service.update_character(
+        created["id"],
+        CharacterUpdateRequest(name="Local New v2"),
+        expected_version=created["version"],
+    )
+    deleted = service.delete_character(updated["id"], expected_version=updated["version"])
+
+    assert listed == [{"id": 7, "name": "Ada", "version": 1, "deleted": 0}]
+    assert searched[0]["id"] == 7
+    assert detail["name"] == "Ada"
+    assert created["id"] == 8
+    assert created["description"] == "created"
+    assert updated["name"] == "Local New v2"
+    assert updated["version"] == 2
+    assert deleted == {"status": "deleted", "character_id": 8}
 
 
 def test_local_character_persona_service_supports_persona_session_metadata():

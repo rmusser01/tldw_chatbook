@@ -8,6 +8,8 @@ from ..Chat.chat_conversation_service import ChatConversationService
 from ..tldw_api.character_persona_schemas import (
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
+    CharacterCreateRequest,
+    CharacterUpdateRequest,
 )
 
 
@@ -64,6 +66,48 @@ class LocalCharacterPersonaService:
 
     def list_characters(self, limit: int = 100, offset: int = 0) -> Any:
         return self._require_db().list_character_cards(limit=limit, offset=offset)
+
+    def search_characters(self, query: str, limit: int = 10) -> Any:
+        return self._require_db().search_character_cards(query, limit=limit)
+
+    def get_character(self, character_id: int) -> Any:
+        return self._require_db().get_character_card_by_id(int(character_id))
+
+    def create_character(self, request_data: Any) -> dict[str, Any]:
+        payload = _model_payload(CharacterCreateRequest.model_validate(_model_payload(request_data)))
+        character_id = self._require_db().add_character_card(payload)
+        record = self.get_character(int(character_id))
+        if record is None:
+            raise ValueError("Created local character could not be loaded.")
+        return record
+
+    def update_character(
+        self,
+        character_id: int,
+        request_data: Any,
+        *,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        payload = _model_payload(
+            CharacterUpdateRequest.model_validate(_model_payload(request_data, exclude_none=False))
+        )
+        payload = {key: value for key, value in payload.items() if value is not None}
+        updated = self._require_db().update_character_card(int(character_id), payload, int(expected_version))
+        if not updated:
+            raise ValueError(f"Local character '{character_id}' could not be updated.")
+        record = self.get_character(int(character_id))
+        if record is None:
+            raise ValueError(f"Local character '{character_id}' could not be loaded after update.")
+        return record
+
+    def delete_character(self, character_id: int, *, expected_version: int) -> dict[str, Any]:
+        deleted = self._require_db().soft_delete_character_card(int(character_id), int(expected_version))
+        if not deleted:
+            raise ValueError(f"Local character '{character_id}' could not be deleted.")
+        return {"status": "deleted", "character_id": int(character_id)}
+
+    def restore_character(self, character_id: int, *, expected_version: int) -> Any:
+        raise ValueError("Local character restore is not available yet.")
 
     def create_character_chat_session(self, request_data: Any, **_: Any) -> dict[str, Any]:
         payload = _model_payload(CharacterChatSessionCreate.model_validate(_model_payload(request_data)))

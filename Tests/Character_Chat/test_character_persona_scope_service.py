@@ -14,6 +14,12 @@ from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
 class FakeCharacterPersonaClient:
     def __init__(self):
         self.list_characters_calls = []
+        self.search_characters_calls = []
+        self.get_character_calls = []
+        self.create_character_calls = []
+        self.update_character_calls = []
+        self.delete_character_calls = []
+        self.restore_character_calls = []
         self.list_persona_profiles_calls = []
         self.get_persona_profile_calls = []
         self.create_persona_profile_calls = []
@@ -54,6 +60,34 @@ class FakeCharacterPersonaClient:
     async def list_characters(self, limit=100, offset=0):
         self.list_characters_calls.append({"limit": limit, "offset": offset})
         return [{"id": 1, "name": "Ada"}]
+
+    async def search_characters(self, query, limit=10):
+        self.search_characters_calls.append({"query": query, "limit": limit})
+        return [{"id": 1, "name": "Ada", "description": query}]
+
+    async def get_character(self, character_id):
+        self.get_character_calls.append(character_id)
+        return {"id": character_id, "name": "Ada", "version": 3}
+
+    async def create_character(self, request_data):
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        self.create_character_calls.append(payload)
+        return {"id": 12, "version": 1, **payload}
+
+    async def update_character(self, character_id, request_data, expected_version):
+        payload = request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json")
+        self.update_character_calls.append(
+            {"character_id": character_id, "payload": payload, "expected_version": expected_version}
+        )
+        return {"id": character_id, "version": expected_version + 1, **payload}
+
+    async def delete_character(self, character_id, expected_version):
+        self.delete_character_calls.append({"character_id": character_id, "expected_version": expected_version})
+        return {"status": "deleted", "character_id": character_id}
+
+    async def restore_character(self, character_id, expected_version):
+        self.restore_character_calls.append({"character_id": character_id, "expected_version": expected_version})
+        return {"id": character_id, "name": "Ada", "version": expected_version + 1, "deleted": False}
 
     async def list_persona_profiles(self, active_only=False, include_deleted=False, limit=100, offset=0):
         self.list_persona_profiles_calls.append(
@@ -306,10 +340,39 @@ class FakeCharacterPersonaClient:
 class FakeLocalCharacterBackend:
     def __init__(self):
         self.list_character_cards_calls = []
+        self.search_characters_calls = []
+        self.get_character_calls = []
+        self.create_character_calls = []
+        self.update_character_calls = []
+        self.delete_character_calls = []
 
     def list_character_cards(self, limit=100, offset=0):
         self.list_character_cards_calls.append({"limit": limit, "offset": offset})
         return [{"id": 2, "name": "Local Ada"}]
+
+    def search_characters(self, query, limit=10):
+        self.search_characters_calls.append({"query": query, "limit": limit})
+        return [{"id": 2, "name": "Local Ada", "description": query}]
+
+    def get_character(self, character_id):
+        self.get_character_calls.append(character_id)
+        return {"id": character_id, "name": "Local Ada", "version": 4}
+
+    def create_character(self, request_data):
+        payload = request_data.model_dump(exclude_none=True, mode="json")
+        self.create_character_calls.append(payload)
+        return {"id": 22, "version": 1, **payload}
+
+    def update_character(self, character_id, request_data, expected_version):
+        payload = request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json")
+        self.update_character_calls.append(
+            {"character_id": character_id, "payload": payload, "expected_version": expected_version}
+        )
+        return {"id": character_id, "version": expected_version + 1, **payload}
+
+    def delete_character(self, character_id, expected_version):
+        self.delete_character_calls.append({"character_id": character_id, "expected_version": expected_version})
+        return {"status": "deleted", "character_id": character_id}
 
 
 class FakeLocalCharacterSessionBackend(FakeLocalCharacterBackend):
@@ -460,6 +523,53 @@ async def test_scope_service_routes_character_and_persona_parameters():
         }
     ]
     assert local_service.list_character_cards_calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_character_crud_to_selected_backend():
+    local_service = FakeLocalCharacterBackend()
+    server_service = FakeCharacterPersonaClient()
+    scope_service = CharacterPersonaScopeService(local_service=local_service, server_service=server_service)
+
+    local_search = await scope_service.search_characters("ada", mode="local", limit=4)
+    local_detail = await scope_service.get_character(2, mode="local")
+    local_created = await scope_service.create_character(
+        Mock(model_dump=lambda **_: {"name": "Local New"}),
+        mode="local",
+    )
+    local_updated = await scope_service.update_character(
+        2,
+        Mock(model_dump=lambda **_: {"name": "Local Ada 2"}),
+        expected_version=4,
+        mode="local",
+    )
+    local_deleted = await scope_service.delete_character(2, expected_version=5, mode="local")
+    server_search = await scope_service.search_characters("ada", mode="server", limit=3)
+    server_detail = await scope_service.get_character(1, mode="server")
+    server_created = await scope_service.create_character(
+        Mock(model_dump=lambda **_: {"name": "Server New"}),
+        mode="server",
+    )
+    server_updated = await scope_service.update_character(
+        1,
+        Mock(model_dump=lambda **_: {"name": "Server Ada 2"}),
+        expected_version=3,
+        mode="server",
+    )
+    server_deleted = await scope_service.delete_character(1, expected_version=4, mode="server")
+    server_restored = await scope_service.restore_character(1, expected_version=5, mode="server")
+
+    assert local_search[0]["id"] == 2
+    assert local_detail["id"] == 2
+    assert local_created["id"] == 22
+    assert local_updated["version"] == 5
+    assert local_deleted == {"status": "deleted", "character_id": 2}
+    assert server_search[0]["id"] == 1
+    assert server_detail["id"] == 1
+    assert server_created["id"] == 12
+    assert server_updated["version"] == 4
+    assert server_deleted == {"status": "deleted", "character_id": 1}
+    assert server_restored["deleted"] is False
 
 
 @pytest.mark.asyncio
@@ -852,6 +962,14 @@ def test_scope_service_reports_known_character_persona_capability_gaps():
                 "character.persona.update.local",
             ],
         },
+        {
+            "operation_id": "character.restore.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_scope_missing",
+            "user_message": "Local character restore is not available through the source-aware scope yet.",
+            "affected_action_ids": ["character.persona.update.local"],
+        },
     ]
     assert server_report == []
 
@@ -906,6 +1024,28 @@ async def test_server_character_persona_service_delegates_to_client():
             "offset": 9,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_character_persona_service_delegates_character_crud_to_client():
+    client = FakeCharacterPersonaClient()
+    service = ServerCharacterPersonaService(client=client)
+
+    searched = await service.search_characters("ada", limit=4)
+    detail = await service.get_character(1)
+    created = await service.create_character(Mock(model_dump=lambda **_: {"name": "Ada"}))
+    updated = await service.update_character(1, Mock(model_dump=lambda **_: {"name": "Ada v2"}), expected_version=3)
+    deleted = await service.delete_character(1, expected_version=4)
+    restored = await service.restore_character(1, expected_version=5)
+
+    assert searched[0]["id"] == 1
+    assert detail["id"] == 1
+    assert created["id"] == 12
+    assert updated["version"] == 4
+    assert deleted == {"status": "deleted", "character_id": 1}
+    assert restored["deleted"] is False
+    assert client.search_characters_calls == [{"query": "ada", "limit": 4}]
+    assert client.update_character_calls[0]["expected_version"] == 3
 
 
 @pytest.mark.asyncio
@@ -1035,6 +1175,12 @@ async def test_server_character_persona_service_enforces_policy_actions():
     service = ServerCharacterPersonaService(client=client, policy_enforcer=policy)
 
     await service.list_characters(limit=13, offset=4)
+    await service.search_characters("ada")
+    await service.get_character(1)
+    await service.create_character(Mock(model_dump=lambda **_: {"name": "Ada"}))
+    await service.update_character(1, Mock(model_dump=lambda **_: {"name": "Ada v2"}), expected_version=3)
+    await service.delete_character(1, expected_version=4)
+    await service.restore_character(1, expected_version=5)
     await service.list_persona_profiles(active_only=True)
     await service.get_persona_profile("persona-1")
     await service.create_persona_profile(Mock(model_dump=lambda **_: {"name": "Guide"}))
@@ -1076,6 +1222,12 @@ async def test_server_character_persona_service_enforces_policy_actions():
 
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "character.persona.list.server",
+        "character.persona.list.server",
+        "character.persona.detail.server",
+        "character.persona.create.server",
+        "character.persona.update.server",
+        "character.persona.delete.server",
+        "character.persona.update.server",
         "character.persona.list.server",
         "character.persona.detail.server",
         "character.persona.create.server",

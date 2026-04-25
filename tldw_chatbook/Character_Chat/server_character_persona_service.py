@@ -82,6 +82,36 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.list_characters(limit=limit, offset=offset)
 
+    async def search_characters(self, query: str, limit: int = 10) -> Any:
+        self._enforce(self._persona_action_id("list"))
+        client = self._require_client()
+        return await client.search_characters(query, limit=limit)
+
+    async def get_character(self, character_id: int) -> Any:
+        self._enforce(self._persona_action_id("detail"))
+        client = self._require_client()
+        return await client.get_character(character_id)
+
+    async def create_character(self, request_data: Any) -> Any:
+        self._enforce(self._persona_action_id("create"))
+        client = self._require_client()
+        return await client.create_character(request_data)
+
+    async def update_character(self, character_id: int, request_data: Any, expected_version: int) -> Any:
+        self._enforce(self._persona_action_id("update"))
+        client = self._require_client()
+        return await client.update_character(character_id, request_data, expected_version)
+
+    async def delete_character(self, character_id: int, expected_version: int) -> Any:
+        self._enforce(self._persona_action_id("delete"))
+        client = self._require_client()
+        return await client.delete_character(character_id, expected_version)
+
+    async def restore_character(self, character_id: int, expected_version: int) -> Any:
+        self._enforce(self._persona_action_id("update"))
+        client = self._require_client()
+        return await client.restore_character(character_id, expected_version)
+
     async def list_persona_profiles(
         self,
         active_only: bool = False,

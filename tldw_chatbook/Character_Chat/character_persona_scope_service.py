@@ -58,6 +58,14 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
             "character.persona.update.local",
         ],
     },
+    {
+        "operation_id": "character.restore.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_scope_missing",
+        "user_message": "Local character restore is not available through the source-aware scope yet.",
+        "affected_action_ids": ["character.persona.update.local"],
+    },
 ]
 
 _SERVER_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
@@ -152,6 +160,113 @@ class CharacterPersonaScopeService:
         if not hasattr(backend, "list_characters"):
             raise ValueError("Character backend does not provide list_characters().")
         return await self._maybe_await(backend.list_characters(limit=limit, offset=offset))
+
+    async def search_characters(self, query: str, mode: str = "local", limit: int = 10) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "list"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character search is not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide search_characters()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("search_characters", "search_character_cards"),
+            query,
+            limit=limit,
+            missing_message=missing_message,
+        )
+
+    async def get_character(self, character_id: int, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "detail"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character detail is not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide get_character()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("get_character", "get_character_card_by_id"),
+            character_id,
+            missing_message=missing_message,
+        )
+
+    async def create_character(self, request_data: Any, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "create"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character creation is not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide create_character()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("create_character",),
+            request_data,
+            missing_message=missing_message,
+        )
+
+    async def update_character(
+        self,
+        character_id: int,
+        request_data: Any,
+        expected_version: int,
+        mode: str = "local",
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "update"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character updates are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide update_character()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("update_character",),
+            character_id,
+            request_data,
+            expected_version=expected_version,
+            missing_message=missing_message,
+        )
+
+    async def delete_character(self, character_id: int, expected_version: int, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "delete"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character deletion is not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide delete_character()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("delete_character",),
+            character_id,
+            expected_version=expected_version,
+            missing_message=missing_message,
+        )
+
+    async def restore_character(self, character_id: int, expected_version: int, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._persona_action_id(normalized_mode, "update"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local character restore is not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide restore_character()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("restore_character",),
+            character_id,
+            expected_version=expected_version,
+            missing_message=missing_message,
+        )
 
     async def list_persona_profiles(
         self,
