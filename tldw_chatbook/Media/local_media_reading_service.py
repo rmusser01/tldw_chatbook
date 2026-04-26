@@ -662,6 +662,108 @@ class LocalMediaReadingService:
             "cached": False,
         }
 
+    def get_media_navigation(
+        self,
+        media_id: Any,
+        *,
+        include_generated_fallback: bool = False,
+        max_depth: int = 4,
+        max_nodes: int = 500,
+        parent_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_media_id, text = self._local_document_text(media_id)
+        nodes, source_order = self._build_local_navigation_nodes(
+            normalized_media_id,
+            text,
+            include_generated_fallback=include_generated_fallback,
+        )
+        filtered_nodes = [
+            node for node in nodes
+            if int(node.get("level", 0)) <= max(int(max_depth or 0), 0)
+        ]
+        if parent_id:
+            filtered_nodes = [node for node in filtered_nodes if node.get("parent_id") == parent_id]
+            filtered_nodes.sort(key=lambda node: (int(node["order"]), str(node["title"]).lower(), str(node["id"])))
+
+        max_depth_seen = max((int(node.get("level", 0)) for node in filtered_nodes), default=0)
+        node_count = len(filtered_nodes)
+        normalized_max_nodes = max(int(max_nodes or 0), 0)
+        truncated = normalized_max_nodes > 0 and node_count > normalized_max_nodes
+        returned_nodes = filtered_nodes[:normalized_max_nodes] if normalized_max_nodes else []
+        return {
+            "media_id": normalized_media_id,
+            "available": bool(nodes),
+            "navigation_version": self._local_navigation_version(
+                normalized_media_id,
+                text,
+                source_order,
+                nodes,
+            ),
+            "source_order_used": source_order,
+            "nodes": returned_nodes,
+            "stats": {
+                "returned_node_count": len(returned_nodes),
+                "node_count": node_count,
+                "max_depth": max_depth_seen,
+                "truncated": truncated,
+            },
+        }
+
+    def get_media_navigation_content(
+        self,
+        media_id: Any,
+        node_id: str,
+        *,
+        format: str = "auto",
+        include_alternates: bool = False,
+    ) -> dict[str, Any]:
+        normalized_media_id, text = self._local_document_text(media_id)
+        nodes, _source_order = self._build_local_navigation_nodes(
+            normalized_media_id,
+            text,
+            include_generated_fallback=True,
+        )
+        node = next((candidate for candidate in nodes if candidate["id"] == node_id), None)
+        if node is None:
+            raise ValueError(f"local_navigation_node_not_found:{node_id}")
+
+        start = int(node["target_start"]) if node.get("target_start") is not None else 0
+        end = int(node["target_end"]) if node.get("target_end") is not None else len(text)
+        selected_text = text[max(start, 0):max(end, start)].strip() or text.strip()
+        variants = {
+            "markdown": selected_text,
+            "plain": self._local_markdown_to_plain(selected_text),
+        }
+        intrinsic_formats = ["markdown", "plain"]
+        requested_format = str(format or "auto").strip().lower()
+        resolved_format = "markdown" if requested_format == "auto" else requested_format
+        if resolved_format not in variants:
+            raise ValueError(f"unsupported_local_navigation_format:{resolved_format}")
+
+        alternate_content = None
+        if include_alternates:
+            alternate_content = {
+                item_format: content
+                for item_format, content in variants.items()
+                if item_format != resolved_format
+            } or None
+
+        return {
+            "media_id": normalized_media_id,
+            "node_id": str(node_id),
+            "title": node["title"],
+            "content_format": resolved_format,
+            "available_formats": intrinsic_formats,
+            "content": variants[resolved_format],
+            "alternate_content": alternate_content,
+            "target": {
+                "target_type": node["target_type"],
+                "target_start": node.get("target_start"),
+                "target_end": node.get("target_end"),
+                "target_href": node.get("target_href"),
+            },
+        }
+
     def bulk_update_reading_items(
         self,
         *,
@@ -2306,6 +2408,146 @@ class LocalMediaReadingService:
         if not text or not text.strip():
             raise ValueError("local_document_no_content")
         return normalized_media_id, text
+
+    def _build_local_navigation_nodes(
+        self,
+        media_id: int,
+        text: str,
+        *,
+        include_generated_fallback: bool,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        heading_nodes = self._build_local_heading_navigation_nodes(text)
+        if heading_nodes:
+            return heading_nodes, ["local_markdown_headings"]
+        if include_generated_fallback:
+            chunk_nodes = self._build_local_chunk_navigation_nodes(media_id)
+            if chunk_nodes:
+                return chunk_nodes, ["local_chunks"]
+        return [], []
+
+    def _build_local_heading_navigation_nodes(self, text: str) -> list[dict[str, Any]]:
+        matches = list(re.finditer(r"(?m)^(#{1,6})\s+(.+?)\s*$", text))
+        if not matches:
+            return []
+        min_heading_level = min(len(match.group(1)) for match in matches)
+        nodes: list[dict[str, Any]] = []
+        stack: list[tuple[int, str, str]] = []
+        for index, match in enumerate(matches):
+            level = max(0, len(match.group(1)) - min_heading_level)
+            title = self._clean_local_navigation_title(match.group(2)) or f"Section {index + 1}"
+            node_id = f"heading-{index}"
+            parent_id = None
+            parent_path = None
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            if stack:
+                parent_id = stack[-1][1]
+                parent_path = stack[-1][2]
+            path_label = f"{parent_path} / {title}" if parent_path else title
+            target_end = len(text)
+            for later_match in matches[index + 1:]:
+                later_level = max(0, len(later_match.group(1)) - min_heading_level)
+                if later_level <= level:
+                    target_end = later_match.start()
+                    break
+            nodes.append(
+                {
+                    "id": node_id,
+                    "parent_id": parent_id,
+                    "level": level,
+                    "title": title,
+                    "order": index,
+                    "path_label": path_label,
+                    "target_type": "char_range",
+                    "target_start": match.start(),
+                    "target_end": target_end,
+                    "target_href": None,
+                    "source": "local_markdown_headings",
+                    "confidence": 1.0,
+                }
+            )
+            stack.append((level, node_id, path_label))
+        return nodes
+
+    def _build_local_chunk_navigation_nodes(self, media_id: int) -> list[dict[str, Any]]:
+        db = self._require_db()
+        cursor = db.get_connection().execute(
+            """
+            SELECT chunk_text, chunk_index, start_char, end_char, chunk_type
+            FROM UnvectorizedMediaChunks
+            WHERE media_id = ? AND deleted = 0
+            ORDER BY chunk_index ASC
+            """,
+            (media_id,),
+        )
+        nodes: list[dict[str, Any]] = []
+        for order, row in enumerate(cursor.fetchall()):
+            chunk_text = str(row["chunk_text"] or "").strip()
+            if not chunk_text:
+                continue
+            nodes.append(
+                {
+                    "id": f"chunk-{order}",
+                    "parent_id": None,
+                    "level": 0,
+                    "title": self._chunk_navigation_title(chunk_text, fallback=f"Chunk {order + 1}"),
+                    "order": order,
+                    "path_label": f"Chunk {order + 1}",
+                    "target_type": "char_range",
+                    "target_start": row["start_char"],
+                    "target_end": row["end_char"],
+                    "target_href": None,
+                    "source": "local_chunks",
+                    "confidence": 0.65,
+                }
+            )
+        return nodes
+
+    @staticmethod
+    def _local_navigation_version(
+        media_id: int,
+        text: str,
+        source_order: list[str],
+        nodes: list[Mapping[str, Any]],
+    ) -> str:
+        digest = hashlib.sha256()
+        digest.update(str(media_id).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update("|".join(source_order).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(len(text)).encode("utf-8"))
+        digest.update(b"\0")
+        for node in nodes:
+            digest.update(str(node.get("id", "")).encode("utf-8"))
+            digest.update(str(node.get("target_start", "")).encode("utf-8"))
+            digest.update(str(node.get("target_end", "")).encode("utf-8"))
+        return f"local:{digest.hexdigest()[:16]}"
+
+    @staticmethod
+    def _clean_local_navigation_title(value: Any) -> str:
+        return " ".join(str(value or "").strip().split())
+
+    @classmethod
+    def _chunk_navigation_title(cls, text: str, *, fallback: str) -> str:
+        first_line = next((line.strip() for line in str(text).splitlines() if line.strip()), "")
+        title = cls._clean_local_navigation_title(re.sub(r"^[#>\-\*\d.\s]+", "", first_line))
+        if not title:
+            return fallback
+        if len(title) <= 80:
+            return title
+        return title[:77].rstrip() + "..."
+
+    @staticmethod
+    def _local_markdown_to_plain(text: str) -> str:
+        plain_lines = []
+        for line in str(text or "").splitlines():
+            stripped = line.strip()
+            stripped = re.sub(r"^#{1,6}\s+", "", stripped)
+            stripped = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", r"\1", stripped)
+            stripped = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1", stripped)
+            stripped = re.sub(r"([*_`~]{1,3})(.*?)\1", r"\2", stripped)
+            plain_lines.append(stripped)
+        return "\n".join(plain_lines).strip()
 
     @staticmethod
     def _first_present_text(row: Mapping[str, Any], *keys: str) -> str | None:

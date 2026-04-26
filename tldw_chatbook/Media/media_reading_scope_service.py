@@ -21,14 +21,6 @@ ALLOWED_SERVER_CREATE_SOURCE_TYPES = ("archive_snapshot", "git_repository")
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
-        "operation_id": "media.navigation.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_contract_missing",
-        "user_message": "Local media navigation tree and navigation-node content APIs are not implemented yet.",
-        "affected_action_ids": ["media.navigation.detail.local"],
-    },
-    {
         "operation_id": "media.file_artifacts.local",
         "source": "local",
         "supported": False,

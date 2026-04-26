@@ -330,6 +330,93 @@ def test_local_service_persists_document_annotations(memory_db_factory):
     assert synced["id_mapping"] == {"client-1": synced["annotations"][0]["id"]}
 
 
+def test_local_service_builds_media_navigation_from_markdown_headings(memory_db_factory):
+    db = memory_db_factory()
+    content = (
+        "# Opening\n"
+        "Opening body.\n\n"
+        "## First Beat\n"
+        "Beat body.\n\n"
+        "# Closing\n"
+        "Closing body."
+    )
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Navigable",
+        content=content,
+        media_type="document",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+
+    navigation = service.get_media_navigation(media_id, max_depth=1)
+    beat_content = service.get_media_navigation_content(
+        media_id,
+        "heading-1",
+        format="markdown",
+        include_alternates=True,
+    )
+
+    assert navigation["media_id"] == media_id
+    assert navigation["available"] is True
+    assert navigation["source_order_used"] == ["local_markdown_headings"]
+    assert [node["id"] for node in navigation["nodes"]] == ["heading-0", "heading-1", "heading-2"]
+    assert navigation["nodes"][0] == {
+        "id": "heading-0",
+        "parent_id": None,
+        "level": 0,
+        "title": "Opening",
+        "order": 0,
+        "path_label": "Opening",
+        "target_type": "char_range",
+        "target_start": 0,
+        "target_end": content.index("# Closing"),
+        "target_href": None,
+        "source": "local_markdown_headings",
+        "confidence": 1.0,
+    }
+    assert navigation["nodes"][1]["parent_id"] == "heading-0"
+    assert navigation["nodes"][1]["level"] == 1
+    assert navigation["nodes"][2]["parent_id"] is None
+    assert navigation["stats"] == {
+        "returned_node_count": 3,
+        "node_count": 3,
+        "max_depth": 1,
+        "truncated": False,
+    }
+    assert beat_content["node_id"] == "heading-1"
+    assert beat_content["title"] == "First Beat"
+    assert beat_content["content_format"] == "markdown"
+    assert beat_content["available_formats"] == ["markdown", "plain"]
+    assert beat_content["content"] == "## First Beat\nBeat body."
+    assert beat_content["alternate_content"] == {"plain": "First Beat\nBeat body."}
+    assert beat_content["target"]["target_type"] == "char_range"
+
+
+def test_local_service_builds_generated_media_navigation_from_chunks(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Chunked",
+        content="Alpha text.\n\nBeta text.",
+        media_type="article",
+        keywords=[],
+        chunks=[
+            {"text": "Alpha text.", "start_char": 0, "end_char": 11, "chunk_type": "section"},
+            {"text": "Beta text.", "start_char": 13, "end_char": 23, "chunk_type": "section"},
+        ],
+    )
+    service = LocalMediaReadingService(db)
+
+    without_fallback = service.get_media_navigation(media_id)
+    with_fallback = service.get_media_navigation(media_id, include_generated_fallback=True)
+
+    assert without_fallback["available"] is False
+    assert without_fallback["nodes"] == []
+    assert with_fallback["available"] is True
+    assert with_fallback["source_order_used"] == ["local_chunks"]
+    assert [node["title"] for node in with_fallback["nodes"]] == ["Alpha text.", "Beta text."]
+    assert [node["id"] for node in with_fallback["nodes"]] == ["chunk-0", "chunk-1"]
+
+
 def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(

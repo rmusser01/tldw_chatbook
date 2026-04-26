@@ -361,6 +361,28 @@ class FakeLocalMediaService:
         self.calls.append(("generate_document_insights", media_id, params))
         return {"media_id": media_id, "insights": [], "model_used": "local-extractive", "cached": False}
 
+    def get_media_navigation(self, media_id, **params):
+        self.calls.append(("get_media_navigation", media_id, params))
+        return {
+            "media_id": media_id,
+            "available": True,
+            "navigation_version": "local-nav-v1",
+            "source_order_used": ["local_markdown_headings"],
+            "nodes": [{"id": "node-1", "title": "Chapter 1"}],
+            "stats": {"returned_node_count": 1, "node_count": 1, "max_depth": 0, "truncated": False},
+        }
+
+    def get_media_navigation_content(self, media_id, node_id, **params):
+        self.calls.append(("get_media_navigation_content", media_id, node_id, params))
+        return {
+            "media_id": media_id,
+            "node_id": node_id,
+            "title": "Chapter 1",
+            "content_format": "markdown",
+            "content": "# Chapter 1",
+            "target": {"target_type": "char_range", "target_start": 0, "target_end": 11},
+        }
+
     def submit_ingest_jobs(self, **kwargs):
         self.calls.append(("submit_ingest_jobs", kwargs))
         return {"batch_id": "local-batch-1", "jobs": [{"id": 301, "status": "queued"}], "errors": []}
@@ -1211,7 +1233,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
     server_report = scope_service.list_unsupported_capabilities(mode="server")
 
     assert [item["operation_id"] for item in local_report] == [
-        "media.navigation.local",
         "media.file_artifacts.local",
         "media.reading_digests.local",
         "media.add.local",
@@ -1230,8 +1251,7 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
         "media.items.server_management.local",
         "media.items.file.local",
     ]
-    assert local_report[0]["affected_action_ids"] == ["media.navigation.detail.local"]
-    assert all(item["affected_action_ids"] == [] for item in local_report[1:])
+    assert all(item["affected_action_ids"] == [] for item in local_report)
     assert server_report == [
         {
             "operation_id": "collections.reading_list.per_media_type.server",
@@ -2685,6 +2705,50 @@ async def test_scope_service_routes_server_media_navigation_with_navigation_acti
     assert policy.calls[-2:] == [
         "media.navigation.detail.server",
         "media.navigation.detail.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_media_navigation_with_navigation_action():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=local,
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    navigation = await scope_service.get_media_navigation(mode="local", media_id=12, max_depth=2)
+    content = await scope_service.get_media_navigation_content(
+        mode="local",
+        media_id=12,
+        node_id="node-1",
+        format="plain",
+    )
+
+    assert navigation["nodes"][0]["title"] == "Chapter 1"
+    assert content["content"] == "# Chapter 1"
+    assert local.calls[-2:] == [
+        (
+            "get_media_navigation",
+            12,
+            {
+                "include_generated_fallback": False,
+                "max_depth": 2,
+                "max_nodes": 500,
+                "parent_id": None,
+            },
+        ),
+        (
+            "get_media_navigation_content",
+            12,
+            "node-1",
+            {"format": "plain", "include_alternates": False},
+        ),
+    ]
+    assert policy.calls[-2:] == [
+        "media.navigation.detail.local",
+        "media.navigation.detail.local",
     ]
 
 
