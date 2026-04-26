@@ -8,7 +8,7 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.widgets import Button, TextArea, Select, Collapsible
+from textual.widgets import Button, TextArea, Select, Collapsible, Input
 from textual.events import Key
 from textual import on
 from textual.reactive import reactive
@@ -20,6 +20,8 @@ from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_models import ChatSessionData
 from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...state.ui_state import UIState
+from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
+from ...Widgets.compact_model_bar import CompactModelBar
 
 # Import the existing chat window to reuse its functionality
 from ..Chat_Window_Enhanced import ChatWindowEnhanced
@@ -86,6 +88,11 @@ class ChatScreen(BaseAppScreen):
                         logger.info("No models available, set to BLANK")
 
                     model_select.prompt = "Select Model..." if available_models else "No models available"
+                    selected_model = None if model_select.value == Select.BLANK else str(model_select.value)
+                    self._sync_compact_shell_controls(
+                        provider=new_provider,
+                        model=selected_model,
+                    )
                     logger.info(f"Successfully updated model dropdown with {len(available_models)} models")
                 except Exception as e:
                     logger.error(f"Could not find model select widget: {e}")
@@ -102,6 +109,17 @@ class ChatScreen(BaseAppScreen):
 
         except Exception as e:
             logger.error(f"Error updating model dropdown: {e}", exc_info=True)
+
+    @on(Select.Changed, "#chat-api-model")
+    def on_chat_api_model_changed(self, event: Select.Changed) -> None:
+        """Mirror sidebar model changes into the compact shell controls."""
+        model = None if event.value == Select.BLANK else str(event.value)
+        self._sync_compact_shell_controls(model=model)
+
+    @on(Input.Changed, "#chat-temperature")
+    def on_chat_temperature_changed(self, event: Input.Changed) -> None:
+        """Mirror sidebar temperature changes into the compact shell controls."""
+        self._sync_compact_shell_controls(temperature=event.value)
     
     
     # Reactive property for sidebar state persistence
@@ -265,7 +283,7 @@ class ChatScreen(BaseAppScreen):
                 
                 # Restore active tab
                 if self.chat_state.active_tab_id:
-                    await tab_container.switch_to_tab(self.chat_state.active_tab_id)
+                    await tab_container.switch_to_tab_async(self.chat_state.active_tab_id)
             else:
                 # Non-tabbed interface - still need to restore state
                 logger.debug("Non-tabbed interface detected, restoring state directly")
@@ -300,6 +318,143 @@ class ChatScreen(BaseAppScreen):
             return self.chat_window.query_one("ChatTabContainer")
         except:
             return None
+
+    def _get_shell_bar(self):
+        """Get the mounted combined chat shell bar."""
+        if not self.chat_window:
+            return None
+
+        if hasattr(self.chat_window, "get_shell_bar"):
+            try:
+                return self.chat_window.get_shell_bar()
+            except Exception:
+                logger.debug("Chat window shell bar seam was unavailable")
+
+        try:
+            return self.chat_window.query_one("#chat-shell-bar")
+        except Exception:
+            return None
+
+    def _get_compact_model_bar(self) -> Optional[CompactModelBar]:
+        """Get the embedded compact control bar from the mounted shell bar."""
+        shell_bar = self._get_shell_bar()
+        if not shell_bar:
+            return None
+
+        try:
+            return shell_bar.query_one(CompactModelBar)
+        except QueryError:
+            return None
+        except Exception:
+            return None
+
+    def _sync_compact_shell_controls(
+        self,
+        *,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: Optional[str] = None,
+    ) -> None:
+        """Push sidebar control values back into the compact shell bar."""
+        compact_bar = self._get_compact_model_bar()
+        if not compact_bar:
+            logger.debug("No compact model bar available for reverse sync")
+            return
+
+        updates: Dict[str, str] = {}
+        if provider is not None:
+            updates["provider"] = provider
+        if model is not None:
+            updates["model"] = model
+        if temperature is not None:
+            updates["temperature"] = temperature
+
+        if not updates:
+            return
+
+        compact_bar.sync_from_sidebar(**updates)
+
+    def _sync_compact_shell_controls_from_sidebar(self) -> None:
+        """Mirror the current sidebar widget values into the compact shell controls."""
+        if not self.chat_window:
+            return
+
+        provider = None
+        model = None
+        temperature = None
+
+        try:
+            provider_select = self.chat_window.query_one("#chat-api-provider", Select)
+            if provider_select.value != Select.BLANK:
+                provider = str(provider_select.value)
+        except Exception:
+            logger.debug("Sidebar provider select unavailable for compact sync")
+
+        try:
+            model_select = self.chat_window.query_one("#chat-api-model", Select)
+            if model_select.value != Select.BLANK:
+                model = str(model_select.value)
+        except Exception:
+            logger.debug("Sidebar model select unavailable for compact sync")
+
+        try:
+            temperature_input = self.chat_window.query_one("#chat-temperature", Input)
+            temperature = temperature_input.value
+        except Exception:
+            logger.debug("Sidebar temperature input unavailable for compact sync")
+
+        self._sync_compact_shell_controls(
+            provider=provider,
+            model=model,
+            temperature=temperature,
+        )
+
+    def sync_shell_bar_from_state(self) -> None:
+        """Push the restored active tab state into the mounted shell bar."""
+        shell_bar = self._get_shell_bar()
+        if not shell_bar:
+            logger.debug("No shell bar available for state sync")
+            return
+
+        active_tab = self.chat_state.get_active_tab()
+        if active_tab is None and self.chat_state.tabs:
+            active_tab = self.chat_state.tabs[0]
+
+        if active_tab is None:
+            logger.debug("No active tab available for shell bar sync")
+            return
+
+        try:
+            shell_bar.sync_from_tab_state(active_tab)
+            logger.debug(f"Synced shell bar from active tab {active_tab.tab_id}")
+        except Exception as e:
+            logger.error(f"Failed to sync shell bar from state: {e}", exc_info=True)
+
+    def sync_shell_bar_from_session_data(self, session_data: Optional[ChatSessionData]) -> None:
+        """Push the live active session contract into the mounted shell bar."""
+        shell_bar = self._get_shell_bar()
+        if not shell_bar:
+            logger.debug("No shell bar available for live session sync")
+            return
+
+        try:
+            shell_bar.sync_from_session_data(session_data)
+            if session_data is None:
+                logger.debug("Synced shell bar from cleared live session")
+            else:
+                logger.debug(
+                    "Synced shell bar from live session {}",
+                    getattr(session_data, "tab_id", None),
+                )
+        except Exception as e:
+            logger.error(f"Failed to sync shell bar from live session: {e}", exc_info=True)
+
+    def on_chat_tab_container_active_session_changed(
+        self,
+        message: ChatTabContainer.ActiveSessionChanged,
+    ) -> None:
+        """Update the shell bar when the live active tab changes."""
+        self.sync_shell_bar_from_session_data(message.session_data)
     
     def _save_tab_sessions(self, tab_container) -> None:
         """Save all tab session states."""
@@ -689,6 +844,8 @@ class ChatScreen(BaseAppScreen):
                             logger.info(f"✓ Restored max tokens: {active_tab.max_tokens_override}")
                     except Exception as e:
                         logger.debug(f"Could not restore max tokens: {e}")
+
+            self._sync_compact_shell_controls_from_sidebar()
                     
         except Exception as e:
             logger.error(f"Error restoring sidebar settings: {e}", exc_info=True)

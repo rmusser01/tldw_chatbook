@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from textual import on
 from textual.app import App
+from textual.widgets import Button
 from unittest.mock import MagicMock, patch
 
 from tldw_chatbook.app import TldwCli
@@ -331,3 +332,129 @@ def test_screen_lifecycle_methods():
     screen.on_mount()
 
     assert screen.mount_called is True
+
+
+@pytest.mark.asyncio
+async def test_main_navigation_copy_and_order():
+    expected_button_order = [
+        ("nav-chat", "Chat"),
+        ("nav-chatbooks", "Chatbooks"),
+        ("nav-notes", "Notes"),
+        ("nav-media", "Media"),
+        ("nav-ingest", "Ingest"),
+        ("nav-search", "Search"),
+        ("nav-subscriptions", "Subscriptions"),
+        ("nav-ccp", "Library"),
+        ("nav-study", "Study"),
+        ("nav-llm", "LLM"),
+        ("nav-stts", "S/TT/S"),
+        ("nav-evals", "Evals"),
+        ("nav-tools_settings", "Settings"),
+        ("nav-customize", "Customize"),
+        ("nav-logs", "Logs"),
+        ("nav-stats", "Stats"),
+        ("nav-coding", "Coding"),
+    ]
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="chat")
+
+    app = TestApp()
+
+    async with app.run_test(size=(160, 20)) as pilot:
+        await pilot.pause(0.1)
+
+        nav_buttons = list(app.query(".nav-button"))
+        actual_button_order = [(button.id, str(button.label).strip()) for button in nav_buttons]
+
+        assert actual_button_order == expected_button_order
+        assert str(app.query_one("#nav-ccp", Button).label).strip() == "Library"
+        assert nav_buttons[0].id == "nav-chat"
+        assert nav_buttons[1].id == "nav-chatbooks"
+        assert nav_buttons[-1].id == "nav-coding"
+
+
+@pytest.mark.asyncio
+async def test_main_navigation_route_ids_remain_intact():
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="chat")
+
+    app = TestApp()
+
+    async with app.run_test(size=(160, 20)) as pilot:
+        await pilot.pause(0.1)
+
+        expected_route_ids = {
+            "nav-chat",
+            "nav-chatbooks",
+            "nav-notes",
+            "nav-media",
+            "nav-ingest",
+            "nav-search",
+            "nav-subscriptions",
+            "nav-ccp",
+            "nav-study",
+            "nav-llm",
+            "nav-stts",
+            "nav-evals",
+            "nav-tools_settings",
+            "nav-customize",
+            "nav-logs",
+            "nav-stats",
+            "nav-coding",
+        }
+
+        actual_route_ids = [button.id for button in app.query(".nav-button")]
+
+        assert actual_route_ids == [
+            "nav-chat",
+            "nav-chatbooks",
+            "nav-notes",
+            "nav-media",
+            "nav-ingest",
+            "nav-search",
+            "nav-subscriptions",
+            "nav-ccp",
+            "nav-study",
+            "nav-llm",
+            "nav-stts",
+            "nav-evals",
+            "nav-tools_settings",
+            "nav-customize",
+            "nav-logs",
+            "nav-stats",
+            "nav-coding",
+        ]
+        assert set(actual_route_ids) == expected_route_ids
+
+
+@pytest.mark.asyncio
+async def test_screen_navigation_routes_reach_real_app_handler():
+    app = _build_test_app()
+    captured_destinations = []
+
+    async def fake_switch_screen(screen):
+        captured_destinations.append(type(screen).__name__)
+
+    app.switch_screen = fake_switch_screen
+
+    cases = [
+        ("chatbooks", "ChatbooksScreen"),
+        ("subscriptions", "SubscriptionScreen"),
+        ("study", "StudyScreen"),
+        ("stts", "STTSScreen"),
+    ]
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+
+        for route, expected_screen_class in cases:
+            captured_destinations.clear()
+
+            await app.handle_screen_navigation(NavigateToScreen(route))
+            await pilot.pause(0.05)
+
+            assert app.current_tab == route
+            assert captured_destinations == [expected_screen_class]

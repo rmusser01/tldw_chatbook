@@ -2,12 +2,15 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual.widgets import Input, Select
 
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, MessageData, TabState
+from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import ChatShellBar
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 
 
 class TestChatSessionDataSerialization:

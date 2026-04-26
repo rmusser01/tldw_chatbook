@@ -13,6 +13,7 @@ from textual.containers import Container, Vertical
 from textual.widgets import Static
 from textual.reactive import reactive
 from textual.binding import Binding
+from textual.message import Message
 #
 # Local Imports
 from .chat_tab_bar import ChatTabBar
@@ -70,6 +71,13 @@ class ChatTabContainer(Container):
     
     # Current active session
     active_session_id: reactive[Optional[str]] = reactive(None)
+
+    class ActiveSessionChanged(Message):
+        """Sent when the live active chat session changes."""
+
+        def __init__(self, session_data: Optional[ChatSessionData]) -> None:
+            super().__init__()
+            self.session_data = session_data
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
@@ -127,6 +135,7 @@ class ChatTabContainer(Container):
                         logger.info(
                             f"Reusing existing chat tab {existing_tab_id} for conversation {reuse_key}"
                         )
+                        await self.switch_to_tab_async(existing_tab_id)
                         return existing_tab_id
 
             # Check max tabs limit
@@ -290,6 +299,7 @@ class ChatTabContainer(Container):
             placeholder = self.query_one("#no-sessions-placeholder", Static)
             placeholder.styles.display = "block"
             self.active_session_id = None
+            self._publish_active_session_changed(None)
         elif was_active:
             # Switch to another tab if this was active
             remaining_tabs = list(self.sessions.keys())
@@ -328,7 +338,9 @@ class ChatTabContainer(Container):
             # If switching to the same tab, just ensure it's resumed
             if self.active_session_id == tab_id:
                 try:
-                    await self.sessions[tab_id].resume()
+                    session = self.sessions[tab_id]
+                    await session.resume()
+                    self._publish_active_session_changed(session.session_data)
                 except Exception as e:
                     logger.error(f"Error resuming current tab {tab_id}: {e}")
                 return
@@ -363,12 +375,24 @@ class ChatTabContainer(Container):
                     self.tab_bar.set_active_tab(tab_id)
                 except Exception as e:
                     logger.warning(f"Error updating tab bar: {e}")
+
+            self._publish_active_session_changed(new_session.session_data)
             
             logger.debug(f"Switched to tab: {tab_id}")
             
         except Exception as e:
             logger.error(f"Unexpected error switching to tab {tab_id}: {e}")
             self.app_instance.notify("Error switching tabs", severity="error")
+
+    def _publish_active_session_changed(
+        self,
+        session_data: Optional[ChatSessionData],
+    ) -> None:
+        """Notify listeners that the live active chat session changed."""
+        try:
+            self.post_message(self.ActiveSessionChanged(session_data))
+        except Exception as e:
+            logger.debug(f"Could not publish active session change: {e}")
     
     def get_active_session(self) -> Optional[ChatSession]:
         """Get the currently active chat session."""
