@@ -1,5 +1,6 @@
 from tldw_chatbook.Character_Chat.local_character_persona_service import LocalCharacterPersonaService
 from tldw_chatbook.tldw_api.character_persona_schemas import (
+    ChatSettingsUpdate,
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
     CharacterExemplarCreate,
@@ -14,6 +15,8 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     PersonaExemplarUpdate,
     PersonaProfileCreate,
     PersonaProfileUpdate,
+    PresetCreate,
+    PresetUpdate,
 )
 
 
@@ -412,3 +415,69 @@ def test_local_character_persona_service_persists_character_exemplar_crud(tmp_pa
     assert deleted == {"status": "deleted", "character_id": 7, "exemplar_id": created["id"]}
     assert hidden_after_delete["total"] == 0
     assert reloaded.get_character_exemplar(7, created["id"], include_deleted=True)["deleted"] is True
+
+
+def test_local_character_persona_service_wraps_chat_execution_adjuncts(tmp_path):
+    db = FakeConversationDB()
+    db.character_cards[7].update(
+        {
+            "first_message": "Hello from Ada.",
+            "alternate_greetings": ["Alt hello.", "Dry hello."],
+            "world_books": [{"name": "Ada Lore", "entries": 2}],
+        }
+    )
+    store_path = tmp_path / "personas.json"
+    service = LocalCharacterPersonaService(db, persona_store_path=store_path)
+    chat = service.create_character_chat_session(
+        CharacterChatSessionCreate(
+            title="Ada Chat",
+            character_id=7,
+            assistant_kind="character",
+            assistant_id="7",
+        )
+    )
+
+    greetings = service.list_chat_greetings(chat["id"])
+    selected = service.select_chat_greeting(chat["id"], 2)
+    settings = service.update_chat_settings(
+        chat["id"],
+        ChatSettingsUpdate(settings={"authorNote": "Stay concise."}),
+    )
+    loaded_settings = service.get_chat_settings(chat["id"])
+    diagnostics = service.export_lorebook_diagnostics(chat["id"], order="desc")
+    created_preset = service.create_chat_preset(
+        PresetCreate(
+            preset_id="local-tight",
+            name="Local Tight",
+            section_order=["system"],
+            section_templates={"system": "{{system_prompt}}"},
+        )
+    )
+    listed_presets = service.list_chat_presets()
+    updated_preset = service.update_chat_preset(
+        "local-tight",
+        PresetUpdate(name="Local Tight Updated"),
+    )
+    deleted_preset = service.delete_chat_preset("local-tight")
+    reloaded = LocalCharacterPersonaService(db, persona_store_path=store_path)
+
+    assert [item["text"] for item in greetings["greetings"]] == [
+        "Hello from Ada.",
+        "Alt hello.",
+        "Dry hello.",
+    ]
+    assert greetings["current_selection"] == 0
+    assert selected["selected_index"] == 2
+    assert selected["greeting_preview"] == "Dry hello."
+    assert settings["settings"] == {"authorNote": "Stay concise."}
+    assert loaded_settings == settings
+    assert diagnostics["chat_id"] == chat["id"]
+    assert diagnostics["turns"] == []
+    assert diagnostics["diagnostics"]["world_books"] == [{"name": "Ada Lore", "entries": 2}]
+    assert created_preset["preset_id"] == "local-tight"
+    assert any(item["preset_id"] == "default" for item in listed_presets["presets"])
+    assert any(item["preset_id"] == "local-tight" for item in listed_presets["presets"])
+    assert updated_preset["name"] == "Local Tight Updated"
+    assert deleted_preset == {"status": "deleted", "preset_id": "local-tight", "source": "local"}
+    assert reloaded.get_chat_settings(chat["id"])["settings"] == {"authorNote": "Stay concise."}
+    assert all(item["preset_id"] != "local-tight" for item in reloaded.list_chat_presets()["presets"])

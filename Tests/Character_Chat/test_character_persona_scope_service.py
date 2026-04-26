@@ -531,6 +531,44 @@ class FakeLocalCharacterExemplarBackend(FakeLocalPersonaExemplarBackend):
         return {"status": "deleted", "character_id": character_id, "exemplar_id": exemplar_id}
 
 
+class FakeLocalChatExecutionBackend(FakeLocalCharacterExemplarBackend):
+    def list_chat_greetings(self, chat_id):
+        self.calls.append(("list_chat_greetings", chat_id))
+        return {"chat_id": chat_id, "greetings": [{"index": 0, "text": "Hi.", "preview": "Hi."}]}
+
+    def select_chat_greeting(self, chat_id, index):
+        self.calls.append(("select_chat_greeting", chat_id, index))
+        return {"chat_id": chat_id, "selected_index": index, "greeting_preview": "Hi."}
+
+    def list_chat_presets(self):
+        self.calls.append(("list_chat_presets",))
+        return {"presets": [{"preset_id": "default", "name": "Default"}]}
+
+    def create_chat_preset(self, request_data):
+        self.calls.append(("create_chat_preset", request_data))
+        return {"preset_id": "local-preset", "name": "Local Preset"}
+
+    def update_chat_preset(self, preset_id, request_data):
+        self.calls.append(("update_chat_preset", preset_id, request_data))
+        return {"preset_id": preset_id, "name": "Updated Preset"}
+
+    def delete_chat_preset(self, preset_id):
+        self.calls.append(("delete_chat_preset", preset_id))
+        return {"status": "deleted", "preset_id": preset_id}
+
+    def get_chat_settings(self, chat_id, **kwargs):
+        self.calls.append(("get_chat_settings", chat_id, kwargs))
+        return {"conversation_id": chat_id, "settings": {}}
+
+    def update_chat_settings(self, chat_id, request_data, **kwargs):
+        self.calls.append(("update_chat_settings", chat_id, request_data, kwargs))
+        return {"conversation_id": chat_id, "settings": {"authorNote": "Local"}}
+
+    def export_lorebook_diagnostics(self, chat_id, **kwargs):
+        self.calls.append(("export_lorebook_diagnostics", chat_id, kwargs))
+        return {"chat_id": chat_id, "turns": []}
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
         self.denied_reason = denied_reason
@@ -961,6 +999,49 @@ async def test_scope_service_routes_character_exemplar_crud_to_local_backend():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_chat_execution_support_to_local_backend():
+    local_service = FakeLocalChatExecutionBackend()
+    scope_service = CharacterPersonaScopeService(
+        local_service=local_service,
+        server_service=FakeCharacterPersonaClient(),
+    )
+    create_data = Mock()
+    update_data = Mock()
+    settings_data = Mock()
+
+    greetings = await scope_service.list_chat_greetings("chat-local", mode="local")
+    selected = await scope_service.select_chat_greeting("chat-local", 0, mode="local")
+    presets = await scope_service.list_chat_presets(mode="local")
+    created_preset = await scope_service.create_chat_preset(create_data, mode="local")
+    updated_preset = await scope_service.update_chat_preset("local-preset", update_data, mode="local")
+    deleted_preset = await scope_service.delete_chat_preset("local-preset", mode="local")
+    settings = await scope_service.get_chat_settings("chat-local", mode="local")
+    updated_settings = await scope_service.update_chat_settings("chat-local", settings_data, mode="local")
+    diagnostics = await scope_service.export_lorebook_diagnostics("chat-local", mode="local", order="desc")
+
+    assert greetings["chat_id"] == "chat-local"
+    assert selected["selected_index"] == 0
+    assert presets["presets"][0]["preset_id"] == "default"
+    assert created_preset["preset_id"] == "local-preset"
+    assert updated_preset["name"] == "Updated Preset"
+    assert deleted_preset == {"status": "deleted", "preset_id": "local-preset"}
+    assert settings["conversation_id"] == "chat-local"
+    assert updated_settings["settings"] == {"authorNote": "Local"}
+    assert diagnostics["turns"] == []
+    assert local_service.calls == [
+        ("list_chat_greetings", "chat-local"),
+        ("select_chat_greeting", "chat-local", 0),
+        ("list_chat_presets",),
+        ("create_chat_preset", create_data),
+        ("update_chat_preset", "local-preset", update_data),
+        ("delete_chat_preset", "local-preset"),
+        ("get_chat_settings", "chat-local", {}),
+        ("update_chat_settings", "chat-local", settings_data, {}),
+        ("export_lorebook_diagnostics", "chat-local", {"order": "desc"}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_chat_execution_support_to_server_backend():
     server_service = FakeCharacterPersonaClient()
     scope_service = CharacterPersonaScopeService(
@@ -1351,6 +1432,20 @@ def test_scope_service_does_not_report_local_character_exemplars_when_backend_wr
     assert "character.persona.profiles.local" not in operation_ids
     assert "character.persona.exemplars.local" not in operation_ids
     assert "character.exemplars.local" not in operation_ids
+
+
+def test_scope_service_does_not_report_local_execution_when_backend_wraps_it():
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalChatExecutionBackend(),
+        server_service=FakeCharacterPersonaClient(),
+    )
+
+    operation_ids = {
+        item["operation_id"]
+        for item in scope_service.list_unsupported_capabilities(mode="local")
+    }
+
+    assert "character.sessions.execution.local" not in operation_ids
 
 
 @pytest.mark.asyncio

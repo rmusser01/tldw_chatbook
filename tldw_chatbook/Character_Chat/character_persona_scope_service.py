@@ -193,6 +193,25 @@ class CharacterPersonaScopeService:
                     for item in reports
                     if item["operation_id"] != "character.exemplars.local"
                 ]
+            if local_backend is not None and self._backend_supports(
+                local_backend,
+                (
+                    "list_chat_greetings",
+                    "select_chat_greeting",
+                    "list_chat_presets",
+                    "create_chat_preset",
+                    "update_chat_preset",
+                    "delete_chat_preset",
+                    "get_chat_settings",
+                    "update_chat_settings",
+                    "export_lorebook_diagnostics",
+                ),
+            ):
+                reports = [
+                    item
+                    for item in reports
+                    if item["operation_id"] != "character.sessions.execution.local"
+                ]
             return reports
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 

@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from ..Chat.chat_conversation_service import ChatConversationService
 from ..tldw_api.character_persona_schemas import (
+    ChatSettingsUpdate,
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
     CharacterCreateRequest,
@@ -24,6 +25,8 @@ from ..tldw_api.character_persona_schemas import (
     PersonaExemplarUpdate,
     PersonaProfileCreate,
     PersonaProfileUpdate,
+    PresetCreate,
+    PresetUpdate,
 )
 
 
@@ -50,6 +53,9 @@ class LocalCharacterPersonaService:
         self._persona_profiles: list[dict[str, Any]] = []
         self._persona_exemplars: list[dict[str, Any]] = []
         self._character_exemplars: list[dict[str, Any]] = []
+        self._chat_settings: dict[str, dict[str, Any]] = {}
+        self._chat_greeting_selections: dict[str, int] = {}
+        self._chat_presets: list[dict[str, Any]] = []
         self._load_persona_profiles()
 
     def _require_db(self) -> Any:
@@ -99,10 +105,16 @@ class LocalCharacterPersonaService:
             profile_records = payload.get("profiles", payload.get("items", []))
             exemplar_records = payload.get("exemplars", [])
             character_exemplar_records = payload.get("character_exemplars", [])
+            chat_settings_records = payload.get("chat_settings", {})
+            chat_greeting_selections = payload.get("chat_greeting_selections", {})
+            chat_preset_records = payload.get("chat_presets", [])
         else:
             profile_records = payload
             exemplar_records = []
             character_exemplar_records = []
+            chat_settings_records = {}
+            chat_greeting_selections = {}
+            chat_preset_records = []
         if not isinstance(profile_records, list):
             self._persona_profiles = []
             return
@@ -117,6 +129,21 @@ class LocalCharacterPersonaService:
             for item in character_exemplar_records
             if isinstance(item, dict)
         ] if isinstance(character_exemplar_records, list) else []
+        self._chat_settings = {
+            str(chat_id): dict(settings)
+            for chat_id, settings in chat_settings_records.items()
+            if isinstance(settings, dict)
+        } if isinstance(chat_settings_records, dict) else {}
+        self._chat_greeting_selections = {
+            str(chat_id): int(index)
+            for chat_id, index in chat_greeting_selections.items()
+            if isinstance(index, int)
+        } if isinstance(chat_greeting_selections, dict) else {}
+        self._chat_presets = [
+            dict(item)
+            for item in chat_preset_records
+            if isinstance(item, dict)
+        ] if isinstance(chat_preset_records, list) else []
 
     def _persist_persona_profiles(self) -> None:
         if self.persona_store_path is None:
@@ -129,6 +156,9 @@ class LocalCharacterPersonaService:
                     "profiles": self._persona_profiles,
                     "exemplars": self._persona_exemplars,
                     "character_exemplars": self._character_exemplars,
+                    "chat_settings": self._chat_settings,
+                    "chat_greeting_selections": self._chat_greeting_selections,
+                    "chat_presets": self._chat_presets,
                 },
                 indent=2,
                 sort_keys=True,
@@ -228,6 +258,82 @@ class LocalCharacterPersonaService:
     def _require_character(self, character_id: int) -> None:
         if self.get_character(int(character_id)) is None:
             raise ValueError(f"local_character_not_found:{character_id}")
+
+    @staticmethod
+    def _builtin_chat_preset() -> dict[str, Any]:
+        return {
+            "preset_id": "default",
+            "name": "Default",
+            "builtin": True,
+            "section_order": [],
+            "section_templates": {},
+            "created_at": None,
+            "updated_at": None,
+        }
+
+    @staticmethod
+    def _chat_preset_view(record: Mapping[str, Any]) -> dict[str, Any]:
+        normalized = dict(record)
+        normalized.setdefault("builtin", False)
+        normalized.setdefault("section_order", [])
+        normalized.setdefault("section_templates", {})
+        normalized.setdefault("created_at", None)
+        normalized.setdefault("updated_at", None)
+        normalized.setdefault("source", "local")
+        return normalized
+
+    def _find_chat_preset(self, preset_id: str, *, include_deleted: bool = False) -> dict[str, Any]:
+        normalized_id = str(preset_id)
+        for record in self._chat_presets:
+            if str(record.get("preset_id")) != normalized_id:
+                continue
+            if record.get("deleted") and not include_deleted:
+                break
+            return record
+        raise ValueError(f"local_chat_preset_not_found:{preset_id}")
+
+    def _require_chat_session(self, chat_id: str) -> dict[str, Any]:
+        session = self.get_character_chat_session(str(chat_id))
+        if session is None:
+            raise ValueError(f"Local character chat session '{chat_id}' was not found.")
+        return session
+
+    def _character_for_session(self, session: Mapping[str, Any]) -> dict[str, Any] | None:
+        character_id = session.get("character_id")
+        if character_id is None:
+            return None
+        character = self.get_character(int(character_id))
+        return dict(character) if character is not None else None
+
+    @staticmethod
+    def _character_greeting_texts(character: Mapping[str, Any] | None) -> list[str]:
+        if character is None:
+            return []
+        first_message = _clean_text(
+            character.get("first_message")
+            or character.get("first_mes")
+            or character.get("greeting")
+        )
+        greetings: list[str] = []
+        if first_message is not None:
+            greetings.append(first_message)
+        for item in character.get("alternate_greetings") or []:
+            text = _clean_text(item)
+            if text is not None:
+                greetings.append(text)
+        return greetings
+
+    def _chat_greeting_items(self, chat_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], str | None]:
+        session = self._require_chat_session(chat_id)
+        character = self._character_for_session(session)
+        greetings = [
+            {"index": index, "text": text, "preview": text[:160]}
+            for index, text in enumerate(self._character_greeting_texts(character))
+        ]
+        warning = None
+        if character is None:
+            warning = "Local chat is not attached to a character card."
+        return session, greetings, warning
 
     def list_characters(self, limit: int = 100, offset: int = 0) -> Any:
         return self._require_db().list_character_cards(limit=limit, offset=offset)
@@ -755,32 +861,123 @@ class LocalCharacterPersonaService:
             "messages": messages,
         }
 
-    def get_chat_settings(self, chat_id: str, **_: Any) -> Any:
-        raise ValueError("Local character chat settings are not available through this scope service yet.")
+    def get_chat_settings(self, chat_id: str, **_: Any) -> dict[str, Any]:
+        self._require_chat_session(chat_id)
+        settings = dict(self._chat_settings.get(str(chat_id), {}))
+        return {"conversation_id": str(chat_id), "settings": settings, "source": "local"}
 
-    def update_chat_settings(self, chat_id: str, request_data: Any, **_: Any) -> Any:
-        raise ValueError("Local character chat settings updates are not available through this scope service yet.")
+    def update_chat_settings(self, chat_id: str, request_data: Any, **_: Any) -> dict[str, Any]:
+        self._require_chat_session(chat_id)
+        request = ChatSettingsUpdate.model_validate(_model_payload(request_data, exclude_none=False))
+        self._chat_settings[str(chat_id)] = dict(request.settings)
+        self._persist_persona_profiles()
+        return self.get_chat_settings(chat_id)
 
-    def export_lorebook_diagnostics(self, chat_id: str, **_: Any) -> Any:
-        raise ValueError("Local character lorebook diagnostics are not available through this scope service yet.")
+    def export_lorebook_diagnostics(self, chat_id: str, **kwargs: Any) -> dict[str, Any]:
+        session = self._require_chat_session(chat_id)
+        character = self._character_for_session(session)
+        world_books = []
+        if character is not None:
+            for key in ("world_books", "world_info", "character_book"):
+                value = character.get(key)
+                if value:
+                    world_books = value if isinstance(value, list) else [value]
+                    break
+        return {
+            "chat_id": str(chat_id),
+            "turns": [],
+            "diagnostics": {
+                "source": "local",
+                "character_id": session.get("character_id"),
+                "world_books": world_books,
+                "options": dict(kwargs),
+            },
+        }
 
-    def list_chat_greetings(self, chat_id: str) -> Any:
-        raise ValueError("Local chat greetings are not available yet.")
+    def list_chat_greetings(self, chat_id: str) -> dict[str, Any]:
+        session, greetings, warning = self._chat_greeting_items(chat_id)
+        current_selection = self._chat_greeting_selections.get(str(chat_id))
+        if current_selection is None and greetings:
+            current_selection = 0
+        if current_selection is not None and not (0 <= current_selection < len(greetings)):
+            current_selection = 0 if greetings else None
+        character = self._character_for_session(session)
+        character_id = session.get("character_id")
+        return {
+            "chat_id": str(chat_id),
+            "character_id": str(character_id) if character_id is not None else None,
+            "character_name": character.get("name") if character else None,
+            "greetings": greetings,
+            "current_selection": current_selection,
+            "staleness_warning": warning,
+            "source": "local",
+        }
 
-    def select_chat_greeting(self, chat_id: str, index: int) -> Any:
-        raise ValueError("Local chat greetings are not available yet.")
+    def select_chat_greeting(self, chat_id: str, index: int) -> dict[str, Any]:
+        _, greetings, _ = self._chat_greeting_items(chat_id)
+        normalized_index = int(index)
+        if normalized_index < 0 or normalized_index >= len(greetings):
+            raise ValueError(f"local_chat_greeting_not_found:{chat_id}:{index}")
+        self._chat_greeting_selections[str(chat_id)] = normalized_index
+        self._persist_persona_profiles()
+        return {
+            "chat_id": str(chat_id),
+            "selected_index": normalized_index,
+            "greeting_preview": greetings[normalized_index]["preview"],
+            "checksum_updated": False,
+            "source": "local",
+        }
 
-    def list_chat_presets(self) -> Any:
-        raise ValueError("Local chat presets are not available yet.")
+    def list_chat_presets(self) -> dict[str, Any]:
+        presets = [self._builtin_chat_preset()]
+        presets.extend(
+            self._chat_preset_view(record)
+            for record in self._chat_presets
+            if not record.get("deleted", False)
+        )
+        return {"presets": presets, "source": "local"}
 
-    def create_chat_preset(self, request_data: Any) -> Any:
-        raise ValueError("Local chat presets are not available yet.")
+    def create_chat_preset(self, request_data: Any) -> dict[str, Any]:
+        payload = PresetCreate.model_validate(_model_payload(request_data)).model_dump(mode="json")
+        preset_id = str(payload["preset_id"])
+        if preset_id == "default" or any(
+            str(record.get("preset_id")) == preset_id and not record.get("deleted", False)
+            for record in self._chat_presets
+        ):
+            raise ValueError(f"local_chat_preset_exists:{preset_id}")
+        now = self._now()
+        record = {
+            **payload,
+            "builtin": False,
+            "created_at": now,
+            "updated_at": now,
+            "deleted": False,
+        }
+        self._chat_presets.append(record)
+        self._persist_persona_profiles()
+        return self._chat_preset_view(record)
 
-    def update_chat_preset(self, preset_id: str, request_data: Any) -> Any:
-        raise ValueError("Local chat presets are not available yet.")
+    def update_chat_preset(self, preset_id: str, request_data: Any) -> dict[str, Any]:
+        if str(preset_id) == "default":
+            raise ValueError("local_builtin_chat_preset_read_only:default")
+        record = self._find_chat_preset(preset_id)
+        payload = PresetUpdate.model_validate(_model_payload(request_data, exclude_none=False)).model_dump(
+            mode="json",
+            exclude_none=True,
+        )
+        record.update(payload)
+        record["updated_at"] = self._now()
+        self._persist_persona_profiles()
+        return self._chat_preset_view(record)
 
-    def delete_chat_preset(self, preset_id: str) -> Any:
-        raise ValueError("Local chat presets are not available yet.")
+    def delete_chat_preset(self, preset_id: str) -> dict[str, Any]:
+        if str(preset_id) == "default":
+            raise ValueError("local_builtin_chat_preset_read_only:default")
+        record = self._find_chat_preset(preset_id)
+        record["deleted"] = True
+        record["updated_at"] = self._now()
+        self._persist_persona_profiles()
+        return {"status": "deleted", "preset_id": str(preset_id), "source": "local"}
 
 
 __all__ = ["LocalCharacterPersonaService"]
