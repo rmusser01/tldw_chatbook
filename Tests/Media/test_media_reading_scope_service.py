@@ -218,6 +218,10 @@ class FakeLocalMediaService:
         self.calls.append(("process_ebook", kwargs))
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "ebook"}]}
 
+    def process_emails(self, **kwargs):
+        self.calls.append(("process_emails", kwargs))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "email"}]}
+
     def process_code(self, **kwargs):
         self.calls.append(("process_code", kwargs))
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "code"}]}
@@ -1409,7 +1413,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
         "media.web_content_ingest.local",
         "media.processing.video.local",
         "media.processing.audio.local",
-        "media.processing.emails.local",
         "media.processing.web_scraping.local",
         "media.processing.mediawiki.local",
         "media.transcription_models.local",
@@ -3308,6 +3311,9 @@ async def test_scope_service_routes_server_processing_and_transcription_models_a
     local_code = await scope_service.process_code(mode="local", file_paths=["/tmp/main.py"])
     assert local_code["results"][0]["media_type"] == "code"
     assert policy.calls[-1] == "media.processing.code.process.local"
+    local_emails = await scope_service.process_emails(mode="local", file_paths=["/tmp/message.eml"], title="Inbox")
+    assert local_emails["results"][0]["media_type"] == "email"
+    assert policy.calls[-1] == "media.processing.emails.process.local"
     with pytest.raises(ValueError, match="server-only"):
         await scope_service.get_transcription_models(mode="local")
 

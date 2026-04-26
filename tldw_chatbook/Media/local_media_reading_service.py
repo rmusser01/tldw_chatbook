@@ -613,6 +613,63 @@ class LocalMediaReadingService:
             **options,
         )
 
+    def process_emails(
+        self,
+        *,
+        file_paths: list[str] | None = None,
+        title: str | None = None,
+        accept_mbox: bool = True,
+        **options: Any,
+    ) -> dict[str, Any]:
+        normalized_files = [str(path).strip() for path in file_paths or [] if str(path).strip()]
+        results: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        if not normalized_files:
+            errors.append({"source": "input", "message": "At least one local email file path is required."})
+
+        for file_path in normalized_files:
+            path = Path(file_path).expanduser()
+            if not path.exists() or not path.is_file():
+                errors.append({"source": "file_path", "file_path": file_path, "message": "file not found"})
+                continue
+            try:
+                messages = self._parse_local_email_path(path.resolve(), accept_mbox=accept_mbox)
+            except Exception as exc:
+                errors.append({"source": "file_path", "file_path": file_path, "message": str(exc)})
+                continue
+            for index, message in enumerate(messages):
+                subject = str(message.get("subject") or "").strip()
+                content = str(message.get("content") or "")
+                results.append(
+                    {
+                        "status": "Success",
+                        "backend": "local",
+                        "persisted": False,
+                        "input_ref": str(path.resolve()),
+                        "source": "file_path",
+                        "file_path": str(path.resolve()),
+                        "message_index": index,
+                        "media_type": "email",
+                        "title": subject or title or path.name,
+                        "subject": subject,
+                        "from": message.get("from"),
+                        "to": message.get("to"),
+                        "date": message.get("date"),
+                        "content": content,
+                        "chunks": [],
+                    }
+                )
+
+        return {
+            "status": "success" if results and not errors else "partial_success" if results else "failed",
+            "backend": "local",
+            "persisted": False,
+            "processed_count": len(results),
+            "errors_count": len(errors),
+            "errors": errors,
+            "results": results,
+        }
+
     def process_code(
         self,
         *,
@@ -747,6 +804,62 @@ class LocalMediaReadingService:
             return re.sub(r"<[^>]+>", " ", raw_html)
         soup = BeautifulSoup(raw_html, "html.parser")
         return soup.get_text("\n")
+
+    @classmethod
+    def _parse_local_email_path(cls, path: Path, *, accept_mbox: bool) -> list[dict[str, Any]]:
+        from email import policy
+        from email.parser import BytesParser
+        import mailbox
+
+        suffix = path.suffix.lower()
+        if accept_mbox and suffix in {".mbox", ".mbx"}:
+            return [cls._email_message_to_payload(message) for message in mailbox.mbox(path)]
+        message = BytesParser(policy=policy.default).parsebytes(path.read_bytes())
+        return [cls._email_message_to_payload(message)]
+
+    @classmethod
+    def _email_message_to_payload(cls, message: Any) -> dict[str, Any]:
+        return {
+            "subject": message.get("subject"),
+            "from": message.get("from"),
+            "to": message.get("to"),
+            "date": message.get("date"),
+            "content": cls._email_message_content(message),
+        }
+
+    @classmethod
+    def _email_message_content(cls, message: Any) -> str:
+        plain_parts: list[str] = []
+        html_parts: list[str] = []
+        if message.is_multipart():
+            for part in message.walk():
+                if part.is_multipart():
+                    continue
+                disposition = str(part.get_content_disposition() or "").lower()
+                if disposition == "attachment":
+                    continue
+                content_type = part.get_content_type()
+                try:
+                    content = part.get_content()
+                except Exception:
+                    payload = part.get_payload(decode=True) or b""
+                    content = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+                if content_type == "text/plain":
+                    plain_parts.append(str(content))
+                elif content_type == "text/html":
+                    html_parts.append(cls._html_to_plain_text(str(content)))
+        else:
+            try:
+                content = message.get_content()
+            except Exception:
+                payload = message.get_payload(decode=True) or b""
+                content = payload.decode(message.get_content_charset() or "utf-8", errors="replace")
+            if message.get_content_type() == "text/html":
+                html_parts.append(cls._html_to_plain_text(str(content)))
+            else:
+                plain_parts.append(str(content))
+        selected_parts = plain_parts or html_parts
+        return "\n\n".join(part.strip() for part in selected_parts if part and part.strip())
 
     @staticmethod
     def _chunk_text(

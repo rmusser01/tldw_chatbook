@@ -696,6 +696,33 @@ def test_local_service_processes_pdf_and_ebook_files_without_persisting(memory_d
     assert service.list_media_items()["pagination"]["total_items"] == 0
 
 
+def test_local_service_processes_email_files_without_persisting(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    email_path = tmp_path / "message.eml"
+    email_path.write_text(
+        "From: sender@example.com\n"
+        "To: reader@example.com\n"
+        "Subject: Local Mail\n"
+        "Date: Sat, 25 Apr 2026 08:00:00 +0000\n"
+        "Content-Type: text/plain; charset=utf-8\n"
+        "\n"
+        "Email body text",
+        encoding="utf-8",
+    )
+    service = LocalMediaReadingService(db)
+
+    email = service.process_emails(file_paths=[str(email_path)], title="Inbox")
+
+    assert email["processed_count"] == 1
+    assert email["results"][0]["media_type"] == "email"
+    assert email["results"][0]["title"] == "Local Mail"
+    assert email["results"][0]["subject"] == "Local Mail"
+    assert email["results"][0]["from"] == "sender@example.com"
+    assert email["results"][0]["to"] == "reader@example.com"
+    assert email["results"][0]["content"] == "Email body text"
+    assert service.list_media_items()["pagination"]["total_items"] == 0
+
+
 def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(
