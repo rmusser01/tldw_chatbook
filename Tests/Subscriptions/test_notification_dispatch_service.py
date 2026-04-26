@@ -166,3 +166,71 @@ def test_notification_dispatch_service_maps_critical_to_error_toast(tmp_path):
         timeout=None,
         persistent=True,
     )
+
+
+def test_notification_dispatch_service_suppresses_disabled_category(tmp_path):
+    store = ClientNotificationsDB(tmp_path / "notifications.db")
+    app = SimpleNamespace(show_toast=Mock(), notify=Mock())
+    service = NotificationDispatchService(store=store)
+    store.update_settings(category_preferences={"watchlists": {"enabled": False}})
+
+    disabled = service.dispatch(
+        app=app,
+        category="watchlists",
+        title="Disabled watchlist alert",
+        message="This category should be suppressed.",
+    )
+    allowed = service.dispatch(
+        app=app,
+        category="research",
+        title="Research alert",
+        message="This category should still be delivered.",
+    )
+
+    assert disabled["skipped"] is True
+    assert disabled["reason"] == "category_notifications_disabled"
+    assert disabled["persisted"] is False
+    assert allowed["title"] == "Research alert"
+    assert [row["category"] for row in store.list_notifications(limit=10)] == ["research"]
+    app.show_toast.assert_called_once_with(
+        message="Research alert: This category should still be delivered.",
+        severity="info",
+        timeout=5.0,
+        persistent=False,
+    )
+
+
+def test_notification_dispatch_service_applies_category_channel_preferences(tmp_path):
+    store = ClientNotificationsDB(tmp_path / "notifications.db")
+    app = SimpleNamespace(show_toast=Mock(), notify=Mock())
+    service = NotificationDispatchService(store=store)
+    store.update_settings(
+        category_preferences={
+            "watchlists": {"toast_enabled": False},
+            "research": {"persist_enabled": False},
+        }
+    )
+
+    persisted = service.dispatch(
+        app=app,
+        category="watchlists",
+        title="Persist only",
+        message="Category toast is disabled.",
+    )
+    transient = service.dispatch(
+        app=app,
+        category="research",
+        title="Toast only",
+        message="Category persistence is disabled.",
+    )
+
+    assert persisted["title"] == "Persist only"
+    assert transient["persisted"] is False
+    assert transient["skipped"] is False
+    assert [row["category"] for row in store.list_notifications(limit=10)] == ["watchlists"]
+    app.show_toast.assert_called_once_with(
+        message="Toast only: Category persistence is disabled.",
+        severity="info",
+        timeout=5.0,
+        persistent=False,
+    )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -15,7 +16,14 @@ DEFAULT_NOTIFICATION_SETTINGS = {
     "enabled": True,
     "toast_enabled": True,
     "persist_enabled": True,
+    "category_preferences": {},
 }
+
+_CATEGORY_NOTIFICATION_SETTINGS = (
+    "enabled",
+    "toast_enabled",
+    "persist_enabled",
+)
 
 
 class ClientNotificationsDB(BaseDB):
@@ -213,7 +221,7 @@ class ClientNotificationsDB(BaseDB):
 
     def get_settings(self) -> dict[str, Any]:
         """Return local notification settings with defaults filled in."""
-        settings = dict(DEFAULT_NOTIFICATION_SETTINGS)
+        settings = deepcopy(DEFAULT_NOTIFICATION_SETTINGS)
         with self._get_connection() as conn:
             rows = conn.execute("SELECT key, value FROM client_notification_settings").fetchall()
         for row in rows:
@@ -221,6 +229,11 @@ class ClientNotificationsDB(BaseDB):
                 value = json.loads(row["value"])
             except json.JSONDecodeError:
                 continue
+            if row["key"] == "category_preferences":
+                try:
+                    value = self._normalize_category_preferences(value)
+                except ValueError:
+                    continue
             settings[row["key"]] = value
         return settings
 
@@ -232,6 +245,8 @@ class ClientNotificationsDB(BaseDB):
         now = self._now_iso()
         with self._get_connection() as conn:
             for key, value in settings.items():
+                if key == "category_preferences":
+                    value = self._normalize_category_preferences(value)
                 conn.execute(
                     """
                     INSERT INTO client_notification_settings (key, value, updated_at)
@@ -242,6 +257,39 @@ class ClientNotificationsDB(BaseDB):
                 )
             conn.commit()
         return self.get_settings()
+
+    @staticmethod
+    def _normalize_category_preferences(value: Any) -> dict[str, dict[str, bool]]:
+        if value is None:
+            return {}
+        if not isinstance(value, Mapping):
+            raise ValueError("category_preferences must be a mapping.")
+
+        normalized: dict[str, dict[str, bool]] = {}
+        valid_settings = set(_CATEGORY_NOTIFICATION_SETTINGS)
+        for raw_category, raw_preferences in value.items():
+            category = str(raw_category).strip()
+            if not category:
+                raise ValueError("category_preferences contains an empty category.")
+            if raw_preferences is None:
+                continue
+            if not isinstance(raw_preferences, Mapping):
+                raise ValueError(
+                    f"category_preferences[{category!r}] must be a mapping."
+                )
+            unknown = set(raw_preferences) - valid_settings
+            if unknown:
+                raise ValueError(
+                    f"Unknown category notification settings for {category!r}: {sorted(unknown)}"
+                )
+            preferences = {
+                setting: bool(raw_preferences[setting])
+                for setting in _CATEGORY_NOTIFICATION_SETTINGS
+                if setting in raw_preferences
+            }
+            if preferences:
+                normalized[category] = preferences
+        return dict(sorted(normalized.items()))
 
     def _update_flags(self, notification_id: int, **fields: Any) -> bool:
         assignments = ", ".join(f"{field} = ?" for field in fields)

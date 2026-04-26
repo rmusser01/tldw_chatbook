@@ -59,3 +59,31 @@ def test_client_notifications_memory_store_keeps_state_across_operations():
 
     assert db.get_notification(row["id"])["title"] == "A"
     db.close()
+
+
+def test_client_notifications_store_round_trips_category_preferences(tmp_path):
+    db = ClientNotificationsDB(tmp_path / "notifications.db")
+
+    defaults = db.get_settings()
+    updated = db.update_settings(
+        category_preferences={
+            "watchlists": {"enabled": False},
+            "research": {"toast_enabled": False, "persist_enabled": True},
+        }
+    )
+
+    assert defaults["category_preferences"] == {}
+    assert updated["category_preferences"] == {
+        "research": {"persist_enabled": True, "toast_enabled": False},
+        "watchlists": {"enabled": False},
+    }
+    assert db.get_settings()["category_preferences"]["watchlists"]["enabled"] is False
+
+
+def test_client_notifications_store_returns_defensive_settings_copy(tmp_path):
+    db = ClientNotificationsDB(tmp_path / "notifications.db")
+
+    settings = db.get_settings()
+    settings["category_preferences"]["watchlists"] = {"enabled": False}
+
+    assert db.get_settings()["category_preferences"] == {}

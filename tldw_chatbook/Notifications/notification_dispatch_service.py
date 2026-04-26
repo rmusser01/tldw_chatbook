@@ -31,11 +31,11 @@ class NotificationDispatchService:
     ) -> dict[str, Any]:
         """Write the local inbox row, then attempt transient delivery."""
         self._enforce_dispatch_allowed()
-        settings = self._delivery_settings()
+        settings = self._delivery_settings(category=category)
         if not bool(settings.get("enabled", True)):
             return {
                 "skipped": True,
-                "reason": "notifications_disabled",
+                "reason": settings.get("disabled_reason") or "notifications_disabled",
                 "persisted": False,
                 "category": category,
                 "title": title,
@@ -78,7 +78,7 @@ class NotificationDispatchService:
             "payload": dict(payload or {}),
         }
 
-    def _delivery_settings(self) -> dict[str, Any]:
+    def _delivery_settings(self, *, category: str | None = None) -> dict[str, Any]:
         get_settings = getattr(self.store, "get_settings", None)
         if not callable(get_settings):
             return {
@@ -87,11 +87,35 @@ class NotificationDispatchService:
                 "persist_enabled": True,
             }
         settings = get_settings()
-        return {
-            "enabled": bool(settings.get("enabled", True)),
+        global_enabled = bool(settings.get("enabled", True))
+        effective = {
+            "enabled": global_enabled,
             "toast_enabled": bool(settings.get("toast_enabled", True)),
             "persist_enabled": bool(settings.get("persist_enabled", True)),
         }
+
+        category_preferences = settings.get("category_preferences")
+        category_settings = None
+        if isinstance(category_preferences, Mapping) and category:
+            raw_category_settings = category_preferences.get(category)
+            if isinstance(raw_category_settings, Mapping):
+                category_settings = raw_category_settings
+
+        if category_settings:
+            category_enabled = bool(category_settings.get("enabled", True))
+            effective["enabled"] = global_enabled and category_enabled
+            effective["toast_enabled"] = bool(effective["toast_enabled"]) and bool(
+                category_settings.get("toast_enabled", True)
+            )
+            effective["persist_enabled"] = bool(effective["persist_enabled"]) and bool(
+                category_settings.get("persist_enabled", True)
+            )
+            if global_enabled and not category_enabled:
+                effective["disabled_reason"] = "category_notifications_disabled"
+
+        if not global_enabled:
+            effective["disabled_reason"] = "notifications_disabled"
+        return effective
 
     def _enforce_dispatch_allowed(self) -> None:
         if self.policy_enforcer is None:
