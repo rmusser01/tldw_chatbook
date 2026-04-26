@@ -582,6 +582,40 @@ def test_local_service_persists_reading_digest_schedules(memory_db_factory):
     assert after_delete["items"] == []
 
 
+def test_local_service_runs_due_reading_digest_schedules(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    media_id, _, _ = db.add_media_with_keywords(
+        url="https://example.com/read",
+        title="Saved Article",
+        media_type="article",
+        content="Saved article body. Second sentence.",
+        keywords=["research"],
+    )
+    service.save_to_read_it_later(media_id)
+    schedule = service.create_reading_digest_schedule(
+        name="Morning",
+        cron="0 8 * * *",
+        timezone="UTC",
+        filters={"status": ["saved"], "tags": ["research"]},
+    )
+
+    result = service.run_due_reading_digest_schedules(now="2026-04-25T08:00:00+00:00")
+    duplicate = service.run_due_reading_digest_schedules(now="2026-04-25T08:00:30+00:00")
+    outputs = service.list_reading_digest_outputs(schedule_id=schedule["id"])
+
+    assert result["executed_count"] == 1
+    assert result["skipped_count"] == 0
+    assert result["results"][0]["output"]["schedule_id"] == schedule["id"]
+    assert "Saved Article" in result["results"][0]["output"]["content"]
+    assert "https://example.com/read" in result["results"][0]["output"]["content"]
+    assert result["results"][0]["output"]["metadata"]["item_count"] == 1
+    assert duplicate["executed_count"] == 0
+    assert duplicate["skipped_count"] == 1
+    assert duplicate["results"][0]["reason"] == "already_executed_for_current_minute"
+    assert outputs["total"] == 1
+
+
 def test_local_service_persists_file_artifacts_and_reference_images(memory_db_factory):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)

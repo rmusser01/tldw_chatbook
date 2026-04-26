@@ -357,6 +357,10 @@ class FakeLocalMediaService:
         self.calls.append(("list_reading_digest_outputs", schedule_id, limit, offset))
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
 
+    def run_due_reading_digest_schedules(self, **kwargs):
+        self.calls.append(("run_due_reading_digest_schedules", kwargs))
+        return {"executed_count": 1, "skipped_count": 0, "failed_count": 0, "results": []}
+
     def create_saved_search(self, **kwargs):
         self.calls.append(("create_saved_search", kwargs))
         return {"id": 1, "created_at": "2026-04-21T12:00:00Z", "updated_at": "2026-04-21T12:00:00Z", **kwargs}
@@ -1394,7 +1398,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
     server_report = scope_service.list_unsupported_capabilities(mode="server")
 
     assert [item["operation_id"] for item in local_report] == [
-        "media.reading_digests.scheduler.local",
         "media.web_content_ingest.local",
         "media.processing.video.local",
         "media.processing.audio.local",
@@ -3112,6 +3115,10 @@ async def test_scope_service_routes_reading_digests_for_local_and_server_modes()
     )
     local_deleted = await scope_service.delete_reading_digest_schedule(mode="local", schedule_id="local-digest-1")
     local_outputs = await scope_service.list_reading_digest_outputs(mode="local", schedule_id="local-digest-1")
+    local_run = await scope_service.run_due_reading_digest_schedules(
+        mode="local",
+        now="2026-04-25T08:00:00+00:00",
+    )
 
     assert local_created["id"] == "local-digest-1"
     assert local_listed["items"][0]["id"] == "local-digest-1"
@@ -3119,7 +3126,8 @@ async def test_scope_service_routes_reading_digests_for_local_and_server_modes()
     assert local_updated == {"id": "local-digest-1", "enabled": False}
     assert local_deleted == {"ok": True, "id": "local-digest-1"}
     assert local_outputs["items"] == []
-    assert local.calls[-6:] == [
+    assert local_run["executed_count"] == 1
+    assert local.calls[-7:] == [
         (
             "create_reading_digest_schedule",
             {
@@ -3140,14 +3148,16 @@ async def test_scope_service_routes_reading_digests_for_local_and_server_modes()
         ("update_reading_digest_schedule", "local-digest-1", {"enabled": False}),
         ("delete_reading_digest_schedule", "local-digest-1"),
         ("list_reading_digest_outputs", "local-digest-1", 50, 0),
+        ("run_due_reading_digest_schedules", {"now": "2026-04-25T08:00:00+00:00"}),
     ]
-    assert policy.calls[-6:] == [
+    assert policy.calls[-7:] == [
         "media.reading.digest_schedules.create.local",
         "media.reading.digest_schedules.list.local",
         "media.reading.digest_schedules.detail.local",
         "media.reading.digest_schedules.update.local",
         "media.reading.digest_schedules.delete.local",
         "media.reading.digest_outputs.list.local",
+        "media.reading.digest_scheduler.trigger.local",
     ]
 
 

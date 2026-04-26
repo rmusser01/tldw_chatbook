@@ -840,6 +840,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.web_content_ingest.launch.server
         media.reading.digest_outputs.list.local
         media.reading.digest_outputs.list.server
+        media.reading.digest_scheduler.trigger.local
         media.reading.digest_schedules.create.local
         media.reading.digest_schedules.create.server
         media.reading.digest_schedules.delete.local

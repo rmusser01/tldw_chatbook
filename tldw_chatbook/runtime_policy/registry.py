@@ -319,6 +319,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("media.reference_images", actions=(LIST,)),
             _resource("media.reading_import_jobs", actions=(LIST, DETAIL)),
             _resource("media.reading.digest_schedules", actions=CRUD_ACTIONS),
+            _resource("media.reading.digest_scheduler", actions=(TRIGGER,), sources=(LOCAL_SOURCE,)),
             _resource("media.reading.digest_outputs", actions=(LIST,)),
             _resource("media.web_content_ingest", actions=(LAUNCH,), sources=(SERVER_SOURCE,)),
             _resource("media.items", actions=(LIST, DETAIL, UPDATE, DELETE, RESTORE)),

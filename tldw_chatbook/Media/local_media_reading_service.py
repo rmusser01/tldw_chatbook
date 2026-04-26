@@ -16,6 +16,7 @@ import uuid
 import zipfile
 from typing import Any, Mapping, Optional
 from urllib.parse import unquote, urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 class LocalMediaReadingService:
@@ -1979,6 +1980,51 @@ class LocalMediaReadingService:
             "total": total,
             "limit": normalized_limit,
             "offset": normalized_offset,
+        }
+
+    def run_due_reading_digest_schedules(
+        self,
+        *,
+        now: str | datetime | None = None,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        run_at = self._normalize_digest_datetime(now)
+        rows = db.get_connection().execute(
+            """
+            SELECT * FROM local_reading_digest_schedules
+            ORDER BY created_at ASC, id ASC
+            """
+        ).fetchall()
+
+        results: list[dict[str, Any]] = []
+        executed = 0
+        skipped = 0
+        failed = 0
+        for row in rows:
+            schedule = self._reading_digest_schedule_row_to_dict(row)
+            schedule_id = str(schedule["id"])
+            reason = self._reading_digest_schedule_skip_reason(schedule, run_at)
+            if reason is not None:
+                skipped += 1
+                results.append({"schedule_id": schedule_id, "status": "skipped", "reason": reason})
+                continue
+            try:
+                output = self._create_reading_digest_output(schedule, run_at=run_at)
+            except Exception as exc:
+                failed += 1
+                results.append({"schedule_id": schedule_id, "status": "failed", "error": str(exc)})
+                continue
+            executed += 1
+            results.append({"schedule_id": schedule_id, "status": "executed", "output": output})
+
+        return {
+            "status": "completed",
+            "executed_count": executed,
+            "skipped_count": skipped,
+            "failed_count": failed,
+            "results": results,
+            "run_at": run_at.astimezone(timezone.utc).isoformat(),
         }
 
     def _execute_reading_import_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
@@ -4315,6 +4361,256 @@ class LocalMediaReadingService:
             "metadata": self._json_loads(payload.get("metadata_json")),
             "created_at": payload.get("created_at"),
         }
+
+    def _reading_digest_schedule_skip_reason(
+        self,
+        schedule: Mapping[str, Any],
+        run_at: datetime,
+    ) -> str | None:
+        if not bool(schedule.get("enabled")):
+            return "disabled"
+        if bool(schedule.get("require_online")):
+            return "requires_online"
+        if not self._cron_matches_run_at(str(schedule.get("cron") or ""), run_at, str(schedule.get("timezone") or "UTC")):
+            return "not_due"
+        if self._reading_digest_already_executed_for_minute(str(schedule["id"]), run_at):
+            return "already_executed_for_current_minute"
+        return None
+
+    def _create_reading_digest_output(
+        self,
+        schedule: Mapping[str, Any],
+        *,
+        run_at: datetime,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        normalized_format = str(schedule.get("format") or "md").strip().lower() or "md"
+        filters = dict(schedule.get("filters") or {})
+        rows = self._reading_digest_matching_items(filters)
+        content = self._render_reading_digest_content(
+            schedule,
+            rows,
+            format=normalized_format,
+            run_at=run_at,
+        )
+        title = self._reading_digest_output_title(schedule, run_at=run_at)
+        metadata = {
+            "schedule_id": schedule.get("id"),
+            "schedule_name": schedule.get("name"),
+            "filters": filters,
+            "item_count": len(rows),
+            "source": "local",
+            "generated_at": run_at.astimezone(timezone.utc).isoformat(),
+        }
+        self._purge_expired_reading_digest_outputs(schedule, run_at=run_at)
+        with db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO local_reading_digest_outputs (
+                    schedule_id, title, format, storage_path, content, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(schedule.get("id")),
+                    title,
+                    normalized_format,
+                    None,
+                    content,
+                    self._json_dumps(metadata),
+                    run_at.astimezone(timezone.utc).isoformat(),
+                ),
+            )
+            output_id = int(cursor.lastrowid)
+        row = db.get_connection().execute(
+            "SELECT * FROM local_reading_digest_outputs WHERE id = ?",
+            (output_id,),
+        ).fetchone()
+        return self._reading_digest_output_row_to_dict(row)
+
+    def _reading_digest_matching_items(self, filters: Mapping[str, Any]) -> list[dict[str, Any]]:
+        statuses = {str(value).strip().lower() for value in filters.get("status", ["saved"]) if value}
+        if statuses and "saved" not in statuses:
+            return []
+        if filters.get("favorite") is True:
+            return []
+        limit = max(int(filters.get("limit") or filters.get("size") or 100), 1)
+        payload = self.search_media(
+            query=filters.get("q") or filters.get("query"),
+            limit=limit,
+            offset=0,
+            read_it_later_only=True,
+            must_have=filters.get("tags") or filters.get("must_have"),
+        )
+        rows = list(payload.get("items") or [])
+        domain = str(filters.get("domain") or "").strip().lower()
+        if domain:
+            rows = [row for row in rows if domain in str(row.get("url") or "").lower()]
+        return rows
+
+    def _render_reading_digest_content(
+        self,
+        schedule: Mapping[str, Any],
+        rows: list[Mapping[str, Any]],
+        *,
+        format: str,
+        run_at: datetime,
+    ) -> str:
+        if format == "json":
+            payload = {
+                "title": self._reading_digest_output_title(schedule, run_at=run_at),
+                "generated_at": run_at.astimezone(timezone.utc).isoformat(),
+                "items": [self._reading_digest_item_payload(row) for row in rows],
+            }
+            return self._json_dumps(payload)
+        if format == "html":
+            items = "\n".join(
+                f"<li><a href=\"{html_escape(str(row.get('url') or ''))}\">"
+                f"{html_escape(str(row.get('title') or 'Untitled'))}</a></li>"
+                for row in rows
+            )
+            if not items:
+                items = "<li>No saved reading items matched this digest.</li>"
+            return (
+                f"<h1>{html_escape(self._reading_digest_output_title(schedule, run_at=run_at))}</h1>\n"
+                f"<ul>\n{items}\n</ul>"
+            )
+
+        lines = [
+            f"# {self._reading_digest_output_title(schedule, run_at=run_at)}",
+            "",
+        ]
+        if not rows:
+            lines.append("No saved reading items matched this digest.")
+            return "\n".join(lines)
+        for index, row in enumerate(rows, start=1):
+            detail = self.get_media_detail(row["id"])
+            summary = self._extractive_summary(self._local_text_from_row(detail), max_chars=240)
+            lines.append(f"{index}. [{row.get('title') or 'Untitled'}]({row.get('url') or ''})")
+            if summary:
+                lines.append(f"   - {summary}")
+        return "\n".join(lines)
+
+    def _reading_digest_item_payload(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        detail = self.get_media_detail(row["id"])
+        return {
+            "id": row.get("id"),
+            "title": row.get("title"),
+            "url": row.get("url"),
+            "summary": self._extractive_summary(self._local_text_from_row(detail), max_chars=240),
+        }
+
+    @staticmethod
+    def _reading_digest_output_title(schedule: Mapping[str, Any], *, run_at: datetime) -> str:
+        name = str(schedule.get("name") or "Reading Digest").strip() or "Reading Digest"
+        return f"{name} - {run_at.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+
+    def _reading_digest_already_executed_for_minute(self, schedule_id: str, run_at: datetime) -> bool:
+        db = self._require_db()
+        rows = db.get_connection().execute(
+            "SELECT created_at FROM local_reading_digest_outputs WHERE schedule_id = ?",
+            (schedule_id,),
+        ).fetchall()
+        minute_start = run_at.astimezone(timezone.utc).replace(second=0, microsecond=0)
+        minute_end = minute_start + timedelta(minutes=1)
+        for row in rows:
+            created_at = self._normalize_digest_datetime(dict(row).get("created_at"))
+            created_at = created_at.astimezone(timezone.utc)
+            if minute_start <= created_at < minute_end:
+                return True
+        return False
+
+    def _purge_expired_reading_digest_outputs(self, schedule: Mapping[str, Any], *, run_at: datetime) -> None:
+        retention_days = schedule.get("retention_days")
+        if retention_days is None:
+            return
+        cutoff = run_at.astimezone(timezone.utc) - timedelta(days=max(int(retention_days), 0))
+        db = self._require_db()
+        rows = db.get_connection().execute(
+            "SELECT id, created_at FROM local_reading_digest_outputs WHERE schedule_id = ?",
+            (str(schedule.get("id")),),
+        ).fetchall()
+        expired_ids = [
+            int(dict(row)["id"])
+            for row in rows
+            if self._normalize_digest_datetime(dict(row).get("created_at")).astimezone(timezone.utc) < cutoff
+        ]
+        if not expired_ids:
+            return
+        placeholders = ", ".join("?" for _ in expired_ids)
+        with db.transaction() as conn:
+            conn.execute(f"DELETE FROM local_reading_digest_outputs WHERE id IN ({placeholders})", expired_ids)
+
+    @staticmethod
+    def _normalize_digest_datetime(value: str | datetime | None) -> datetime:
+        if value is None:
+            return datetime.now(timezone.utc)
+        if isinstance(value, datetime):
+            return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        normalized = str(value).strip()
+        if not normalized:
+            return datetime.now(timezone.utc)
+        try:
+            parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.now(timezone.utc)
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+    @classmethod
+    def _cron_matches_run_at(cls, cron: str, run_at: datetime, timezone_name: str) -> bool:
+        fields = str(cron or "").strip().split()
+        if len(fields) < 5:
+            return False
+        try:
+            tz = ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError:
+            tz = timezone.utc
+        local_run_at = run_at.astimezone(tz)
+        cron_dow = (local_run_at.weekday() + 1) % 7
+        return (
+            cls._cron_field_matches(fields[0], local_run_at.minute, 0, 59)
+            and cls._cron_field_matches(fields[1], local_run_at.hour, 0, 23)
+            and cls._cron_field_matches(fields[2], local_run_at.day, 1, 31)
+            and cls._cron_field_matches(fields[3], local_run_at.month, 1, 12)
+            and cls._cron_field_matches(fields[4], cron_dow, 0, 7)
+        )
+
+    @staticmethod
+    def _cron_field_matches(field: str, value: int, minimum: int, maximum: int) -> bool:
+        for part in str(field or "").split(","):
+            normalized = part.strip()
+            if not normalized:
+                continue
+            step = 1
+            if "/" in normalized:
+                normalized, step_text = normalized.split("/", 1)
+                try:
+                    step = max(int(step_text), 1)
+                except ValueError:
+                    return False
+            if normalized == "*":
+                if value % step == 0:
+                    return True
+                continue
+            if "-" in normalized:
+                start_text, end_text = normalized.split("-", 1)
+                try:
+                    start = int(start_text)
+                    end = int(end_text)
+                except ValueError:
+                    return False
+                if minimum <= start <= value <= end <= maximum and (value - start) % step == 0:
+                    return True
+                continue
+            try:
+                expected = int(normalized)
+            except ValueError:
+                return False
+            if expected == 7 and minimum == 0 and maximum == 7:
+                expected = 0
+            if value == expected:
+                return True
+        return False
 
     def _file_artifact_row_to_response(self, row: Mapping[str, Any]) -> dict[str, Any]:
         payload = dict(row)

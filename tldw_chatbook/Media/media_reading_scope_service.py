@@ -21,14 +21,6 @@ ALLOWED_SERVER_CREATE_SOURCE_TYPES = ("archive_snapshot", "git_repository")
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
-        "operation_id": "media.reading_digests.scheduler.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_worker_missing",
-        "user_message": "Local reading digest schedule CRUD is available, but automatic local scheduler execution is not wired yet.",
-        "affected_action_ids": [],
-    },
-    {
         "operation_id": "media.web_content_ingest.local",
         "source": "local",
         "supported": False,
@@ -201,6 +193,10 @@ class MediaReadingScopeService:
     @staticmethod
     def _reading_digest_output_action_id(mode: MediaReadingBackend, action: str) -> str:
         return f"media.reading.digest_outputs.{action}.{mode.value}"
+
+    @staticmethod
+    def _reading_digest_scheduler_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading.digest_scheduler.{action}.{mode.value}"
 
     @staticmethod
     def _web_content_ingest_action_id(action: str) -> str:
@@ -985,6 +981,19 @@ class MediaReadingScopeService:
         return await self._maybe_await(
             service.list_reading_digest_outputs(schedule_id=schedule_id, limit=limit, offset=offset)
         )
+
+    async def run_due_reading_digest_schedules(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        now: str | None = None,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != MediaReadingBackend.LOCAL:
+            raise ValueError("Local reading digest scheduler execution is local-only; server schedules run on the server.")
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._reading_digest_scheduler_action_id(normalized_mode, "trigger"))
+        return self._to_plain(await self._maybe_await(service.run_due_reading_digest_schedules(now=now)))
 
     async def ingest_web_content(
         self,
