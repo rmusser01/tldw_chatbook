@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Chat_Grammars_Interop.chat_grammars_scope_service import ChatGrammarsScopeService
+from tldw_chatbook.Chat_Grammars_Interop.local_chat_grammars_service import LocalChatGrammarsService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -80,11 +81,37 @@ async def test_chat_grammars_scope_service_routes_server_crud_and_normalizes_rec
 
 
 @pytest.mark.asyncio
-async def test_chat_grammars_scope_service_honestly_rejects_local_mode_as_remote_only():
-    server = FakeChatGrammarsService()
-    scope = ChatGrammarsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+async def test_chat_grammars_scope_service_routes_local_crud_and_normalizes_records(tmp_path):
+    local = LocalChatGrammarsService(store_path=tmp_path / "grammars.json")
+    policy = FakePolicyEnforcer()
+    scope = ChatGrammarsScopeService(local_service=local, server_service=None, policy_enforcer=policy)
 
-    with pytest.raises(ValueError, match="Saved chat grammars are server-only"):
+    created = await scope.create_grammar(mode="local", name="JSON object", grammar_text="root ::= object")
+    listed = await scope.list_grammars(mode="local")
+    fetched = await scope.get_grammar("local-grammar-1", mode="local")
+    updated = await scope.update_grammar("local-grammar-1", mode="local", version=1, name="Strict JSON")
+    deleted = await scope.delete_grammar("local-grammar-1", mode="local")
+
+    assert created["record_id"] == "local:chat_grammar:local-grammar-1"
+    assert listed["items"][0]["record_id"] == "local:chat_grammar:local-grammar-1"
+    assert fetched["record_id"] == "local:chat_grammar:local-grammar-1"
+    assert updated["record_id"] == "local:chat_grammar:local-grammar-1"
+    assert deleted["record_id"] == "local:chat_grammar:local-grammar-1"
+    assert policy.calls == [
+        "chat.grammars.create.local",
+        "chat.grammars.list.local",
+        "chat.grammars.detail.local",
+        "chat.grammars.update.local",
+        "chat.grammars.delete.local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_grammars_scope_service_honestly_rejects_missing_local_service():
+    server = FakeChatGrammarsService()
+    scope = ChatGrammarsScopeService(local_service=None, server_service=server, policy_enforcer=FakePolicyEnforcer())
+
+    with pytest.raises(ValueError, match="Local chat grammars backend is unavailable"):
         await scope.list_grammars(mode="local")
 
     assert server.calls == []
@@ -106,13 +133,4 @@ def test_chat_grammars_scope_service_reports_known_unsupported_capabilities():
     scope = ChatGrammarsScopeService(server_service=FakeChatGrammarsService())
 
     assert scope.list_unsupported_capabilities(mode="server") == []
-    assert scope.list_unsupported_capabilities(mode="local") == [
-        {
-            "operation_id": "chat.grammars.remote_only.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "remote_only_surface",
-            "user_message": "Saved chat grammars are unavailable in local/offline mode.",
-            "affected_action_ids": [],
-        }
-    ]
+    assert scope.list_unsupported_capabilities(mode="local") == []

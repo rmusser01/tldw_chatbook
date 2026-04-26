@@ -1,4 +1,4 @@
-"""Source-aware routing for remote-owned saved chat grammars."""
+"""Source-aware routing for saved chat grammars."""
 
 from __future__ import annotations
 
@@ -12,22 +12,20 @@ class ChatGrammarsBackend(str, Enum):
     SERVER = "server"
 
 
-_LOCAL_UNSUPPORTED_CAPABILITIES = [
-    {
-        "operation_id": "chat.grammars.remote_only.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "remote_only_surface",
-        "user_message": "Saved chat grammars are unavailable in local/offline mode.",
-        "affected_action_ids": [],
-    }
-]
+_LOCAL_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 
 
 class ChatGrammarsScopeService:
-    """Route saved grammar CRUD without touching local ad hoc provider grammar options."""
+    """Route saved grammar CRUD without merging local and server grammar libraries."""
 
-    def __init__(self, *, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any = None,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+    ):
+        self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
@@ -41,11 +39,11 @@ class ChatGrammarsScopeService:
         except ValueError as exc:
             raise ValueError(f"Invalid chat grammars backend: {mode}") from exc
 
-    def _require_server_service(self, mode: ChatGrammarsBackend) -> Any:
+    def _service_for_mode(self, mode: ChatGrammarsBackend) -> Any:
         if mode == ChatGrammarsBackend.LOCAL:
-            raise ValueError(
-                "Saved chat grammars are server-only; local provider grammar options remain ad hoc for now."
-            )
+            if self.local_service is None:
+                raise ValueError("Local chat grammars backend is unavailable.")
+            return self.local_service
         if self.server_service is None:
             raise ValueError("Server chat grammars backend is unavailable.")
         return self.server_service
@@ -62,8 +60,8 @@ class ChatGrammarsScopeService:
         self.policy_enforcer.require_allowed(action_id=action_id)
 
     @staticmethod
-    def _action_id(action: str) -> str:
-        return f"chat.grammars.{action}.server"
+    def _action_id(action: str, mode: ChatGrammarsBackend) -> str:
+        return f"chat.grammars.{action}.{mode.value}"
 
     @staticmethod
     def _with_record_id(mode: ChatGrammarsBackend, item: dict[str, Any]) -> dict[str, Any]:
@@ -109,8 +107,8 @@ class ChatGrammarsScopeService:
         kwargs: dict[str, Any] | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._require_server_service(normalized_mode)
-        self._enforce_policy(self._action_id(action))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._action_id(action, normalized_mode))
         result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
         return self._normalize_response(normalized_mode, result)
 
@@ -152,8 +150,8 @@ class ChatGrammarsScopeService:
         **kwargs: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        service = self._require_server_service(normalized_mode)
-        self._enforce_policy(self._action_id("delete"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._action_id("delete", normalized_mode))
         result = await self._maybe_await(service.delete_grammar(grammar_id, **kwargs))
         if not isinstance(result, dict):
             result = {"id": grammar_id, "deleted": bool(result)}

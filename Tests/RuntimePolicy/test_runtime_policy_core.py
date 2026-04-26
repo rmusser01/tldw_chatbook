@@ -135,6 +135,7 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "chat_grammars": {
         "expected_domain_ids": {"chat_grammars"},
         "expected_action_kinds_by_source": {
+            "local": FULL_CRUD,
             "server": FULL_CRUD,
         },
     },
@@ -491,10 +492,15 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         connectors.sources.update.server
     """),
     "chat_grammars": _action_ids("""
+        chat.grammars.create.local
         chat.grammars.create.server
+        chat.grammars.delete.local
         chat.grammars.delete.server
+        chat.grammars.detail.local
         chat.grammars.detail.server
+        chat.grammars.list.local
         chat.grammars.list.server
+        chat.grammars.update.local
         chat.grammars.update.server
     """),
     "explicit_feedback": _action_ids("""

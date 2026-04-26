@@ -208,7 +208,11 @@ from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
 from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
 from .UI.SearchWindow import SearchWindow
-from tldw_chatbook.Chat_Grammars_Interop import ChatGrammarsScopeService, ServerChatGrammarsService
+from tldw_chatbook.Chat_Grammars_Interop import (
+    ChatGrammarsScopeService,
+    LocalChatGrammarsService,
+    ServerChatGrammarsService,
+)
 from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
@@ -1817,6 +1821,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_research_search_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self.local_chat_grammars_service = LocalChatGrammarsService(
+            store_path=get_user_data_dir() / "tldw_chatbook_chat_grammars.json",
+            policy_enforcer=self.service_policy_enforcer,
+        )
         try:
             self.server_chat_grammars_service = ServerChatGrammarsService.from_config(
                 self.app_config,
@@ -1828,6 +1836,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 policy_enforcer=self.service_policy_enforcer,
             )
         self.chat_grammars_scope_service = ChatGrammarsScopeService(
+            local_service=self.local_chat_grammars_service,
             server_service=self.server_chat_grammars_service,
             policy_enforcer=self.service_policy_enforcer,
         )

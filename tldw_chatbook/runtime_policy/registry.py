@@ -520,7 +520,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "chat_grammars",
         "Chat Grammars",
         "chat_grammars",
-        sources=REMOTE_ONLY_SOURCES,
+        sources=SEPARATED_SOURCES,
         resources=(
             _resource("chat.grammars", actions=CRUD_ACTIONS),
         ),
