@@ -39,6 +39,38 @@ class FakePolicyEnforcer:
             )
 
 
+def test_text2sql_scope_service_lists_static_server_target_catalog_with_policy():
+    scope = Text2SQLScopeService(
+        server_service=FakeText2SQLService(),
+        policy_enforcer=FakePolicyEnforcer(),
+    )
+
+    targets = scope.list_targets(mode="server")
+
+    assert targets == [
+        {
+            "record_id": "server:text2sql_target:media_db",
+            "backend": "server",
+            "target_id": "media_db",
+            "display_name": "Server Media Database",
+            "description": "Read-only SQL target for the authenticated user's server media database.",
+            "authorization": "checked_at_query_time",
+            "query_action_id": "text2sql.query.launch.server",
+        }
+    ]
+    assert scope.policy_enforcer.calls == ["text2sql.targets.list.server"]
+
+
+def test_text2sql_scope_service_rejects_local_target_catalog_as_remote_only():
+    scope = Text2SQLScopeService(
+        server_service=FakeText2SQLService(),
+        policy_enforcer=FakePolicyEnforcer(),
+    )
+
+    with pytest.raises(ValueError, match="Text2SQL targets are server-only"):
+        scope.list_targets(mode="local")
+
+
 @pytest.mark.asyncio
 async def test_text2sql_scope_service_routes_server_query_and_normalizes_record():
     server = FakeText2SQLService()

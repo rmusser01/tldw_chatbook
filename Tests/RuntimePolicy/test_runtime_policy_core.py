@@ -757,6 +757,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
     """),
     "text2sql_query": _action_ids("""
         text2sql.query.launch.server
+        text2sql.targets.list.server
     """),
     "sync_transport": _action_ids("""
         sync.changes.launch.server

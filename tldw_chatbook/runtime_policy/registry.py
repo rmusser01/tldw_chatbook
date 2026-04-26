@@ -790,6 +790,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "text2sql",
         sources=REMOTE_ONLY_SOURCES,
         resources=(
+            _resource("text2sql.targets", actions=(LIST,)),
             _resource("text2sql.query", actions=(LAUNCH,)),
         ),
     ),

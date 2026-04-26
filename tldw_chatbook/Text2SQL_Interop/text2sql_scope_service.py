@@ -27,6 +27,16 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
 class Text2SQLScopeService:
     """Route Text2SQL queries to the active server only."""
 
+    SERVER_TARGETS = [
+        {
+            "target_id": "media_db",
+            "display_name": "Server Media Database",
+            "description": "Read-only SQL target for the authenticated user's server media database.",
+            "authorization": "checked_at_query_time",
+            "query_action_id": "text2sql.query.launch.server",
+        }
+    ]
+
     def __init__(self, *, server_service: Any = None, policy_enforcer: Any = None):
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
@@ -78,6 +88,24 @@ class Text2SQLScopeService:
         if normalized_mode == Text2SQLBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         return []
+
+    def list_targets(
+        self,
+        *,
+        mode: Text2SQLBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == Text2SQLBackend.LOCAL:
+            raise ValueError("Text2SQL targets are server-only; Chatbook local database internals are not query targets.")
+        self._enforce_policy("text2sql.targets.list.server")
+        return [
+            {
+                "record_id": f"{normalized_mode.value}:text2sql_target:{target['target_id']}",
+                "backend": normalized_mode.value,
+                **dict(target),
+            }
+            for target in self.SERVER_TARGETS
+        ]
 
     async def query(
         self,
