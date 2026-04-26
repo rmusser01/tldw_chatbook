@@ -130,6 +130,80 @@ class FakeEvaluationsClient:
         self.calls.append(("test_evaluation_webhook", request_data.model_dump(exclude_none=True, mode="json")))
         return {"success": True}
 
+    async def list_evaluation_recipe_manifests(self):
+        self.calls.append(("list_evaluation_recipe_manifests",))
+        return [
+            {
+                "recipe_id": "rag_answer_quality",
+                "recipe_version": "1.0.0",
+                "name": "RAG Answer Quality",
+                "description": "Evaluate RAG answers.",
+                "launchable": True,
+                "supported_modes": ["labeled"],
+                "tags": [],
+                "capabilities": {},
+                "default_run_config": {},
+            }
+        ]
+
+    async def get_evaluation_recipe_manifest(self, recipe_id):
+        self.calls.append(("get_evaluation_recipe_manifest", recipe_id))
+        return {
+            "recipe_id": recipe_id,
+            "recipe_version": "1.0.0",
+            "name": "RAG Answer Quality",
+            "description": "Evaluate RAG answers.",
+            "launchable": True,
+            "supported_modes": ["labeled"],
+            "tags": [],
+            "capabilities": {},
+            "default_run_config": {},
+        }
+
+    async def get_evaluation_recipe_launch_readiness(self, recipe_id):
+        self.calls.append(("get_evaluation_recipe_launch_readiness", recipe_id))
+        return {
+            "recipe_id": recipe_id,
+            "ready": True,
+            "can_enqueue_runs": True,
+            "can_reuse_completed_runs": True,
+            "runtime_checks": {"recipe_launchable": True},
+        }
+
+    async def validate_evaluation_recipe_dataset(self, recipe_id, request_data):
+        self.calls.append(("validate_evaluation_recipe_dataset", recipe_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"valid": True, "errors": [], "dataset_mode": "labeled", "sample_count": 1}
+
+    async def create_evaluation_recipe_run(self, recipe_id, request_data):
+        self.calls.append(("create_evaluation_recipe_run", recipe_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "run_id": "recipe_run_1",
+            "recipe_id": recipe_id,
+            "recipe_version": "1.0.0",
+            "status": "pending",
+            "review_state": "not_required",
+            "created_at": "2026-04-22T00:00:00Z",
+            "updated_at": "2026-04-22T00:00:00Z",
+            "metadata": {},
+        }
+
+    async def get_evaluation_recipe_run(self, run_id):
+        self.calls.append(("get_evaluation_recipe_run", run_id))
+        return {
+            "run_id": run_id,
+            "recipe_id": "rag_answer_quality",
+            "recipe_version": "1.0.0",
+            "status": "completed",
+            "review_state": "approved",
+            "created_at": "2026-04-22T00:00:00Z",
+            "updated_at": "2026-04-22T00:10:00Z",
+            "metadata": {},
+        }
+
+    async def get_evaluation_recipe_run_report(self, run_id):
+        self.calls.append(("get_evaluation_recipe_run_report", run_id))
+        return {"run": {"run_id": run_id}, "summary": {"score": 0.91}}
+
 
 @pytest.mark.asyncio
 async def test_server_evaluations_service_enforces_policy_actions():
@@ -186,6 +260,13 @@ async def test_server_evaluations_service_enforces_policy_actions():
     await service.list_webhooks()
     await service.unregister_webhook("https://example.com/evals")
     await service.test_webhook("https://example.com/evals")
+    await service.list_recipe_manifests()
+    await service.get_recipe_manifest("rag_answer_quality")
+    await service.get_recipe_launch_readiness("rag_answer_quality")
+    await service.validate_recipe_dataset("rag_answer_quality", dataset_id="dataset_1", run_config={"mode": "fast"})
+    await service.create_recipe_run("rag_answer_quality", dataset_id="dataset_1", run_config={"mode": "fast"}, force_rerun=True)
+    await service.get_recipe_run("recipe_run_1")
+    await service.get_recipe_run_report("recipe_run_1")
 
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "evaluations.dataset.list.server",
@@ -218,6 +299,63 @@ async def test_server_evaluations_service_enforces_policy_actions():
         "evaluations.webhooks.list.server",
         "evaluations.webhooks.delete.server",
         "evaluations.webhooks.launch.server",
+        "evaluations.recipes.list.server",
+        "evaluations.recipes.detail.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.observe.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_evaluations_service_routes_recipe_controls():
+    client = FakeEvaluationsClient()
+    policy = Mock()
+    service = ServerEvaluationsService(client=client, policy_enforcer=policy)
+
+    manifests = await service.list_recipe_manifests()
+    manifest = await service.get_recipe_manifest("rag_answer_quality")
+    readiness = await service.get_recipe_launch_readiness("rag_answer_quality")
+    validation = await service.validate_recipe_dataset(
+        "rag_answer_quality",
+        dataset_id="dataset_1",
+        run_config={"mode": "fast"},
+    )
+    created = await service.create_recipe_run(
+        "rag_answer_quality",
+        dataset_id="dataset_1",
+        run_config={"mode": "fast"},
+        force_rerun=True,
+    )
+    fetched = await service.get_recipe_run("recipe_run_1")
+    report = await service.get_recipe_run_report("recipe_run_1")
+
+    assert manifests[0]["recipe_id"] == "rag_answer_quality"
+    assert manifest["recipe_id"] == "rag_answer_quality"
+    assert readiness["ready"] is True
+    assert validation["valid"] is True
+    assert created["run_id"] == "recipe_run_1"
+    assert fetched["status"] == "completed"
+    assert report["summary"]["score"] == 0.91
+    assert client.calls[-7:] == [
+        ("list_evaluation_recipe_manifests",),
+        ("get_evaluation_recipe_manifest", "rag_answer_quality"),
+        ("get_evaluation_recipe_launch_readiness", "rag_answer_quality"),
+        ("validate_evaluation_recipe_dataset", "rag_answer_quality", {"dataset_id": "dataset_1", "run_config": {"mode": "fast"}}),
+        ("create_evaluation_recipe_run", "rag_answer_quality", {"dataset_id": "dataset_1", "run_config": {"mode": "fast"}, "force_rerun": True}),
+        ("get_evaluation_recipe_run", "recipe_run_1"),
+        ("get_evaluation_recipe_run_report", "recipe_run_1"),
+    ]
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "evaluations.recipes.list.server",
+        "evaluations.recipes.detail.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.observe.server",
     ]
 
 

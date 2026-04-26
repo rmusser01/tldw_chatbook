@@ -867,6 +867,11 @@ AUDITED_CAPABILITY_SEEDS = (
                 actions=(LIST, CREATE, DELETE, LAUNCH),
                 sources=(SERVER_SOURCE,),
             ),
+            _resource(
+                "evaluations.recipes",
+                actions=(LIST, DETAIL, LAUNCH, OBSERVE),
+                sources=(SERVER_SOURCE,),
+            ),
         ),
     ),
     _capability(

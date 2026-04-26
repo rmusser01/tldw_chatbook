@@ -13,6 +13,12 @@ from tldw_chatbook.tldw_api import (
     EvaluationRunListResponse,
     EvaluationRunResponse,
     EvaluationSpec,
+    RecipeDatasetValidationRequest,
+    RecipeDatasetValidationResponse,
+    RecipeLaunchReadiness,
+    RecipeManifest,
+    RecipeRunCreateRequest,
+    RecipeRunRecord,
     SyntheticEvalGenerationRequest,
     SyntheticEvalGenerationResponse,
     SyntheticEvalPromotionRequest,
@@ -629,3 +635,110 @@ async def test_evaluation_benchmark_and_webhook_routes_wire(monkeypatch):
     assert unregistered["status"] == "unregistered"
     assert isinstance(tested, WebhookTestResponse)
     assert tested.success is True
+
+
+@pytest.mark.asyncio
+async def test_evaluation_recipe_routes_wire(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    run_record = {
+        "run_id": "recipe_run_1",
+        "recipe_id": "rag_answer_quality",
+        "recipe_version": "1.0.0",
+        "status": "pending",
+        "review_state": "not_required",
+        "created_at": "2026-04-22T00:00:00Z",
+        "updated_at": "2026-04-22T00:00:00Z",
+        "metadata": {},
+    }
+    mocked = AsyncMock(
+        side_effect=[
+            [
+                {
+                    "recipe_id": "rag_answer_quality",
+                    "recipe_version": "1.0.0",
+                    "name": "RAG Answer Quality",
+                    "description": "Evaluate RAG answers.",
+                    "launchable": True,
+                    "supported_modes": ["labeled"],
+                    "tags": ["rag"],
+                    "capabilities": {},
+                    "default_run_config": {},
+                }
+            ],
+            {
+                "recipe_id": "rag_answer_quality",
+                "recipe_version": "1.0.0",
+                "name": "RAG Answer Quality",
+                "description": "Evaluate RAG answers.",
+                "launchable": True,
+                "supported_modes": ["labeled"],
+                "tags": [],
+                "capabilities": {},
+                "default_run_config": {},
+            },
+            {
+                "recipe_id": "rag_answer_quality",
+                "ready": True,
+                "can_enqueue_runs": True,
+                "can_reuse_completed_runs": True,
+                "runtime_checks": {"recipe_launchable": True},
+            },
+            {
+                "valid": True,
+                "errors": [],
+                "dataset_mode": "labeled",
+                "sample_count": 2,
+                "dataset_snapshot_ref": "snapshot_1",
+                "dataset_content_hash": "hash_1",
+            },
+            run_record,
+            {**run_record, "status": "completed", "review_state": "approved"},
+            {"run": run_record, "summary": {"score": 0.91}},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    manifests = await client.list_evaluation_recipe_manifests()
+    manifest = await client.get_evaluation_recipe_manifest("rag_answer_quality")
+    readiness = await client.get_evaluation_recipe_launch_readiness("rag_answer_quality")
+    validation = await client.validate_evaluation_recipe_dataset(
+        "rag_answer_quality",
+        RecipeDatasetValidationRequest(dataset_id="dataset_1", run_config={"mode": "fast"}),
+    )
+    created = await client.create_evaluation_recipe_run(
+        "rag_answer_quality",
+        RecipeRunCreateRequest(dataset_id="dataset_1", run_config={"mode": "fast"}, force_rerun=True),
+    )
+    fetched = await client.get_evaluation_recipe_run("recipe_run_1")
+    report = await client.get_evaluation_recipe_run_report("recipe_run_1")
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/evaluations/recipes")
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/recipes/rag_answer_quality")
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/evaluations/recipes/rag_answer_quality/launch-readiness")
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/evaluations/recipes/rag_answer_quality/validate-dataset")
+    assert mocked.await_args_list[3].kwargs["json_data"] == {
+        "dataset_id": "dataset_1",
+        "run_config": {"mode": "fast"},
+    }
+    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/evaluations/recipes/rag_answer_quality/runs")
+    assert mocked.await_args_list[4].kwargs["json_data"] == {
+        "dataset_id": "dataset_1",
+        "run_config": {"mode": "fast"},
+        "force_rerun": True,
+    }
+    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/evaluations/recipe-runs/recipe_run_1")
+    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/evaluations/recipe-runs/recipe_run_1/report")
+
+    assert isinstance(manifests[0], RecipeManifest)
+    assert isinstance(manifest, RecipeManifest)
+    assert isinstance(readiness, RecipeLaunchReadiness)
+    assert isinstance(validation, RecipeDatasetValidationResponse)
+    assert isinstance(created, RecipeRunRecord)
+    assert isinstance(fetched, RecipeRunRecord)
+    assert manifests[0].recipe_id == "rag_answer_quality"
+    assert manifest.name == "RAG Answer Quality"
+    assert readiness.ready is True
+    assert validation.valid is True
+    assert created.run_id == "recipe_run_1"
+    assert fetched.status == "completed"
+    assert report["summary"]["score"] == 0.91

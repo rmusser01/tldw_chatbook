@@ -289,3 +289,69 @@ class WebhookTestResponse(BaseModel):
     error: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class RecipeManifest(BaseModel):
+    recipe_id: str
+    recipe_version: str
+    name: str
+    description: str
+    launchable: bool = True
+    supported_modes: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    capabilities: dict[str, Any] = Field(default_factory=dict)
+    default_run_config: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class RecipeLaunchReadiness(BaseModel):
+    recipe_id: str
+    ready: bool
+    can_enqueue_runs: bool
+    can_reuse_completed_runs: bool = True
+    runtime_checks: dict[str, Any] = Field(default_factory=dict)
+    message: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class RecipeDatasetValidationRequest(BaseModel):
+    dataset_id: Optional[str] = None
+    dataset: Any = None
+    run_config: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="allow")
+
+
+class RecipeDatasetValidationResponse(BaseModel):
+    valid: bool
+    errors: list[str] = Field(default_factory=list)
+    dataset_mode: Optional[str] = None
+    sample_count: int = 0
+    dataset_snapshot_ref: Optional[str] = None
+    dataset_content_hash: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class RecipeRunCreateRequest(RecipeDatasetValidationRequest):
+    force_rerun: bool = False
+
+
+class RecipeRunRecord(BaseModel):
+    run_id: str
+    recipe_id: str
+    recipe_version: Optional[str] = None
+    status: str
+    review_state: str = "not_required"
+    dataset_snapshot_ref: Optional[str] = None
+    dataset_content_hash: Optional[str] = None
+    confidence_summary: dict[str, Any] = Field(default_factory=dict)
+    recommendation_slots: list[dict[str, Any]] = Field(default_factory=list)
+    child_run_ids: list[str] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")

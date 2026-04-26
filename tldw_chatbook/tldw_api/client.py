@@ -527,6 +527,12 @@ from .evaluations_schemas import (
     EvaluationRunCreateRequest,
     EvaluationRunListResponse,
     EvaluationRunResponse,
+    RecipeDatasetValidationRequest,
+    RecipeDatasetValidationResponse,
+    RecipeLaunchReadiness,
+    RecipeManifest,
+    RecipeRunCreateRequest,
+    RecipeRunRecord,
     SyntheticEvalGenerationRequest,
     SyntheticEvalGenerationResponse,
     SyntheticEvalPromotionRequest,
@@ -5866,6 +5872,55 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return WebhookTestResponse.model_validate(response)
+
+    async def list_evaluation_recipe_manifests(self) -> list[RecipeManifest]:
+        response = await self._request("GET", "/api/v1/evaluations/recipes")
+        return [RecipeManifest.model_validate(item) for item in list(response or [])]
+
+    async def get_evaluation_recipe_manifest(self, recipe_id: str) -> RecipeManifest:
+        response = await self._request("GET", f"/api/v1/evaluations/recipes/{recipe_id}")
+        return RecipeManifest.model_validate(response)
+
+    async def get_evaluation_recipe_launch_readiness(
+        self,
+        recipe_id: str,
+    ) -> RecipeLaunchReadiness:
+        response = await self._request(
+            "GET",
+            f"/api/v1/evaluations/recipes/{recipe_id}/launch-readiness",
+        )
+        return RecipeLaunchReadiness.model_validate(response)
+
+    async def validate_evaluation_recipe_dataset(
+        self,
+        recipe_id: str,
+        request_data: RecipeDatasetValidationRequest,
+    ) -> RecipeDatasetValidationResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/evaluations/recipes/{recipe_id}/validate-dataset",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return RecipeDatasetValidationResponse.model_validate(response)
+
+    async def create_evaluation_recipe_run(
+        self,
+        recipe_id: str,
+        request_data: RecipeRunCreateRequest,
+    ) -> RecipeRunRecord:
+        response = await self._request(
+            "POST",
+            f"/api/v1/evaluations/recipes/{recipe_id}/runs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return RecipeRunRecord.model_validate(response)
+
+    async def get_evaluation_recipe_run(self, run_id: str) -> RecipeRunRecord:
+        response = await self._request("GET", f"/api/v1/evaluations/recipe-runs/{run_id}")
+        return RecipeRunRecord.model_validate(response)
+
+    async def get_evaluation_recipe_run_report(self, run_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/evaluations/recipe-runs/{run_id}/report")
 
     async def create_flashcard_deck(
         self,

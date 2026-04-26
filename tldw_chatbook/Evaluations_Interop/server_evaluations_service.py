@@ -11,6 +11,8 @@ from ..tldw_api import (
     CreateEvaluationRequest,
     EvaluationDatasetCreateRequest,
     EvaluationRunCreateRequest,
+    RecipeDatasetValidationRequest,
+    RecipeRunCreateRequest,
     SyntheticEvalGenerationRequest,
     SyntheticEvalPromotionRequest,
     SyntheticEvalReviewRequest,
@@ -92,6 +94,10 @@ class ServerEvaluationsService:
     @staticmethod
     def _webhook_action_id(action: str) -> str:
         return f"evaluations.webhooks.{action}.server"
+
+    @staticmethod
+    def _recipe_action_id(action: str) -> str:
+        return f"evaluations.recipes.{action}.server"
 
     def _dump_model(self, value: Any) -> Any:
         if hasattr(value, "model_dump") and callable(value.model_dump):
@@ -550,3 +556,61 @@ class ServerEvaluationsService:
     async def test_webhook(self, url: str) -> dict[str, Any]:
         self._enforce(self._webhook_action_id("launch"))
         return self._dump_model(await self._require_client().test_evaluation_webhook(WebhookTestRequest(url=url)))
+
+    async def list_recipe_manifests(self) -> list[dict[str, Any]]:
+        self._enforce(self._recipe_action_id("list"))
+        return list(self._dump_model(await self._require_client().list_evaluation_recipe_manifests()) or [])
+
+    async def get_recipe_manifest(self, recipe_id: str) -> dict[str, Any]:
+        self._enforce(self._recipe_action_id("detail"))
+        return self._dump_model(await self._require_client().get_evaluation_recipe_manifest(recipe_id))
+
+    async def get_recipe_launch_readiness(self, recipe_id: str) -> dict[str, Any]:
+        self._enforce(self._recipe_action_id("observe"))
+        return self._dump_model(
+            await self._require_client().get_evaluation_recipe_launch_readiness(recipe_id)
+        )
+
+    async def validate_recipe_dataset(
+        self,
+        recipe_id: str,
+        *,
+        dataset_id: str | None = None,
+        dataset: Any = None,
+        run_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._recipe_action_id("launch"))
+        request = RecipeDatasetValidationRequest(
+            dataset_id=dataset_id,
+            dataset=dataset,
+            run_config=run_config or {},
+        )
+        return self._dump_model(
+            await self._require_client().validate_evaluation_recipe_dataset(recipe_id, request)
+        )
+
+    async def create_recipe_run(
+        self,
+        recipe_id: str,
+        *,
+        dataset_id: str | None = None,
+        dataset: Any = None,
+        run_config: dict[str, Any] | None = None,
+        force_rerun: bool = False,
+    ) -> dict[str, Any]:
+        self._enforce(self._recipe_action_id("launch"))
+        request = RecipeRunCreateRequest(
+            dataset_id=dataset_id,
+            dataset=dataset,
+            run_config=run_config or {},
+            force_rerun=force_rerun,
+        )
+        return self._dump_model(await self._require_client().create_evaluation_recipe_run(recipe_id, request))
+
+    async def get_recipe_run(self, run_id: str) -> dict[str, Any]:
+        self._enforce(self._recipe_action_id("observe"))
+        return self._dump_model(await self._require_client().get_evaluation_recipe_run(run_id))
+
+    async def get_recipe_run_report(self, run_id: str) -> dict[str, Any]:
+        self._enforce(self._recipe_action_id("observe"))
+        return self._dump_model(await self._require_client().get_evaluation_recipe_run_report(run_id))

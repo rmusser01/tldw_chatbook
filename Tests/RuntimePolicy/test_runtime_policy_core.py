@@ -736,6 +736,10 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         evaluations.webhooks.delete.server
         evaluations.webhooks.launch.server
         evaluations.webhooks.list.server
+        evaluations.recipes.detail.server
+        evaluations.recipes.launch.server
+        evaluations.recipes.list.server
+        evaluations.recipes.observe.server
         evaluations.rag_pipeline.create.server
         evaluations.rag_pipeline.delete.server
         evaluations.rag_pipeline.detail.server

@@ -34,7 +34,7 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "source": "local",
         "supported": False,
         "reason_code": "remote_only_surface",
-        "user_message": "Server synthetic evaluation drafts, benchmark runs, and webhook administration are unavailable in local/offline mode.",
+        "user_message": "Server synthetic evaluation drafts, benchmark runs, webhook administration, and recipe-run controls are unavailable in local/offline mode.",
         "affected_action_ids": [],
     },
 ]
@@ -129,6 +129,10 @@ class EvaluationScopeService:
     @staticmethod
     def _webhook_action_id(mode: EvaluationBackend, action: str) -> str:
         return f"evaluations.webhooks.{action}.{mode.value}"
+
+    @staticmethod
+    def _recipe_action_id(mode: EvaluationBackend, action: str) -> str:
+        return f"evaluations.recipes.{action}.{mode.value}"
 
     def _require_server_only_mode(
         self,
@@ -971,3 +975,128 @@ class EvaluationScopeService:
         self._enforce_policy(self._webhook_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
         return dict(await self._maybe_await(service.test_webhook(url)) or {})
+
+    async def list_recipe_manifests(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation recipe controls",
+        )
+        self._enforce_policy(self._recipe_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        return list(await self._maybe_await(service.list_recipe_manifests()) or [])
+
+    async def get_recipe_manifest(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation recipe controls",
+        )
+        self._enforce_policy(self._recipe_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.get_recipe_manifest(recipe_id)) or {})
+
+    async def get_recipe_launch_readiness(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation recipe controls",
+        )
+        self._enforce_policy(self._recipe_action_id(normalized_mode, "observe"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.get_recipe_launch_readiness(recipe_id)) or {})
+
+    async def validate_recipe_dataset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_id: str,
+        dataset_id: str | None = None,
+        dataset: Any = None,
+        run_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation recipe controls",
+        )
+        self._enforce_policy(self._recipe_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.validate_recipe_dataset(
+                    recipe_id,
+                    dataset_id=dataset_id,
+                    dataset=dataset,
+                    run_config=run_config,
+                )
+            )
+            or {}
+        )
+
+    async def create_recipe_run(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_id: str,
+        dataset_id: str | None = None,
+        dataset: Any = None,
+        run_config: dict[str, Any] | None = None,
+        force_rerun: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation recipe controls",
+        )
+        self._enforce_policy(self._recipe_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(
+            await self._maybe_await(
+                service.create_recipe_run(
+                    recipe_id,
+                    dataset_id=dataset_id,
+                    dataset=dataset,
+                    run_config=run_config,
+                    force_rerun=force_rerun,
+                )
+            )
+            or {}
+        )
+
+    async def get_recipe_run(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        run_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation recipe controls",
+        )
+        self._enforce_policy(self._recipe_action_id(normalized_mode, "observe"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.get_recipe_run(run_id)) or {})
+
+    async def get_recipe_run_report(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        run_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Evaluation recipe controls",
+        )
+        self._enforce_policy(self._recipe_action_id(normalized_mode, "observe"))
+        service = self._service_for_mode(normalized_mode)
+        return dict(await self._maybe_await(service.get_recipe_run_report(run_id)) or {})

@@ -306,6 +306,34 @@ class FakeServerEvaluationService:
         self.calls.append(("test_webhook", url))
         return {"success": True}
 
+    async def list_recipe_manifests(self):
+        self.calls.append(("list_recipe_manifests",))
+        return [{"recipe_id": "rag_answer_quality", "name": "RAG Answer Quality"}]
+
+    async def get_recipe_manifest(self, recipe_id):
+        self.calls.append(("get_recipe_manifest", recipe_id))
+        return {"recipe_id": recipe_id, "name": "RAG Answer Quality"}
+
+    async def get_recipe_launch_readiness(self, recipe_id):
+        self.calls.append(("get_recipe_launch_readiness", recipe_id))
+        return {"recipe_id": recipe_id, "ready": True}
+
+    async def validate_recipe_dataset(self, recipe_id, **kwargs):
+        self.calls.append(("validate_recipe_dataset", recipe_id, kwargs))
+        return {"valid": True, "sample_count": 1}
+
+    async def create_recipe_run(self, recipe_id, **kwargs):
+        self.calls.append(("create_recipe_run", recipe_id, kwargs))
+        return {"run_id": "recipe_run_1", "recipe_id": recipe_id, "status": "pending"}
+
+    async def get_recipe_run(self, run_id):
+        self.calls.append(("get_recipe_run", run_id))
+        return {"run_id": run_id, "recipe_id": "rag_answer_quality", "status": "completed"}
+
+    async def get_recipe_run_report(self, run_id):
+        self.calls.append(("get_recipe_run_report", run_id))
+        return {"run": {"run_id": run_id}, "summary": {"score": 0.91}}
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
@@ -719,6 +747,62 @@ async def test_scope_service_routes_server_synthetic_benchmark_and_webhook_contr
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_server_recipe_controls_with_policy():
+    server = FakeServerEvaluationService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    manifests = await scope.list_recipe_manifests(mode="server")
+    manifest = await scope.get_recipe_manifest(mode="server", recipe_id="rag_answer_quality")
+    readiness = await scope.get_recipe_launch_readiness(mode="server", recipe_id="rag_answer_quality")
+    validation = await scope.validate_recipe_dataset(
+        mode="server",
+        recipe_id="rag_answer_quality",
+        dataset_id="dataset_1",
+        run_config={"mode": "fast"},
+    )
+    created = await scope.create_recipe_run(
+        mode="server",
+        recipe_id="rag_answer_quality",
+        dataset_id="dataset_1",
+        run_config={"mode": "fast"},
+        force_rerun=True,
+    )
+    fetched = await scope.get_recipe_run(mode="server", run_id="recipe_run_1")
+    report = await scope.get_recipe_run_report(mode="server", run_id="recipe_run_1")
+
+    assert manifests[0]["recipe_id"] == "rag_answer_quality"
+    assert manifest["name"] == "RAG Answer Quality"
+    assert readiness["ready"] is True
+    assert validation["valid"] is True
+    assert created["run_id"] == "recipe_run_1"
+    assert fetched["status"] == "completed"
+    assert report["summary"]["score"] == 0.91
+    assert server.calls[-7:] == [
+        ("list_recipe_manifests",),
+        ("get_recipe_manifest", "rag_answer_quality"),
+        ("get_recipe_launch_readiness", "rag_answer_quality"),
+        ("validate_recipe_dataset", "rag_answer_quality", {"dataset_id": "dataset_1", "dataset": None, "run_config": {"mode": "fast"}}),
+        ("create_recipe_run", "rag_answer_quality", {"dataset_id": "dataset_1", "dataset": None, "run_config": {"mode": "fast"}, "force_rerun": True}),
+        ("get_recipe_run", "recipe_run_1"),
+        ("get_recipe_run_report", "recipe_run_1"),
+    ]
+    assert policy_enforcer.calls[-7:] == [
+        "evaluations.recipes.list.server",
+        "evaluations.recipes.detail.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.observe.server",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_rejects_server_only_evaluation_helpers_in_local_mode():
     scope = EvaluationScopeService(
         local_service=FakeLocalEvaluationService(),
@@ -733,6 +817,9 @@ async def test_scope_service_rejects_server_only_evaluation_helpers_in_local_mod
 
     with pytest.raises(ValueError, match="Evaluation webhook administration"):
         await scope.list_webhooks(mode="local")
+
+    with pytest.raises(ValueError, match="Evaluation recipe controls"):
+        await scope.list_recipe_manifests(mode="local")
 
 
 def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
@@ -758,7 +845,7 @@ def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
             "source": "local",
             "supported": False,
             "reason_code": "remote_only_surface",
-            "user_message": "Server synthetic evaluation drafts, benchmark runs, and webhook administration are unavailable in local/offline mode.",
+            "user_message": "Server synthetic evaluation drafts, benchmark runs, webhook administration, and recipe-run controls are unavailable in local/offline mode.",
             "affected_action_ids": [],
         },
     ]
