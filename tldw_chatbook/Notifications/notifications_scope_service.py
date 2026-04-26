@@ -1,4 +1,4 @@
-"""Source-aware routing for server-owned reminder and notification feed capabilities."""
+"""Source-aware routing for local notification queues and server reminder/feed capabilities."""
 
 from __future__ import annotations
 
@@ -14,20 +14,21 @@ class NotificationsBackend(str, Enum):
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
-        "operation_id": "notifications.remote_only.local",
+        "operation_id": "notifications.reminders.local",
         "source": "local",
         "supported": False,
-        "reason_code": "remote_only_surface",
-        "user_message": "Server reminders and notification feeds are unavailable in local/offline mode.",
+        "reason_code": "server_authority_required",
+        "user_message": "Server reminders are unavailable in local/offline mode; local Chatbook notifications use the local queue.",
         "affected_action_ids": [],
     }
 ]
 
 
 class NotificationsScopeService:
-    """Route server reminders and notification feeds through one remote-owned seam."""
+    """Route local queue notifications or server reminders/feed through one seam."""
 
-    def __init__(self, *, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(self, *, local_service: Any = None, server_service: Any = None, policy_enforcer: Any = None):
+        self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
@@ -41,10 +42,15 @@ class NotificationsScopeService:
         except ValueError as exc:
             raise ValueError(f"Invalid notifications backend: {mode}") from exc
 
+    def _require_local_service(self) -> Any:
+        if self.local_service is None:
+            raise ValueError("Local notifications backend is unavailable.")
+        return self.local_service
+
     def _require_server_service(self, mode: NotificationsBackend) -> Any:
         if mode == NotificationsBackend.LOCAL:
             raise ValueError(
-                "Server reminders and notification feeds are server-only; switch to server mode to manage them."
+                "Server reminders are server-only; switch to server mode to manage them."
             )
         if self.server_service is None:
             raise ValueError("Server notifications backend is unavailable.")
@@ -72,6 +78,15 @@ class NotificationsScopeService:
         source_id = record.get(id_key)
         if source_id is not None:
             record.setdefault("record_id", f"{mode.value}:{kind}:{source_id}")
+        return record
+
+    @staticmethod
+    def _with_local_notification_record_id(payload: dict[str, Any]) -> dict[str, Any]:
+        record = dict(payload or {})
+        record.setdefault("backend", "local")
+        source_id = record.get("id")
+        if source_id is not None:
+            record.setdefault("record_id", f"local:notification:{source_id}")
         return record
 
     def _normalize_response(
@@ -111,6 +126,8 @@ class NotificationsScopeService:
         return self._normalize_item(mode, payload)
 
     def _normalize_item(self, mode: NotificationsBackend, item: dict[str, Any]) -> dict[str, Any]:
+        if mode == NotificationsBackend.LOCAL:
+            return self._with_local_notification_record_id(item)
         if "schedule_kind" in item or "next_run_at" in item:
             return self._with_record_id(mode, "reminder_task", item)
         if "kind" in item or "read_at" in item or "dismissed_at" in item:
@@ -158,8 +175,21 @@ class NotificationsScopeService:
         return self._normalize_response(normalized_mode, result, normalize_kind=normalize_kind, id_key=id_key)
 
     async def list_feed(self, *, mode: NotificationsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == NotificationsBackend.LOCAL:
+            service = self._require_local_service()
+            self._enforce_policy("notifications.queue.list.local")
+            result = await self._maybe_await(
+                service.list_queue(
+                    limit=int(kwargs.get("limit", 100) or 100),
+                    include_dismissed=bool(kwargs.get("include_dismissed", False)),
+                    category=kwargs.get("category"),
+                )
+            )
+            items = [self._normalize_item(normalized_mode, item) for item in result]
+            return {"items": items, "total": len(items), "backend": normalized_mode.value}
         return await self._call(
-            mode=mode,
+            mode=normalized_mode,
             resource="feed",
             action="list",
             method_name="list_feed",
@@ -168,16 +198,32 @@ class NotificationsScopeService:
         )
 
     async def unread_count(self, *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == NotificationsBackend.LOCAL:
+            service = self._require_local_service()
+            self._enforce_policy("notifications.queue.list.local")
+            result = await self._maybe_await(service.list_queue(limit=1000, include_dismissed=False))
+            return {
+                "backend": normalized_mode.value,
+                "unread_count": sum(1 for item in result if not bool(item.get("is_read"))),
+            }
         return await self._call(
-            mode=mode,
+            mode=normalized_mode,
             resource="feed",
             action="list",
             method_name="unread_count",
         )
 
     async def mark_read(self, ids: list[int], *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == NotificationsBackend.LOCAL:
+            service = self._require_local_service()
+            self._enforce_policy("notifications.queue.update.local")
+            for notification_id in ids:
+                await self._maybe_await(service.update_notification(int(notification_id), is_read=True))
+            return {"backend": normalized_mode.value, "updated": len(ids)}
         return await self._call(
-            mode=mode,
+            mode=normalized_mode,
             resource="feed",
             action="update",
             method_name="mark_read",
@@ -185,8 +231,16 @@ class NotificationsScopeService:
         )
 
     async def dismiss(self, notification_id: int, *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == NotificationsBackend.LOCAL:
+            service = self._require_local_service()
+            self._enforce_policy("notifications.queue.update.local")
+            result = await self._maybe_await(
+                service.update_notification(int(notification_id), is_dismissed=True)
+            )
+            return self._normalize_item(normalized_mode, result)
         return await self._call(
-            mode=mode,
+            mode=normalized_mode,
             resource="feed",
             action="update",
             method_name="dismiss",
@@ -247,6 +301,26 @@ class NotificationsScopeService:
         **kwargs: Any,
     ) -> AsyncGenerator[dict[str, Any], None]:
         normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == NotificationsBackend.LOCAL:
+            service = self._require_local_service()
+            self._enforce_policy("notifications.queue.observe.local")
+            after_id = kwargs.get("after_id", kwargs.get("after", 0))
+            result = await self._maybe_await(
+                service.observe_queue(
+                    after_id=int(after_id or 0),
+                    limit=int(kwargs.get("limit", 100) or 100),
+                    include_dismissed=bool(kwargs.get("include_dismissed", False)),
+                )
+            )
+            for item in result:
+                normalized_item = self._normalize_item(normalized_mode, item)
+                yield {
+                    "event": "notification",
+                    "backend": normalized_mode.value,
+                    "event_id": f"local:{normalized_item.get('id')}",
+                    "data": normalized_item,
+                }
+            return
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(self._action_id("feed", "observe"))
         async for event in service.observe_feed(**kwargs):

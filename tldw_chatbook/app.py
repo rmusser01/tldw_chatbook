@@ -1676,7 +1676,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        self.client_notifications_db = ClientNotificationsDB(
+            get_notifications_db_path(),
+            CLI_APP_CLIENT_ID,
+        )
+        self.client_notifications_service = ClientNotificationsService(
+            store=self.client_notifications_db,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.notification_dispatch_service = NotificationDispatchService(
+            store=self.client_notifications_db,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.notifications_scope_service = NotificationsScopeService(
+            local_service=self.client_notifications_service,
             server_service=self.server_notifications_service,
             policy_enforcer=self.service_policy_enforcer,
         )
@@ -2049,18 +2062,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.watchlist_scope_service = WatchlistScopeService(
             local_service=self.local_watchlists_service,
             server_service=self.server_watchlists_service,
-            policy_enforcer=self.service_policy_enforcer,
-        )
-        self.client_notifications_db = ClientNotificationsDB(
-            get_notifications_db_path(),
-            CLI_APP_CLIENT_ID,
-        )
-        self.client_notifications_service = ClientNotificationsService(
-            store=self.client_notifications_db,
-            policy_enforcer=self.service_policy_enforcer,
-        )
-        self.notification_dispatch_service = NotificationDispatchService(
-            store=self.client_notifications_db,
             policy_enforcer=self.service_policy_enforcer,
         )
         self.local_watchlists_service.notification_dispatcher = self.notification_dispatch_service

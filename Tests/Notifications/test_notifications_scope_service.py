@@ -36,6 +36,50 @@ class FakeServerNotificationsService:
         yield {"event": "notification", "data": {"id": 8, "title": "Observed"}, "event_id": "evt-8"}
 
 
+class FakeLocalNotificationsService:
+    def __init__(self):
+        self.calls = []
+        self.rows = [
+            {
+                "id": 3,
+                "category": "watchlists",
+                "title": "Local alert",
+                "message": "Local item changed.",
+                "severity": "warning",
+                "is_read": False,
+                "is_dismissed": False,
+                "created_at": "2026-04-25T00:00:00+00:00",
+            },
+            {
+                "id": 2,
+                "category": "media",
+                "title": "Older",
+                "message": "Older local item.",
+                "severity": "information",
+                "is_read": True,
+                "is_dismissed": False,
+                "created_at": "2026-04-24T00:00:00+00:00",
+            },
+        ]
+
+    def list_queue(self, **kwargs):
+        self.calls.append(("list_queue", kwargs))
+        return list(self.rows)
+
+    def observe_queue(self, **kwargs):
+        self.calls.append(("observe_queue", kwargs))
+        after_id = int(kwargs.get("after_id", 0))
+        return [row for row in self.rows if row["id"] > after_id]
+
+    def update_notification(self, notification_id, **kwargs):
+        self.calls.append(("update_notification", notification_id, kwargs))
+        for row in self.rows:
+            if row["id"] == int(notification_id):
+                row.update({key: value for key, value in kwargs.items() if value is not None})
+                return dict(row)
+        raise KeyError(notification_id)
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
         self.denied_reason = denied_reason
@@ -93,14 +137,67 @@ async def test_notifications_scope_service_routes_server_feed_reminders_and_obse
 
 
 @pytest.mark.asyncio
-async def test_notifications_scope_service_honestly_rejects_local_mode_as_remote_only():
+async def test_notifications_scope_service_requires_local_backend_for_local_feed():
     server = FakeServerNotificationsService()
     scope = NotificationsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
 
-    with pytest.raises(ValueError, match="Server reminders and notification feeds are server-only"):
+    with pytest.raises(ValueError, match="Local notifications backend is unavailable"):
         await scope.list_feed(mode="local")
 
     assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_notifications_scope_service_routes_local_feed_to_client_queue():
+    local = FakeLocalNotificationsService()
+    server = FakeServerNotificationsService()
+    policy = FakePolicyEnforcer()
+    scope = NotificationsScopeService(
+        local_service=local,
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    feed = await scope.list_feed(mode="local", limit=10, category="watchlists")
+    unread = await scope.unread_count(mode="local")
+    marked = await scope.mark_read(mode="local", ids=[3])
+    dismissed = await scope.dismiss(3, mode="local")
+    observed = [event async for event in scope.observe_feed(mode="local", after_id=2, limit=10)]
+
+    assert feed["items"][0]["record_id"] == "local:notification:3"
+    assert feed["items"][0]["backend"] == "local"
+    assert unread == {"backend": "local", "unread_count": 1}
+    assert marked == {"backend": "local", "updated": 1}
+    assert dismissed["record_id"] == "local:notification:3"
+    assert dismissed["is_dismissed"] is True
+    assert observed[0]["backend"] == "local"
+    assert observed[0]["data"]["record_id"] == "local:notification:3"
+    assert server.calls == []
+    assert local.calls == [
+        ("list_queue", {"limit": 10, "include_dismissed": False, "category": "watchlists"}),
+        ("list_queue", {"limit": 1000, "include_dismissed": False}),
+        ("update_notification", 3, {"is_read": True}),
+        ("update_notification", 3, {"is_dismissed": True}),
+        ("observe_queue", {"after_id": 2, "limit": 10, "include_dismissed": False}),
+    ]
+    assert policy.calls == [
+        "notifications.queue.list.local",
+        "notifications.queue.list.local",
+        "notifications.queue.update.local",
+        "notifications.queue.update.local",
+        "notifications.queue.observe.local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_notifications_scope_service_keeps_local_reminders_server_owned():
+    local = FakeLocalNotificationsService()
+    scope = NotificationsScopeService(local_service=local, server_service=FakeServerNotificationsService())
+
+    with pytest.raises(ValueError, match="Server reminders are server-only"):
+        await scope.create_reminder(mode="local", title="Follow up", schedule_kind="one_time")
+
+    assert local.calls == []
 
 
 @pytest.mark.asyncio
@@ -124,11 +221,11 @@ def test_notifications_scope_service_reports_known_unsupported_capabilities():
     assert scope.list_unsupported_capabilities(mode="server") == []
     assert scope.list_unsupported_capabilities(mode="local") == [
         {
-            "operation_id": "notifications.remote_only.local",
+            "operation_id": "notifications.reminders.local",
             "source": "local",
             "supported": False,
-            "reason_code": "remote_only_surface",
-            "user_message": "Server reminders and notification feeds are unavailable in local/offline mode.",
+            "reason_code": "server_authority_required",
+            "user_message": "Server reminders are unavailable in local/offline mode; local Chatbook notifications use the local queue.",
             "affected_action_ids": [],
         }
     ]
