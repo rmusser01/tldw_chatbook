@@ -813,6 +813,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.items.update.server
         media.navigation.detail.local
         media.navigation.detail.server
+        media.processing.audio.process.local
         media.processing.audio.process.server
         media.processing.code.process.local
         media.processing.code.process.server
@@ -828,6 +829,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.processing.pdf.process.server
         media.processing.plaintext.process.local
         media.processing.plaintext.process.server
+        media.processing.video.process.local
         media.processing.video.process.server
         media.processing.web_scraping.process.local
         media.processing.web_scraping.process.server

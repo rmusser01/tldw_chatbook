@@ -34,11 +34,15 @@ class LocalMediaReadingService:
         tts_audio_generator: Any = None,
         url_article_scraper: Any = None,
         url_file_downloader: Any = None,
+        audio_processor_factory: Any = None,
+        video_processor_factory: Any = None,
     ):
         self.media_db = media_db
         self.tts_audio_generator = tts_audio_generator
         self.url_article_scraper = url_article_scraper
         self.url_file_downloader = url_file_downloader
+        self.audio_processor_factory = audio_processor_factory
+        self.video_processor_factory = video_processor_factory
 
     def _require_db(self) -> Any:
         if self.media_db is None:
@@ -733,6 +737,42 @@ class LocalMediaReadingService:
             "results": results,
         }
 
+    def process_audio(
+        self,
+        *,
+        urls: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        **options: Any,
+    ) -> dict[str, Any]:
+        inputs = self._combine_url_file_inputs(urls=urls, file_paths=file_paths)
+        if not inputs:
+            return self._failed_local_no_db_processing_result("audio", "At least one URL or local audio file path is required.")
+        processor = self._build_local_audio_processor()
+        payload = processor.process_audio_files(
+            inputs=inputs,
+            **self._local_audio_video_options(options),
+        )
+        return self._mark_local_no_db_processing(payload)
+
+    def process_video(
+        self,
+        *,
+        urls: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        **options: Any,
+    ) -> dict[str, Any]:
+        inputs = self._combine_url_file_inputs(urls=urls, file_paths=file_paths)
+        if not inputs:
+            return self._failed_local_no_db_processing_result("video", "At least one URL or local video file path is required.")
+        processor = self._build_local_video_processor()
+        download_video_flag = bool(options.pop("download_video_flag", options.pop("download_video", False)))
+        payload = processor.process_videos(
+            inputs=inputs,
+            download_video_flag=download_video_flag,
+            **self._local_audio_video_options(options),
+        )
+        return self._mark_local_no_db_processing(payload)
+
     def process_code(
         self,
         *,
@@ -882,6 +922,99 @@ class LocalMediaReadingService:
     def _split_title_input(custom_titles: str | None) -> list[str]:
         raw = str(custom_titles or "")
         return [line.strip() for line in raw.splitlines() if line.strip()]
+
+    def _build_local_audio_processor(self) -> Any:
+        if self.audio_processor_factory is not None:
+            return self.audio_processor_factory()
+        from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
+
+        return LocalAudioProcessor(media_db=None)
+
+    def _build_local_video_processor(self) -> Any:
+        if self.video_processor_factory is not None:
+            return self.video_processor_factory()
+        from tldw_chatbook.Local_Ingestion.video_processing import LocalVideoProcessor
+
+        return LocalVideoProcessor(media_db=None)
+
+    @staticmethod
+    def _combine_url_file_inputs(
+        *,
+        urls: list[str] | None,
+        file_paths: list[str] | None,
+    ) -> list[str]:
+        return [
+            str(value).strip()
+            for value in [*(urls or []), *(file_paths or [])]
+            if str(value).strip()
+        ]
+
+    @staticmethod
+    def _local_audio_video_options(options: Mapping[str, Any]) -> dict[str, Any]:
+        supported_options = {
+            "transcription_provider",
+            "transcription_model",
+            "transcription_language",
+            "translation_target_language",
+            "perform_chunking",
+            "chunk_method",
+            "chunk_overlap",
+            "use_adaptive_chunking",
+            "use_multi_level_chunking",
+            "chunk_language",
+            "diarize",
+            "vad_use",
+            "timestamp_option",
+            "start_time",
+            "end_time",
+            "perform_analysis",
+            "api_name",
+            "api_key",
+            "custom_prompt",
+            "system_prompt",
+            "summarize_recursively",
+            "use_cookies",
+            "cookies",
+            "keep_original",
+            "author",
+        }
+        normalized = {key: value for key, value in options.items() if key in supported_options and value is not None}
+        if "title" in options and options["title"] is not None:
+            normalized["custom_title"] = options["title"]
+        if "chunk_size" in options and options["chunk_size"] is not None:
+            normalized["max_chunk_size"] = options["chunk_size"]
+        return normalized
+
+    @staticmethod
+    def _mark_local_no_db_processing(payload: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(payload)
+        result["backend"] = "local"
+        result["persisted"] = False
+        result["results"] = [
+            {**dict(item), "backend": "local", "persisted": False}
+            for item in result.get("results", [])
+        ]
+        return result
+
+    @staticmethod
+    def _failed_local_no_db_processing_result(media_type: str, message: str) -> dict[str, Any]:
+        return {
+            "processed_count": 0,
+            "errors_count": 1,
+            "errors": [message],
+            "backend": "local",
+            "persisted": False,
+            "results": [
+                {
+                    "status": "Error",
+                    "input_ref": "",
+                    "media_type": media_type,
+                    "error": message,
+                    "backend": "local",
+                    "persisted": False,
+                }
+            ],
+        }
 
     @classmethod
     def _parse_local_email_path(cls, path: Path, *, accept_mbox: bool) -> list[dict[str, Any]]:

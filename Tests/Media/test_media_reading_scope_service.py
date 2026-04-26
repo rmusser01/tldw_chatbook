@@ -202,6 +202,14 @@ class FakeLocalMediaService:
         self.calls.append(("purge_file_artifacts", delete_files, soft_deleted_grace_days, include_retention))
         return {"removed": 1, "files_deleted": 0}
 
+    def process_video(self, **kwargs):
+        self.calls.append(("process_video", kwargs))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "video"}]}
+
+    def process_audio(self, **kwargs):
+        self.calls.append(("process_audio", kwargs))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "audio"}]}
+
     def process_plaintext(self, **kwargs):
         self.calls.append(("process_plaintext", kwargs))
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "plaintext"}]}
@@ -1415,8 +1423,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
 
     assert [item["operation_id"] for item in local_report] == [
         "media.web_content_ingest.local",
-        "media.processing.video.local",
-        "media.processing.audio.local",
         "media.processing.mediawiki.local",
         "media.transcription_models.local",
     ]
@@ -3371,20 +3377,26 @@ async def test_scope_service_routes_existing_server_no_db_processing_endpoints()
         "media.processing.plaintext.process.server",
     ]
 
-    with pytest.raises(ValueError, match="server-only"):
-        await scope_service.process_video(mode="local", urls=["https://example.com/video.mp4"])
-
+    local_video = await scope_service.process_video(mode="local", file_paths=["/tmp/video.mp4"])
+    local_audio = await scope_service.process_audio(mode="local", file_paths=["/tmp/audio.mp3"])
     local_pdf = await scope_service.process_pdf(mode="local", file_paths=["/tmp/paper.pdf"])
     local_ebook = await scope_service.process_ebook(mode="local", file_paths=["/tmp/book.epub"])
     local_document = await scope_service.process_document(mode="local", file_paths=["/tmp/doc.md"])
     local_plaintext = await scope_service.process_plaintext(mode="local", file_paths=["/tmp/notes.txt"])
-    assert [item["results"][0]["media_type"] for item in [local_pdf, local_ebook, local_document, local_plaintext]] == [
+    assert [
+        item["results"][0]["media_type"]
+        for item in [local_video, local_audio, local_pdf, local_ebook, local_document, local_plaintext]
+    ] == [
+        "video",
+        "audio",
         "pdf",
         "ebook",
         "document",
         "plaintext",
     ]
-    assert policy.calls[-4:] == [
+    assert policy.calls[-6:] == [
+        "media.processing.video.process.local",
+        "media.processing.audio.process.local",
         "media.processing.pdf.process.local",
         "media.processing.ebook.process.local",
         "media.processing.document.process.local",

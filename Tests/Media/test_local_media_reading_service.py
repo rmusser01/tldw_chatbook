@@ -757,6 +757,91 @@ def test_local_service_processes_web_scraping_urls_without_persisting(memory_db_
     assert service.list_media_items()["pagination"]["total_items"] == 0
 
 
+def test_local_service_processes_audio_and_video_without_persisting(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    audio_path = tmp_path / "clip.mp3"
+    video_path = tmp_path / "clip.mp4"
+    audio_path.write_bytes(b"audio")
+    video_path.write_bytes(b"video")
+    calls = []
+
+    class FakeAudioProcessor:
+        def process_audio_files(self, **kwargs):
+            calls.append(("audio", kwargs))
+            return {
+                "processed_count": 1,
+                "errors_count": 0,
+                "errors": [],
+                "results": [
+                    {
+                        "status": "Success",
+                        "input_ref": str(audio_path),
+                        "media_type": "audio",
+                        "content": "audio transcript",
+                    }
+                ],
+            }
+
+    class FakeVideoProcessor:
+        def process_videos(self, **kwargs):
+            calls.append(("video", kwargs))
+            return {
+                "processed_count": 1,
+                "errors_count": 0,
+                "errors": [],
+                "results": [
+                    {
+                        "status": "Success",
+                        "input_ref": str(video_path),
+                        "media_type": "video",
+                        "content": "video transcript",
+                    }
+                ],
+            }
+
+    service = LocalMediaReadingService(
+        db,
+        audio_processor_factory=FakeAudioProcessor,
+        video_processor_factory=FakeVideoProcessor,
+    )
+
+    audio = service.process_audio(
+        file_paths=[str(audio_path)],
+        transcription_model="tiny",
+        perform_analysis=False,
+    )
+    video = service.process_video(
+        file_paths=[str(video_path)],
+        transcription_model="tiny",
+        perform_analysis=False,
+    )
+
+    assert audio["backend"] == "local"
+    assert audio["persisted"] is False
+    assert audio["results"][0]["backend"] == "local"
+    assert audio["results"][0]["persisted"] is False
+    assert video["backend"] == "local"
+    assert video["persisted"] is False
+    assert calls[0] == (
+        "audio",
+        {
+            "inputs": [str(audio_path)],
+            "transcription_model": "tiny",
+            "perform_analysis": False,
+        },
+    )
+    assert calls[1] == (
+        "video",
+        {
+            "inputs": [str(video_path)],
+            "download_video_flag": False,
+            "transcription_model": "tiny",
+            "perform_analysis": False,
+        },
+    )
+    assert service.list_media_items()["pagination"]["total_items"] == 0
+
+
 def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(

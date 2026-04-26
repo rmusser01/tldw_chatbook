@@ -29,22 +29,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "affected_action_ids": [],
     },
     {
-        "operation_id": "media.processing.video.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "source_specific_equivalent",
-        "user_message": "The server process-videos endpoint is server-owned; local mode should use local ingestion or media tooling instead.",
-        "affected_action_ids": [],
-    },
-    {
-        "operation_id": "media.processing.audio.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "source_specific_equivalent",
-        "user_message": "The server process-audios endpoint is server-owned; local mode should use local ingestion or audio tooling instead.",
-        "affected_action_ids": [],
-    },
-    {
         "operation_id": "media.processing.mediawiki.local",
         "source": "local",
         "supported": False,
@@ -1084,7 +1068,7 @@ class MediaReadingScopeService:
         **options: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL and kind not in {"pdf", "ebook", "document", "plaintext"}:
+        if normalized_mode == MediaReadingBackend.LOCAL and kind not in {"video", "audio", "pdf", "ebook", "document", "plaintext"}:
             service = self._server_processing_service(normalized_mode, f"process-{kind}")
         else:
             service = self._service_for_mode(normalized_mode)
