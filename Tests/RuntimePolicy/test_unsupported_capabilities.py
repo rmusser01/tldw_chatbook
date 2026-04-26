@@ -33,6 +33,7 @@ from tldw_chatbook.Text2SQL_Interop.text2sql_scope_service import Text2SQLScopeS
 from tldw_chatbook.Tools_Interop.tools_scope_service import ToolsScopeService
 from tldw_chatbook.Translation_Interop.translation_scope_service import TranslationScopeService
 from tldw_chatbook.User_Governance_Interop.user_governance_scope_service import UserGovernanceScopeService
+from tldw_chatbook.Voice_Assistant_Interop.voice_assistant_scope_service import VoiceAssistantScopeService
 from tldw_chatbook.Web_Clipper_Interop.web_clipper_scope_service import WebClipperScopeService
 from tldw_chatbook.Web_Scraping_Interop.web_scraping_scope_service import WebScrapingScopeService
 from tldw_chatbook.Writing_Interop.writing_scope_service import WritingScopeService
@@ -157,6 +158,7 @@ def test_collect_unsupported_capability_reports_labels_each_report_scope():
         (Text2SQLScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (SyncScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (UserGovernanceScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (VoiceAssistantScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (SharingScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (WebClipperScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (WebScrapingScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),

@@ -262,6 +262,7 @@ from tldw_chatbook.Subscriptions import (
     WatchlistScopeService,
 )
 from tldw_chatbook.Translation_Interop import ServerTranslationService, TranslationScopeService
+from tldw_chatbook.Voice_Assistant_Interop import ServerVoiceAssistantService, VoiceAssistantScopeService
 from tldw_chatbook.Evaluations_Interop import (
     EvaluationScopeService,
     LocalEvaluationsService,
@@ -1775,6 +1776,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.translation_scope_service = TranslationScopeService(
             server_service=self.server_translation_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_voice_assistant_service = ServerVoiceAssistantService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_voice_assistant_service = ServerVoiceAssistantService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.voice_assistant_scope_service = VoiceAssistantScopeService(
+            server_service=self.server_voice_assistant_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:

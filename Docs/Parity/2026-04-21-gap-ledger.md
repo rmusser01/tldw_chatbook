@@ -161,6 +161,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 2
 - Notes: Priority 58. This is a cross-cutting media/chat utility surface, but it should stay source-separated until local audio artifact and history semantics are explicitly designed.
 
+### Voice Assistant: server voice commands, sessions, analytics, and dry-run validation
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Discover / Configure / Trigger / Observe
+- Current state: Chatbook now has typed direct API-client wrappers plus an app-wired policy-gated server service and source-aware remote-only scope seam for server Voice Assistant REST command processing, command list/create/detail/update/toggle/validate/usage/delete, session list/detail/delete, analytics summary, and command dry-run validation.
+- Gap: Dedicated UX adoption, realtime Voice Assistant WebSocket transport, workflow template/status/cancel routes, local/server command mirror semantics, and persona/MCP/workflow identity mapping remain pending. Chatbook's existing local dictation and local voice command processing stay separate from server Voice Assistant state.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/voice_assistant.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/voice_assistant_schemas.py`; Chatbook: `tldw_chatbook/Voice_Assistant_Interop/server_voice_assistant_service.py`, `tldw_chatbook/Voice_Assistant_Interop/voice_assistant_scope_service.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/voice_assistant_schemas.py`, `tldw_chatbook/app.py`; Verification: `Tests/tldw_api/test_voice_assistant_client.py`, `Tests/Voice_Assistant/test_server_voice_assistant_service.py`, `Tests/Voice_Assistant/test_voice_assistant_scope_service.py`, app wiring coverage in `Tests/UI/test_screen_navigation.py`, and runtime-policy coverage in `Tests/RuntimePolicy/test_runtime_policy_core.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 47. This is user-facing server completeness for voice command administration and dry-run validation, but workflow and WebSocket parity should stay deferred until those larger surfaces are reopened.
+
 ### LLM Provider / Model Catalog: LLM health, configured providers, model metadata, and available model IDs
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Discover / Configure / Observe

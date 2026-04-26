@@ -202,6 +202,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": FULL_CRUD_AND_LAUNCH_AND_OBSERVE,
         },
     },
+    "voice_assistant": {
+        "expected_domain_ids": {"voice_assistant"},
+        "expected_action_kinds_by_source": {
+            "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
+        },
+    },
     "auth_profile_sessions": {
         "expected_domain_ids": {"auth"},
         "expected_action_kinds_by_source": {
@@ -1197,6 +1203,20 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         audiobooks.voice_profiles.delete.server
         audiobooks.voice_profiles.list.local
         audiobooks.voice_profiles.list.server
+    """),
+    "voice_assistant": _action_ids("""
+        voice_assistant.analytics.observe.server
+        voice_assistant.commands.create.server
+        voice_assistant.commands.delete.server
+        voice_assistant.commands.detail.server
+        voice_assistant.commands.launch.server
+        voice_assistant.commands.list.server
+        voice_assistant.commands.observe.server
+        voice_assistant.commands.preview.server
+        voice_assistant.commands.update.server
+        voice_assistant.sessions.delete.server
+        voice_assistant.sessions.detail.server
+        voice_assistant.sessions.list.server
     """),
     "auth_profile_sessions": _action_ids("""
         auth.api_keys.create.server

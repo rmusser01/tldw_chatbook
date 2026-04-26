@@ -140,6 +140,21 @@ from .llm_provider_schemas import (
     LLMProviderDetail,
     LLMProviderListResponse,
 )
+from .voice_assistant_schemas import (
+    VoiceAnalyticsSummary,
+    VoiceCommandDefinition,
+    VoiceCommandDryRunRequest,
+    VoiceCommandDryRunResponse,
+    VoiceCommandInfo,
+    VoiceCommandListResponse,
+    VoiceCommandRequest,
+    VoiceCommandResponse,
+    VoiceCommandToggleRequest,
+    VoiceCommandUsage,
+    VoiceCommandValidationResponse,
+    VoiceSessionInfo,
+    VoiceSessionListResponse,
+)
 from .server_runtime_schemas import (
     FlashcardsImportLimitsResponse,
     JobsConfigResponse,
@@ -1649,6 +1664,150 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return TranslateResponse.model_validate(response)
+
+    async def process_voice_command(self, request_data: VoiceCommandRequest) -> VoiceCommandResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/voice/command",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return VoiceCommandResponse.model_validate(response)
+
+    async def list_voice_commands(
+        self,
+        *,
+        include_system: bool = True,
+        include_disabled: bool = False,
+        persona_id: str | None = None,
+    ) -> VoiceCommandListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/voice/commands",
+            params={
+                key: value
+                for key, value in {
+                    "include_system": str(include_system).lower(),
+                    "include_disabled": str(include_disabled).lower(),
+                    "persona_id": persona_id,
+                }.items()
+                if value is not None
+            },
+        )
+        return VoiceCommandListResponse.model_validate(response)
+
+    async def create_voice_command(self, request_data: VoiceCommandDefinition) -> VoiceCommandInfo:
+        response = await self._request(
+            "POST",
+            "/api/v1/voice/commands",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return VoiceCommandInfo.model_validate(response)
+
+    async def get_voice_command(
+        self,
+        command_id: str,
+        *,
+        persona_id: str | None = None,
+    ) -> VoiceCommandInfo:
+        response = await self._request(
+            "GET",
+            f"/api/v1/voice/commands/{command_id}",
+            params={key: value for key, value in {"persona_id": persona_id}.items() if value is not None},
+        )
+        return VoiceCommandInfo.model_validate(response)
+
+    async def update_voice_command(
+        self,
+        command_id: str,
+        request_data: VoiceCommandDefinition,
+        *,
+        persona_id: str | None = None,
+    ) -> VoiceCommandInfo:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/voice/commands/{command_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            params={key: value for key, value in {"persona_id": persona_id}.items() if value is not None},
+        )
+        return VoiceCommandInfo.model_validate(response)
+
+    async def toggle_voice_command(
+        self,
+        command_id: str,
+        request_data: VoiceCommandToggleRequest,
+        *,
+        persona_id: str | None = None,
+    ) -> VoiceCommandInfo:
+        response = await self._request(
+            "POST",
+            f"/api/v1/voice/commands/{command_id}/toggle",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            params={key: value for key, value in {"persona_id": persona_id}.items() if value is not None},
+        )
+        return VoiceCommandInfo.model_validate(response)
+
+    async def validate_voice_command(
+        self,
+        command_id: str,
+        *,
+        persona_id: str | None = None,
+    ) -> VoiceCommandValidationResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/voice/commands/{command_id}/validate",
+            params={key: value for key, value in {"persona_id": persona_id}.items() if value is not None},
+        )
+        return VoiceCommandValidationResponse.model_validate(response)
+
+    async def get_voice_command_usage(self, command_id: str, *, days: int = 30) -> VoiceCommandUsage:
+        response = await self._request(
+            "GET",
+            f"/api/v1/voice/commands/{command_id}/usage",
+            params={"days": days},
+        )
+        return VoiceCommandUsage.model_validate(response)
+
+    async def delete_voice_command(self, command_id: str, *, persona_id: str | None = None) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/voice/commands/{command_id}",
+            params={key: value for key, value in {"persona_id": persona_id}.items() if value is not None},
+        )
+
+    async def list_voice_sessions(
+        self,
+        *,
+        active_only: bool = True,
+        limit: int = 100,
+    ) -> VoiceSessionListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/voice/sessions",
+            params={"active_only": str(active_only).lower(), "limit": limit},
+        )
+        return VoiceSessionListResponse.model_validate(response)
+
+    async def get_voice_session(self, session_id: str) -> VoiceSessionInfo:
+        response = await self._request("GET", f"/api/v1/voice/sessions/{session_id}")
+        return VoiceSessionInfo.model_validate(response)
+
+    async def delete_voice_session(self, session_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/voice/sessions/{session_id}")
+
+    async def get_voice_analytics(self, *, days: int = 7) -> VoiceAnalyticsSummary:
+        response = await self._request("GET", "/api/v1/voice/analytics", params={"days": days})
+        return VoiceAnalyticsSummary.model_validate(response)
+
+    async def dry_run_voice_command(
+        self,
+        request_data: VoiceCommandDryRunRequest,
+    ) -> VoiceCommandDryRunResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/voice/voice/commands/dry-run",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return VoiceCommandDryRunResponse.model_validate(response)
 
     async def list_ocr_backends(self) -> OCRBackendsResponse:
         response = await self._request("GET", "/api/v1/ocr/backends")

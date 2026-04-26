@@ -205,6 +205,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "server_runtime_config_discovery",
         "llm_provider_model_catalog",
         "audio_speech_services",
+        "voice_assistant",
         "auth_profile_sessions",
         "server_reminders_notification_feeds",
         "external_connectors",
@@ -682,6 +683,17 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("audiobooks.artifacts", actions=(LIST,), domain_id="audiobooks"),
             _resource("audiobooks.voice_profiles", actions=(LIST, CREATE, DELETE), domain_id="audiobooks"),
             _resource("audiobooks.subtitles", actions=(EXPORT,), domain_id="audiobooks"),
+        ),
+    ),
+    _capability(
+        "voice_assistant",
+        "Voice Assistant",
+        "voice_assistant",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("voice_assistant.commands", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, LAUNCH, PREVIEW, OBSERVE)),
+            _resource("voice_assistant.sessions", actions=(LIST, DETAIL, DELETE)),
+            _resource("voice_assistant.analytics", actions=(OBSERVE,)),
         ),
     ),
     _capability(

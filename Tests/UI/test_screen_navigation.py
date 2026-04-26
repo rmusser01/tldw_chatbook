@@ -81,6 +81,7 @@ from tldw_chatbook.Subscriptions import (
     WatchlistScopeService,
 )
 from tldw_chatbook.Translation_Interop import ServerTranslationService, TranslationScopeService
+from tldw_chatbook.Voice_Assistant_Interop import ServerVoiceAssistantService, VoiceAssistantScopeService
 from tldw_chatbook.Constants import ALL_TABS
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
@@ -169,6 +170,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.kanban_scope_service, KanbanScopeService)
     assert isinstance(app.server_translation_service, ServerTranslationService)
     assert isinstance(app.translation_scope_service, TranslationScopeService)
+    assert isinstance(app.server_voice_assistant_service, ServerVoiceAssistantService)
+    assert isinstance(app.voice_assistant_scope_service, VoiceAssistantScopeService)
     assert isinstance(app.server_collections_feeds_service, ServerCollectionsFeedsService)
     assert isinstance(app.collections_feeds_scope_service, CollectionsFeedsScopeService)
     assert app.collections_feeds_scope_service.local_service is app.local_watchlists_service
