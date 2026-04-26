@@ -72,9 +72,9 @@ class OutputsScopeService:
 
     def _service_for_mode(self, mode: OutputsBackend) -> Any:
         if mode == OutputsBackend.LOCAL:
-            if self.local_service is None:
-                raise ValueError("Local outputs backend is unavailable.")
-            return self.local_service
+            raise NotImplementedError(
+                "Local managed output templates, artifacts, and render jobs are not wired in the current Chatbook client."
+            )
         if self.server_service is None:
             raise ValueError("Server outputs backend is unavailable.")
         return self.server_service
@@ -125,9 +125,7 @@ class OutputsScopeService:
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == OutputsBackend.LOCAL:
-            if self.local_service is None:
-                return [dict(_LOCAL_BACKEND_UNAVAILABLE_CAPABILITY)]
-            return []
+            return [dict(_LOCAL_BACKEND_UNAVAILABLE_CAPABILITY)]
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def _call(

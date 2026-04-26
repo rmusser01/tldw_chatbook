@@ -86,10 +86,48 @@ async def test_outputs_scope_service_honestly_rejects_local_mode_when_backend_mi
     policy = FakePolicyEnforcer()
     scope = OutputsScopeService(local_service=None, server_service=FakeOutputsService(), policy_enforcer=policy)
 
-    with pytest.raises(ValueError, match="Local outputs backend is unavailable"):
+    with pytest.raises(NotImplementedError, match="Local managed output templates"):
         await scope.list_templates(mode="local")
 
     assert policy.calls == ["outputs.templates.list.local"]
+
+
+@pytest.mark.asyncio
+async def test_outputs_scope_service_blocks_local_backend_even_if_adapter_is_injected():
+    local = FakeOutputsService(source="local")
+    policy = FakePolicyEnforcer()
+    scope = OutputsScopeService(local_service=local, server_service=FakeOutputsService(), policy_enforcer=policy)
+
+    with pytest.raises(NotImplementedError, match="Local managed output templates"):
+        await scope.list_templates(mode="local")
+
+    assert local.calls == []
+    assert policy.calls == ["outputs.templates.list.local"]
+    assert scope.list_unsupported_capabilities(mode="local") == [
+        {
+            "operation_id": "outputs.local_backend.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_backend_unavailable",
+            "user_message": "Local managed output templates, artifacts, and render jobs are not wired in the current Chatbook client.",
+            "affected_action_ids": [
+                "outputs.templates.list.local",
+                "outputs.templates.detail.local",
+                "outputs.templates.create.local",
+                "outputs.templates.update.local",
+                "outputs.templates.delete.local",
+                "outputs.artifacts.list.local",
+                "outputs.artifacts.detail.local",
+                "outputs.artifacts.create.local",
+                "outputs.artifacts.update.local",
+                "outputs.artifacts.delete.local",
+                "outputs.render_jobs.launch.local",
+                "outputs.render_jobs.list.local",
+                "outputs.render_jobs.detail.local",
+                "outputs.render_jobs.observe.local",
+            ],
+        }
+    ]
 
 
 @pytest.mark.asyncio

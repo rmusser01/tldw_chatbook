@@ -102,6 +102,19 @@ class ChatConversationScopeService:
             return
         self.policy_enforcer.require_allowed(action_id=action_id)
 
+    @staticmethod
+    def _raise_server_create_unsupported() -> None:
+        raise NotImplementedError(
+            "The current server chat conversation contract does not expose first-class conversation creation "
+            "outside chat launch/persist flows."
+        )
+
+    @staticmethod
+    def _raise_server_delete_unsupported() -> None:
+        raise NotImplementedError(
+            "The current server chat conversation contract does not expose conversation deletion."
+        )
+
     def _service_for_mode(self, mode: str) -> Any:
         service = self.server_service if mode == "server" else self.local_service
         if service is None:
@@ -329,6 +342,8 @@ class ChatConversationScopeService:
     async def create_conversation(self, *, mode: str = "local", **kwargs: Any) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("create", normalized_mode))
+        if normalized_mode == "server":
+            self._raise_server_create_unsupported()
         return await self._maybe_await(self._service_for_mode(normalized_mode).create_conversation(**kwargs))
 
     async def delete_conversation(
@@ -340,6 +355,8 @@ class ChatConversationScopeService:
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("delete", normalized_mode))
+        if normalized_mode == "server":
+            self._raise_server_delete_unsupported()
         return bool(
             await self._maybe_await(
                 self._service_for_mode(normalized_mode).delete_conversation(

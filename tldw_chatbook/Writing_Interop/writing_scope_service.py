@@ -11,20 +11,7 @@ from .writing_normalizers import normalize_writing_record, normalize_writing_str
 
 _UNSET = object()
 
-_LOCAL_UNSUPPORTED_CAPABILITIES = [
-    {
-        "operation_id": "writing.research_analysis.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_engine_missing",
-        "user_message": "Local writing research and analysis execution is not implemented yet.",
-        "affected_action_ids": [
-            "writing.research.launch.local",
-            "writing.analysis.launch.local",
-            "writing.analysis.list.local",
-        ],
-    },
-]
+_LOCAL_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
     {

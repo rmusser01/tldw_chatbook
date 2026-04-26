@@ -76,6 +76,14 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
     {
+        "operation_id": "study.deck.delete.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": "Flashcard deck deletion is not supported by the current server API.",
+        "affected_action_ids": ["study.deck.delete.server"],
+    },
+    {
         "operation_id": "study.packs.jobs.list.server",
         "source": "server",
         "supported": False,
@@ -192,6 +200,10 @@ class StudyScopeService:
     def _require_server_only(mode: StudyBackend, feature_name: str) -> None:
         if mode != StudyBackend.SERVER:
             raise ValueError(f"{feature_name} are server-only.")
+
+    @staticmethod
+    def _raise_server_deck_delete_unsupported() -> None:
+        raise NotImplementedError("Flashcard deck deletion is not supported by the current server API.")
 
     @staticmethod
     def _coerce_delete_result(result: Any) -> bool:
@@ -1357,6 +1369,8 @@ class StudyScopeService:
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._deck_action_id(normalized_mode, "delete"))
+        if normalized_mode == StudyBackend.SERVER:
+            self._raise_server_deck_delete_unsupported()
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).delete_deck(
                 deck_id,

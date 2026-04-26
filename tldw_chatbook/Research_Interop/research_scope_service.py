@@ -11,6 +11,34 @@ from .research_normalizers import normalize_research_record
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
     {
+        "operation_id": "research.sessions.server_crud",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_run_centric",
+        "user_message": (
+            "The current server API exposes deep research through run-centric /research/runs "
+            "operations and does not support separate research session CRUD."
+        ),
+        "affected_action_ids": [
+            "research.sessions.create.server",
+            "research.sessions.list.server",
+            "research.sessions.detail.server",
+            "research.sessions.update.server",
+            "research.sessions.delete.server",
+        ],
+    },
+    {
+        "operation_id": "research.runs.filtered_list.server",
+        "source": "server",
+        "supported": False,
+        "reason_code": "server_contract_missing",
+        "user_message": (
+            "The current server API only supports limit-based research run listing; "
+            "offset, session, and status filters are local-only."
+        ),
+        "affected_action_ids": ["research.runs.list.server"],
+    },
+    {
         "operation_id": "research.runs.delete.server",
         "source": "server",
         "supported": False,
@@ -62,6 +90,24 @@ class ResearchScopeService:
         if self.policy_enforcer is None:
             return
         self.policy_enforcer.require_allowed(action_id=action_id)
+
+    @staticmethod
+    def _raise_server_sessions_unsupported() -> None:
+        raise NotImplementedError(
+            "The current server API does not expose separate research session CRUD; "
+            "use server research run operations instead."
+        )
+
+    @staticmethod
+    def _raise_server_run_list_filters_unsupported() -> None:
+        raise NotImplementedError(
+            "The current server API does not support filtered research run lists; "
+            "only limit-based server run listing is available."
+        )
+
+    @staticmethod
+    def _raise_server_run_delete_unsupported() -> None:
+        raise NotImplementedError("The current server API does not support research run deletion.")
 
     @staticmethod
     def _action_id(resource: str, action: str, mode: ResearchBackend) -> str:
@@ -124,7 +170,10 @@ class ResearchScopeService:
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("sessions", "list", normalized_mode))
+        action_id = self._action_id("sessions", "list", normalized_mode)
+        self._enforce_policy(action_id)
+        if normalized_mode == ResearchBackend.SERVER:
+            self._raise_server_sessions_unsupported()
         result = await self._call_service(
             self._service_for_mode(normalized_mode),
             "list_sessions",
@@ -143,7 +192,10 @@ class ResearchScopeService:
         **kwargs: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("sessions", "create", normalized_mode))
+        action_id = self._action_id("sessions", "create", normalized_mode)
+        self._enforce_policy(action_id)
+        if normalized_mode == ResearchBackend.SERVER:
+            self._raise_server_sessions_unsupported()
         result = await self._call_service(
             self._service_for_mode(normalized_mode),
             "create_session",
@@ -160,7 +212,10 @@ class ResearchScopeService:
         session_id: str,
     ) -> dict[str, Any] | None:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("sessions", "detail", normalized_mode))
+        action_id = self._action_id("sessions", "detail", normalized_mode)
+        self._enforce_policy(action_id)
+        if normalized_mode == ResearchBackend.SERVER:
+            self._raise_server_sessions_unsupported()
         result = await self._call_service(self._service_for_mode(normalized_mode), "get_session", session_id)
         return self._normalize_result(normalized_mode, "session", result)
 
@@ -173,7 +228,10 @@ class ResearchScopeService:
         **kwargs: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("sessions", "update", normalized_mode))
+        action_id = self._action_id("sessions", "update", normalized_mode)
+        self._enforce_policy(action_id)
+        if normalized_mode == ResearchBackend.SERVER:
+            self._raise_server_sessions_unsupported()
         result = await self._call_service(
             self._service_for_mode(normalized_mode),
             "update_session",
@@ -191,7 +249,10 @@ class ResearchScopeService:
         expected_version: int | None = None,
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("sessions", "delete", normalized_mode))
+        action_id = self._action_id("sessions", "delete", normalized_mode)
+        self._enforce_policy(action_id)
+        if normalized_mode == ResearchBackend.SERVER:
+            self._raise_server_sessions_unsupported()
         return bool(
             await self._call_service(
                 self._service_for_mode(normalized_mode),
@@ -232,7 +293,12 @@ class ResearchScopeService:
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("runs", "list", normalized_mode))
+        action_id = self._action_id("runs", "list", normalized_mode)
+        self._enforce_policy(action_id)
+        if normalized_mode == ResearchBackend.SERVER and (
+            offset not in (0, None) or session_id is not None or status is not None
+        ):
+            self._raise_server_run_list_filters_unsupported()
         result = await self._call_service(
             self._service_for_mode(normalized_mode),
             "list_runs",
@@ -295,7 +361,10 @@ class ResearchScopeService:
         expected_version: int | None = None,
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("runs", "delete", normalized_mode))
+        action_id = self._action_id("runs", "delete", normalized_mode)
+        self._enforce_policy(action_id)
+        if normalized_mode == ResearchBackend.SERVER:
+            self._raise_server_run_delete_unsupported()
         return bool(
             await self._call_service(
                 self._service_for_mode(normalized_mode),

@@ -146,6 +146,13 @@ class NotificationsScopeService:
             payload["data"] = self._with_record_id(mode, "notification", data)
         return payload
 
+    @staticmethod
+    def _with_local_settings_record_id(payload: dict[str, Any]) -> dict[str, Any]:
+        record = dict(payload or {})
+        record.setdefault("backend", "local")
+        record.setdefault("record_id", "local:notification_settings")
+        return record
+
     def list_unsupported_capabilities(
         self,
         *,
@@ -246,6 +253,29 @@ class NotificationsScopeService:
             method_name="dismiss",
             args=(notification_id,),
         )
+
+    async def get_settings(self, *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == NotificationsBackend.LOCAL:
+            service = self._require_local_service()
+            self._enforce_policy("notifications.settings.list.local")
+            result = await self._maybe_await(service.get_settings())
+            return self._with_local_settings_record_id(result)
+        return await self.get_preferences(mode=normalized_mode)
+
+    async def update_settings(
+        self,
+        *,
+        mode: NotificationsBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == NotificationsBackend.LOCAL:
+            service = self._require_local_service()
+            self._enforce_policy("notifications.settings.update.local")
+            result = await self._maybe_await(service.update_settings(**kwargs))
+            return self._with_local_settings_record_id(result)
+        return await self.update_preferences(mode=normalized_mode, **kwargs)
 
     async def snooze(
         self,

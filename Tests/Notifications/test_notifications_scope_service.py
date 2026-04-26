@@ -79,6 +79,24 @@ class FakeLocalNotificationsService:
                 return dict(row)
         raise KeyError(notification_id)
 
+    def get_settings(self):
+        self.calls.append(("get_settings",))
+        return {
+            "enabled": True,
+            "toast_enabled": True,
+            "persist_enabled": True,
+            "category_preferences": {},
+        }
+
+    def update_settings(self, **settings):
+        self.calls.append(("update_settings", settings))
+        return {
+            "enabled": settings.get("enabled", True),
+            "toast_enabled": settings.get("toast_enabled", True),
+            "persist_enabled": True,
+            "category_preferences": settings.get("category_preferences", {}),
+        }
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
@@ -186,6 +204,31 @@ async def test_notifications_scope_service_routes_local_feed_to_client_queue():
         "notifications.queue.update.local",
         "notifications.queue.update.local",
         "notifications.queue.observe.local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_notifications_scope_service_routes_local_settings_to_client_service():
+    local = FakeLocalNotificationsService()
+    policy = FakePolicyEnforcer()
+    scope = NotificationsScopeService(local_service=local, policy_enforcer=policy)
+
+    settings = await scope.get_settings(mode="local")
+    updated = await scope.update_settings(mode="local", enabled=False, toast_enabled=False)
+
+    assert settings["record_id"] == "local:notification_settings"
+    assert settings["backend"] == "local"
+    assert settings["enabled"] is True
+    assert updated["record_id"] == "local:notification_settings"
+    assert updated["enabled"] is False
+    assert updated["toast_enabled"] is False
+    assert local.calls == [
+        ("get_settings",),
+        ("update_settings", {"enabled": False, "toast_enabled": False}),
+    ]
+    assert policy.calls == [
+        "notifications.settings.list.local",
+        "notifications.settings.update.local",
     ]
 
 

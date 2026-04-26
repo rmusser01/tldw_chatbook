@@ -96,6 +96,12 @@ class RAGAdminScopeService:
         return self._service_for_mode(mode)
 
     @staticmethod
+    def _raise_server_collection_export_unsupported() -> None:
+        raise NotImplementedError(
+            "The current server embedding admin contract does not expose embedding collection export."
+        )
+
+    @staticmethod
     def _to_plain(value: Any) -> Any:
         if hasattr(value, "model_dump") and callable(value.model_dump):
             return value.model_dump(mode="json")
@@ -317,6 +323,8 @@ class RAGAdminScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._admin_action_id(normalized_mode, "observe"))
+        if normalized_mode == RAGAdminBackend.SERVER:
+            self._raise_server_collection_export_unsupported()
         service = self._service_for_mode(normalized_mode)
         method = getattr(service, "export_collection", None)
         if not callable(method):

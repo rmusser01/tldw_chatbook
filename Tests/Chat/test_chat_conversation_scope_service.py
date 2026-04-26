@@ -286,6 +286,25 @@ async def test_scope_service_routes_create_delete_and_requires_local_or_server_m
 
 
 @pytest.mark.asyncio
+async def test_scope_service_blocks_unsupported_server_conversation_create_delete_before_dispatch():
+    server = FakeServerConversationService()
+    policy = RecordingPolicy()
+    service = ChatConversationScopeService(
+        local_service=FakeConversationService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(NotImplementedError, match="does not expose first-class conversation creation"):
+        await service.create_conversation(mode="server", title="Server draft")
+    with pytest.raises(NotImplementedError, match="does not expose conversation deletion"):
+        await service.delete_conversation("conv-1", expected_version=1, mode="server")
+
+    assert server.calls == []
+    assert policy.calls == ["chat.create.server", "chat.delete.server"]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_server_chat_adjunct_controls_and_rejects_local_mode():
     server = FakeServerConversationService()
     policy = RecordingPolicy()

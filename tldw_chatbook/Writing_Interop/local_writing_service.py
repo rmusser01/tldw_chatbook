@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 import uuid
 import json
+import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -108,8 +110,14 @@ class LocalWritingService:
             payload["properties"] = self._json_loads(payload.pop("properties_json"), {})
         if "tags_json" in payload:
             payload["tags"] = self._json_loads(payload.pop("tags_json"), [])
+        if "findings_json" in payload:
+            payload["findings"] = self._json_loads(payload.pop("findings_json"), [])
+        if "metrics_json" in payload:
+            payload["metrics"] = self._json_loads(payload.pop("metrics_json"), {})
         if "deleted" in payload:
             payload["deleted"] = self._bool_value(payload["deleted"])
+        if "stale" in payload:
+            payload["stale"] = self._bool_value(payload["stale"])
         if "bidirectional" in payload:
             payload["bidirectional"] = self._bool_value(payload["bidirectional"])
         if "is_pov" in payload:
@@ -370,6 +378,27 @@ class LocalWritingService:
                     PRIMARY KEY(scene_id, world_info_id),
                     FOREIGN KEY(scene_id) REFERENCES writing_scenes(id),
                     FOREIGN KEY(world_info_id) REFERENCES writing_world_info(id)
+                );
+                CREATE TABLE IF NOT EXISTS writing_analyses (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    scope_type TEXT NOT NULL,
+                    scope_id TEXT NOT NULL,
+                    analysis_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'completed',
+                    summary TEXT NOT NULL,
+                    findings_json TEXT NOT NULL DEFAULT '[]',
+                    metrics_json TEXT NOT NULL DEFAULT '{}',
+                    provider TEXT,
+                    model TEXT,
+                    source_hash TEXT NOT NULL,
+                    stale INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    last_modified TEXT NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    client_id TEXT NOT NULL DEFAULT 'local',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(project_id) REFERENCES writing_projects(id)
                 );
                 """
             )
@@ -1637,3 +1666,415 @@ class LocalWritingService:
 
     def delete_citation(self, citation_id: str, *, expected_version: int | None = None) -> bool:
         return self._soft_delete("writing_citations", citation_id, "citation", expected_version)
+
+    @staticmethod
+    def _search_terms(query: str) -> list[str]:
+        seen: set[str] = set()
+        terms: list[str] = []
+        for term in re.findall(r"[a-z0-9]+", str(query or "").lower()):
+            if len(term) < 3 or term in seen:
+                continue
+            seen.add(term)
+            terms.append(term)
+        return terms
+
+    @staticmethod
+    def _score_text(terms: list[str], *texts: Any) -> float:
+        haystack = " ".join(str(text or "").lower() for text in texts)
+        if not haystack:
+            return 0.0
+        return float(sum(haystack.count(term) for term in terms))
+
+    @staticmethod
+    def _excerpt_for_terms(text: str, terms: list[str], *, max_chars: int = 180) -> str:
+        normalized_text = str(text or "").strip()
+        if len(normalized_text) <= max_chars:
+            return normalized_text
+        lowered = normalized_text.lower()
+        first_match = min(
+            (idx for term in terms if (idx := lowered.find(term)) >= 0),
+            default=0,
+        )
+        start = max(0, first_match - max_chars // 3)
+        end = min(len(normalized_text), start + max_chars)
+        excerpt = normalized_text[start:end].strip()
+        if start > 0:
+            excerpt = f"...{excerpt}"
+        if end < len(normalized_text):
+            excerpt = f"{excerpt}..."
+        return excerpt
+
+    def _project_corpus(self, project_id: str) -> list[dict[str, Any]]:
+        self._require_one("writing_projects", project_id, "project")
+        corpus: list[dict[str, Any]] = []
+        with self._connect() as conn:
+            scene_rows = conn.execute(
+                """
+                SELECT id, title, synopsis, content_markdown
+                FROM writing_scenes
+                WHERE project_id = ? AND deleted = 0
+                """,
+                (project_id,),
+            ).fetchall()
+            character_rows = conn.execute(
+                """
+                SELECT id, name, role, full_name, appearance, personality,
+                       backstory, motivation, arc_summary, notes
+                FROM writing_characters
+                WHERE project_id = ? AND deleted = 0
+                """,
+                (project_id,),
+            ).fetchall()
+            world_rows = conn.execute(
+                """
+                SELECT id, kind, name, description, properties_json, tags_json
+                FROM writing_world_info
+                WHERE project_id = ? AND deleted = 0
+                """,
+                (project_id,),
+            ).fetchall()
+            citation_rows = conn.execute(
+                """
+                SELECT id, source_type, source_id, source_title, excerpt, query_used
+                FROM writing_citations
+                WHERE project_id = ? AND deleted = 0
+                """,
+                (project_id,),
+            ).fetchall()
+
+        for row in scene_rows:
+            data = dict(row)
+            corpus.append(
+                {
+                    "source_type": "scene",
+                    "source_id": data["id"],
+                    "title": data["title"],
+                    "text": "\n\n".join(
+                        part for part in [data.get("synopsis"), data.get("content_markdown")] if part
+                    ),
+                }
+            )
+        for row in character_rows:
+            data = dict(row)
+            corpus.append(
+                {
+                    "source_type": "character",
+                    "source_id": data["id"],
+                    "title": data["name"],
+                    "text": "\n\n".join(str(value) for value in data.values() if value),
+                }
+            )
+        for row in world_rows:
+            data = dict(row)
+            corpus.append(
+                {
+                    "source_type": "world_info",
+                    "source_id": data["id"],
+                    "title": data["name"],
+                    "text": "\n\n".join(
+                        str(value)
+                        for value in [
+                            data.get("kind"),
+                            data.get("description"),
+                            data.get("properties_json"),
+                            data.get("tags_json"),
+                        ]
+                        if value
+                    ),
+                }
+            )
+        for row in citation_rows:
+            data = dict(row)
+            corpus.append(
+                {
+                    "source_type": "citation",
+                    "source_id": data["id"],
+                    "title": data.get("source_title") or data.get("source_id") or data["id"],
+                    "text": "\n\n".join(
+                        part for part in [data.get("excerpt"), data.get("query_used")] if part
+                    ),
+                }
+            )
+        return corpus
+
+    def research_scene(self, scene_id: str, *, query: str, top_k: int = 5) -> dict[str, Any]:
+        scene = self._require_one("writing_scenes", scene_id, "scene")
+        terms = self._search_terms(query)
+        ranked_results: list[dict[str, Any]] = []
+        for item in self._project_corpus(scene["project_id"]):
+            score = self._score_text(terms, item.get("title"), item.get("text"))
+            if score <= 0:
+                continue
+            result = {
+                "source_id": item["source_id"],
+                "source_type": item["source_type"],
+                "title": item["title"],
+                "excerpt": self._excerpt_for_terms(item.get("text") or "", terms),
+                "score": score,
+            }
+            ranked_results.append(normalize_writing_record("local", "research_result", result))
+        ranked_results.sort(key=lambda result: (-float(result.get("score") or 0), str(result.get("title") or "")))
+        return {
+            "source": "local",
+            "scene_id": scene_id,
+            "query": query,
+            "results": ranked_results[: max(0, int(top_k))],
+        }
+
+    def _analysis_text_for_scene(self, scene_id: str) -> tuple[str, str, str]:
+        scene = self._require_one("writing_scenes", scene_id, "scene")
+        return scene["project_id"], "scene", str(scene.get("content_markdown") or "")
+
+    def _analysis_text_for_chapter(self, chapter_id: str) -> tuple[str, str, str]:
+        chapter = self._require_one("writing_chapters", chapter_id, "chapter")
+        scenes = self.list_scenes(chapter_id)
+        text = "\n\n".join(scene.get("content_markdown") or "" for scene in scenes)
+        return chapter["project_id"], "chapter", text
+
+    def _analysis_text_for_project(self, project_id: str) -> tuple[str, str, str]:
+        self._require_one("writing_projects", project_id, "project")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT content_markdown
+                FROM writing_scenes
+                WHERE project_id = ? AND deleted = 0
+                ORDER BY sort_order ASC, created_at ASC
+                """,
+                (project_id,),
+            ).fetchall()
+        text = "\n\n".join(str(row["content_markdown"] or "") for row in rows)
+        return project_id, "project", text
+
+    @staticmethod
+    def _analysis_metrics(text: str) -> dict[str, Any]:
+        words = [word for word in re.findall(r"\b\w+\b", text or "") if word.strip()]
+        sentence_count = len([part for part in re.split(r"[.!?]+", text or "") if part.strip()])
+        paragraph_count = len([part for part in str(text or "").split("\n\n") if part.strip()])
+        return {
+            "word_count": len(words),
+            "sentence_count": sentence_count,
+            "paragraph_count": paragraph_count,
+        }
+
+    @staticmethod
+    def _analysis_summary(scope_type: str, analysis_type: str, metrics: dict[str, Any]) -> tuple[str, list[str]]:
+        word_count = metrics["word_count"]
+        sentence_count = metrics["sentence_count"]
+        if word_count == 0:
+            return (
+                f"No prose available for {scope_type} {analysis_type} analysis.",
+                ["Add scene prose before relying on local deterministic analysis."],
+            )
+        if analysis_type == "pacing":
+            return (
+                f"Local pacing pass measured {word_count} words across {sentence_count} sentences.",
+                [
+                    "Short deterministic pacing check only; use server/LLM analysis for narrative judgment.",
+                    "Review unusually long paragraphs or abrupt scene transitions manually.",
+                ],
+            )
+        if analysis_type == "continuity":
+            return (
+                f"Local continuity pass scanned {word_count} words for this {scope_type}.",
+                [
+                    "Cross-check linked characters, world info, and citations for source-of-truth consistency.",
+                    "No LLM inference was used, so subtle continuity issues may be missed.",
+                ],
+            )
+        if analysis_type == "plot_holes":
+            return (
+                f"Local plot-hole pass scanned {word_count} words across project prose.",
+                [
+                    "No deterministic structural break was detected automatically.",
+                    "Use plot lines, plot holes, and citations for explicit follow-up tracking.",
+                ],
+            )
+        if analysis_type == "consistency":
+            return (
+                f"Local consistency pass scanned {word_count} words across project prose.",
+                [
+                    "Use linked characters and world info to verify consistency manually.",
+                    "Server analysis can provide deeper narrative consistency checks when connected.",
+                ],
+            )
+        return (
+            f"Local {analysis_type} pass measured {word_count} words across {sentence_count} sentences.",
+            ["This is a deterministic local baseline, not a generative critique."],
+        )
+
+    def _create_analysis(
+        self,
+        *,
+        project_id: str,
+        scope_type: str,
+        scope_id: str,
+        analysis_type: str,
+        text: str,
+        provider: str | None,
+        model: str | None,
+    ) -> dict[str, Any]:
+        analysis_id = self._new_id()
+        now = self._now()
+        metrics = self._analysis_metrics(text)
+        summary, findings = self._analysis_summary(scope_type, analysis_type, metrics)
+        source_hash = hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO writing_analyses (
+                    id, project_id, scope_type, scope_id, analysis_type, summary,
+                    findings_json, metrics_json, provider, model, source_hash,
+                    created_at, last_modified
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    analysis_id,
+                    project_id,
+                    scope_type,
+                    scope_id,
+                    analysis_type,
+                    summary,
+                    self._json_dumps(findings, []),
+                    self._json_dumps(metrics, {}),
+                    provider,
+                    model,
+                    source_hash,
+                    now,
+                    now,
+                ),
+            )
+        return self._normalize_aux_record(
+            "analysis",
+            self._require_one("writing_analyses", analysis_id, "analysis"),
+        )
+
+    def _analyze_scope(
+        self,
+        *,
+        project_id: str,
+        scope_type: str,
+        scope_id: str,
+        text: str,
+        analysis_types: list[str],
+        provider: str | None,
+        model: str | None,
+    ) -> list[dict[str, Any]]:
+        if not analysis_types:
+            raise ValueError("analysis_types cannot be empty")
+        return [
+            self._create_analysis(
+                project_id=project_id,
+                scope_type=scope_type,
+                scope_id=scope_id,
+                analysis_type=analysis_type,
+                text=text,
+                provider=provider,
+                model=model,
+            )
+            for analysis_type in analysis_types
+        ]
+
+    def analyze_scene(
+        self,
+        scene_id: str,
+        *,
+        analysis_types: list[str],
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        project_id, scope_type, text = self._analysis_text_for_scene(scene_id)
+        return self._analyze_scope(
+            project_id=project_id,
+            scope_type=scope_type,
+            scope_id=scene_id,
+            text=text,
+            analysis_types=analysis_types,
+            provider=provider,
+            model=model,
+        )
+
+    def analyze_chapter(
+        self,
+        chapter_id: str,
+        *,
+        analysis_types: list[str],
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        project_id, scope_type, text = self._analysis_text_for_chapter(chapter_id)
+        return self._analyze_scope(
+            project_id=project_id,
+            scope_type=scope_type,
+            scope_id=chapter_id,
+            text=text,
+            analysis_types=analysis_types,
+            provider=provider,
+            model=model,
+        )
+
+    def analyze_project_plot_holes(
+        self,
+        project_id: str,
+        *,
+        analysis_types: list[str] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        resolved_project_id, scope_type, text = self._analysis_text_for_project(project_id)
+        return self._analyze_scope(
+            project_id=resolved_project_id,
+            scope_type=scope_type,
+            scope_id=project_id,
+            text=text,
+            analysis_types=analysis_types or ["plot_holes"],
+            provider=provider,
+            model=model,
+        )
+
+    def analyze_project_consistency(
+        self,
+        project_id: str,
+        *,
+        analysis_types: list[str] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        resolved_project_id, scope_type, text = self._analysis_text_for_project(project_id)
+        return self._analyze_scope(
+            project_id=resolved_project_id,
+            scope_type=scope_type,
+            scope_id=project_id,
+            text=text,
+            analysis_types=analysis_types or ["consistency"],
+            provider=provider,
+            model=model,
+        )
+
+    def list_analyses(
+        self,
+        project_id: str,
+        *,
+        scope_type: str | None = None,
+        analysis_type: str | None = None,
+        include_stale: bool = False,
+    ) -> dict[str, Any]:
+        self._require_one("writing_projects", project_id, "project")
+        sql = "SELECT * FROM writing_analyses WHERE project_id = ? AND deleted = 0"
+        params: list[Any] = [project_id]
+        if scope_type is not None:
+            sql += " AND scope_type = ?"
+            params.append(scope_type)
+        if analysis_type is not None:
+            sql += " AND analysis_type = ?"
+            params.append(analysis_type)
+        if not include_stale:
+            sql += " AND stale = 0"
+        sql += " ORDER BY created_at DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        analyses = [
+            self._normalize_aux_record("analysis", dict(row))
+            for row in rows
+        ]
+        return {"analyses": analyses, "total": len(analyses)}

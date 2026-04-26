@@ -568,14 +568,7 @@ def test_writing_scope_service_reports_known_unsupported_server_capabilities():
     local_report = scope.list_unsupported_capabilities(mode="local")
     server_report = scope.list_unsupported_capabilities(mode="server")
 
-    assert [item["operation_id"] for item in local_report] == [
-        "writing.research_analysis.local",
-    ]
-    assert local_report[0]["affected_action_ids"] == [
-        "writing.research.launch.local",
-        "writing.analysis.launch.local",
-        "writing.analysis.list.local",
-    ]
+    assert local_report == []
     assert [item["operation_id"] for item in server_report] == [
         "writing.scenes.direct_manuscript_level.server",
         "writing.versions.server",

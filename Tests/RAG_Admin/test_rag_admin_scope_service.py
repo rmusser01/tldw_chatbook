@@ -331,6 +331,28 @@ async def test_scope_service_routes_local_collection_export_as_rag_admin_observe
     assert policy_enforcer.calls == ["rag.admin.observe.local"]
 
 
+@pytest.mark.asyncio
+async def test_scope_service_blocks_server_collection_export_before_dispatch():
+    class ServerServiceWithExport(FakeServerService):
+        async def export_collection(self, collection_name, **options):
+            self.calls.append(("export_collection", collection_name, options))
+            return {"backend": "server", "name": collection_name}
+
+    server = ServerServiceWithExport()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = RAGAdminScopeService(
+        local_service=FakeLocalService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(NotImplementedError, match="embedding collection export"):
+        await scope.export_collection(mode="server", collection_name="demo")
+
+    assert server.calls == []
+    assert policy_enforcer.calls == ["rag.admin.observe.server"]
+
+
 def test_scope_service_reports_known_rag_admin_capability_gaps():
     scope = RAGAdminScopeService(
         local_service=FakeLocalService(),

@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Web_Scraping_Interop import WebScrapingScopeService
+from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
 class FakeServerWebScrapingService:
@@ -36,6 +37,23 @@ class FakeServerWebScrapingService:
         return {"record_id": f"server:web_scraping_duplicate:{url}"}
 
 
+class FakePolicyEnforcer:
+    def __init__(self, denied_reason=None):
+        self.denied_reason = denied_reason
+        self.calls = []
+
+    def require_allowed(self, *, action_id):
+        self.calls.append(action_id)
+        if self.denied_reason:
+            raise PolicyDeniedError(
+                action_id=action_id,
+                reason_code=self.denied_reason,
+                user_message=f"{action_id} denied",
+                effective_source="server",
+                authority_owner="server",
+            )
+
+
 @pytest.mark.asyncio
 async def test_web_scraping_scope_service_routes_server_owned_operations():
     server = FakeServerWebScrapingService()
@@ -68,6 +86,17 @@ async def test_web_scraping_scope_service_routes_server_owned_operations():
 
 
 @pytest.mark.asyncio
+async def test_web_scraping_scope_service_defaults_to_server_mode():
+    server = FakeServerWebScrapingService()
+    scope = WebScrapingScopeService(server_service=server)
+
+    status = await scope.get_status()
+
+    assert status["record_id"] == "server:web_scraping:status"
+    assert server.calls == [("get_status",)]
+
+
+@pytest.mark.asyncio
 async def test_web_scraping_scope_service_rejects_local_mode_before_dispatch():
     server = FakeServerWebScrapingService()
     scope = WebScrapingScopeService(server_service=server)
@@ -75,6 +104,20 @@ async def test_web_scraping_scope_service_rejects_local_mode_before_dispatch():
     with pytest.raises(ValueError, match="server-only"):
         await scope.get_status(mode="local")
 
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_web_scraping_scope_service_blocks_denied_action_before_dispatch():
+    server = FakeServerWebScrapingService()
+    policy = FakePolicyEnforcer("wrong_source")
+    scope = WebScrapingScopeService(server_service=server, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await scope.cancel_job(mode="server", job_id="job-1")
+
+    assert exc.value.reason_code == "wrong_source"
+    assert policy.calls == ["media.web_scraping.cancel.server"]
     assert server.calls == []
 
 

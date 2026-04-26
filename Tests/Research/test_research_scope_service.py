@@ -80,6 +80,53 @@ class FakePolicyEnforcer:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "action_id"),
+    [
+        ("list_sessions", {}, "research.sessions.list.server"),
+        ("create_session", {"title": "Research", "query": "MCP"}, "research.sessions.create.server"),
+        ("get_session", {"session_id": "server-session-1"}, "research.sessions.detail.server"),
+        (
+            "update_session",
+            {"session_id": "server-session-1", "title": "Updated", "expected_version": 1},
+            "research.sessions.update.server",
+        ),
+        ("delete_session", {"session_id": "server-session-1", "expected_version": 1}, "research.sessions.delete.server"),
+    ],
+)
+async def test_research_scope_service_blocks_server_session_crud_as_unsupported(method_name, kwargs, action_id):
+    server = object()
+    policy = FakePolicyEnforcer()
+    scope = ResearchScopeService(
+        local_service=FakeResearchService("local"),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(NotImplementedError, match="does not expose separate research session CRUD"):
+        await getattr(scope, method_name)(mode="server", **kwargs)
+
+    assert policy.calls == [action_id]
+
+
+@pytest.mark.asyncio
+async def test_research_scope_service_rejects_unsupported_server_run_list_filters_before_dispatch():
+    server = FakeResearchService("server")
+    policy = FakePolicyEnforcer()
+    scope = ResearchScopeService(
+        local_service=FakeResearchService("local"),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(NotImplementedError, match="does not support filtered research run lists"):
+        await scope.list_runs(mode="server", status="completed")
+
+    assert server.calls == []
+    assert policy.calls == ["research.runs.list.server"]
+
+
+@pytest.mark.asyncio
 async def test_research_scope_service_routes_sessions_runs_and_policy_actions():
     local = FakeResearchService("local")
     server = FakeResearchService("server")
@@ -193,6 +240,34 @@ def test_research_scope_service_reports_known_unsupported_server_capabilities():
     server_report = scope.list_unsupported_capabilities(mode="server")
 
     assert server_report == [
+        {
+            "operation_id": "research.sessions.server_crud",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_run_centric",
+            "user_message": (
+                "The current server API exposes deep research through run-centric /research/runs "
+                "operations and does not support separate research session CRUD."
+            ),
+            "affected_action_ids": [
+                "research.sessions.create.server",
+                "research.sessions.list.server",
+                "research.sessions.detail.server",
+                "research.sessions.update.server",
+                "research.sessions.delete.server",
+            ],
+        },
+        {
+            "operation_id": "research.runs.filtered_list.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": (
+                "The current server API only supports limit-based research run listing; "
+                "offset, session, and status filters are local-only."
+            ),
+            "affected_action_ids": ["research.runs.list.server"],
+        },
         {
             "operation_id": "research.runs.delete.server",
             "source": "server",

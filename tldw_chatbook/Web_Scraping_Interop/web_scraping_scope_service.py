@@ -55,7 +55,7 @@ class WebScrapingScopeService:
 
     def _normalize_mode(self, mode: WebScrapingBackend | str | None) -> WebScrapingBackend:
         if mode is None:
-            return WebScrapingBackend.LOCAL
+            return WebScrapingBackend.SERVER
         if isinstance(mode, WebScrapingBackend):
             return mode
         try:
@@ -77,6 +77,24 @@ class WebScrapingScopeService:
             return await value
         return value
 
+    def _enforce_policy(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=action_id)
+
+    async def _call_server(
+        self,
+        *,
+        mode: WebScrapingBackend | str | None,
+        action_id: str,
+        method_name: str,
+        args: tuple[Any, ...] = (),
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._require_server(normalized_mode)
+        self._enforce_policy(action_id)
+        return await self._maybe_await(getattr(service, method_name)(*args))
+
     def list_unsupported_capabilities(
         self,
         *,
@@ -88,7 +106,11 @@ class WebScrapingScopeService:
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def get_status(self, *, mode: WebScrapingBackend | str | None = None) -> dict[str, Any]:
-        return await self._maybe_await(self._require_server(mode).get_status())
+        return await self._call_server(
+            mode=mode,
+            action_id="media.web_scraping.status.server",
+            method_name="get_status",
+        )
 
     async def get_job_status(
         self,
@@ -96,7 +118,12 @@ class WebScrapingScopeService:
         mode: WebScrapingBackend | str | None = None,
         job_id: str,
     ) -> dict[str, Any]:
-        return await self._maybe_await(self._require_server(mode).get_job_status(job_id))
+        return await self._call_server(
+            mode=mode,
+            action_id="media.web_scraping.detail.server",
+            method_name="get_job_status",
+            args=(job_id,),
+        )
 
     async def cancel_job(
         self,
@@ -104,7 +131,12 @@ class WebScrapingScopeService:
         mode: WebScrapingBackend | str | None = None,
         job_id: str,
     ) -> dict[str, Any]:
-        return await self._maybe_await(self._require_server(mode).cancel_job(job_id))
+        return await self._call_server(
+            mode=mode,
+            action_id="media.web_scraping.cancel.server",
+            method_name="cancel_job",
+            args=(job_id,),
+        )
 
     async def get_progress(
         self,
@@ -112,7 +144,12 @@ class WebScrapingScopeService:
         mode: WebScrapingBackend | str | None = None,
         task_id: str,
     ) -> dict[str, Any]:
-        return await self._maybe_await(self._require_server(mode).get_progress(task_id))
+        return await self._call_server(
+            mode=mode,
+            action_id="media.web_scraping.observe.server",
+            method_name="get_progress",
+            args=(task_id,),
+        )
 
     async def get_cookies(
         self,
@@ -120,7 +157,12 @@ class WebScrapingScopeService:
         mode: WebScrapingBackend | str | None = None,
         domain: str,
     ) -> dict[str, Any]:
-        return await self._maybe_await(self._require_server(mode).get_cookies(domain))
+        return await self._call_server(
+            mode=mode,
+            action_id="media.web_scraping.cookies.detail.server",
+            method_name="get_cookies",
+            args=(domain,),
+        )
 
     async def set_cookies(
         self,
@@ -129,7 +171,12 @@ class WebScrapingScopeService:
         domain: str,
         cookies: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        return await self._maybe_await(self._require_server(mode).set_cookies(domain, cookies))
+        return await self._call_server(
+            mode=mode,
+            action_id="media.web_scraping.cookies.update.server",
+            method_name="set_cookies",
+            args=(domain, cookies),
+        )
 
     async def check_duplicate(
         self,
@@ -137,4 +184,9 @@ class WebScrapingScopeService:
         mode: WebScrapingBackend | str | None = None,
         url: str,
     ) -> dict[str, Any]:
-        return await self._maybe_await(self._require_server(mode).check_duplicate(url))
+        return await self._call_server(
+            mode=mode,
+            action_id="media.web_scraping.inspect.server",
+            method_name="check_duplicate",
+            args=(url,),
+        )

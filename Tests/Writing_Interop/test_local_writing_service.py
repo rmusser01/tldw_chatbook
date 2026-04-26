@@ -327,3 +327,44 @@ def test_local_writing_service_persists_authoring_auxiliary_resources(tmp_path):
     assert service.list_scene_characters(scene["id"]) == []
     assert service.list_scene_world_info(scene["id"]) == []
     assert service.list_citations(scene["id"]) == []
+
+
+def test_local_writing_service_runs_local_research_and_persists_analyses(tmp_path):
+    service = LocalWritingService(tmp_path / "writing.db")
+    project = service.create_project(title="Novel")
+    manuscript = service.create_manuscript(project["id"], title="Book One")
+    chapter = service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
+    scene = service.create_scene(
+        chapter["id"],
+        title="Market Chase",
+        content_markdown="Ada follows the brass automaton through the market.",
+    )
+    service.create_character(project["id"], name="Ada", notes="Inventor hunting a brass automaton.")
+    service.create_world_info(
+        project["id"],
+        kind="location",
+        name="Clockwork Market",
+        description="A busy market full of brass mechanisms.",
+    )
+
+    research = service.research_scene(scene["id"], query="brass market", top_k=3)
+    scene_analyses = service.analyze_scene(scene["id"], analysis_types=["pacing"])
+    chapter_analyses = service.analyze_chapter(chapter["id"], analysis_types=["continuity"])
+    plot_holes = service.analyze_project_plot_holes(project["id"])
+    consistency = service.analyze_project_consistency(project["id"])
+    listed = service.list_analyses(project["id"], scope_type="scene")
+
+    assert research["source"] == "local"
+    assert research["scene_id"] == scene["id"]
+    assert len(research["results"]) == 3
+    assert research["results"][0]["record_type"] == "writing_research_result"
+    assert research["results"][0]["score"] > 0
+    assert scene_analyses[0]["record_id"].startswith("local:writing_analysis:")
+    assert scene_analyses[0]["scope_type"] == "scene"
+    assert scene_analyses[0]["analysis_type"] == "pacing"
+    assert scene_analyses[0]["findings"]
+    assert chapter_analyses[0]["scope_type"] == "chapter"
+    assert plot_holes[0]["analysis_type"] == "plot_holes"
+    assert consistency[0]["analysis_type"] == "consistency"
+    assert listed["total"] == 1
+    assert listed["analyses"][0]["id"] == scene_analyses[0]["id"]

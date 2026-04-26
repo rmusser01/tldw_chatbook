@@ -1352,6 +1352,31 @@ async def test_scope_service_does_not_swallow_server_deck_delete_unsupported_err
 
 
 @pytest.mark.asyncio
+async def test_scope_service_blocks_server_deck_delete_before_dispatch():
+    class ServerStudyServiceWithDelete(FakeServerStudyService):
+        async def delete_deck(self, deck_id, *, expected_version=None, hard_delete=False):
+            self.calls.append(("delete_deck", deck_id, expected_version, hard_delete))
+            return {"status": "deleted"}
+
+    server = ServerStudyServiceWithDelete()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Flashcard deck deletion is not supported by the current server API\\.",
+    ):
+        await scope.delete_deck(mode="server", deck_id=7, expected_version=2)
+
+    assert server.calls == []
+    assert policy_enforcer.calls == ["study.deck.delete.server"]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_study_pack_jobs_to_server_with_policy():
     server = FakeServerStudyService()
     policy_enforcer = FakePolicyEnforcer()
@@ -1547,6 +1572,14 @@ def test_scope_service_reports_study_pack_and_suggestion_unsupported_capabilitie
         },
     ]
     assert server_report == [
+        {
+            "operation_id": "study.deck.delete.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "Flashcard deck deletion is not supported by the current server API.",
+            "affected_action_ids": ["study.deck.delete.server"],
+        },
         {
             "operation_id": "study.packs.jobs.list.server",
             "source": "server",

@@ -417,6 +417,28 @@ async def test_scope_service_lists_local_targets_and_routes_run_creation_by_back
 
 
 @pytest.mark.asyncio
+async def test_scope_service_blocks_server_target_catalog_before_dispatch():
+    class ServerEvaluationServiceWithTargets(FakeServerEvaluationService):
+        async def list_targets(self, *, provider=None, limit=100, offset=0):
+            self.calls.append(("list_targets", provider, limit, offset))
+            return [{"id": "server-model", "name": "Server Model"}]
+
+    server = ServerEvaluationServiceWithTargets()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(NotImplementedError, match="server evaluation API does not expose a target catalog"):
+        await scope.list_targets(mode="server")
+
+    assert server.calls == []
+    assert policy_enforcer.calls == ["evaluations.run.list.server"]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_forwards_local_dataset_override_and_webhook_url():
     local = FakeLocalEvaluationService()
     scope = EvaluationScopeService(local_service=local, server_service=FakeServerEvaluationService())

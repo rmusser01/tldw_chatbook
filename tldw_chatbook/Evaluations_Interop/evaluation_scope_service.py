@@ -145,6 +145,13 @@ class EvaluationScopeService:
             raise ValueError(f"{capability_name} is only available from the server evaluation backend.")
         return normalized_mode
 
+    @staticmethod
+    def _raise_server_targets_unsupported() -> None:
+        raise NotImplementedError(
+            "The current server evaluation API does not expose a target catalog; "
+            "server runs require an explicit target_model string."
+        )
+
     def list_unsupported_capabilities(
         self,
         *,
@@ -380,6 +387,8 @@ class EvaluationScopeService:
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._run_action_id(normalized_mode, "list"))
+        if normalized_mode == EvaluationBackend.SERVER:
+            self._raise_server_targets_unsupported()
         service = self._service_for_mode(normalized_mode)
         if not hasattr(service, "list_targets"):
             return []
