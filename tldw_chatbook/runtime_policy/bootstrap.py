@@ -139,8 +139,9 @@ def set_authoritative_runtime_source(app: Any, active_source: str) -> RuntimeSou
     if resolved_source == "server" and not configured_binding.server_configured:
         resolved_source = "local"
 
+    base_state = _clear_server_probe_state_if_binding_changed(context.state, configured_binding)
     updated_state = replace(
-        context.state,
+        base_state,
         active_source=resolved_source,
         active_server_id=configured_binding.active_server_id,
         server_configured=configured_binding.server_configured,
@@ -229,12 +230,32 @@ def synchronize_runtime_source_state_with_app_config(
     if resolved_source == "server" and not configured_binding.server_configured:
         resolved_source = "local"
 
+    base_state = _clear_server_probe_state_if_binding_changed(state, configured_binding)
     return replace(
-        state,
+        base_state,
         active_source=resolved_source,
         active_server_id=configured_binding.active_server_id,
         server_configured=configured_binding.server_configured,
         last_known_server_label=configured_binding.last_known_server_label,
+    )
+
+
+def _clear_server_probe_state_if_binding_changed(
+    state: RuntimeSourceState,
+    configured_binding: ConfiguredServerBinding,
+) -> RuntimeSourceState:
+    if (
+        state.active_server_id == configured_binding.active_server_id
+        and state.server_configured == configured_binding.server_configured
+    ):
+        return state
+
+    return replace(
+        state,
+        server_reachability="unknown",
+        server_reachability_checked_at=None,
+        server_auth_state="unknown",
+        server_auth_checked_at=None,
     )
 
 

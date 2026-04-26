@@ -76,6 +76,7 @@ from tldw_chatbook.Skills_Interop import ServerSkillsService, SkillsScopeService
 from tldw_chatbook.Sync_Interop import ServerSyncService, SyncScopeService
 from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
 from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
+from tldw_chatbook.MCP_Governance_Interop import MCPGovernanceScopeService, ServerMCPGovernanceService
 from tldw_chatbook.User_Governance_Interop import ServerUserGovernanceService, UserGovernanceScopeService
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
 from tldw_chatbook.Web_Scraping_Interop import ServerWebScrapingService, WebScrapingScopeService
@@ -190,6 +191,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.skills_scope_service, SkillsScopeService)
     assert isinstance(app.server_tools_service, ServerToolsService)
     assert isinstance(app.tools_scope_service, ToolsScopeService)
+    assert isinstance(app.server_mcp_governance_service, ServerMCPGovernanceService)
+    assert isinstance(app.mcp_governance_scope_service, MCPGovernanceScopeService)
     assert isinstance(app.server_text2sql_service, ServerText2SQLService)
     assert isinstance(app.text2sql_scope_service, Text2SQLScopeService)
     assert isinstance(app.server_sync_service, ServerSyncService)

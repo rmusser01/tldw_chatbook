@@ -289,7 +289,7 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "remote_mcp_control_plane_governance": {
         "expected_domain_ids": {"mcp_governance"},
         "expected_action_kinds_by_source": {
-            "server": DISCOVER_CONFIGURE_TRIGGER_OBSERVE,
+            "server": _action_kinds("browse", "detail", "create", "update", "delete", "observe"),
         },
     },
     "sharing": {
@@ -1095,11 +1095,38 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         rag.template.update.server
     """),
     "remote_mcp_control_plane_governance": _action_ids("""
-        mcp.governance.approve.server
-        mcp.governance.configure.server
-        mcp.governance.launch.server
-        mcp.governance.list.server
-        mcp.governance.observe.server
+        mcp.governance.approval_decisions.approve.server
+        mcp.governance.approval_policies.create.server
+        mcp.governance.approval_policies.delete.server
+        mcp.governance.approval_policies.list.server
+        mcp.governance.approval_policies.update.server
+        mcp.governance.capability_mappings.create.server
+        mcp.governance.capability_mappings.delete.server
+        mcp.governance.capability_mappings.list.server
+        mcp.governance.capability_mappings.preview.server
+        mcp.governance.capability_mappings.update.server
+        mcp.governance.catalog_entries.create.server
+        mcp.governance.catalog_entries.delete.server
+        mcp.governance.catalogs.create.server
+        mcp.governance.catalogs.delete.server
+        mcp.governance.catalogs.list.server
+        mcp.governance.effective_policy.detail.server
+        mcp.governance.events.observe.server
+        mcp.governance.external_servers.create.server
+        mcp.governance.external_servers.delete.server
+        mcp.governance.external_servers.list.server
+        mcp.governance.external_servers.secrets.update.server
+        mcp.governance.external_servers.update.server
+        mcp.governance.permission_profiles.create.server
+        mcp.governance.permission_profiles.delete.server
+        mcp.governance.permission_profiles.list.server
+        mcp.governance.permission_profiles.update.server
+        mcp.governance.policy_assignments.create.server
+        mcp.governance.policy_assignments.delete.server
+        mcp.governance.policy_assignments.list.server
+        mcp.governance.policy_assignments.update.server
+        mcp.governance.tool_registry.detail.server
+        mcp.governance.tool_registry.list.server
     """),
     "research_search_provider_surfaces": _action_ids("""
         research.search.providers.configure.local

@@ -188,6 +188,38 @@ def test_load_runtime_policy_for_app_rebinds_persisted_runtime_state_to_configur
     assert store.load() == context.state
 
 
+def test_load_runtime_policy_for_app_clears_stale_capability_state_when_server_identity_changes(
+    tmp_path,
+):
+    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
+    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+
+    store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
+    store.save(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="https://old.example.com/api",
+            server_configured=True,
+            server_reachability="reachable",
+            server_reachability_checked_at=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+            server_auth_state="authenticated",
+            server_auth_checked_at=datetime(2026, 4, 21, 12, 5, tzinfo=timezone.utc),
+            last_known_server_label="old.example.com",
+        )
+    )
+    app_like = _make_app_like(base_url="https://new.example.com/v1/")
+
+    context = load_runtime_policy_for_app(app_like, store=store)
+
+    assert context.state.active_source == "server"
+    assert context.state.active_server_id == "https://new.example.com/v1"
+    assert context.state.server_reachability == "unknown"
+    assert context.state.server_reachability_checked_at is None
+    assert context.state.server_auth_state == "unknown"
+    assert context.state.server_auth_checked_at is None
+    assert store.load() == context.state
+
+
 def test_load_runtime_policy_for_app_downgrades_stale_server_mode_when_server_config_is_missing(
     tmp_path,
 ):

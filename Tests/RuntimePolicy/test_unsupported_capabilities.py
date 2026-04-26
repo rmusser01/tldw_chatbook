@@ -33,6 +33,7 @@ from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistScopeSe
 from tldw_chatbook.Sync_Interop.sync_scope_service import SyncScopeService
 from tldw_chatbook.Text2SQL_Interop.text2sql_scope_service import Text2SQLScopeService
 from tldw_chatbook.Tools_Interop.tools_scope_service import ToolsScopeService
+from tldw_chatbook.MCP_Governance_Interop.mcp_governance_scope_service import MCPGovernanceScopeService
 from tldw_chatbook.Translation_Interop.translation_scope_service import TranslationScopeService
 from tldw_chatbook.User_Governance_Interop.user_governance_scope_service import UserGovernanceScopeService
 from tldw_chatbook.Voice_Assistant_Interop.voice_assistant_scope_service import VoiceAssistantScopeService
@@ -159,6 +160,7 @@ def test_collect_unsupported_capability_reports_labels_each_report_scope():
         (ConnectorsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (SkillsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (ToolsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (MCPGovernanceScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (Text2SQLScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (SyncScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (UserGovernanceScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),

@@ -257,6 +257,7 @@ from tldw_chatbook.Skills_Interop import ServerSkillsService, SkillsScopeService
 from tldw_chatbook.Sync_Interop import ServerSyncService, SyncScopeService
 from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
 from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
+from tldw_chatbook.MCP_Governance_Interop import MCPGovernanceScopeService, ServerMCPGovernanceService
 from tldw_chatbook.User_Governance_Interop import ServerUserGovernanceService, UserGovernanceScopeService
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
 from tldw_chatbook.Web_Scraping_Interop import ServerWebScrapingService, WebScrapingScopeService
@@ -1975,6 +1976,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.tools_scope_service = ToolsScopeService(
             server_service=self.server_tools_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_mcp_governance_service = ServerMCPGovernanceService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_mcp_governance_service = ServerMCPGovernanceService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.mcp_governance_scope_service = MCPGovernanceScopeService(
+            server_service=self.server_mcp_governance_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:

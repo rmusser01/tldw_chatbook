@@ -337,6 +337,25 @@ from .skills_schemas import (
     SkillUpdate,
 )
 from .tools_schemas import ExecuteToolRequest, ExecuteToolResult, ToolListResponse
+from .mcp_governance_schemas import (
+    MCPApprovalDecisionCreate,
+    MCPApprovalPolicyCreate,
+    MCPApprovalPolicyUpdate,
+    MCPCapabilityMappingCreate,
+    MCPCapabilityMappingUpdate,
+    MCPCatalogCreate,
+    MCPCatalogEntryCreate,
+    MCPEffectivePolicyResponse,
+    MCPExternalServerCreate,
+    MCPExternalServerUpdate,
+    MCPGovernanceObject,
+    MCPGovernanceSummary,
+    MCPPermissionProfileCreate,
+    MCPPermissionProfileUpdate,
+    MCPPolicyAssignmentCreate,
+    MCPPolicyAssignmentUpdate,
+    MCPSecretSetRequest,
+)
 from .text2sql_schemas import Text2SQLRequest, Text2SQLResponse
 from .sync_schemas import ClientChangesPayload, ServerChangesResponse
 from .prompt_studio_schemas import (
@@ -11033,6 +11052,368 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return ExecuteToolResult.model_validate(response)
+
+    @staticmethod
+    def _mcp_payload(request_data: Any, *, exclude_unset: bool = False) -> Dict[str, Any]:
+        if hasattr(request_data, "model_dump"):
+            return request_data.model_dump(
+                exclude_none=True,
+                exclude_unset=exclude_unset,
+                mode="json",
+            )
+        if isinstance(request_data, dict):
+            return {key: value for key, value in request_data.items() if value is not None}
+        return dict(request_data or {})
+
+    @staticmethod
+    def _mcp_params(**kwargs: Any) -> Dict[str, Any]:
+        return {key: value for key, value in kwargs.items() if value is not None}
+
+    async def list_mcp_tool_registry(self) -> list[MCPGovernanceObject]:
+        response = await self._request("GET", "/api/v1/mcp/hub/tool-registry")
+        return [MCPGovernanceObject.model_validate(item) for item in response]
+
+    async def list_mcp_tool_registry_modules(self) -> list[MCPGovernanceObject]:
+        response = await self._request("GET", "/api/v1/mcp/hub/tool-registry/modules")
+        return [MCPGovernanceObject.model_validate(item) for item in response]
+
+    async def get_mcp_tool_registry_summary(self) -> MCPGovernanceSummary:
+        response = await self._request("GET", "/api/v1/mcp/hub/tool-registry/summary")
+        return MCPGovernanceSummary.model_validate(response)
+
+    async def list_mcp_capability_mappings(
+        self,
+        *,
+        owner_scope_type: str | None = None,
+        owner_scope_id: int | None = None,
+    ) -> list[MCPGovernanceObject]:
+        response = await self._request(
+            "GET",
+            "/api/v1/mcp/hub/capability-mappings",
+            params=self._mcp_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+        )
+        return [MCPGovernanceObject.model_validate(item) for item in response]
+
+    async def preview_mcp_capability_mapping(
+        self,
+        request_data: MCPCapabilityMappingCreate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            "/api/v1/mcp/hub/capability-mappings/preview",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def create_mcp_capability_mapping(
+        self,
+        request_data: MCPCapabilityMappingCreate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            "/api/v1/mcp/hub/capability-mappings",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def update_mcp_capability_mapping(
+        self,
+        capability_adapter_mapping_id: int,
+        request_data: MCPCapabilityMappingUpdate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/mcp/hub/capability-mappings/{capability_adapter_mapping_id}",
+            json_data=self._mcp_payload(request_data, exclude_unset=True),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def delete_mcp_capability_mapping(self, capability_adapter_mapping_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/mcp/hub/capability-mappings/{capability_adapter_mapping_id}")
+
+    async def list_mcp_external_servers(
+        self,
+        *,
+        owner_scope_type: str | None = None,
+        owner_scope_id: int | None = None,
+    ) -> list[MCPGovernanceObject]:
+        response = await self._request(
+            "GET",
+            "/api/v1/mcp/hub/external-servers",
+            params=self._mcp_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+        )
+        return [MCPGovernanceObject.model_validate(item) for item in response]
+
+    async def create_mcp_external_server(
+        self,
+        request_data: MCPExternalServerCreate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            "/api/v1/mcp/hub/external-servers",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def import_mcp_external_server(self, server_id: str) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            f"/api/v1/mcp/hub/external-servers/{quote(server_id, safe='')}/import",
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def update_mcp_external_server(
+        self,
+        server_id: str,
+        request_data: MCPExternalServerUpdate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/mcp/hub/external-servers/{quote(server_id, safe='')}",
+            json_data=self._mcp_payload(request_data, exclude_unset=True),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def delete_mcp_external_server(self, server_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/mcp/hub/external-servers/{quote(server_id, safe='')}")
+
+    async def set_mcp_external_server_secret(
+        self,
+        server_id: str,
+        request_data: MCPSecretSetRequest | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            f"/api/v1/mcp/hub/external-servers/{quote(server_id, safe='')}/secret",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def list_mcp_permission_profiles(
+        self,
+        *,
+        owner_scope_type: str | None = None,
+        owner_scope_id: int | None = None,
+    ) -> list[MCPGovernanceObject]:
+        response = await self._request(
+            "GET",
+            "/api/v1/mcp/hub/permission-profiles",
+            params=self._mcp_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+        )
+        return [MCPGovernanceObject.model_validate(item) for item in response]
+
+    async def create_mcp_permission_profile(
+        self,
+        request_data: MCPPermissionProfileCreate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            "/api/v1/mcp/hub/permission-profiles",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def update_mcp_permission_profile(
+        self,
+        profile_id: int,
+        request_data: MCPPermissionProfileUpdate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/mcp/hub/permission-profiles/{profile_id}",
+            json_data=self._mcp_payload(request_data, exclude_unset=True),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def delete_mcp_permission_profile(self, profile_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/mcp/hub/permission-profiles/{profile_id}")
+
+    async def list_mcp_policy_assignments(
+        self,
+        *,
+        owner_scope_type: str | None = None,
+        owner_scope_id: int | None = None,
+        target_type: str | None = None,
+        target_id: str | None = None,
+    ) -> list[MCPGovernanceObject]:
+        response = await self._request(
+            "GET",
+            "/api/v1/mcp/hub/policy-assignments",
+            params=self._mcp_params(
+                owner_scope_type=owner_scope_type,
+                owner_scope_id=owner_scope_id,
+                target_type=target_type,
+                target_id=target_id,
+            ),
+        )
+        return [MCPGovernanceObject.model_validate(item) for item in response]
+
+    async def create_mcp_policy_assignment(
+        self,
+        request_data: MCPPolicyAssignmentCreate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            "/api/v1/mcp/hub/policy-assignments",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def update_mcp_policy_assignment(
+        self,
+        assignment_id: int,
+        request_data: MCPPolicyAssignmentUpdate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/mcp/hub/policy-assignments/{assignment_id}",
+            json_data=self._mcp_payload(request_data, exclude_unset=True),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def delete_mcp_policy_assignment(self, assignment_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/mcp/hub/policy-assignments/{assignment_id}")
+
+    async def list_mcp_approval_policies(
+        self,
+        *,
+        owner_scope_type: str | None = None,
+        owner_scope_id: int | None = None,
+    ) -> list[MCPGovernanceObject]:
+        response = await self._request(
+            "GET",
+            "/api/v1/mcp/hub/approval-policies",
+            params=self._mcp_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+        )
+        return [MCPGovernanceObject.model_validate(item) for item in response]
+
+    async def create_mcp_approval_policy(
+        self,
+        request_data: MCPApprovalPolicyCreate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            "/api/v1/mcp/hub/approval-policies",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def update_mcp_approval_policy(
+        self,
+        approval_policy_id: int,
+        request_data: MCPApprovalPolicyUpdate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "PUT",
+            f"/api/v1/mcp/hub/approval-policies/{approval_policy_id}",
+            json_data=self._mcp_payload(request_data, exclude_unset=True),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def delete_mcp_approval_policy(self, approval_policy_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/mcp/hub/approval-policies/{approval_policy_id}")
+
+    async def create_mcp_approval_decision(
+        self,
+        request_data: MCPApprovalDecisionCreate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            "/api/v1/mcp/hub/approval-decisions",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def get_mcp_effective_policy(
+        self,
+        *,
+        persona_id: str | None = None,
+        group_id: str | None = None,
+        org_id: int | None = None,
+        team_id: int | None = None,
+    ) -> MCPEffectivePolicyResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/mcp/hub/effective-policy",
+            params=self._mcp_params(persona_id=persona_id, group_id=group_id, org_id=org_id, team_id=team_id),
+        )
+        return MCPEffectivePolicyResponse.model_validate(response)
+
+    async def list_mcp_org_tool_catalogs(self, org_id: int) -> list[MCPGovernanceObject]:
+        response = await self._request("GET", f"/api/v1/orgs/{org_id}/mcp/tool_catalogs")
+        return [MCPGovernanceObject.model_validate(item) for item in response]
+
+    async def create_mcp_org_tool_catalog(
+        self,
+        org_id: int,
+        request_data: MCPCatalogCreate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            f"/api/v1/orgs/{org_id}/mcp/tool_catalogs",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def delete_mcp_org_tool_catalog(self, org_id: int, catalog_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/orgs/{org_id}/mcp/tool_catalogs/{catalog_id}")
+
+    async def add_mcp_org_catalog_entry(
+        self,
+        org_id: int,
+        catalog_id: int,
+        request_data: MCPCatalogEntryCreate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            f"/api/v1/orgs/{org_id}/mcp/tool_catalogs/{catalog_id}/entries",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def delete_mcp_org_catalog_entry(self, org_id: int, catalog_id: int, tool_name: str) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/orgs/{org_id}/mcp/tool_catalogs/{catalog_id}/entries/{quote(tool_name, safe='')}",
+        )
+
+    async def list_mcp_team_tool_catalogs(self, team_id: int) -> list[MCPGovernanceObject]:
+        response = await self._request("GET", f"/api/v1/teams/{team_id}/mcp/tool_catalogs")
+        return [MCPGovernanceObject.model_validate(item) for item in response]
+
+    async def create_mcp_team_tool_catalog(
+        self,
+        team_id: int,
+        request_data: MCPCatalogCreate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            f"/api/v1/teams/{team_id}/mcp/tool_catalogs",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def delete_mcp_team_tool_catalog(self, team_id: int, catalog_id: int) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/teams/{team_id}/mcp/tool_catalogs/{catalog_id}")
+
+    async def add_mcp_team_catalog_entry(
+        self,
+        team_id: int,
+        catalog_id: int,
+        request_data: MCPCatalogEntryCreate | Dict[str, Any],
+    ) -> MCPGovernanceObject:
+        response = await self._request(
+            "POST",
+            f"/api/v1/teams/{team_id}/mcp/tool_catalogs/{catalog_id}/entries",
+            json_data=self._mcp_payload(request_data),
+        )
+        return MCPGovernanceObject.model_validate(response)
+
+    async def delete_mcp_team_catalog_entry(self, team_id: int, catalog_id: int, tool_name: str) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/teams/{team_id}/mcp/tool_catalogs/{catalog_id}/entries/{quote(tool_name, safe='')}",
+        )
 
     async def query_text2sql(self, request_data: Text2SQLRequest) -> Text2SQLResponse:
         response = await self._request(
