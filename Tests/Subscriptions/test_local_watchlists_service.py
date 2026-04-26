@@ -320,6 +320,100 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
 
 
 @pytest.mark.asyncio
+async def test_local_watchlists_service_executes_api_sources_with_json_field_mapping(tmp_path, monkeypatch):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    requests = []
+
+    class FakeResponse:
+        headers = {"content-type": "application/json"}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "payload": {
+                    "entries": [
+                        {
+                            "headline": "Alpha update",
+                            "link": "https://api.example.com/a",
+                            "summary": "First item",
+                            "published": "2026-04-25T00:00:00+00:00",
+                        },
+                        {
+                            "headline": "Beta update",
+                            "link": "https://api.example.com/b",
+                            "summary": "Second item",
+                            "published": "2026-04-25T01:00:00+00:00",
+                        },
+                    ]
+                }
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, **kwargs):
+            requests.append({"url": url, **kwargs})
+            return FakeResponse()
+
+    monkeypatch.setattr("httpx.AsyncClient", FakeAsyncClient)
+    source = await service.create_source(
+        {
+            "name": "API changelog",
+            "url": "https://api.example.com/changes",
+            "source_type": "api",
+            "custom_headers": {"X-API-Key": "secret"},
+            "extraction_rules": {
+                "items_path": "payload.entries",
+                "field_map": {
+                    "title": "headline",
+                    "url": "link",
+                    "content": "summary",
+                    "published_date": "published",
+                },
+            },
+            "processing_options": {"max_items": 1},
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    completed = await service.execute_run(launched["run_id"])
+
+    stored_items = db.conn.execute(
+        "SELECT url, title, content_hash FROM subscription_items WHERE subscription_id = ? ORDER BY id ASC",
+        (source["source_id"],),
+    ).fetchall()
+    assert requests == [
+        {
+            "url": "https://api.example.com/changes",
+            "headers": {
+                "Accept": "application/json",
+                "User-Agent": "tldw-chatbook/1.0 (+https://github.com/tldw/chatbook)",
+                "X-API-Key": "secret",
+            },
+        }
+    ]
+    assert completed["status"] == "completed"
+    assert completed["stats"]["items_found"] == 1
+    assert [dict(row) for row in stored_items] == [
+        {
+            "url": "https://api.example.com/a",
+            "title": "Alpha update",
+            "content_hash": "0592ea3b5b28611c52b3b7cbb5382cfbe977f978f3239984bb5f5a6425c55794",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_local_watchlists_service_evaluates_completed_run_alerts_into_notifications(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     notification_store = ClientNotificationsDB(tmp_path / "notifications.db")

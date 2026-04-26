@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import inspect
+import hashlib
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
@@ -561,6 +562,8 @@ class LocalWatchlistsService:
                 )
                 if result:
                     items.append(result)
+        elif source_type == "api":
+            items = await self._items_for_api_source(subscription_config)
         else:
             raise ValueError(f"Unsupported local watchlist source type for execution: {source_type}")
         return {
@@ -576,6 +579,7 @@ class LocalWatchlistsService:
             "processing_options",
             "notification_config",
             "rate_limit_config",
+            "custom_headers",
         ):
             if field in config:
                 config[field] = cls._parse_json_value(config[field])
@@ -639,6 +643,143 @@ class LocalWatchlistsService:
             except (TypeError, ValueError):
                 max_urls = None
         return urls[:max_urls] if max_urls is not None else urls
+
+    @classmethod
+    async def _items_for_api_source(cls, subscription: Mapping[str, Any]) -> list[dict[str, Any]]:
+        import httpx
+
+        source = str(subscription.get("source") or "").strip()
+        if not source:
+            return []
+
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "tldw-chatbook/1.0 (+https://github.com/tldw/chatbook)",
+        }
+        custom_headers = subscription.get("custom_headers")
+        if isinstance(custom_headers, Mapping):
+            headers.update({str(key): str(value) for key, value in custom_headers.items()})
+
+        extraction_rules = subscription.get("extraction_rules")
+        request_options = extraction_rules if isinstance(extraction_rules, Mapping) else {}
+        request_kwargs: dict[str, Any] = {"headers": headers}
+        params = request_options.get("params") or request_options.get("query")
+        if isinstance(params, Mapping) and params:
+            request_kwargs["params"] = dict(params)
+
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(source, **request_kwargs)
+            response.raise_for_status()
+
+        payload = response.json()
+        items_payload = cls._api_items_payload(payload, request_options.get("items_path"))
+        if not isinstance(items_payload, list):
+            items_payload = [items_payload] if items_payload is not None else []
+        items_payload = cls._apply_max_items(items_payload, subscription)
+
+        field_map = request_options.get("field_map")
+        normalized_field_map = field_map if isinstance(field_map, Mapping) else {}
+        return [
+            cls._normalize_api_item(item, normalized_field_map, source)
+            for item in items_payload
+        ]
+
+    @classmethod
+    def _api_items_payload(cls, payload: Any, items_path: Any = None) -> Any:
+        if items_path:
+            return cls._json_path(payload, str(items_path))
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, Mapping):
+            for key in ("items", "entries", "results", "data"):
+                candidate = payload.get(key)
+                if isinstance(candidate, list):
+                    return candidate
+        return payload
+
+    @classmethod
+    def _json_path(cls, value: Any, path: str) -> Any:
+        current = value
+        for raw_part in path.split("."):
+            part = raw_part.strip()
+            if not part:
+                continue
+            if isinstance(current, Mapping):
+                current = current.get(part)
+            elif isinstance(current, list):
+                try:
+                    current = current[int(part)]
+                except (ValueError, IndexError):
+                    return None
+            else:
+                return None
+            if current is None:
+                return None
+        return current
+
+    @classmethod
+    def _normalize_api_item(
+        cls,
+        item: Any,
+        field_map: Mapping[str, Any],
+        source_url: str,
+    ) -> dict[str, Any]:
+        title = cls._api_item_field(item, field_map, "title", ("title", "name", "headline"))
+        url = cls._api_item_field(item, field_map, "url", ("url", "link", "html_url", "permalink")) or source_url
+        content = cls._api_item_field(item, field_map, "content", ("content", "summary", "description", "body"))
+        published_date = cls._api_item_field(
+            item,
+            field_map,
+            "published_date",
+            ("published_date", "published", "date", "created_at", "updated_at"),
+        )
+        author = cls._api_item_field(item, field_map, "author", ("author", "by", "user"))
+        content_hash = cls._api_item_field(item, field_map, "content_hash", ("content_hash", "hash", "id"))
+        if not content_hash:
+            content_hash = hashlib.sha256(f"{title or ''}{content or ''}".encode("utf-8")).hexdigest()
+
+        normalized = {
+            "url": str(url),
+            "title": str(title or url),
+            "content": content,
+            "content_hash": str(content_hash),
+            "published_date": published_date,
+            "author": author,
+            "extracted_data": item if isinstance(item, Mapping) else {"value": item},
+        }
+        return {key: value for key, value in normalized.items() if value is not None}
+
+    @classmethod
+    def _api_item_field(
+        cls,
+        item: Any,
+        field_map: Mapping[str, Any],
+        field_name: str,
+        fallback_paths: tuple[str, ...],
+    ) -> Any:
+        mapped_path = field_map.get(field_name)
+        if mapped_path:
+            value = cls._json_path(item, str(mapped_path))
+            if value not in (None, ""):
+                return value
+        for path in fallback_paths:
+            value = cls._json_path(item, path)
+            if value not in (None, ""):
+                return value
+        return None
+
+    @staticmethod
+    def _apply_max_items(items: list[Any], subscription: Mapping[str, Any]) -> list[Any]:
+        processing_options = subscription.get("processing_options")
+        max_items = None
+        if isinstance(processing_options, Mapping):
+            configured = processing_options.get("max_items", processing_options.get("max_urls"))
+            if configured is not None:
+                try:
+                    max_items = max(int(configured), 0)
+                except (TypeError, ValueError):
+                    max_items = None
+        return items[:max_items] if max_items is not None else items
 
     @staticmethod
     def _parse_json_value(value: Any) -> Any:
