@@ -1674,3 +1674,50 @@ def test_local_service_dispatches_completed_ingest_job_notifications(memory_db_f
             },
         }
     ]
+
+
+def test_local_service_dispatches_cancelled_ingest_job_notifications(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Needs Reprocess",
+        content="Body",
+        media_type="article",
+        keywords=[],
+    )
+    dispatcher = RecordingNotificationDispatcher()
+    app = object()
+    service = LocalMediaReadingService(
+        db,
+        notification_dispatcher=dispatcher,
+        notification_app=app,
+    )
+    queued = service.reprocess_media(media_id)
+
+    cancelled = service.cancel_ingest_job(queued["job_id"], reason="user requested")
+    job = service.get_ingest_job(queued["job_id"])
+
+    assert cancelled["success"] is True
+    assert cancelled["status"] == "cancelled"
+    assert dispatcher.calls == [
+        {
+            "app": app,
+            "category": "media_ingestion",
+            "title": "Media ingestion job cancelled",
+            "message": "Cancelled",
+            "severity": "warning",
+            "source_backend": "local",
+            "source_entity_kind": "media_ingest_job",
+            "source_entity_id": str(queued["job_id"]),
+            "payload": {
+                "job_id": queued["job_id"],
+                "batch_id": job["batch_id"],
+                "source_id": None,
+                "job_type": "media_reprocess",
+                "media_type": "media",
+                "source_kind": "media",
+                "status": "cancelled",
+                "result": {},
+                "error_message": None,
+            },
+        }
+    ]

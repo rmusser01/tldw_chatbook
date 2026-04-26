@@ -3782,6 +3782,8 @@ class LocalMediaReadingService:
                     "status": existing.get("status"),
                     "message": "Job is already terminal.",
                 }
+        cancelled_job = self.get_ingest_job(job_id)
+        self._dispatch_terminal_ingest_job_notification(cancelled_job)
         return {"success": True, "job_id": int(job_id), "status": "cancelled", "message": reason}
 
     def cancel_ingest_batch(
