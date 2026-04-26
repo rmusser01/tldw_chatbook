@@ -10,6 +10,21 @@ from typing import Any
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
+        "operation_id": "character.archetypes.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_scope_missing",
+        "user_message": (
+            "Local persona archetype templates are not available through the source-aware "
+            "character/persona scope yet."
+        ),
+        "affected_action_ids": [
+            "character.archetypes.detail.local",
+            "character.archetypes.list.local",
+            "character.archetypes.preview.local",
+        ],
+    },
+    {
         "operation_id": "character.persona.profiles.local",
         "source": "local",
         "supported": False,
@@ -119,6 +134,10 @@ class CharacterPersonaScopeService:
         return f"character.persona.{action}.{mode}"
 
     @staticmethod
+    def _archetype_action_id(mode: str, action: str) -> str:
+        return f"character.archetypes.{action}.{mode}"
+
+    @staticmethod
     def _session_action_id(mode: str, action: str = "launch") -> str:
         return f"character.sessions.{action}.{mode}"
 
@@ -144,6 +163,19 @@ class CharacterPersonaScopeService:
         if normalized_mode == "local":
             reports = [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
             local_backend = self.local_service
+            if local_backend is not None and self._backend_supports(
+                local_backend,
+                (
+                    "list_persona_archetypes",
+                    "get_persona_archetype",
+                    "preview_persona_archetype",
+                ),
+            ):
+                reports = [
+                    item
+                    for item in reports
+                    if item["operation_id"] != "character.archetypes.local"
+                ]
             if local_backend is not None and self._backend_supports(
                 local_backend,
                 (
@@ -228,6 +260,53 @@ class CharacterPersonaScopeService:
             if callable(method):
                 return await self._maybe_await(method(*args, **kwargs))
         raise ValueError(missing_message)
+
+    async def list_persona_archetypes(self, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._archetype_action_id(normalized_mode, "list"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona archetype templates are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide list_persona_archetypes()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("list_persona_archetypes",),
+            missing_message=missing_message,
+        )
+
+    async def get_persona_archetype(self, key: str, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._archetype_action_id(normalized_mode, "detail"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona archetype templates are not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide get_persona_archetype()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("get_persona_archetype",),
+            key,
+            missing_message=missing_message,
+        )
+
+    async def preview_persona_archetype(self, key: str, mode: str = "local") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._archetype_action_id(normalized_mode, "preview"))
+        backend = self._backend(normalized_mode)
+        missing_message = (
+            "Local persona archetype preview is not available yet."
+            if normalized_mode == "local"
+            else "Character/persona backend does not provide preview_persona_archetype()."
+        )
+        return await self._invoke_backend_method(
+            backend,
+            ("preview_persona_archetype",),
+            key,
+            missing_message=missing_message,
+        )
 
     async def list_characters(self, mode: str = "local", limit: int = 100, offset: int = 0) -> Any:
         normalized_mode = self._normalize_mode(mode)

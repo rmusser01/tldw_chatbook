@@ -8,6 +8,9 @@ import pytest
 
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api.character_persona_schemas import (
+    ArchetypePreviewResponse,
+    ArchetypeSummary,
+    ArchetypeTemplate,
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
     CharacterCreateRequest,
@@ -192,6 +195,68 @@ class TestCharacterPersonaClient:
         assert create_payload["setup"]["current_step"] == "persona"
         assert isinstance(PersonaVoiceDefaults.model_validate(create_payload["voice_defaults"]), PersonaVoiceDefaults)
         assert isinstance(PersonaSetupState.model_validate(create_payload["setup"]), PersonaSetupState)
+
+    async def test_persona_archetype_endpoint_wiring(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(
+            side_effect=[
+                [
+                    {
+                        "key": "researcher",
+                        "label": "Researcher",
+                        "tagline": "Investigates sources",
+                        "icon": "search",
+                    }
+                ],
+                {
+                    "key": "researcher",
+                    "label": "Researcher",
+                    "tagline": "Investigates sources",
+                    "icon": "search",
+                    "persona": {
+                        "name": "Researcher",
+                        "system_prompt": "Investigate carefully.",
+                        "personality_traits": ["careful"],
+                    },
+                    "mcp_modules": {"enabled": ["web"], "disabled": []},
+                    "suggested_external_servers": ["semantic-scholar"],
+                    "policy": {
+                        "confirmation_mode": "destructive_only",
+                        "tool_overrides": [{"tool": "web.search", "requires_confirmation": False}],
+                    },
+                    "voice_defaults": {"wake_phrase": "research"},
+                    "scope_rules": [{"scope": "workspace"}],
+                    "buddy": {"species": "owl", "palette": "sepia", "silhouette": "round"},
+                    "starter_commands": [{"template_key": "summarize"}],
+                },
+                {
+                    "name": "Researcher",
+                    "system_prompt": "Investigate carefully.",
+                    "archetype_key": "researcher",
+                    "voice_defaults": {"wake_phrase": "research"},
+                    "setup": {"status": "not_started", "current_step": "archetype"},
+                },
+            ]
+        )
+        monkeypatch.setattr(client, "_request", mocked)
+
+        summaries = await client.list_persona_archetypes()
+        template = await client.get_persona_archetype("researcher")
+        preview = await client.preview_persona_archetype("researcher")
+
+        assert isinstance(summaries[0], ArchetypeSummary)
+        assert summaries[0].key == "researcher"
+        assert isinstance(template, ArchetypeTemplate)
+        assert template.persona.name == "Researcher"
+        assert template.starter_commands[0].template_key == "summarize"
+        assert isinstance(preview, ArchetypePreviewResponse)
+        assert preview.archetype_key == "researcher"
+        assert preview.setup.current_step == "archetype"
+        assert [call.args[:2] for call in mocked.await_args_list] == [
+            ("GET", "/api/v1/persona/archetypes"),
+            ("GET", "/api/v1/persona/archetypes/researcher"),
+            ("GET", "/api/v1/persona/archetypes/researcher/preview"),
+        ]
 
     async def test_persona_exemplar_endpoint_wiring(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")

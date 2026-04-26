@@ -23,6 +23,93 @@ PersonaSetupTestType = Literal["dry_run", "live_session"]
 CharacterChatSessionState = Literal["in-progress", "resolved", "backlog", "non-viable"]
 CharacterAssistantKind = Literal["character", "persona"]
 PersonaMemoryMode = Literal["read_only", "read_write"]
+MCPAuthType = Literal["none", "bearer", "api_key"]
+
+
+class ArchetypePersonaDefaults(BaseModel):
+    """Default persona settings seeded by a server persona archetype."""
+
+    name: str
+    system_prompt: str | None = None
+    personality_traits: list[str] = Field(default_factory=list)
+
+
+class ArchetypeMCPConfig(BaseModel):
+    """Default MCP module allow/deny hints from an archetype."""
+
+    enabled: list[str] = Field(default_factory=list)
+    disabled: list[str] = Field(default_factory=list)
+
+
+class ArchetypeToolOverride(BaseModel):
+    tool: str
+    requires_confirmation: bool = False
+
+
+class ArchetypePolicyDefaults(BaseModel):
+    confirmation_mode: PersonaConfirmationMode = "destructive_only"
+    tool_overrides: list[ArchetypeToolOverride] = Field(default_factory=list)
+
+
+class ArchetypeBuddyDefaults(BaseModel):
+    species: str | None = None
+    palette: str | None = None
+    silhouette: str | None = None
+
+
+class ArchetypeStarterCommand(BaseModel):
+    template_key: str | None = None
+    custom: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_source(self) -> "ArchetypeStarterCommand":
+        has_template = self.template_key is not None
+        has_custom = self.custom is not None
+        if has_template == has_custom:
+            raise ValueError("Exactly one of 'template_key' or 'custom' must be provided")
+        return self
+
+
+class ArchetypeSummary(BaseModel):
+    key: str
+    label: str
+    tagline: str
+    icon: str
+
+
+class ArchetypeTemplate(ArchetypeSummary):
+    persona: ArchetypePersonaDefaults
+    mcp_modules: ArchetypeMCPConfig = Field(default_factory=ArchetypeMCPConfig)
+    suggested_external_servers: list[str] = Field(default_factory=list)
+    policy: ArchetypePolicyDefaults = Field(default_factory=ArchetypePolicyDefaults)
+    voice_defaults: dict[str, Any] = Field(default_factory=dict)
+    scope_rules: list[dict[str, Any]] = Field(default_factory=list)
+    buddy: ArchetypeBuddyDefaults = Field(default_factory=ArchetypeBuddyDefaults)
+    starter_commands: list[ArchetypeStarterCommand] = Field(default_factory=list)
+
+
+class ArchetypePreviewSetupState(BaseModel):
+    status: Literal["not_started"] = "not_started"
+    current_step: Literal["archetype"] = "archetype"
+
+
+class ArchetypePreviewResponse(BaseModel):
+    name: str
+    system_prompt: str | None = None
+    archetype_key: str
+    voice_defaults: dict[str, Any] = Field(default_factory=dict)
+    setup: ArchetypePreviewSetupState = Field(default_factory=ArchetypePreviewSetupState)
+
+
+class MCPCatalogEntry(BaseModel):
+    key: str
+    name: str
+    description: str
+    url_template: str
+    auth_type: MCPAuthType = "none"
+    category: str
+    logo_key: str | None = None
+    suggested_for: list[str] = Field(default_factory=list)
 
 
 def _strip_optional_text(value: Any) -> Any:

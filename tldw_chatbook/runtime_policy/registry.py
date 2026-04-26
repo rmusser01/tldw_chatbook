@@ -251,6 +251,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "characters",
         sources=SEPARATED_SOURCES,
         resources=(
+            _resource("character.archetypes", actions=(LIST, DETAIL, PREVIEW)),
             _resource("character.persona", actions=CRUD_ACTIONS),
             _resource(
                 "character.sessions",

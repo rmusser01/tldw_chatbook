@@ -26,6 +26,9 @@ class FakeCharacterPersonaClient:
         self.update_persona_profile_calls = []
         self.delete_persona_profile_calls = []
         self.restore_persona_profile_calls = []
+        self.list_persona_archetypes_calls = 0
+        self.get_persona_archetype_calls = []
+        self.preview_persona_archetype_calls = []
         self.list_persona_exemplars_calls = []
         self.get_persona_exemplar_calls = []
         self.create_persona_exemplar_calls = []
@@ -154,6 +157,18 @@ class FakeCharacterPersonaClient:
             {"persona_id": persona_id, "expected_version": expected_version}
         )
         return {"id": persona_id, "name": "Guide", "version": expected_version + 1}
+
+    async def list_persona_archetypes(self):
+        self.list_persona_archetypes_calls += 1
+        return [{"key": "researcher", "label": "Researcher", "tagline": "Investigates", "icon": "search"}]
+
+    async def get_persona_archetype(self, key):
+        self.get_persona_archetype_calls.append(key)
+        return {"key": key, "label": "Researcher", "persona": {"name": "Researcher"}}
+
+    async def preview_persona_archetype(self, key):
+        self.preview_persona_archetype_calls.append(key)
+        return {"archetype_key": key, "name": "Researcher", "setup": {"current_step": "archetype"}}
 
     async def list_persona_exemplars(
         self,
@@ -505,6 +520,24 @@ class FakeLocalPersonaExemplarBackend(FakeLocalPersonaProfileBackend):
         return {"status": "deleted", "persona_id": persona_id, "exemplar_id": exemplar_id}
 
 
+class FakeLocalArchetypeBackend(FakeLocalCharacterBackend):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def list_persona_archetypes(self):
+        self.calls.append(("list_persona_archetypes",))
+        return [{"key": "local-guide", "label": "Local Guide", "tagline": "Offline", "icon": "book"}]
+
+    def get_persona_archetype(self, key):
+        self.calls.append(("get_persona_archetype", key))
+        return {"key": key, "label": "Local Guide", "persona": {"name": "Local Guide"}}
+
+    def preview_persona_archetype(self, key):
+        self.calls.append(("preview_persona_archetype", key))
+        return {"archetype_key": key, "name": "Local Guide", "setup": {"current_step": "archetype"}}
+
+
 class FakeLocalCharacterExemplarBackend(FakeLocalPersonaExemplarBackend):
     def search_character_exemplars(self, character_id, request_data):
         self.calls.append(("search_character_exemplars", character_id, request_data))
@@ -683,6 +716,35 @@ async def test_scope_service_routes_character_and_persona_parameters():
         }
     ]
     assert local_service.list_character_cards_calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_persona_archetypes_to_selected_backend():
+    local_service = FakeLocalArchetypeBackend()
+    server_service = FakeCharacterPersonaClient()
+    scope_service = CharacterPersonaScopeService(local_service=local_service, server_service=server_service)
+
+    server_summaries = await scope_service.list_persona_archetypes(mode="server")
+    server_template = await scope_service.get_persona_archetype("researcher", mode="server")
+    server_preview = await scope_service.preview_persona_archetype("researcher", mode="server")
+    local_summaries = await scope_service.list_persona_archetypes(mode="local")
+    local_template = await scope_service.get_persona_archetype("local-guide", mode="local")
+    local_preview = await scope_service.preview_persona_archetype("local-guide", mode="local")
+
+    assert server_summaries[0]["key"] == "researcher"
+    assert server_template["key"] == "researcher"
+    assert server_preview["archetype_key"] == "researcher"
+    assert local_summaries[0]["key"] == "local-guide"
+    assert local_template["key"] == "local-guide"
+    assert local_preview["archetype_key"] == "local-guide"
+    assert server_service.list_persona_archetypes_calls == 1
+    assert server_service.get_persona_archetype_calls == ["researcher"]
+    assert server_service.preview_persona_archetype_calls == ["researcher"]
+    assert local_service.calls == [
+        ("list_persona_archetypes",),
+        ("get_persona_archetype", "local-guide"),
+        ("preview_persona_archetype", "local-guide"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -1304,6 +1366,21 @@ def test_scope_service_reports_known_character_persona_capability_gaps():
 
     assert local_report == [
         {
+            "operation_id": "character.archetypes.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_scope_missing",
+            "user_message": (
+                "Local persona archetype templates are not available through the source-aware "
+                "character/persona scope yet."
+            ),
+            "affected_action_ids": [
+                "character.archetypes.detail.local",
+                "character.archetypes.list.local",
+                "character.archetypes.preview.local",
+            ],
+        },
+        {
             "operation_id": "character.persona.profiles.local",
             "source": "local",
             "supported": False,
@@ -1448,6 +1525,20 @@ def test_scope_service_does_not_report_local_execution_when_backend_wraps_it():
     assert "character.sessions.execution.local" not in operation_ids
 
 
+def test_scope_service_does_not_report_local_archetypes_when_backend_wraps_them():
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalArchetypeBackend(),
+        server_service=FakeCharacterPersonaClient(),
+    )
+
+    operation_ids = {
+        item["operation_id"]
+        for item in scope_service.list_unsupported_capabilities(mode="local")
+    }
+
+    assert "character.archetypes.local" not in operation_ids
+
+
 @pytest.mark.asyncio
 async def test_scope_service_requires_local_backend_for_local_calls():
     scope_service = CharacterPersonaScopeService(
@@ -1483,6 +1574,25 @@ async def test_server_character_persona_service_delegates_to_client():
             "offset": 9,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_character_persona_service_delegates_persona_archetypes_to_client():
+    client = FakeCharacterPersonaClient()
+    service = ServerCharacterPersonaService(client=client)
+
+    summaries = await service.list_persona_archetypes()
+    template = await service.get_persona_archetype("researcher")
+    preview = await service.preview_persona_archetype("researcher")
+
+    assert summaries == [
+        {"key": "researcher", "label": "Researcher", "tagline": "Investigates", "icon": "search"}
+    ]
+    assert template["key"] == "researcher"
+    assert preview["archetype_key"] == "researcher"
+    assert client.list_persona_archetypes_calls == 1
+    assert client.get_persona_archetype_calls == ["researcher"]
+    assert client.preview_persona_archetype_calls == ["researcher"]
 
 
 @pytest.mark.asyncio
@@ -1674,6 +1784,9 @@ async def test_server_character_persona_service_enforces_policy_actions():
     await service.update_character(1, Mock(model_dump=lambda **_: {"name": "Ada v2"}), expected_version=3)
     await service.delete_character(1, expected_version=4)
     await service.restore_character(1, expected_version=5)
+    await service.list_persona_archetypes()
+    await service.get_persona_archetype("researcher")
+    await service.preview_persona_archetype("researcher")
     await service.list_persona_profiles(active_only=True)
     await service.get_persona_profile("persona-1")
     await service.create_persona_profile(Mock(model_dump=lambda **_: {"name": "Guide"}))
@@ -1727,6 +1840,9 @@ async def test_server_character_persona_service_enforces_policy_actions():
         "character.persona.update.server",
         "character.persona.delete.server",
         "character.persona.update.server",
+        "character.archetypes.list.server",
+        "character.archetypes.detail.server",
+        "character.archetypes.preview.server",
         "character.persona.list.server",
         "character.persona.detail.server",
         "character.persona.create.server",

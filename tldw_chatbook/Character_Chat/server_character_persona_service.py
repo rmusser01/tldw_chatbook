@@ -66,6 +66,10 @@ class ServerCharacterPersonaService:
         return f"character.persona.{action}.server"
 
     @staticmethod
+    def _archetype_action_id(action: str) -> str:
+        return f"character.archetypes.{action}.server"
+
+    @staticmethod
     def _session_action_id(action: str = "launch") -> str:
         return f"character.sessions.{action}.server"
 
@@ -161,6 +165,21 @@ class ServerCharacterPersonaService:
         self._enforce(self._persona_action_id("update"))
         client = self._require_client()
         return await client.restore_persona_profile(persona_id, expected_version=expected_version)
+
+    async def list_persona_archetypes(self) -> Any:
+        self._enforce(self._archetype_action_id("list"))
+        client = self._require_client()
+        return await client.list_persona_archetypes()
+
+    async def get_persona_archetype(self, key: str) -> Any:
+        self._enforce(self._archetype_action_id("detail"))
+        client = self._require_client()
+        return await client.get_persona_archetype(key)
+
+    async def preview_persona_archetype(self, key: str) -> Any:
+        self._enforce(self._archetype_action_id("preview"))
+        client = self._require_client()
+        return await client.preview_persona_archetype(key)
 
     async def list_persona_exemplars(self, persona_id: str, **kwargs: Any) -> Any:
         self._enforce(self._persona_action_id("list"))

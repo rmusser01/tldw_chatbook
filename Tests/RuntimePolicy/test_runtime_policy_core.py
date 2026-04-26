@@ -323,6 +323,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
 
 EXPECTED_ACTION_IDS_BY_CAPABILITY = {
     "characters_personas_ccp": _action_ids("""
+        character.archetypes.detail.local
+        character.archetypes.detail.server
+        character.archetypes.list.local
+        character.archetypes.list.server
+        character.archetypes.preview.local
+        character.archetypes.preview.server
         character.persona.create.local
         character.persona.create.server
         character.persona.delete.local

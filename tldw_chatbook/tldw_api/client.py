@@ -687,6 +687,9 @@ from .chat_loop_schemas import (
     ChatLoopStartResponse,
 )
 from .character_persona_schemas import (
+    ArchetypePreviewResponse,
+    ArchetypeSummary,
+    ArchetypeTemplate,
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
     CharacterCreateRequest,
@@ -8038,6 +8041,18 @@ class TLDWAPIClient:
             f"/api/v1/persona/profiles/{persona_id}/restore",
             params={"expected_version": expected_version},
         )
+
+    async def list_persona_archetypes(self) -> list[ArchetypeSummary]:
+        response = await self._request("GET", "/api/v1/persona/archetypes")
+        return [ArchetypeSummary.model_validate(item) for item in response]
+
+    async def get_persona_archetype(self, key: str) -> ArchetypeTemplate:
+        response = await self._request("GET", f"/api/v1/persona/archetypes/{quote(key, safe='')}")
+        return ArchetypeTemplate.model_validate(response)
+
+    async def preview_persona_archetype(self, key: str) -> ArchetypePreviewResponse:
+        response = await self._request("GET", f"/api/v1/persona/archetypes/{quote(key, safe='')}/preview")
+        return ArchetypePreviewResponse.model_validate(response)
 
     async def list_persona_exemplars(
         self,
