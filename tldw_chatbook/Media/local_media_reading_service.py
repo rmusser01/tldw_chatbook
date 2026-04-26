@@ -571,6 +571,48 @@ class LocalMediaReadingService:
             **options,
         )
 
+    def process_pdf(
+        self,
+        *,
+        urls: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        perform_chunking: bool = True,
+        chunk_size: int = 4000,
+        chunk_overlap: int = 200,
+        **options: Any,
+    ) -> dict[str, Any]:
+        return self._process_text_like_files(
+            media_type="pdf",
+            urls=urls,
+            file_paths=file_paths,
+            perform_chunking=perform_chunking,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            text_extractor=self._extract_pdf_text,
+            **options,
+        )
+
+    def process_ebook(
+        self,
+        *,
+        urls: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        perform_chunking: bool = True,
+        chunk_size: int = 4000,
+        chunk_overlap: int = 200,
+        **options: Any,
+    ) -> dict[str, Any]:
+        return self._process_text_like_files(
+            media_type="ebook",
+            urls=urls,
+            file_paths=file_paths,
+            perform_chunking=perform_chunking,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            text_extractor=self._extract_ebook_text,
+            **options,
+        )
+
     def process_code(
         self,
         *,
@@ -600,6 +642,7 @@ class LocalMediaReadingService:
         perform_chunking: bool = True,
         chunk_size: int = 4000,
         chunk_overlap: int = 200,
+        text_extractor: Any = None,
         **options: Any,
     ) -> dict[str, Any]:
         normalized_files = [str(path).strip() for path in file_paths or [] if str(path).strip()]
@@ -623,8 +666,11 @@ class LocalMediaReadingService:
                 continue
             resolved_path = path.resolve()
             try:
-                content = resolved_path.read_text(encoding="utf-8", errors="replace")
-            except OSError as exc:
+                if callable(text_extractor):
+                    content = text_extractor(resolved_path)
+                else:
+                    content = resolved_path.read_text(encoding="utf-8", errors="replace")
+            except Exception as exc:
                 errors.append({"source": "file_path", "file_path": file_path, "message": str(exc)})
                 continue
             results.append(
@@ -659,6 +705,48 @@ class LocalMediaReadingService:
             "errors": errors,
             "results": results,
         }
+
+    @staticmethod
+    def _extract_pdf_text(path: Path) -> str:
+        try:
+            import fitz
+        except ModuleNotFoundError:
+            fitz = None
+        if fitz is not None:
+            try:
+                with fitz.open(path) as document:
+                    text = "\n".join(page.get_text() for page in document)
+                if text.strip():
+                    return text
+            except Exception:
+                pass
+        decoded = path.read_bytes().decode("utf-8", errors="ignore")
+        lines = [
+            line
+            for line in decoded.splitlines()
+            if line and not line.startswith("%")
+        ]
+        return "\n".join(lines) + ("\n" if lines else "")
+
+    @staticmethod
+    def _extract_ebook_text(path: Path) -> str:
+        with zipfile.ZipFile(path) as archive:
+            text_parts: list[str] = []
+            for name in sorted(archive.namelist()):
+                if not name.lower().endswith((".html", ".htm", ".xhtml")):
+                    continue
+                raw = archive.read(name).decode("utf-8", errors="replace")
+                text_parts.append(LocalMediaReadingService._html_to_plain_text(raw))
+        return "\n\n".join(part for part in text_parts if part.strip())
+
+    @staticmethod
+    def _html_to_plain_text(raw_html: str) -> str:
+        try:
+            from bs4 import BeautifulSoup
+        except ModuleNotFoundError:
+            return re.sub(r"<[^>]+>", " ", raw_html)
+        soup = BeautifulSoup(raw_html, "html.parser")
+        return soup.get_text("\n")
 
     @staticmethod
     def _chunk_text(

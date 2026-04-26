@@ -672,6 +672,30 @@ def test_local_service_processes_text_like_files_without_persisting(memory_db_fa
     assert service.list_media_items()["pagination"]["total_items"] == 0
 
 
+def test_local_service_processes_pdf_and_ebook_files_without_persisting(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\nPDF body text\n%%EOF")
+    epub_path = tmp_path / "book.epub"
+    with zipfile.ZipFile(epub_path, "w") as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr("OPS/chapter.xhtml", "<html><body><h1>Chapter</h1><p>EPUB body text</p></body></html>")
+    service = LocalMediaReadingService(db)
+
+    pdf = service.process_pdf(file_paths=[str(pdf_path)], perform_chunking=True, chunk_size=8, chunk_overlap=0)
+    ebook = service.process_ebook(file_paths=[str(epub_path)], perform_chunking=False)
+
+    assert pdf["processed_count"] == 1
+    assert pdf["results"][0]["media_type"] == "pdf"
+    assert "PDF body text" in pdf["results"][0]["content"]
+    assert [chunk["text"] for chunk in pdf["results"][0]["chunks"][:2]] == ["PDF body", " text\n"]
+    assert ebook["processed_count"] == 1
+    assert ebook["results"][0]["media_type"] == "ebook"
+    assert "Chapter" in ebook["results"][0]["content"]
+    assert "EPUB body text" in ebook["results"][0]["content"]
+    assert service.list_media_items()["pagination"]["total_items"] == 0
+
+
 def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(

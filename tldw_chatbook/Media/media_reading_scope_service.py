@@ -45,22 +45,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "affected_action_ids": [],
     },
     {
-        "operation_id": "media.processing.pdf.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "source_specific_equivalent",
-        "user_message": "The server process-pdfs endpoint is server-owned; local mode should use local ingestion or PDF tooling instead.",
-        "affected_action_ids": [],
-    },
-    {
-        "operation_id": "media.processing.ebook.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "source_specific_equivalent",
-        "user_message": "The server process-ebooks endpoint is server-owned; local mode should use local ingestion or ebook tooling instead.",
-        "affected_action_ids": [],
-    },
-    {
         "operation_id": "media.processing.emails.local",
         "source": "local",
         "supported": False,
@@ -1116,7 +1100,7 @@ class MediaReadingScopeService:
         **options: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL and kind not in {"document", "plaintext"}:
+        if normalized_mode == MediaReadingBackend.LOCAL and kind not in {"pdf", "ebook", "document", "plaintext"}:
             service = self._server_processing_service(normalized_mode, f"process-{kind}")
         else:
             service = self._service_for_mode(normalized_mode)

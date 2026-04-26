@@ -210,6 +210,14 @@ class FakeLocalMediaService:
         self.calls.append(("process_document", kwargs))
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "document"}]}
 
+    def process_pdf(self, **kwargs):
+        self.calls.append(("process_pdf", kwargs))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "pdf"}]}
+
+    def process_ebook(self, **kwargs):
+        self.calls.append(("process_ebook", kwargs))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "ebook"}]}
+
     def process_code(self, **kwargs):
         self.calls.append(("process_code", kwargs))
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "code"}]}
@@ -1401,8 +1409,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
         "media.web_content_ingest.local",
         "media.processing.video.local",
         "media.processing.audio.local",
-        "media.processing.pdf.local",
-        "media.processing.ebook.local",
         "media.processing.emails.local",
         "media.processing.web_scraping.local",
         "media.processing.mediawiki.local",
@@ -3351,10 +3357,19 @@ async def test_scope_service_routes_existing_server_no_db_processing_endpoints()
     with pytest.raises(ValueError, match="server-only"):
         await scope_service.process_video(mode="local", urls=["https://example.com/video.mp4"])
 
+    local_pdf = await scope_service.process_pdf(mode="local", file_paths=["/tmp/paper.pdf"])
+    local_ebook = await scope_service.process_ebook(mode="local", file_paths=["/tmp/book.epub"])
     local_document = await scope_service.process_document(mode="local", file_paths=["/tmp/doc.md"])
     local_plaintext = await scope_service.process_plaintext(mode="local", file_paths=["/tmp/notes.txt"])
-    assert [item["results"][0]["media_type"] for item in [local_document, local_plaintext]] == ["document", "plaintext"]
-    assert policy.calls[-2:] == [
+    assert [item["results"][0]["media_type"] for item in [local_pdf, local_ebook, local_document, local_plaintext]] == [
+        "pdf",
+        "ebook",
+        "document",
+        "plaintext",
+    ]
+    assert policy.calls[-4:] == [
+        "media.processing.pdf.process.local",
+        "media.processing.ebook.process.local",
         "media.processing.document.process.local",
         "media.processing.plaintext.process.local",
     ]
