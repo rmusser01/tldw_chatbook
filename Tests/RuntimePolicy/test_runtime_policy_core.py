@@ -814,13 +814,16 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.navigation.detail.local
         media.navigation.detail.server
         media.processing.audio.process.server
+        media.processing.code.process.local
         media.processing.code.process.server
+        media.processing.document.process.local
         media.processing.document.process.server
         media.processing.ebook.process.server
         media.processing.emails.process.server
         media.processing.mediawiki.import.server
         media.processing.mediawiki.process.server
         media.processing.pdf.process.server
+        media.processing.plaintext.process.local
         media.processing.plaintext.process.server
         media.processing.video.process.server
         media.processing.web_scraping.process.server

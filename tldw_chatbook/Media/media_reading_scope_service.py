@@ -37,14 +37,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "affected_action_ids": [],
     },
     {
-        "operation_id": "media.processing.code.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "source_specific_equivalent",
-        "user_message": "The server process-code endpoint is server-owned; local mode should use local ingestion or file tooling instead.",
-        "affected_action_ids": [],
-    },
-    {
         "operation_id": "media.processing.video.local",
         "source": "local",
         "supported": False,
@@ -74,22 +66,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "supported": False,
         "reason_code": "source_specific_equivalent",
         "user_message": "The server process-ebooks endpoint is server-owned; local mode should use local ingestion or ebook tooling instead.",
-        "affected_action_ids": [],
-    },
-    {
-        "operation_id": "media.processing.document.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "source_specific_equivalent",
-        "user_message": "The server process-documents endpoint is server-owned; local mode should use local ingestion or document tooling instead.",
-        "affected_action_ids": [],
-    },
-    {
-        "operation_id": "media.processing.plaintext.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "source_specific_equivalent",
-        "user_message": "The server process-plaintext endpoint is server-owned; local mode should use local ingestion or text tooling instead.",
         "affected_action_ids": [],
     },
     {
@@ -231,8 +207,9 @@ class MediaReadingScopeService:
         return f"media.web_content_ingest.{action}.server"
 
     @staticmethod
-    def _processing_action_id(kind: str, action: str) -> str:
-        return f"media.processing.{kind}.{action}.server"
+    def _processing_action_id(kind: str, action: str, mode: MediaReadingBackend | None = None) -> str:
+        source = mode.value if mode is not None else MediaReadingBackend.SERVER.value
+        return f"media.processing.{kind}.{action}.{source}"
 
     @staticmethod
     def _transcription_models_action_id(action: str) -> str:
@@ -1104,8 +1081,8 @@ class MediaReadingScopeService:
         chunk_overlap: int = 200,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_processing_service(normalized_mode, "process-code")
-        self._enforce_policy(self._processing_action_id("code", "process"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._processing_action_id("code", "process", normalized_mode))
         return self._to_plain(
             await self._maybe_await(
                 service.process_code(
@@ -1130,8 +1107,11 @@ class MediaReadingScopeService:
         **options: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_processing_service(normalized_mode, f"process-{kind}")
-        self._enforce_policy(self._processing_action_id(kind, "process"))
+        if normalized_mode == MediaReadingBackend.LOCAL and kind not in {"document", "plaintext"}:
+            service = self._server_processing_service(normalized_mode, f"process-{kind}")
+        else:
+            service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._processing_action_id(kind, "process", normalized_mode))
         service_method = getattr(service, method_name)
         return self._to_plain(
             await self._maybe_await(
@@ -1250,7 +1230,7 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._server_processing_service(normalized_mode, "process-emails")
-        self._enforce_policy(self._processing_action_id("emails", "process"))
+        self._enforce_policy(self._processing_action_id("emails", "process", normalized_mode))
         return self._to_plain(
             await self._maybe_await(
                 service.process_emails(file_paths=file_paths, **kwargs)
@@ -1268,7 +1248,7 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._server_processing_service(normalized_mode, "process-web-scraping")
-        self._enforce_policy(self._processing_action_id("web_scraping", "process"))
+        self._enforce_policy(self._processing_action_id("web_scraping", "process", normalized_mode))
         return self._to_plain(
             await self._maybe_await(
                 service.process_web_scraping(
@@ -1496,7 +1476,7 @@ class MediaReadingScopeService:
     ):
         normalized_mode = self._normalize_mode(mode)
         service = self._server_processing_service(normalized_mode, "MediaWiki dump processing")
-        self._enforce_policy(self._processing_action_id("mediawiki", "process"))
+        self._enforce_policy(self._processing_action_id("mediawiki", "process", normalized_mode))
         async for item in service.process_mediawiki_dump(dump_file_path=dump_file_path, **options):
             yield self._to_plain(item)
 
@@ -1509,7 +1489,7 @@ class MediaReadingScopeService:
     ):
         normalized_mode = self._normalize_mode(mode)
         service = self._server_processing_service(normalized_mode, "MediaWiki dump ingest")
-        self._enforce_policy(self._processing_action_id("mediawiki", "import"))
+        self._enforce_policy(self._processing_action_id("mediawiki", "import", normalized_mode))
         async for item in service.ingest_mediawiki_dump(dump_file_path=dump_file_path, **options):
             yield self._to_plain(item)
 

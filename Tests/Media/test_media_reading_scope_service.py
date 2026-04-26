@@ -202,6 +202,18 @@ class FakeLocalMediaService:
         self.calls.append(("purge_file_artifacts", delete_files, soft_deleted_grace_days, include_retention))
         return {"removed": 1, "files_deleted": 0}
 
+    def process_plaintext(self, **kwargs):
+        self.calls.append(("process_plaintext", kwargs))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "plaintext"}]}
+
+    def process_document(self, **kwargs):
+        self.calls.append(("process_document", kwargs))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "document"}]}
+
+    def process_code(self, **kwargs):
+        self.calls.append(("process_code", kwargs))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "code"}]}
+
     def delete_media(self, media_id):
         self.calls.append(("delete_media", media_id))
         return True
@@ -1384,13 +1396,10 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
     assert [item["operation_id"] for item in local_report] == [
         "media.reading_digests.scheduler.local",
         "media.web_content_ingest.local",
-        "media.processing.code.local",
         "media.processing.video.local",
         "media.processing.audio.local",
         "media.processing.pdf.local",
         "media.processing.ebook.local",
-        "media.processing.document.local",
-        "media.processing.plaintext.local",
         "media.processing.emails.local",
         "media.processing.web_scraping.local",
         "media.processing.mediawiki.local",
@@ -3280,8 +3289,9 @@ async def test_scope_service_routes_server_processing_and_transcription_models_a
         "media.transcription_models.list.server",
     ]
 
-    with pytest.raises(ValueError, match="server-only"):
-        await scope_service.process_code(mode="local", urls=["https://example.com/main.py"])
+    local_code = await scope_service.process_code(mode="local", file_paths=["/tmp/main.py"])
+    assert local_code["results"][0]["media_type"] == "code"
+    assert policy.calls[-1] == "media.processing.code.process.local"
     with pytest.raises(ValueError, match="server-only"):
         await scope_service.get_transcription_models(mode="local")
 
@@ -3330,6 +3340,14 @@ async def test_scope_service_routes_existing_server_no_db_processing_endpoints()
 
     with pytest.raises(ValueError, match="server-only"):
         await scope_service.process_video(mode="local", urls=["https://example.com/video.mp4"])
+
+    local_document = await scope_service.process_document(mode="local", file_paths=["/tmp/doc.md"])
+    local_plaintext = await scope_service.process_plaintext(mode="local", file_paths=["/tmp/notes.txt"])
+    assert [item["results"][0]["media_type"] for item in [local_document, local_plaintext]] == ["document", "plaintext"]
+    assert policy.calls[-2:] == [
+        "media.processing.document.process.local",
+        "media.processing.plaintext.process.local",
+    ]
 
 
 @pytest.mark.asyncio

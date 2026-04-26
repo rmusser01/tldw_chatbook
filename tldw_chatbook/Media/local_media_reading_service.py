@@ -530,6 +530,167 @@ class LocalMediaReadingService:
             "errors": errors,
         }
 
+    def process_plaintext(
+        self,
+        *,
+        urls: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        perform_chunking: bool = True,
+        chunk_size: int = 4000,
+        chunk_overlap: int = 200,
+        **options: Any,
+    ) -> dict[str, Any]:
+        return self._process_text_like_files(
+            media_type="plaintext",
+            urls=urls,
+            file_paths=file_paths,
+            perform_chunking=perform_chunking,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            **options,
+        )
+
+    def process_document(
+        self,
+        *,
+        urls: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        perform_chunking: bool = True,
+        chunk_size: int = 4000,
+        chunk_overlap: int = 200,
+        **options: Any,
+    ) -> dict[str, Any]:
+        return self._process_text_like_files(
+            media_type="document",
+            urls=urls,
+            file_paths=file_paths,
+            perform_chunking=perform_chunking,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            **options,
+        )
+
+    def process_code(
+        self,
+        *,
+        urls: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        perform_chunking: bool = True,
+        chunk_method: str | None = "code",
+        chunk_size: int = 4000,
+        chunk_overlap: int = 200,
+    ) -> dict[str, Any]:
+        return self._process_text_like_files(
+            media_type="code",
+            urls=urls,
+            file_paths=file_paths,
+            perform_chunking=perform_chunking,
+            chunk_method=chunk_method,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+
+    def _process_text_like_files(
+        self,
+        *,
+        media_type: str,
+        urls: list[str] | None,
+        file_paths: list[str] | None,
+        perform_chunking: bool = True,
+        chunk_size: int = 4000,
+        chunk_overlap: int = 200,
+        **options: Any,
+    ) -> dict[str, Any]:
+        normalized_files = [str(path).strip() for path in file_paths or [] if str(path).strip()]
+        normalized_urls = [str(url).strip() for url in urls or [] if str(url).strip()]
+        results: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+
+        for url in normalized_urls:
+            errors.append(
+                {
+                    "source": "url",
+                    "url": url,
+                    "message": "Local text processing accepts local file paths only.",
+                }
+            )
+
+        for file_path in normalized_files:
+            path = Path(file_path).expanduser()
+            if not path.exists() or not path.is_file():
+                errors.append({"source": "file_path", "file_path": file_path, "message": "file not found"})
+                continue
+            resolved_path = path.resolve()
+            try:
+                content = resolved_path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                errors.append({"source": "file_path", "file_path": file_path, "message": str(exc)})
+                continue
+            results.append(
+                {
+                    "status": "Success",
+                    "backend": "local",
+                    "persisted": False,
+                    "input_ref": str(resolved_path),
+                    "source": "file_path",
+                    "file_path": str(resolved_path),
+                    "title": str(options.get("title") or resolved_path.name),
+                    "media_type": media_type,
+                    "content": content,
+                    "chunks": self._chunk_text(
+                        content,
+                        perform_chunking=perform_chunking,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
+                    ),
+                }
+            )
+
+        if not normalized_files and not normalized_urls:
+            errors.append({"source": "input", "message": "At least one local file path is required."})
+
+        return {
+            "status": "success" if results and not errors else "partial_success" if results else "failed",
+            "backend": "local",
+            "persisted": False,
+            "processed_count": len(results),
+            "errors_count": len(errors),
+            "errors": errors,
+            "results": results,
+        }
+
+    @staticmethod
+    def _chunk_text(
+        text: str,
+        *,
+        perform_chunking: bool,
+        chunk_size: int,
+        chunk_overlap: int,
+    ) -> list[dict[str, Any]]:
+        if not perform_chunking:
+            return []
+        normalized_size = max(int(chunk_size or 0), 1)
+        normalized_overlap = min(max(int(chunk_overlap or 0), 0), normalized_size - 1)
+        step = normalized_size - normalized_overlap
+        chunks: list[dict[str, Any]] = []
+        for index, start in enumerate(range(0, len(text), step)):
+            end = min(start + normalized_size, len(text))
+            chunk_text = text[start:end]
+            if chunk_text == "":
+                continue
+            chunks.append(
+                {
+                    "index": index,
+                    "chunk_index": index,
+                    "start_char": start,
+                    "end_char": end,
+                    "text": chunk_text,
+                }
+            )
+            if end >= len(text):
+                break
+        return chunks
+
     def create_file_artifact(
         self,
         *,

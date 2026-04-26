@@ -613,6 +613,31 @@ def test_local_service_persists_file_artifacts_and_reference_images(memory_db_fa
     assert purged == {"removed": 1, "files_deleted": 0}
 
 
+def test_local_service_processes_text_like_files_without_persisting(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    notes = tmp_path / "notes.txt"
+    doc = tmp_path / "doc.md"
+    code = tmp_path / "main.py"
+    notes.write_text("Plain text body", encoding="utf-8")
+    doc.write_text("# Heading\n\nDocument body", encoding="utf-8")
+    code.write_text("print('hello')\n", encoding="utf-8")
+    service = LocalMediaReadingService(db)
+
+    plaintext = service.process_plaintext(file_paths=[str(notes)], perform_chunking=True, chunk_size=6, chunk_overlap=0)
+    document = service.process_document(file_paths=[str(doc)])
+    code_result = service.process_code(file_paths=[str(code)], chunk_method="lines")
+
+    assert plaintext["processed_count"] == 1
+    assert plaintext["results"][0]["media_type"] == "plaintext"
+    assert plaintext["results"][0]["content"] == "Plain text body"
+    assert [chunk["text"] for chunk in plaintext["results"][0]["chunks"]] == ["Plain ", "text b", "ody"]
+    assert document["results"][0]["title"] == "doc.md"
+    assert document["results"][0]["media_type"] == "document"
+    assert code_result["results"][0]["media_type"] == "code"
+    assert code_result["results"][0]["content"] == "print('hello')\n"
+    assert service.list_media_items()["pagination"]["total_items"] == 0
+
+
 def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(
