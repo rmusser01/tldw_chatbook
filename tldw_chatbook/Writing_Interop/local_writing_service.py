@@ -34,6 +34,12 @@ _REORDER_ENTITY_TYPES = {
     "scenes": "scenes",
 }
 
+_JSON_FIELD_COLUMNS = {
+    "custom_fields": "custom_fields_json",
+    "properties": "properties_json",
+    "tags": "tags_json",
+}
+
 
 class LocalWritingService:
     """Local-first persistence for projects, manuscripts, chapters, and scenes."""
@@ -59,6 +65,75 @@ class LocalWritingService:
     @staticmethod
     def _word_count(text: str | None) -> int:
         return len(str(text or "").split())
+
+    @staticmethod
+    def _json_dumps(value: Any, default: Any) -> str:
+        if value is None:
+            value = default
+        return json.dumps(value, sort_keys=True)
+
+    @staticmethod
+    def _json_loads(value: Any, default: Any) -> Any:
+        if value in (None, ""):
+            return default
+        try:
+            return json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return default
+
+    @staticmethod
+    def _bool_value(value: Any) -> bool:
+        return bool(int(value)) if isinstance(value, int) else bool(value)
+
+    def _prepare_aux_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
+        prepared: dict[str, Any] = {}
+        for key, value in fields.items():
+            column = _JSON_FIELD_COLUMNS.get(key, key)
+            if column == "custom_fields_json":
+                value = self._json_dumps(value, {})
+            elif column == "properties_json":
+                value = self._json_dumps(value, {})
+            elif column == "tags_json":
+                value = self._json_dumps(value, [])
+            elif key in {"bidirectional", "is_pov"}:
+                value = 1 if value else 0
+            prepared[column] = value
+        return prepared
+
+    def _normalize_aux_record(self, kind: str, row: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        if "custom_fields_json" in payload:
+            payload["custom_fields"] = self._json_loads(payload.pop("custom_fields_json"), {})
+        if "properties_json" in payload:
+            payload["properties"] = self._json_loads(payload.pop("properties_json"), {})
+        if "tags_json" in payload:
+            payload["tags"] = self._json_loads(payload.pop("tags_json"), [])
+        if "deleted" in payload:
+            payload["deleted"] = self._bool_value(payload["deleted"])
+        if "bidirectional" in payload:
+            payload["bidirectional"] = self._bool_value(payload["bidirectional"])
+        if "is_pov" in payload:
+            payload["is_pov"] = self._bool_value(payload["is_pov"])
+        return normalize_writing_record("local", kind, payload)
+
+    def _update_aux_row(
+        self,
+        *,
+        table: str,
+        item_id: str,
+        label: str,
+        kind: str,
+        expected_version: int | None,
+        fields: dict[str, Any],
+    ) -> dict[str, Any]:
+        row = self._update_row(
+            table=table,
+            item_id=item_id,
+            label=label,
+            expected_version=expected_version,
+            fields=self._prepare_aux_fields(fields),
+        )
+        return self._normalize_aux_record(kind, row)
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
@@ -143,6 +218,159 @@ class LocalWritingService:
                     client_id TEXT NOT NULL DEFAULT 'local',
                     UNIQUE(entity_type, entity_id, version_number)
                 );
+                CREATE TABLE IF NOT EXISTS writing_characters (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'supporting',
+                    cast_group TEXT,
+                    full_name TEXT,
+                    age TEXT,
+                    gender TEXT,
+                    appearance TEXT,
+                    personality TEXT,
+                    backstory TEXT,
+                    motivation TEXT,
+                    arc_summary TEXT,
+                    notes TEXT,
+                    custom_fields_json TEXT NOT NULL DEFAULT '{}',
+                    sort_order REAL NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    last_modified TEXT NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    client_id TEXT NOT NULL DEFAULT 'local',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(project_id) REFERENCES writing_projects(id)
+                );
+                CREATE TABLE IF NOT EXISTS writing_relationships (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    from_character_id TEXT NOT NULL,
+                    to_character_id TEXT NOT NULL,
+                    relationship_type TEXT NOT NULL,
+                    description TEXT,
+                    bidirectional INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    last_modified TEXT NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    client_id TEXT NOT NULL DEFAULT 'local',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(project_id) REFERENCES writing_projects(id),
+                    FOREIGN KEY(from_character_id) REFERENCES writing_characters(id),
+                    FOREIGN KEY(to_character_id) REFERENCES writing_characters(id)
+                );
+                CREATE TABLE IF NOT EXISTS writing_world_info (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    parent_id TEXT,
+                    properties_json TEXT NOT NULL DEFAULT '{}',
+                    tags_json TEXT NOT NULL DEFAULT '[]',
+                    sort_order REAL NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    last_modified TEXT NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    client_id TEXT NOT NULL DEFAULT 'local',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(project_id) REFERENCES writing_projects(id),
+                    FOREIGN KEY(parent_id) REFERENCES writing_world_info(id)
+                );
+                CREATE TABLE IF NOT EXISTS writing_plot_lines (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    color TEXT,
+                    sort_order REAL NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    last_modified TEXT NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    client_id TEXT NOT NULL DEFAULT 'local',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(project_id) REFERENCES writing_projects(id)
+                );
+                CREATE TABLE IF NOT EXISTS writing_plot_events (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    plot_line_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    scene_id TEXT,
+                    chapter_id TEXT,
+                    event_type TEXT NOT NULL DEFAULT 'plot',
+                    sort_order REAL NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    last_modified TEXT NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    client_id TEXT NOT NULL DEFAULT 'local',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(project_id) REFERENCES writing_projects(id),
+                    FOREIGN KEY(plot_line_id) REFERENCES writing_plot_lines(id),
+                    FOREIGN KEY(scene_id) REFERENCES writing_scenes(id),
+                    FOREIGN KEY(chapter_id) REFERENCES writing_chapters(id)
+                );
+                CREATE TABLE IF NOT EXISTS writing_plot_holes (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    severity TEXT NOT NULL DEFAULT 'medium',
+                    status TEXT NOT NULL DEFAULT 'open',
+                    resolution TEXT,
+                    scene_id TEXT,
+                    chapter_id TEXT,
+                    plot_line_id TEXT,
+                    detected_by TEXT NOT NULL DEFAULT 'manual',
+                    created_at TEXT NOT NULL,
+                    last_modified TEXT NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    client_id TEXT NOT NULL DEFAULT 'local',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(project_id) REFERENCES writing_projects(id),
+                    FOREIGN KEY(scene_id) REFERENCES writing_scenes(id),
+                    FOREIGN KEY(chapter_id) REFERENCES writing_chapters(id),
+                    FOREIGN KEY(plot_line_id) REFERENCES writing_plot_lines(id)
+                );
+                CREATE TABLE IF NOT EXISTS writing_citations (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    scene_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_id TEXT,
+                    source_title TEXT,
+                    excerpt TEXT,
+                    query_used TEXT,
+                    anchor_offset INTEGER,
+                    created_at TEXT NOT NULL,
+                    last_modified TEXT NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    client_id TEXT NOT NULL DEFAULT 'local',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(project_id) REFERENCES writing_projects(id),
+                    FOREIGN KEY(scene_id) REFERENCES writing_scenes(id)
+                );
+                CREATE TABLE IF NOT EXISTS writing_scene_characters (
+                    scene_id TEXT NOT NULL,
+                    character_id TEXT NOT NULL,
+                    is_pov INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    last_modified TEXT NOT NULL,
+                    PRIMARY KEY(scene_id, character_id),
+                    FOREIGN KEY(scene_id) REFERENCES writing_scenes(id),
+                    FOREIGN KEY(character_id) REFERENCES writing_characters(id)
+                );
+                CREATE TABLE IF NOT EXISTS writing_scene_world_info (
+                    scene_id TEXT NOT NULL,
+                    world_info_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    last_modified TEXT NOT NULL,
+                    PRIMARY KEY(scene_id, world_info_id),
+                    FOREIGN KEY(scene_id) REFERENCES writing_scenes(id),
+                    FOREIGN KEY(world_info_id) REFERENCES writing_world_info(id)
+                );
                 """
             )
             self._ensure_direct_scene_schema(conn)
@@ -207,6 +435,18 @@ class LocalWritingService:
         row = self._fetch_one(table, item_id)
         if not row:
             raise ValueError(f"{label} not found")
+        return row
+
+    def _require_project_match(
+        self,
+        table: str,
+        item_id: str,
+        label: str,
+        project_id: str,
+    ) -> dict[str, Any]:
+        row = self._require_one(table, item_id, label)
+        if row.get("project_id") != project_id:
+            raise ValueError(f"{label} does not belong to project")
         return row
 
     def _fetch_deleted_one(self, table: str, item_id: str) -> dict[str, Any] | None:
@@ -849,3 +1089,551 @@ class LocalWritingService:
                 "unassigned_chapters": unassigned,
             },
         )
+
+    def create_character(self, project_id: str, *, name: str, **kwargs: Any) -> dict[str, Any]:
+        self._require_one("writing_projects", project_id, "project")
+        character_id = kwargs.get("id") or self._new_id()
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO writing_characters (
+                    id, project_id, name, role, cast_group, full_name, age, gender,
+                    appearance, personality, backstory, motivation, arc_summary, notes,
+                    custom_fields_json, sort_order, created_at, last_modified
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    character_id,
+                    project_id,
+                    name,
+                    kwargs.get("role") or "supporting",
+                    kwargs.get("cast_group"),
+                    kwargs.get("full_name"),
+                    kwargs.get("age"),
+                    kwargs.get("gender"),
+                    kwargs.get("appearance"),
+                    kwargs.get("personality"),
+                    kwargs.get("backstory"),
+                    kwargs.get("motivation"),
+                    kwargs.get("arc_summary"),
+                    kwargs.get("notes"),
+                    self._json_dumps(kwargs.get("custom_fields"), {}),
+                    kwargs.get("sort_order") or 0.0,
+                    now,
+                    now,
+                ),
+            )
+        return self.get_character(character_id)
+
+    def list_characters(
+        self,
+        project_id: str,
+        *,
+        role: str | None = None,
+        cast_group: str | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM writing_characters WHERE project_id = ? AND deleted = 0"
+        params: list[Any] = [project_id]
+        if role is not None:
+            sql += " AND role = ?"
+            params.append(role)
+        if cast_group is not None:
+            sql += " AND cast_group = ?"
+            params.append(cast_group)
+        sql += " ORDER BY sort_order ASC, created_at ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._normalize_aux_record("character", dict(row)) for row in rows]
+
+    def get_character(self, character_id: str) -> dict[str, Any] | None:
+        row = self._fetch_one("writing_characters", character_id)
+        return self._normalize_aux_record("character", row) if row else None
+
+    def update_character(
+        self,
+        character_id: str,
+        *,
+        expected_version: int | None = None,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        return self._update_aux_row(
+            table="writing_characters",
+            item_id=character_id,
+            label="character",
+            kind="character",
+            expected_version=expected_version,
+            fields=fields,
+        )
+
+    def delete_character(self, character_id: str, *, expected_version: int | None = None) -> bool:
+        return self._soft_delete("writing_characters", character_id, "character", expected_version)
+
+    def create_relationship(self, project_id: str, **fields: Any) -> dict[str, Any]:
+        self._require_one("writing_projects", project_id, "project")
+        from_character = self._require_project_match(
+            "writing_characters",
+            fields["from_character_id"],
+            "from character",
+            project_id,
+        )
+        to_character = self._require_project_match(
+            "writing_characters",
+            fields["to_character_id"],
+            "to character",
+            project_id,
+        )
+        relationship_id = fields.get("id") or self._new_id()
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO writing_relationships (
+                    id, project_id, from_character_id, to_character_id, relationship_type,
+                    description, bidirectional, created_at, last_modified
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    relationship_id,
+                    project_id,
+                    from_character["id"],
+                    to_character["id"],
+                    fields["relationship_type"],
+                    fields.get("description"),
+                    1 if fields.get("bidirectional", True) else 0,
+                    now,
+                    now,
+                ),
+            )
+        return self._normalize_aux_record(
+            "relationship",
+            self._require_one("writing_relationships", relationship_id, "relationship"),
+        )
+
+    def list_relationships(self, project_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM writing_relationships
+                WHERE project_id = ? AND deleted = 0
+                ORDER BY created_at ASC
+                """,
+                (project_id,),
+            ).fetchall()
+        return [self._normalize_aux_record("relationship", dict(row)) for row in rows]
+
+    def delete_relationship(self, relationship_id: str, *, expected_version: int | None = None) -> bool:
+        return self._soft_delete("writing_relationships", relationship_id, "relationship", expected_version)
+
+    def create_world_info(self, project_id: str, *, kind: str, name: str, **kwargs: Any) -> dict[str, Any]:
+        self._require_one("writing_projects", project_id, "project")
+        parent_id = kwargs.get("parent_id")
+        if parent_id is not None:
+            self._require_project_match("writing_world_info", parent_id, "world info parent", project_id)
+        item_id = kwargs.get("id") or self._new_id()
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO writing_world_info (
+                    id, project_id, kind, name, description, parent_id, properties_json,
+                    tags_json, sort_order, created_at, last_modified
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item_id,
+                    project_id,
+                    kind,
+                    name,
+                    kwargs.get("description"),
+                    parent_id,
+                    self._json_dumps(kwargs.get("properties"), {}),
+                    self._json_dumps(kwargs.get("tags"), []),
+                    kwargs.get("sort_order") or 0.0,
+                    now,
+                    now,
+                ),
+            )
+        return self.get_world_info(item_id)
+
+    def list_world_info(self, project_id: str, *, kind: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM writing_world_info WHERE project_id = ? AND deleted = 0"
+        params: list[Any] = [project_id]
+        if kind is not None:
+            sql += " AND kind = ?"
+            params.append(kind)
+        sql += " ORDER BY sort_order ASC, created_at ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._normalize_aux_record("world_info", dict(row)) for row in rows]
+
+    def get_world_info(self, item_id: str) -> dict[str, Any] | None:
+        row = self._fetch_one("writing_world_info", item_id)
+        return self._normalize_aux_record("world_info", row) if row else None
+
+    def update_world_info(
+        self,
+        item_id: str,
+        *,
+        expected_version: int | None = None,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        row = self._require_one("writing_world_info", item_id, "world info")
+        parent_id = fields.get("parent_id", _UNSET)
+        if parent_id not in (_UNSET, None):
+            self._require_project_match("writing_world_info", parent_id, "world info parent", row["project_id"])
+        return self._update_aux_row(
+            table="writing_world_info",
+            item_id=item_id,
+            label="world info",
+            kind="world_info",
+            expected_version=expected_version,
+            fields=fields,
+        )
+
+    def delete_world_info(self, item_id: str, *, expected_version: int | None = None) -> bool:
+        return self._soft_delete("writing_world_info", item_id, "world info", expected_version)
+
+    def create_plot_line(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+        self._require_one("writing_projects", project_id, "project")
+        plot_line_id = kwargs.get("id") or self._new_id()
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO writing_plot_lines (
+                    id, project_id, title, description, status, color, sort_order,
+                    created_at, last_modified
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    plot_line_id,
+                    project_id,
+                    title,
+                    kwargs.get("description"),
+                    kwargs.get("status") or "active",
+                    kwargs.get("color"),
+                    kwargs.get("sort_order") or 0.0,
+                    now,
+                    now,
+                ),
+            )
+        return self.get_plot_line(plot_line_id)
+
+    def list_plot_lines(self, project_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM writing_plot_lines
+                WHERE project_id = ? AND deleted = 0
+                ORDER BY sort_order ASC, created_at ASC
+                """,
+                (project_id,),
+            ).fetchall()
+        return [self._normalize_aux_record("plot_line", dict(row)) for row in rows]
+
+    def get_plot_line(self, plot_line_id: str) -> dict[str, Any] | None:
+        row = self._fetch_one("writing_plot_lines", plot_line_id)
+        return self._normalize_aux_record("plot_line", row) if row else None
+
+    def update_plot_line(
+        self,
+        plot_line_id: str,
+        *,
+        expected_version: int | None = None,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        return self._update_aux_row(
+            table="writing_plot_lines",
+            item_id=plot_line_id,
+            label="plot line",
+            kind="plot_line",
+            expected_version=expected_version,
+            fields=fields,
+        )
+
+    def delete_plot_line(self, plot_line_id: str, *, expected_version: int | None = None) -> bool:
+        return self._soft_delete("writing_plot_lines", plot_line_id, "plot line", expected_version)
+
+    def _validate_plot_event_refs(self, project_id: str, fields: dict[str, Any]) -> None:
+        scene_id = fields.get("scene_id", _UNSET)
+        chapter_id = fields.get("chapter_id", _UNSET)
+        if scene_id not in (_UNSET, None):
+            self._require_project_match("writing_scenes", scene_id, "scene", project_id)
+        if chapter_id not in (_UNSET, None):
+            self._require_project_match("writing_chapters", chapter_id, "chapter", project_id)
+
+    def create_plot_event(self, plot_line_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+        plot_line = self._require_one("writing_plot_lines", plot_line_id, "plot line")
+        project_id = plot_line["project_id"]
+        self._validate_plot_event_refs(project_id, kwargs)
+        plot_event_id = kwargs.get("id") or self._new_id()
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO writing_plot_events (
+                    id, project_id, plot_line_id, title, description, scene_id,
+                    chapter_id, event_type, sort_order, created_at, last_modified
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    plot_event_id,
+                    project_id,
+                    plot_line_id,
+                    title,
+                    kwargs.get("description"),
+                    kwargs.get("scene_id"),
+                    kwargs.get("chapter_id"),
+                    kwargs.get("event_type") or "plot",
+                    kwargs.get("sort_order") or 0.0,
+                    now,
+                    now,
+                ),
+            )
+        return self._normalize_aux_record(
+            "plot_event",
+            self._require_one("writing_plot_events", plot_event_id, "plot event"),
+        )
+
+    def list_plot_events(self, plot_line_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM writing_plot_events
+                WHERE plot_line_id = ? AND deleted = 0
+                ORDER BY sort_order ASC, created_at ASC
+                """,
+                (plot_line_id,),
+            ).fetchall()
+        return [self._normalize_aux_record("plot_event", dict(row)) for row in rows]
+
+    def update_plot_event(
+        self,
+        plot_event_id: str,
+        *,
+        expected_version: int | None = None,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        row = self._require_one("writing_plot_events", plot_event_id, "plot event")
+        self._validate_plot_event_refs(row["project_id"], fields)
+        return self._update_aux_row(
+            table="writing_plot_events",
+            item_id=plot_event_id,
+            label="plot event",
+            kind="plot_event",
+            expected_version=expected_version,
+            fields=fields,
+        )
+
+    def delete_plot_event(self, plot_event_id: str, *, expected_version: int | None = None) -> bool:
+        return self._soft_delete("writing_plot_events", plot_event_id, "plot event", expected_version)
+
+    def _validate_plot_hole_refs(self, project_id: str, fields: dict[str, Any]) -> None:
+        scene_id = fields.get("scene_id", _UNSET)
+        chapter_id = fields.get("chapter_id", _UNSET)
+        plot_line_id = fields.get("plot_line_id", _UNSET)
+        if scene_id not in (_UNSET, None):
+            self._require_project_match("writing_scenes", scene_id, "scene", project_id)
+        if chapter_id not in (_UNSET, None):
+            self._require_project_match("writing_chapters", chapter_id, "chapter", project_id)
+        if plot_line_id not in (_UNSET, None):
+            self._require_project_match("writing_plot_lines", plot_line_id, "plot line", project_id)
+
+    def create_plot_hole(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+        self._require_one("writing_projects", project_id, "project")
+        self._validate_plot_hole_refs(project_id, kwargs)
+        plot_hole_id = kwargs.get("id") or self._new_id()
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO writing_plot_holes (
+                    id, project_id, title, description, severity, status, resolution,
+                    scene_id, chapter_id, plot_line_id, detected_by, created_at,
+                    last_modified
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    plot_hole_id,
+                    project_id,
+                    title,
+                    kwargs.get("description"),
+                    kwargs.get("severity") or "medium",
+                    kwargs.get("status") or "open",
+                    kwargs.get("resolution"),
+                    kwargs.get("scene_id"),
+                    kwargs.get("chapter_id"),
+                    kwargs.get("plot_line_id"),
+                    kwargs.get("detected_by") or "manual",
+                    now,
+                    now,
+                ),
+            )
+        return self._normalize_aux_record(
+            "plot_hole",
+            self._require_one("writing_plot_holes", plot_hole_id, "plot hole"),
+        )
+
+    def list_plot_holes(self, project_id: str, *, status: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM writing_plot_holes WHERE project_id = ? AND deleted = 0"
+        params: list[Any] = [project_id]
+        if status is not None:
+            sql += " AND status = ?"
+            params.append(status)
+        sql += " ORDER BY created_at ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._normalize_aux_record("plot_hole", dict(row)) for row in rows]
+
+    def update_plot_hole(
+        self,
+        plot_hole_id: str,
+        *,
+        expected_version: int | None = None,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        row = self._require_one("writing_plot_holes", plot_hole_id, "plot hole")
+        self._validate_plot_hole_refs(row["project_id"], fields)
+        return self._update_aux_row(
+            table="writing_plot_holes",
+            item_id=plot_hole_id,
+            label="plot hole",
+            kind="plot_hole",
+            expected_version=expected_version,
+            fields=fields,
+        )
+
+    def delete_plot_hole(self, plot_hole_id: str, *, expected_version: int | None = None) -> bool:
+        return self._soft_delete("writing_plot_holes", plot_hole_id, "plot hole", expected_version)
+
+    def link_scene_character(
+        self,
+        scene_id: str,
+        *,
+        character_id: str,
+        is_pov: bool = False,
+    ) -> list[dict[str, Any]]:
+        scene = self._require_one("writing_scenes", scene_id, "scene")
+        self._require_project_match("writing_characters", character_id, "character", scene["project_id"])
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO writing_scene_characters (
+                    scene_id, character_id, is_pov, created_at, last_modified
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(scene_id, character_id) DO UPDATE SET
+                    is_pov = excluded.is_pov,
+                    last_modified = excluded.last_modified
+                """,
+                (scene_id, character_id, 1 if is_pov else 0, now, now),
+            )
+        return self.list_scene_characters(scene_id)
+
+    def list_scene_characters(self, scene_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT l.scene_id, l.character_id, l.is_pov, c.name, c.role
+                FROM writing_scene_characters AS l
+                JOIN writing_characters AS c ON c.id = l.character_id
+                WHERE l.scene_id = ? AND c.deleted = 0
+                ORDER BY c.sort_order ASC, c.created_at ASC
+                """,
+                (scene_id,),
+            ).fetchall()
+        return [self._normalize_aux_record("scene_character_link", dict(row)) for row in rows]
+
+    def unlink_scene_character(self, scene_id: str, character_id: str) -> bool:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM writing_scene_characters WHERE scene_id = ? AND character_id = ?",
+                (scene_id, character_id),
+            )
+        return True
+
+    def link_scene_world_info(self, scene_id: str, *, world_info_id: str) -> list[dict[str, Any]]:
+        scene = self._require_one("writing_scenes", scene_id, "scene")
+        self._require_project_match("writing_world_info", world_info_id, "world info", scene["project_id"])
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO writing_scene_world_info (
+                    scene_id, world_info_id, created_at, last_modified
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(scene_id, world_info_id) DO UPDATE SET
+                    last_modified = excluded.last_modified
+                """,
+                (scene_id, world_info_id, now, now),
+            )
+        return self.list_scene_world_info(scene_id)
+
+    def list_scene_world_info(self, scene_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT l.scene_id, l.world_info_id, w.name, w.kind
+                FROM writing_scene_world_info AS l
+                JOIN writing_world_info AS w ON w.id = l.world_info_id
+                WHERE l.scene_id = ? AND w.deleted = 0
+                ORDER BY w.sort_order ASC, w.created_at ASC
+                """,
+                (scene_id,),
+            ).fetchall()
+        return [self._normalize_aux_record("scene_world_info_link", dict(row)) for row in rows]
+
+    def unlink_scene_world_info(self, scene_id: str, world_info_id: str) -> bool:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM writing_scene_world_info WHERE scene_id = ? AND world_info_id = ?",
+                (scene_id, world_info_id),
+            )
+        return True
+
+    def create_citation(self, scene_id: str, *, source_type: str, **kwargs: Any) -> dict[str, Any]:
+        scene = self._require_one("writing_scenes", scene_id, "scene")
+        citation_id = kwargs.get("id") or self._new_id()
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO writing_citations (
+                    id, project_id, scene_id, source_type, source_id, source_title,
+                    excerpt, query_used, anchor_offset, created_at, last_modified
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    citation_id,
+                    scene["project_id"],
+                    scene_id,
+                    source_type,
+                    kwargs.get("source_id"),
+                    kwargs.get("source_title"),
+                    kwargs.get("excerpt"),
+                    kwargs.get("query_used"),
+                    kwargs.get("anchor_offset"),
+                    now,
+                    now,
+                ),
+            )
+        return self._normalize_aux_record(
+            "citation",
+            self._require_one("writing_citations", citation_id, "citation"),
+        )
+
+    def list_citations(self, scene_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM writing_citations
+                WHERE scene_id = ? AND deleted = 0
+                ORDER BY created_at ASC
+                """,
+                (scene_id,),
+            ).fetchall()
+        return [self._normalize_aux_record("citation", dict(row)) for row in rows]
+
+    def delete_citation(self, citation_id: str, *, expected_version: int | None = None) -> bool:
+        return self._soft_delete("writing_citations", citation_id, "citation", expected_version)

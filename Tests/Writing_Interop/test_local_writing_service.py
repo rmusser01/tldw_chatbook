@@ -223,3 +223,107 @@ def test_local_writing_service_supports_direct_manuscript_level_scenes(tmp_path)
     assert scene["manuscript_id"] == manuscript["id"]
     assert manuscript_scenes[0]["id"] == scene["id"]
     assert structure["manuscripts"][0]["scenes"][0]["id"] == scene["id"]
+
+
+def test_local_writing_service_persists_authoring_auxiliary_resources(tmp_path):
+    service = LocalWritingService(tmp_path / "writing.db")
+    project = service.create_project(title="Novel")
+    manuscript = service.create_manuscript(project["id"], title="Book One")
+    chapter = service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
+    scene = service.create_scene(chapter["id"], title="Scene 1", content_markdown="Draft")
+
+    character = service.create_character(
+        project["id"],
+        name="Ada",
+        role="protagonist",
+        cast_group="main",
+        custom_fields={"voice": "dry"},
+    )
+    relationship = service.create_relationship(
+        project["id"],
+        from_character_id=character["id"],
+        to_character_id=character["id"],
+        relationship_type="self",
+        bidirectional=False,
+    )
+    world = service.create_world_info(
+        project["id"],
+        kind="location",
+        name="Capital",
+        properties={"climate": "rain"},
+        tags=["city"],
+    )
+    plot_line = service.create_plot_line(project["id"], title="Main Plot", color="#336699")
+    plot_event = service.create_plot_event(
+        plot_line["id"],
+        title="Inciting Incident",
+        scene_id=scene["id"],
+        event_type="plot",
+    )
+    plot_hole = service.create_plot_hole(
+        project["id"],
+        title="Continuity Issue",
+        scene_id=scene["id"],
+        plot_line_id=plot_line["id"],
+        severity="high",
+    )
+    scene_characters = service.link_scene_character(scene["id"], character_id=character["id"], is_pov=True)
+    scene_world = service.link_scene_world_info(scene["id"], world_info_id=world["id"])
+    citation = service.create_citation(
+        scene["id"],
+        source_type="manual",
+        source_title="Reference",
+        excerpt="Quoted fact",
+    )
+
+    updated_character = service.update_character(
+        character["id"],
+        expected_version=1,
+        notes="Revised notes",
+    )
+    updated_world = service.update_world_info(world["id"], expected_version=1, tags=["city", "capital"])
+    updated_plot_line = service.update_plot_line(plot_line["id"], expected_version=1, status="resolved")
+    updated_plot_event = service.update_plot_event(plot_event["id"], expected_version=1, title="New Incident")
+    updated_plot_hole = service.update_plot_hole(
+        plot_hole["id"],
+        expected_version=1,
+        status="resolved",
+        resolution="Fixed in scene.",
+    )
+
+    assert character["record_id"] == f"local:writing_character:{character['id']}"
+    assert character["custom_fields"] == {"voice": "dry"}
+    assert service.list_characters(project["id"], role="protagonist")[0]["id"] == character["id"]
+    assert updated_character["version"] == 2
+    assert updated_character["notes"] == "Revised notes"
+    assert relationship["bidirectional"] is False
+    assert service.list_relationships(project["id"])[0]["record_id"] == f"local:writing_relationship:{relationship['id']}"
+    assert world["properties"] == {"climate": "rain"}
+    assert updated_world["tags"] == ["city", "capital"]
+    assert service.list_world_info(project["id"], kind="location")[0]["id"] == world["id"]
+    assert updated_plot_line["status"] == "resolved"
+    assert updated_plot_event["title"] == "New Incident"
+    assert service.list_plot_events(plot_line["id"])[0]["id"] == plot_event["id"]
+    assert updated_plot_hole["status"] == "resolved"
+    assert service.list_plot_holes(project["id"], status="resolved")[0]["id"] == plot_hole["id"]
+    assert scene_characters[0]["record_id"] == f"local:writing_scene_character_link:{scene['id']}:{character['id']}"
+    assert scene_characters[0]["name"] == "Ada"
+    assert scene_characters[0]["is_pov"] is True
+    assert scene_world[0]["record_id"] == f"local:writing_scene_world_info_link:{scene['id']}:{world['id']}"
+    assert scene_world[0]["name"] == "Capital"
+    assert citation["record_id"] == f"local:writing_citation:{citation['id']}"
+    assert service.list_citations(scene["id"])[0]["source_title"] == "Reference"
+
+    assert service.unlink_scene_character(scene["id"], character["id"]) is True
+    assert service.unlink_scene_world_info(scene["id"], world["id"]) is True
+    assert service.delete_citation(citation["id"], expected_version=1) is True
+    assert service.delete_plot_hole(plot_hole["id"], expected_version=2) is True
+    assert service.delete_plot_event(plot_event["id"], expected_version=2) is True
+    assert service.delete_plot_line(plot_line["id"], expected_version=2) is True
+    assert service.delete_world_info(world["id"], expected_version=2) is True
+    assert service.delete_relationship(relationship["id"], expected_version=1) is True
+    assert service.delete_character(character["id"], expected_version=2) is True
+
+    assert service.list_scene_characters(scene["id"]) == []
+    assert service.list_scene_world_info(scene["id"]) == []
+    assert service.list_citations(scene["id"]) == []
