@@ -779,18 +779,30 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.file_artifacts.detail.server
         media.file_artifacts.export.server
         media.file_artifacts.purge.server
+        media.items.delete.local
         media.items.delete.server
+        media.items.detail.local
         media.items.detail.server
         media.items.file.detail.server
+        media.items.identifier_lookup.detail.local
         media.items.identifier_lookup.detail.server
+        media.items.keywords.list.local
         media.items.keywords.list.server
+        media.items.keywords.update.local
         media.items.keywords.update.server
+        media.items.list.local
         media.items.list.server
+        media.items.metadata_search.list.local
         media.items.metadata_search.list.server
+        media.items.permanent.delete.local
         media.items.permanent.delete.server
+        media.items.restore.local
         media.items.restore.server
+        media.items.trash.delete.local
         media.items.trash.delete.server
+        media.items.trash.list.local
         media.items.trash.list.server
+        media.items.update.local
         media.items.update.server
         media.navigation.detail.local
         media.navigation.detail.server

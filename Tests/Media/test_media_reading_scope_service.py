@@ -82,6 +82,74 @@ class FakeLocalMediaService:
         self.calls.append(("update_media_metadata", media_id, metadata))
         return {"ok": True, "media_id": media_id, "metadata": metadata}
 
+    def list_media_items(self, *, page=1, results_per_page=10, include_keywords=False):
+        self.calls.append(("list_media_items", page, results_per_page, include_keywords))
+        return {
+            "items": [{"id": 12, "title": "Local PDF", "type": "pdf"}],
+            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+        }
+
+    def list_media_keywords(self, *, query=None, limit=100):
+        self.calls.append(("list_media_keywords", query, limit))
+        return {"keywords": ["ai"]}
+
+    def list_media_trash(self, *, page=1, results_per_page=10, include_keywords=False):
+        self.calls.append(("list_media_trash", page, results_per_page, include_keywords))
+        return {
+            "items": [{"id": 12, "title": "Trashed Local PDF", "type": "pdf"}],
+            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+        }
+
+    def empty_media_trash(self):
+        self.calls.append(("empty_media_trash",))
+        return {"deleted_count": 1, "failed_count": 0, "failed_ids": [], "remaining_count": 0}
+
+    def get_media_item(
+        self,
+        media_id,
+        *,
+        include_content=True,
+        include_versions=True,
+        include_version_content=False,
+    ):
+        self.calls.append(("get_media_item", media_id, include_content, include_versions, include_version_content))
+        return {"id": media_id, "title": "Local Detail", "type": "pdf"}
+
+    def update_media_item(self, media_id, **fields):
+        self.calls.append(("update_media_item", media_id, fields))
+        return {"id": media_id, **fields}
+
+    def delete_media_item(self, media_id):
+        self.calls.append(("delete_media_item", media_id))
+        return {"ok": True, "media_id": media_id}
+
+    def restore_media_item(
+        self,
+        media_id,
+        *,
+        include_content=True,
+        include_versions=True,
+        include_version_content=False,
+    ):
+        self.calls.append(("restore_media_item", media_id, include_content, include_versions, include_version_content))
+        return {"id": media_id, "title": "Restored Local Detail", "type": "pdf"}
+
+    def permanently_delete_media_item(self, media_id):
+        self.calls.append(("permanently_delete_media_item", media_id))
+        return {"ok": True, "media_id": media_id}
+
+    def update_media_keywords(self, media_id, *, keywords, mode="add"):
+        self.calls.append(("update_media_keywords", media_id, keywords, mode))
+        return {"media_id": media_id, "keywords": keywords}
+
+    def search_media_metadata(self, **filters):
+        self.calls.append(("search_media_metadata", filters))
+        return {"items": [{"id": 12, "title": "Local Search"}], "pagination": {"page": 1, "total_items": 1}}
+
+    def get_media_by_identifier(self, **identifiers):
+        self.calls.append(("get_media_by_identifier", identifiers))
+        return {"items": [{"id": 12, "title": "Local Identifier"}], "total": 1}
+
     def delete_media(self, media_id):
         self.calls.append(("delete_media", media_id))
         return True
@@ -1277,7 +1345,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
         "media.processing.web_scraping.local",
         "media.processing.mediawiki.local",
         "media.transcription_models.local",
-        "media.items.server_management.local",
         "media.items.file.local",
     ]
     assert all(item["affected_action_ids"] == [] for item in local_report)
@@ -1520,11 +1587,12 @@ async def test_scope_service_save_and_remove_use_explicit_reading_list_actions()
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_server_direct_media_management_and_blocks_local_mode():
+async def test_scope_service_routes_direct_media_management_for_local_and_server_modes():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     server = FakeServerMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=server,
         policy_enforcer=policy,
     )
@@ -1571,8 +1639,59 @@ async def test_scope_service_routes_server_direct_media_management_and_blocks_lo
         ("get_media_by_identifier", {"doi": "10.123/example"}),
     ]
 
-    with pytest.raises(ValueError, match="server-only"):
-        await scope.list_media_trash(mode="local")
+    local_list = await scope.list_media_items(mode="local", page=1, results_per_page=5, include_keywords=True)
+    local_keywords = await scope.list_media_keywords(mode="local", query="ai", limit=5)
+    local_trash = await scope.list_media_trash(mode="local", page=1, results_per_page=5, include_keywords=True)
+    local_empty = await scope.empty_media_trash(mode="local")
+    local_detail = await scope.get_media_item(mode="local", media_id=12, include_content=False)
+    local_updated = await scope.update_media_item(mode="local", media_id=12, title="Renamed", keywords=["ai"])
+    local_deleted = await scope.delete_media_item(mode="local", media_id=12)
+    local_restored = await scope.restore_media_item(mode="local", media_id=12, include_content=False)
+    local_permanent = await scope.permanently_delete_media_item(mode="local", media_id=12)
+    local_keyword_update = await scope.update_media_keywords(mode="local", media_id=12, keywords=["ai"], update_mode="set")
+    local_metadata = await scope.search_media_metadata(mode="local", field="title", value="Local", media_types=["pdf"])
+    local_identifier = await scope.get_media_by_identifier(mode="local", url="https://example.com/local.pdf")
+
+    assert local_list["items"][0]["id"] == 12
+    assert local_keywords == {"keywords": ["ai"]}
+    assert local_trash["items"][0]["id"] == 12
+    assert local_empty["deleted_count"] == 1
+    assert local_detail["id"] == 12
+    assert local_updated == {"id": 12, "title": "Renamed", "keywords": ["ai"]}
+    assert local_deleted == {"ok": True, "media_id": 12}
+    assert local_restored["title"] == "Restored Local Detail"
+    assert local_permanent == {"ok": True, "media_id": 12}
+    assert local_keyword_update == {"media_id": 12, "keywords": ["ai"]}
+    assert local_metadata["items"][0]["title"] == "Local Search"
+    assert local_identifier["items"][0]["title"] == "Local Identifier"
+    assert policy.calls[-12:] == [
+        "media.items.list.local",
+        "media.items.keywords.list.local",
+        "media.items.trash.list.local",
+        "media.items.trash.delete.local",
+        "media.items.detail.local",
+        "media.items.update.local",
+        "media.items.delete.local",
+        "media.items.restore.local",
+        "media.items.permanent.delete.local",
+        "media.items.keywords.update.local",
+        "media.items.metadata_search.list.local",
+        "media.items.identifier_lookup.detail.local",
+    ]
+    assert local.calls[-12:] == [
+        ("list_media_items", 1, 5, True),
+        ("list_media_keywords", "ai", 5),
+        ("list_media_trash", 1, 5, True),
+        ("empty_media_trash",),
+        ("get_media_item", 12, False, True, False),
+        ("update_media_item", 12, {"title": "Renamed", "keywords": ["ai"]}),
+        ("delete_media_item", 12),
+        ("restore_media_item", 12, False, True, False),
+        ("permanently_delete_media_item", 12),
+        ("update_media_keywords", 12, ["ai"], "set"),
+        ("search_media_metadata", {"field": "title", "value": "Local", "media_types": ["pdf"]}),
+        ("get_media_by_identifier", {"url": "https://example.com/local.pdf"}),
+    ]
 
 
 @pytest.mark.asyncio

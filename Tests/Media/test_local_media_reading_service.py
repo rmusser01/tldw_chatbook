@@ -149,6 +149,57 @@ def test_local_service_get_media_detail_enriches_saved_state(memory_db_factory):
     assert detail["saved_at"] is not None
 
 
+def test_local_service_direct_media_management_round_trips(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        url="https://example.com/report.md",
+        title="Report",
+        content="Body text with DOI 10.1234/example",
+        media_type="document",
+        keywords=["draft", "research"],
+        author="Ada",
+    )
+    other_id, _, _ = db.add_media_with_keywords(
+        title="Other",
+        content="Other body",
+        media_type="article",
+        keywords=["misc"],
+    )
+    service = LocalMediaReadingService(db)
+
+    listed = service.list_media_items(page=1, results_per_page=10, include_keywords=True)
+    detail = service.get_media_item(media_id, include_content=False)
+    updated = service.update_media_item(media_id, title="Renamed", keywords=["reviewed"])
+    keyword_suggestions = service.list_media_keywords(query="view", limit=5)
+    metadata_matches = service.search_media_metadata(field="title", value="Renamed", per_page=5)
+    identifier_matches = service.get_media_by_identifier(url="https://example.com/report.md")
+    deleted = service.delete_media_item(media_id)
+    trash = service.list_media_trash(page=1, results_per_page=10, include_keywords=True)
+    restored = service.restore_media_item(media_id, include_content=False)
+    deleted_again = service.delete_media_item(media_id)
+    permanent = service.permanently_delete_media_item(media_id)
+    after_permanent = service.get_media_by_identifier(url="https://example.com/report.md")
+
+    assert listed["pagination"]["total_items"] == 2
+    assert any(item["id"] == media_id and item["keywords"] == ["draft", "research"] for item in listed["items"])
+    assert any(item["id"] == other_id for item in listed["items"])
+    assert "content" not in detail
+    assert detail["keywords"] == ["draft", "research"]
+    assert updated["title"] == "Renamed"
+    assert updated["keywords"] == ["reviewed"]
+    assert keyword_suggestions == {"keywords": ["reviewed"]}
+    assert [item["id"] for item in metadata_matches["items"]] == [media_id]
+    assert identifier_matches["items"][0]["id"] == media_id
+    assert deleted == {"ok": True, "media_id": media_id}
+    assert trash["items"][0]["id"] == media_id
+    assert trash["items"][0]["keywords"] == ["reviewed"]
+    assert restored["id"] == media_id
+    assert restored["is_trash"] in {0, False}
+    assert deleted_again == {"ok": True, "media_id": media_id}
+    assert permanent == {"ok": True, "media_id": media_id}
+    assert after_permanent["items"] == []
+
+
 def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])

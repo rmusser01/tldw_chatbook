@@ -139,6 +139,239 @@ class LocalMediaReadingService:
             raise ValueError(f"Unsupported local media metadata fields: {unsupported_text}")
         return db.update_media_metadata(self._coerce_media_id(media_id), **metadata)
 
+    def list_media_items(
+        self,
+        *,
+        page: int = 1,
+        results_per_page: int = 10,
+        include_keywords: bool = False,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        rows, total_pages, current_page, total_items = db.get_paginated_files(
+            page=max(int(page or 1), 1),
+            results_per_page=max(int(results_per_page or 10), 1),
+        )
+        return self._build_local_media_list_response(
+            rows,
+            page=current_page,
+            results_per_page=max(int(results_per_page or 10), 1),
+            total_pages=total_pages,
+            total_items=total_items,
+            include_keywords=include_keywords,
+        )
+
+    def list_media_keywords(self, *, query: str | None = None, limit: int = 100) -> dict[str, Any]:
+        keywords = list(self._require_db().fetch_all_keywords())
+        normalized_query = str(query or "").strip().lower()
+        if normalized_query:
+            keywords = [keyword for keyword in keywords if normalized_query in str(keyword).lower()]
+        return {"keywords": keywords[:max(int(limit or 100), 0)]}
+
+    def list_media_trash(
+        self,
+        *,
+        page: int = 1,
+        results_per_page: int = 10,
+        include_keywords: bool = False,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        normalized_page = max(int(page or 1), 1)
+        normalized_results_per_page = max(int(results_per_page or 10), 1)
+        offset = (normalized_page - 1) * normalized_results_per_page
+        total = db.get_connection().execute(
+            "SELECT COUNT(*) FROM Media WHERE deleted = 0 AND is_trash = 1"
+        ).fetchone()[0]
+        rows = db.get_connection().execute(
+            """
+            SELECT id, title, type
+            FROM Media
+            WHERE deleted = 0 AND is_trash = 1
+            ORDER BY trash_date DESC, last_modified DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (normalized_results_per_page, offset),
+        ).fetchall()
+        total_pages = (int(total) + normalized_results_per_page - 1) // normalized_results_per_page if total else 0
+        return self._build_local_media_list_response(
+            rows,
+            page=normalized_page,
+            results_per_page=normalized_results_per_page,
+            total_pages=total_pages,
+            total_items=int(total),
+            include_keywords=include_keywords,
+        )
+
+    def empty_media_trash(self) -> dict[str, Any]:
+        from tldw_chatbook.DB.Client_Media_DB_v2 import permanently_delete_item
+
+        db = self._require_db()
+        rows = db.get_connection().execute(
+            "SELECT id FROM Media WHERE deleted = 0 AND is_trash = 1"
+        ).fetchall()
+        failed_ids: list[int] = []
+        deleted_count = 0
+        for row in rows:
+            media_id = int(dict(row)["id"])
+            try:
+                if permanently_delete_item(db, media_id):
+                    deleted_count += 1
+                else:
+                    failed_ids.append(media_id)
+            except Exception:
+                failed_ids.append(media_id)
+        remaining = db.get_connection().execute(
+            "SELECT COUNT(*) FROM Media WHERE deleted = 0 AND is_trash = 1"
+        ).fetchone()[0]
+        return {
+            "deleted_count": deleted_count,
+            "failed_count": len(failed_ids),
+            "failed_ids": failed_ids,
+            "remaining_count": int(remaining),
+        }
+
+    def get_media_item(
+        self,
+        media_id: Any,
+        *,
+        include_content: bool = True,
+        include_versions: bool = True,
+        include_version_content: bool = False,
+    ) -> dict[str, Any]:
+        row = self.get_media_detail(media_id)
+        return self._local_media_item_response(
+            row,
+            include_content=include_content,
+            include_versions=include_versions,
+            include_version_content=include_version_content,
+        )
+
+    def update_media_item(self, media_id: Any, **fields: Any) -> dict[str, Any]:
+        payload = dict(fields)
+        if "type" in payload and "media_type" not in payload:
+            payload["media_type"] = payload.pop("type")
+        self.update_media_metadata(media_id, **payload)
+        return self.get_media_item(media_id)
+
+    def delete_media_item(self, media_id: Any) -> dict[str, Any]:
+        db = self._require_db()
+        normalized_media_id = self._coerce_media_id(media_id)
+        current = db.get_media_by_id(normalized_media_id, include_trash=True)
+        if current is None:
+            raise KeyError(f"Local media item not found: {media_id}")
+        if not current.get("is_trash"):
+            if not db.mark_as_trash(normalized_media_id):
+                raise ValueError(f"Local media item could not be moved to trash: {media_id}")
+        return {"ok": True, "media_id": normalized_media_id}
+
+    def restore_media_item(
+        self,
+        media_id: Any,
+        *,
+        include_content: bool = True,
+        include_versions: bool = True,
+        include_version_content: bool = False,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        normalized_media_id = self._coerce_media_id(media_id)
+        current = db.get_media_by_id(normalized_media_id, include_trash=True)
+        if current is None:
+            raise KeyError(f"Local media item not found: {media_id}")
+        if current.get("is_trash") and not db.restore_from_trash(normalized_media_id):
+            raise ValueError(f"Local media item could not be restored from trash: {media_id}")
+        restored = db.get_media_by_id(normalized_media_id)
+        if restored is None:
+            raise KeyError(f"Local media item not found after restore: {media_id}")
+        return self._local_media_item_response(
+            self._enrich_with_read_it_later_state(restored),
+            include_content=include_content,
+            include_versions=include_versions,
+            include_version_content=include_version_content,
+        )
+
+    def permanently_delete_media_item(self, media_id: Any) -> dict[str, Any]:
+        from tldw_chatbook.DB.Client_Media_DB_v2 import permanently_delete_item
+
+        db = self._require_db()
+        normalized_media_id = self._coerce_media_id(media_id)
+        current = db.get_media_by_id(normalized_media_id, include_trash=True)
+        if current is None:
+            raise KeyError(f"Local media item not found: {media_id}")
+        if not current.get("is_trash"):
+            raise ValueError("Local media item must be in trash before permanent deletion.")
+        deleted = permanently_delete_item(db, normalized_media_id)
+        if not deleted:
+            raise ValueError(f"Local media item could not be permanently deleted: {media_id}")
+        return {"ok": True, "media_id": normalized_media_id}
+
+    def update_media_keywords(self, media_id: Any, *, keywords: list[str], mode: str = "add") -> dict[str, Any]:
+        normalized_media_id = self._coerce_media_id(media_id)
+        incoming = self._normalize_bulk_tags(keywords)
+        current = self._local_keywords_for_media(normalized_media_id)
+        normalized_mode = str(mode or "add").strip().lower()
+        if normalized_mode == "set":
+            next_keywords = incoming
+        elif normalized_mode == "add":
+            next_keywords = sorted(set(current + incoming))
+        elif normalized_mode in {"remove", "delete"}:
+            remove_set = set(incoming)
+            next_keywords = [keyword for keyword in current if keyword not in remove_set]
+        else:
+            raise ValueError(f"Unsupported local keyword update mode: {mode}")
+        self.update_media_metadata(normalized_media_id, keywords=next_keywords)
+        return {"media_id": normalized_media_id, "keywords": self._local_keywords_for_media(normalized_media_id)}
+
+    def search_media_metadata(self, **filters: Any) -> dict[str, Any]:
+        page = max(int(filters.get("page") or 1), 1)
+        per_page = max(int(filters.get("per_page") or filters.get("results_per_page") or 20), 1)
+        query = filters.get("q") or filters.get("value")
+        field = str(filters.get("field") or "").strip()
+        search_fields = [field] if field in {"title", "content", "author", "type"} else None
+        if field in {"url", "uuid", "content_hash"} and query is not None:
+            return self._search_local_media_column(field, str(query), page=page, per_page=per_page)
+        result = self.search_media(
+            query=str(query) if query is not None else None,
+            limit=per_page,
+            offset=(page - 1) * per_page,
+            fields=search_fields,
+            media_types=filters.get("media_types"),
+            must_have=filters.get("must_have"),
+            must_not=filters.get("must_not"),
+            sort_by=filters.get("sort_by") or "last_modified_desc",
+        )
+        total = int(result.get("total") or 0)
+        return {
+            "items": result.get("items", []),
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total_items": total,
+                "total_pages": (total + per_page - 1) // per_page if total else 0,
+            },
+        }
+
+    def get_media_by_identifier(self, **identifiers: Any) -> dict[str, Any]:
+        db = self._require_db()
+        lookup_order = (
+            ("url", getattr(db, "get_media_by_url", None)),
+            ("uuid", getattr(db, "get_media_by_uuid", None)),
+            ("content_hash", getattr(db, "get_media_by_hash", None)),
+            ("hash", getattr(db, "get_media_by_hash", None)),
+            ("title", getattr(db, "get_media_by_title", None)),
+        )
+        matches: list[dict[str, Any]] = []
+        for key, getter in lookup_order:
+            value = identifiers.get(key)
+            if value is None or not callable(getter):
+                continue
+            row = getter(str(value), include_deleted=False, include_trash=False)
+            if row:
+                matches.append(self._enrich_with_read_it_later_state(row))
+        return {
+            "items": matches,
+            "total": len(matches),
+            "group_by_media": bool(identifiers.get("group_by_media", True)),
+        }
+
     def delete_media(self, media_id: Any) -> Any:
         return self._require_db().soft_delete_media(self._coerce_media_id(media_id))
 
@@ -2860,6 +3093,112 @@ class LocalMediaReadingService:
         if callable(fetch_batch):
             return [str(value).strip().lower() for value in fetch_batch([media_id]).get(media_id, []) if value]
         return []
+
+    def _build_local_media_list_response(
+        self,
+        rows: Any,
+        *,
+        page: int,
+        results_per_page: int,
+        total_pages: int,
+        total_items: int,
+        include_keywords: bool,
+    ) -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
+        media_ids: list[int] = []
+        for row in rows or []:
+            payload = dict(row)
+            media_id = self._coerce_media_id(payload["id"])
+            media_ids.append(media_id)
+            item = {
+                "id": media_id,
+                "title": str(payload.get("title") or ""),
+                "type": str(payload.get("type") or payload.get("media_type") or ""),
+                "url": f"local://media/{media_id}",
+            }
+            items.append(item)
+        keywords_map: dict[int, list[str]] = {}
+        keywords_available: bool | None = None
+        if include_keywords:
+            keywords_available = True
+            fetch_batch = getattr(self._require_db(), "fetch_keywords_for_media_batch", None)
+            if callable(fetch_batch) and media_ids:
+                keywords_map = {
+                    int(media_id): [str(value).strip().lower() for value in values if value]
+                    for media_id, values in fetch_batch(media_ids).items()
+                }
+            for item in items:
+                item["keywords"] = keywords_map.get(item["id"], [])
+        response: dict[str, Any] = {
+            "items": items,
+            "pagination": {
+                "page": int(page),
+                "results_per_page": int(results_per_page),
+                "total_pages": int(total_pages),
+                "total_items": int(total_items),
+            },
+        }
+        if include_keywords and keywords_available is not None:
+            response["keywords_available"] = keywords_available
+        return response
+
+    def _local_media_item_response(
+        self,
+        row: Mapping[str, Any],
+        *,
+        include_content: bool,
+        include_versions: bool,
+        include_version_content: bool,
+    ) -> dict[str, Any]:
+        payload = dict(row)
+        media_id = self._coerce_media_id(payload["id"])
+        payload["keywords"] = self._local_keywords_for_media(media_id)
+        if not include_content:
+            payload.pop("content", None)
+        if include_versions:
+            try:
+                versions = self.list_document_versions(media_id)
+            except Exception:
+                versions = []
+            if not include_version_content:
+                for version in versions:
+                    if isinstance(version, dict):
+                        version.pop("content", None)
+            payload["versions"] = versions
+        return payload
+
+    def _search_local_media_column(self, field: str, value: str, *, page: int, per_page: int) -> dict[str, Any]:
+        db = self._require_db()
+        offset = (page - 1) * per_page
+        normalized_field = field if field in {"url", "uuid", "content_hash"} else "url"
+        like_value = f"%{value}%"
+        total = db.get_connection().execute(
+            f"""
+            SELECT COUNT(*)
+            FROM Media
+            WHERE deleted = 0 AND is_trash = 0 AND {normalized_field} LIKE ?
+            """,
+            (like_value,),
+        ).fetchone()[0]
+        rows = db.get_connection().execute(
+            f"""
+            SELECT *
+            FROM Media
+            WHERE deleted = 0 AND is_trash = 0 AND {normalized_field} LIKE ?
+            ORDER BY last_modified DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (like_value, per_page, offset),
+        ).fetchall()
+        return {
+            "items": [self._enrich_with_read_it_later_state(dict(row)) for row in rows],
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total_items": int(total),
+                "total_pages": (int(total) + per_page - 1) // per_page if total else 0,
+            },
+        }
 
     def _apply_local_bulk_reading_action(
         self,
