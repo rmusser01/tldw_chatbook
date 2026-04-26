@@ -181,6 +181,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
     {
         "chat",
         "characters_personas_ccp",
+        "companion_personalization",
         "notes_workspaces",
         "media_reading_ingestion_sources",
         "prompts_chatbooks",
@@ -293,6 +294,21 @@ AUDITED_CAPABILITY_SEEDS = (
                 domain_id="characters",
                 sources=SEPARATED_SOURCES,
             ),
+        ),
+    ),
+    _capability(
+        "companion_personalization",
+        "Companion / Personalization",
+        "companion",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("companion.activity", actions=(LIST, DETAIL, CREATE)),
+            _resource("companion.checkins", actions=(CREATE,)),
+            _resource("companion.knowledge", actions=(LIST, DETAIL)),
+            _resource("companion.reflections", actions=(DETAIL,)),
+            _resource("companion.conversation_prompts", actions=(LIST,)),
+            _resource("companion.goals", actions=(LIST, CREATE, UPDATE)),
+            _resource("companion.lifecycle", actions=(PURGE, LAUNCH)),
         ),
     ),
     _capability(

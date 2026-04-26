@@ -43,6 +43,12 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": FULL_CRUD_AND_LAUNCH_AND_OBSERVE,
         },
     },
+    "companion_personalization": {
+        "expected_domain_ids": {"companion"},
+        "expected_action_kinds_by_source": {
+            "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch"),
+        },
+    },
     "notes_workspaces": {
         "expected_domain_ids": {"notes"},
         "expected_action_kinds_by_source": {
@@ -398,6 +404,21 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         chat.dictionary.versions.list.server
         chat.dictionary.versions.restore.local
         chat.dictionary.versions.restore.server
+    """),
+    "companion_personalization": _action_ids("""
+        companion.activity.create.server
+        companion.activity.detail.server
+        companion.activity.list.server
+        companion.checkins.create.server
+        companion.conversation_prompts.list.server
+        companion.goals.create.server
+        companion.goals.list.server
+        companion.goals.update.server
+        companion.knowledge.detail.server
+        companion.knowledge.list.server
+        companion.lifecycle.launch.server
+        companion.lifecycle.purge.server
+        companion.reflections.detail.server
     """),
     "chat": _action_ids("""
         chat.create.local

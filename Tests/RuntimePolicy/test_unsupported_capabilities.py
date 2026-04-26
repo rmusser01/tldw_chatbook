@@ -4,6 +4,7 @@ from tldw_chatbook.Character_Chat.character_persona_scope_service import Charact
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat_Grammars_Interop.chat_grammars_scope_service import ChatGrammarsScopeService
 from tldw_chatbook.Claims_Interop.claims_scope_service import ClaimsScopeService
+from tldw_chatbook.Companion_Interop.companion_scope_service import CompanionScopeService
 from tldw_chatbook.Auth_Account_Interop.auth_account_scope_service import AuthAccountScopeService
 from tldw_chatbook.Audio_Services_Interop.audio_services_scope_service import AudioServicesScopeService
 from tldw_chatbook.Collections_Interop.collections_feeds_scope_service import CollectionsFeedsScopeService
@@ -116,6 +117,7 @@ def test_collect_unsupported_capability_reports_labels_each_report_scope():
     [
         (ChatConversationScopeService(local_service=None, server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (CharacterPersonaScopeService(local_service=None, server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (CompanionScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (
             NotesScopeService(local_notes_service=None, server_service=None),
             [

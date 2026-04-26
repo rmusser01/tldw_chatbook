@@ -124,6 +124,15 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - Recommended tranche: Tranche 1
 - Notes: Priority 73. This is an important existing seam to finish rather than a net-new product surface.
 
+### Companion / Personalization: server activity, knowledge, goals, prompts, and lifecycle controls
+- Requirement class: Remote parity required, local parity assessed explicitly
+- Client obligation: Discover / Configure / Trigger / Observe
+- Current state: Chatbook now has typed direct API-client wrappers plus an app-wired policy-gated server service and source-aware remote-only scope seam for server Companion activity create/list/detail, manual check-ins, knowledge list/detail, reflection detail, conversation prompt suggestions, goal list/create/update, and lifecycle purge/rebuild.
+- Gap: Dedicated UX adoption, local/offline companion memory, sync/mirror semantics, and integration with Chatbook local notifications remain follow-on. Server personalization opt-in and tenant ownership stay enforced by the active server; local mode reports explicit unsupported state rather than silently writing server companion state.
+- Evidence: Server: `../tldw_server/tldw_Server_API/app/api/v1/endpoints/companion.py`, `../tldw_server/tldw_Server_API/app/api/v1/schemas/companion.py`; Chatbook: `tldw_chatbook/Companion_Interop/server_companion_service.py`, `tldw_chatbook/Companion_Interop/companion_scope_service.py`, `tldw_chatbook/tldw_api/client.py`, `tldw_chatbook/tldw_api/companion_schemas.py`, `tldw_chatbook/app.py`; Verification: `Tests/tldw_api/test_companion_client.py`, `Tests/Companion/test_server_companion_service.py`, `Tests/Companion/test_companion_scope_service.py`, `Tests/RuntimePolicy/test_runtime_policy_core.py`, and `Tests/RuntimePolicy/test_unsupported_capabilities.py`.
+- Recommended tranche: Tranche 3
+- Notes: Priority 34. This is user-facing server personalization parity, but not a local-first blocker until a Chatbook-owned companion memory model is designed.
+
 ### Notes / Workspaces: Notes CRUD, workspace CRUD, and notes graph
 - Requirement class: Local parity required + Remote parity required
 - Client obligation: Full CRUD

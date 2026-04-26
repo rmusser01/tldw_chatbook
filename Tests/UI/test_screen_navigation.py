@@ -56,6 +56,7 @@ from tldw_chatbook.Chat_Grammars_Interop import (
     ServerChatGrammarsService,
 )
 from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
+from tldw_chatbook.Companion_Interop import CompanionScopeService, ServerCompanionService
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Feedback_Interop import FeedbackScopeService, LocalFeedbackService, ServerFeedbackService
@@ -172,6 +173,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.translation_scope_service, TranslationScopeService)
     assert isinstance(app.server_voice_assistant_service, ServerVoiceAssistantService)
     assert isinstance(app.voice_assistant_scope_service, VoiceAssistantScopeService)
+    assert isinstance(app.server_companion_service, ServerCompanionService)
+    assert isinstance(app.companion_scope_service, CompanionScopeService)
     assert isinstance(app.server_collections_feeds_service, ServerCollectionsFeedsService)
     assert isinstance(app.collections_feeds_scope_service, CollectionsFeedsScopeService)
     assert app.collections_feeds_scope_service.local_service is app.local_watchlists_service

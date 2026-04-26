@@ -214,6 +214,7 @@ from tldw_chatbook.Chat_Grammars_Interop import (
     ServerChatGrammarsService,
 )
 from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
+from tldw_chatbook.Companion_Interop import CompanionScopeService, ServerCompanionService
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Feedback_Interop import FeedbackScopeService, LocalFeedbackService, ServerFeedbackService
@@ -1790,6 +1791,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.voice_assistant_scope_service = VoiceAssistantScopeService(
             server_service=self.server_voice_assistant_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_companion_service = ServerCompanionService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_companion_service = ServerCompanionService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.companion_scope_service = CompanionScopeService(
+            server_service=self.server_companion_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:

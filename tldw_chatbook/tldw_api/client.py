@@ -129,6 +129,23 @@ from .translation_schemas import (
     TranslateRequest,
     TranslateResponse,
 )
+from .companion_schemas import (
+    CompanionActivityCreate,
+    CompanionActivityItem,
+    CompanionActivityListResponse,
+    CompanionCheckInCreate,
+    CompanionConversationPromptsResponse,
+    CompanionGoal,
+    CompanionGoalCreate,
+    CompanionGoalListResponse,
+    CompanionGoalUpdate,
+    CompanionKnowledgeDetail,
+    CompanionKnowledgeListResponse,
+    CompanionLifecycleResponse,
+    CompanionPurgeRequest,
+    CompanionRebuildRequest,
+    CompanionReflectionDetail,
+)
 from .ocr_vlm_schemas import (
     OCRBackendsResponse,
     OCRPointsPreloadResponse,
@@ -1667,6 +1684,101 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return TranslateResponse.model_validate(response)
+
+    async def create_companion_activity(self, request_data: CompanionActivityCreate) -> CompanionActivityItem:
+        response = await self._request(
+            "POST",
+            "/api/v1/companion/activity",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return CompanionActivityItem.model_validate(response)
+
+    async def create_companion_check_in(self, request_data: CompanionCheckInCreate) -> CompanionActivityItem:
+        response = await self._request(
+            "POST",
+            "/api/v1/companion/check-ins",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return CompanionActivityItem.model_validate(response)
+
+    async def list_companion_activity(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> CompanionActivityListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/companion/activity",
+            params={"limit": limit, "offset": offset},
+        )
+        return CompanionActivityListResponse.model_validate(response)
+
+    async def get_companion_activity(self, event_id: str) -> CompanionActivityItem:
+        response = await self._request("GET", f"/api/v1/companion/activity/{quote(event_id, safe='')}")
+        return CompanionActivityItem.model_validate(response)
+
+    async def list_companion_knowledge(self, *, status: str | None = "active") -> CompanionKnowledgeListResponse:
+        params: Dict[str, Any] = {}
+        if status is not None:
+            params["status"] = status
+        response = await self._request("GET", "/api/v1/companion/knowledge", params=params)
+        return CompanionKnowledgeListResponse.model_validate(response)
+
+    async def get_companion_knowledge(self, card_id: str) -> CompanionKnowledgeDetail:
+        response = await self._request("GET", f"/api/v1/companion/knowledge/{quote(card_id, safe='')}")
+        return CompanionKnowledgeDetail.model_validate(response)
+
+    async def get_companion_reflection(self, reflection_id: str) -> CompanionReflectionDetail:
+        response = await self._request("GET", f"/api/v1/companion/reflections/{quote(reflection_id, safe='')}")
+        return CompanionReflectionDetail.model_validate(response)
+
+    async def get_companion_conversation_prompts(self, *, query: str) -> CompanionConversationPromptsResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/companion/conversation-prompts",
+            params={"query": query},
+        )
+        return CompanionConversationPromptsResponse.model_validate(response)
+
+    async def list_companion_goals(self, *, status: str | None = None) -> CompanionGoalListResponse:
+        params: Dict[str, Any] = {}
+        if status is not None:
+            params["status"] = status
+        response = await self._request("GET", "/api/v1/companion/goals", params=params)
+        return CompanionGoalListResponse.model_validate(response)
+
+    async def create_companion_goal(self, request_data: CompanionGoalCreate) -> CompanionGoal:
+        response = await self._request(
+            "POST",
+            "/api/v1/companion/goals",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return CompanionGoal.model_validate(response)
+
+    async def update_companion_goal(self, goal_id: str, request_data: CompanionGoalUpdate) -> CompanionGoal:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/companion/goals/{quote(goal_id, safe='')}",
+            json_data=request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json"),
+        )
+        return CompanionGoal.model_validate(response)
+
+    async def purge_companion_data(self, request_data: CompanionPurgeRequest) -> CompanionLifecycleResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/companion/purge",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return CompanionLifecycleResponse.model_validate(response)
+
+    async def rebuild_companion_data(self, request_data: CompanionRebuildRequest) -> CompanionLifecycleResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/companion/rebuild",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return CompanionLifecycleResponse.model_validate(response)
 
     async def process_voice_command(self, request_data: VoiceCommandRequest) -> VoiceCommandResponse:
         response = await self._request(
