@@ -21,14 +21,6 @@ ALLOWED_SERVER_CREATE_SOURCE_TYPES = ("archive_snapshot", "git_repository")
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
-        "operation_id": "media.file_artifacts.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "remote_only_surface",
-        "user_message": "Managed file artifacts and reference images are server-owned; local mode uses ordinary local files until a local artifact store is designed.",
-        "affected_action_ids": [],
-    },
-    {
         "operation_id": "media.reading_digests.scheduler.local",
         "source": "local",
         "supported": False,
@@ -259,12 +251,12 @@ class MediaReadingScopeService:
         return f"media.add.{action}.{mode.value}"
 
     @staticmethod
-    def _file_artifact_action_id(action: str) -> str:
-        return f"media.file_artifacts.{action}.server"
+    def _file_artifact_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.file_artifacts.{action}.{mode.value}"
 
     @staticmethod
-    def _reference_image_action_id(action: str) -> str:
-        return f"media.reference_images.{action}.server"
+    def _reference_image_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reference_images.{action}.{mode.value}"
 
     @staticmethod
     def _reading_list_action_id(mode: MediaReadingBackend, action: str) -> str:
@@ -343,11 +335,6 @@ class MediaReadingScopeService:
             raise ValueError("The direct web-content ingestion is server-only; use local URL ingest jobs in local mode.")
         return self._service_for_mode(mode)
 
-    def _server_file_artifact_service(self, mode: MediaReadingBackend, operation_name: str) -> Any:
-        if mode == MediaReadingBackend.LOCAL:
-            raise ValueError(f"{operation_name} is server-only; use ordinary local files in local mode.")
-        return self._service_for_mode(mode)
-
     def _server_processing_service(self, mode: MediaReadingBackend, operation_name: str) -> Any:
         if mode == MediaReadingBackend.LOCAL:
             raise ValueError(f"{operation_name} is server-only; use local/offline ingestion tooling in local mode.")
@@ -409,8 +396,8 @@ class MediaReadingScopeService:
         options: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_file_artifact_service(normalized_mode, "file-artifact creation")
-        self._enforce_policy(self._file_artifact_action_id("create"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._file_artifact_action_id(normalized_mode, "create"))
         if request_data is not None:
             response = await self._maybe_await(service.create_file_artifact(request_data=request_data))
         else:
@@ -431,8 +418,8 @@ class MediaReadingScopeService:
         mode: MediaReadingBackend | str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_file_artifact_service(normalized_mode, "reference-image listing")
-        self._enforce_policy(self._reference_image_action_id("list"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._reference_image_action_id(normalized_mode, "list"))
         response = self._to_plain(await self._maybe_await(service.list_reference_images()))
         items = response.get("items", []) if isinstance(response, Mapping) else list(response or [])
         normalized_items = [normalize_reference_image(item, backend=normalized_mode.value) for item in items]
@@ -448,8 +435,8 @@ class MediaReadingScopeService:
         file_id: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_file_artifact_service(normalized_mode, "file-artifact detail")
-        self._enforce_policy(self._file_artifact_action_id("detail"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._file_artifact_action_id(normalized_mode, "detail"))
         response = await self._maybe_await(service.get_file_artifact(file_id))
         return normalize_file_artifact(self._to_plain(response), backend=normalized_mode.value)
 
@@ -461,8 +448,8 @@ class MediaReadingScopeService:
         format: str,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_file_artifact_service(normalized_mode, "file-artifact export")
-        self._enforce_policy(self._file_artifact_action_id("export"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._file_artifact_action_id(normalized_mode, "export"))
         return self._to_plain(await self._maybe_await(service.export_file_artifact(file_id, format=format)))
 
     async def delete_file_artifact(
@@ -474,8 +461,8 @@ class MediaReadingScopeService:
         delete_file: bool = False,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_file_artifact_service(normalized_mode, "file-artifact deletion")
-        self._enforce_policy(self._file_artifact_action_id("delete"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._file_artifact_action_id(normalized_mode, "delete"))
         return self._to_plain(
             await self._maybe_await(service.delete_file_artifact(file_id, hard=hard, delete_file=delete_file))
         )
@@ -489,8 +476,8 @@ class MediaReadingScopeService:
         include_retention: bool = True,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_file_artifact_service(normalized_mode, "file-artifact purge")
-        self._enforce_policy(self._file_artifact_action_id("purge"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._file_artifact_action_id(normalized_mode, "purge"))
         return self._to_plain(
             await self._maybe_await(
                 service.purge_file_artifacts(

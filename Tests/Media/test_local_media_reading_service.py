@@ -582,6 +582,37 @@ def test_local_service_persists_reading_digest_schedules(memory_db_factory):
     assert after_delete["items"] == []
 
 
+def test_local_service_persists_file_artifacts_and_reference_images(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    created = service.create_file_artifact(
+        file_type="reference_image",
+        payload={"mime_type": "image/png", "width": 640, "height": 480, "alt": "Figure"},
+        title="Figure 1",
+        export={"format": "md", "content": "![Figure 1](local://figure-1.png)", "filename": "figure.md"},
+        options={"persist": True},
+    )
+    detail = service.get_file_artifact(created["artifact"]["file_id"])
+    reference_images = service.list_reference_images()
+    exported = service.export_file_artifact(created["artifact"]["file_id"], format="md")
+    deleted = service.delete_file_artifact(created["artifact"]["file_id"], hard=False, delete_file=False)
+    after_delete = service.list_reference_images()
+    purged = service.purge_file_artifacts()
+
+    assert created["artifact"]["file_type"] == "reference_image"
+    assert created["artifact"]["title"] == "Figure 1"
+    assert detail["artifact"]["structured"]["alt"] == "Figure"
+    assert reference_images["total"] == 1
+    assert reference_images["items"][0]["file_id"] == created["artifact"]["file_id"]
+    assert reference_images["items"][0]["mime_type"] == "image/png"
+    assert exported["content"] == b"![Figure 1](local://figure-1.png)"
+    assert exported["filename"] == "figure.md"
+    assert deleted == {"success": True, "file_deleted": False}
+    assert after_delete == {"items": [], "total": 0}
+    assert purged == {"removed": 1, "files_deleted": 0}
+
+
 def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(

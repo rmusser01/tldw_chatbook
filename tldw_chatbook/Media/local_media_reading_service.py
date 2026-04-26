@@ -530,6 +530,133 @@ class LocalMediaReadingService:
             "errors": errors,
         }
 
+    def create_file_artifact(
+        self,
+        *,
+        request_data: Any | None = None,
+        file_type: str | None = None,
+        payload: Mapping[str, Any] | None = None,
+        title: str | None = None,
+        export: Mapping[str, Any] | None = None,
+        options: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        if request_data is not None:
+            request_payload = self._model_dump_dict(request_data)
+            file_type = request_payload.get("file_type", file_type)
+            payload = request_payload.get("payload", payload)
+            title = request_payload.get("title", title)
+            export = request_payload.get("export", export)
+            options = request_payload.get("options", options)
+        normalized_file_type = str(file_type or "").strip()
+        if not normalized_file_type:
+            raise ValueError("file_type is required for local file artifacts.")
+        artifact_payload = dict(payload or {})
+        export_payload = dict(export or {})
+        options_payload = dict(options or {"persist": True})
+        now = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO local_file_artifacts (
+                    file_type, title, payload_json, validation_json, export_json,
+                    options_json, created_at, updated_at, deleted, deleted_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)
+                """,
+                (
+                    normalized_file_type,
+                    title,
+                    self._json_dumps(artifact_payload),
+                    self._json_dumps({"ok": True, "warnings": []}),
+                    self._json_dumps(export_payload),
+                    self._json_dumps(options_payload),
+                    now,
+                    now,
+                ),
+            )
+            file_id = int(cursor.lastrowid)
+        return self.get_file_artifact(file_id)
+
+    def get_file_artifact(self, file_id: Any) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        row = db.get_connection().execute(
+            "SELECT * FROM local_file_artifacts WHERE id = ? AND deleted = 0",
+            (self._coerce_media_id(file_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Local file artifact not found: {file_id}")
+        return {"artifact": self._file_artifact_row_to_response(row)}
+
+    def list_reference_images(self) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        rows = db.get_connection().execute(
+            """
+            SELECT * FROM local_file_artifacts
+            WHERE deleted = 0 AND LOWER(file_type) IN ('reference_image', 'reference-image', 'image')
+            ORDER BY created_at DESC, id DESC
+            """
+        ).fetchall()
+        return {
+            "items": [self._reference_image_row_to_response(row) for row in rows],
+            "total": len(rows),
+        }
+
+    def export_file_artifact(self, file_id: Any, *, format: str) -> dict[str, Any]:
+        artifact = self.get_file_artifact(file_id)["artifact"]
+        export_payload = dict(artifact.get("export") or {})
+        normalized_format = str(format or export_payload.get("format") or "json").strip().lower() or "json"
+        content = export_payload.get("content")
+        if content is None:
+            content = self._json_dumps(dict(artifact.get("structured") or {}))
+        filename = str(export_payload.get("filename") or f"artifact-{artifact['file_id']}.{normalized_format}")
+        content_type = {
+            "md": "text/markdown",
+            "markdown": "text/markdown",
+            "json": "application/json",
+            "txt": "text/plain; charset=utf-8",
+        }.get(normalized_format, "application/octet-stream")
+        return {
+            "content": str(content).encode("utf-8"),
+            "content_type": content_type,
+            "content_disposition": f"attachment; filename={filename}",
+            "filename": filename,
+        }
+
+    def delete_file_artifact(self, file_id: Any, *, hard: bool = False, delete_file: bool = False) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        self.get_file_artifact(file_id)
+        normalized_file_id = self._coerce_media_id(file_id)
+        with db.transaction() as conn:
+            if hard:
+                conn.execute("DELETE FROM local_file_artifacts WHERE id = ?", (normalized_file_id,))
+            else:
+                now = db._get_current_utc_timestamp_str()
+                conn.execute(
+                    "UPDATE local_file_artifacts SET deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ?",
+                    (now, now, normalized_file_id),
+                )
+        return {"success": True, "file_deleted": bool(delete_file)}
+
+    def purge_file_artifacts(
+        self,
+        *,
+        delete_files: bool = False,
+        soft_deleted_grace_days: int = 30,
+        include_retention: bool = True,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        with db.transaction() as conn:
+            rows = conn.execute("SELECT id FROM local_file_artifacts WHERE deleted = 1").fetchall()
+            removed = len(rows)
+            conn.execute("DELETE FROM local_file_artifacts WHERE deleted = 1")
+        return {"removed": removed, "files_deleted": removed if delete_files else 0}
+
     def delete_media(self, media_id: Any) -> Any:
         return self._require_db().soft_delete_media(self._coerce_media_id(media_id))
 
@@ -2940,6 +3067,15 @@ class LocalMediaReadingService:
         return self._require_db().soft_delete_document_version(version_uuid)
 
     @staticmethod
+    def _model_dump_dict(value: Any) -> dict[str, Any]:
+        if isinstance(value, Mapping):
+            return dict(value)
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return dict(model_dump(exclude_none=True, mode="python"))
+        return {}
+
+    @staticmethod
     def _json_dumps(value: Mapping[str, Any] | list[Any] | None) -> str:
         return json.dumps(value or {})
 
@@ -3818,6 +3954,21 @@ class LocalMediaReadingService:
                 );
                 CREATE INDEX IF NOT EXISTS idx_local_reading_digest_outputs_schedule_id
                     ON local_reading_digest_outputs(schedule_id);
+                CREATE TABLE IF NOT EXISTS local_file_artifacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_type TEXT NOT NULL,
+                    title TEXT,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    validation_json TEXT NOT NULL DEFAULT '{}',
+                    export_json TEXT NOT NULL DEFAULT '{}',
+                    options_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    deleted_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_local_file_artifacts_type_deleted
+                    ON local_file_artifacts(file_type, deleted);
                 """
             )
 
@@ -4002,6 +4153,32 @@ class LocalMediaReadingService:
             "content": payload.get("content"),
             "metadata": self._json_loads(payload.get("metadata_json")),
             "created_at": payload.get("created_at"),
+        }
+
+    def _file_artifact_row_to_response(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        return {
+            "file_id": payload["id"],
+            "file_type": payload.get("file_type"),
+            "title": payload.get("title"),
+            "structured": self._json_loads(payload.get("payload_json")),
+            "validation": self._json_loads(payload.get("validation_json")),
+            "export": self._json_loads(payload.get("export_json")),
+            "options": self._json_loads(payload.get("options_json")),
+            "created_at": payload.get("created_at"),
+            "updated_at": payload.get("updated_at"),
+        }
+
+    def _reference_image_row_to_response(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        artifact = self._file_artifact_row_to_response(row)
+        structured = dict(artifact.get("structured") or {})
+        return {
+            "file_id": artifact["file_id"],
+            "title": artifact.get("title"),
+            "mime_type": structured.get("mime_type") or structured.get("content_type"),
+            "width": structured.get("width"),
+            "height": structured.get("height"),
+            "created_at": artifact.get("created_at"),
         }
 
     def _note_link_row_to_dict(self, row: Mapping[str, Any] | None) -> dict[str, Any]:

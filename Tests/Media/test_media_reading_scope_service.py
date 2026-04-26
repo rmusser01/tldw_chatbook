@@ -167,6 +167,41 @@ class FakeLocalMediaService:
         self.calls.append(("add_media", options, file_paths))
         return {"status": "success", "backend": "local", "processed_count": 1}
 
+    def create_file_artifact(self, **kwargs):
+        self.calls.append(("create_file_artifact", kwargs))
+        return {
+            "artifact": {
+                "file_id": 12,
+                "file_type": kwargs.get("file_type", "reference_image"),
+                "title": kwargs.get("title") or "Local Figure",
+                "structured": kwargs.get("payload") or {},
+                "validation": {"ok": True, "warnings": []},
+                "export": {"status": "ready"},
+                "created_at": "2026-04-25T12:00:00Z",
+                "updated_at": "2026-04-25T12:00:00Z",
+            }
+        }
+
+    def list_reference_images(self):
+        self.calls.append(("list_reference_images",))
+        return {"items": [{"file_id": 12, "title": "Local Figure", "mime_type": "image/png"}], "total": 1}
+
+    def get_file_artifact(self, file_id):
+        self.calls.append(("get_file_artifact", file_id))
+        return {"artifact": {"file_id": file_id, "file_type": "reference_image", "title": "Local Figure"}}
+
+    def export_file_artifact(self, file_id, *, format):
+        self.calls.append(("export_file_artifact", file_id, format))
+        return {"content": b"local", "filename": f"artifact.{format}"}
+
+    def delete_file_artifact(self, file_id, *, hard=False, delete_file=False):
+        self.calls.append(("delete_file_artifact", file_id, hard, delete_file))
+        return {"success": True, "file_deleted": delete_file}
+
+    def purge_file_artifacts(self, *, delete_files=False, soft_deleted_grace_days=30, include_retention=True):
+        self.calls.append(("purge_file_artifacts", delete_files, soft_deleted_grace_days, include_retention))
+        return {"removed": 1, "files_deleted": 0}
+
     def delete_media(self, media_id):
         self.calls.append(("delete_media", media_id))
         return True
@@ -1347,7 +1382,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
     server_report = scope_service.list_unsupported_capabilities(mode="server")
 
     assert [item["operation_id"] for item in local_report] == [
-        "media.file_artifacts.local",
         "media.reading_digests.scheduler.local",
         "media.web_content_ingest.local",
         "media.processing.code.local",
@@ -1825,11 +1859,12 @@ async def test_scope_service_routes_add_media_for_local_and_server():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_server_file_artifacts_and_reference_images_and_blocks_local_mode():
+async def test_scope_service_routes_file_artifacts_and_reference_images_for_local_and_server():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     server = FakeServerMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=server,
         policy_enforcer=policy,
     )
@@ -1859,6 +1894,17 @@ async def test_scope_service_routes_server_file_artifacts_and_reference_images_a
         soft_deleted_grace_days=7,
         include_retention=False,
     )
+    local_created = await scope.create_file_artifact(
+        mode="local",
+        file_type="reference_image",
+        payload={"mime_type": "image/png"},
+        title="Local Figure",
+    )
+    local_reference_images = await scope.list_reference_images(mode="local")
+    local_detail = await scope.get_file_artifact(mode="local", file_id=12)
+    local_exported = await scope.export_file_artifact(mode="local", file_id=12, format="md")
+    local_deleted = await scope.delete_file_artifact(mode="local", file_id=12, hard=False, delete_file=False)
+    local_purged = await scope.purge_file_artifacts(mode="local")
 
     assert created["id"] == "server:file_artifact:19"
     assert created["file_type"] == "markdown_table"
@@ -1868,7 +1914,13 @@ async def test_scope_service_routes_server_file_artifacts_and_reference_images_a
     assert exported["filename"] == "table.md"
     assert deleted == {"success": True, "file_deleted": True}
     assert purged == {"removed": 2, "files_deleted": 1}
-    assert policy.calls[-7:] == [
+    assert local_created["id"] == "local:file_artifact:12"
+    assert local_reference_images["items"][0]["id"] == "local:reference_image:12"
+    assert local_detail["id"] == "local:file_artifact:12"
+    assert local_exported["filename"] == "artifact.md"
+    assert local_deleted == {"success": True, "file_deleted": False}
+    assert local_purged == {"removed": 1, "files_deleted": 0}
+    assert policy.calls[-13:] == [
         "media.file_artifacts.create.server",
         "media.file_artifacts.create.server",
         "media.reference_images.list.server",
@@ -1876,6 +1928,12 @@ async def test_scope_service_routes_server_file_artifacts_and_reference_images_a
         "media.file_artifacts.export.server",
         "media.file_artifacts.delete.server",
         "media.file_artifacts.purge.server",
+        "media.file_artifacts.create.local",
+        "media.reference_images.list.local",
+        "media.file_artifacts.detail.local",
+        "media.file_artifacts.export.local",
+        "media.file_artifacts.delete.local",
+        "media.file_artifacts.purge.local",
     ]
     assert server.calls[-7][0] == "create_file_artifact"
     assert server.calls[-7][1] == {
@@ -1895,8 +1953,23 @@ async def test_scope_service_routes_server_file_artifacts_and_reference_images_a
         ("purge_file_artifacts", True, 7, False),
     ]
 
-    with pytest.raises(ValueError, match="server-only"):
-        await scope.list_reference_images(mode="local")
+    assert local.calls[-6:] == [
+        (
+            "create_file_artifact",
+            {
+                "file_type": "reference_image",
+                "payload": {"mime_type": "image/png"},
+                "title": "Local Figure",
+                "export": None,
+                "options": {"persist": True},
+            },
+        ),
+        ("list_reference_images",),
+        ("get_file_artifact", 12),
+        ("export_file_artifact", 12, "md"),
+        ("delete_file_artifact", 12, False, False),
+        ("purge_file_artifacts", False, 30, True),
+    ]
 
 
 @pytest.mark.asyncio
