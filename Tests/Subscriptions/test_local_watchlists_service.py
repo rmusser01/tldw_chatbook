@@ -142,6 +142,100 @@ async def test_local_watchlists_service_filters_sources_by_query(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_local_watchlists_service_persists_source_execution_settings(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    source = await service.create_source(
+        {
+            "name": "Docs",
+            "source_type": "url_list",
+            "extraction_rules": {"urls": ["https://example.com/a", "https://example.com/b"]},
+            "processing_options": {"max_urls": 2},
+            "extraction_method": "full",
+            "check_frequency": 300,
+        }
+    )
+    updated = await service.update_source(
+        source["source_id"],
+        {
+            "processing_options": {"max_urls": 1},
+            "extraction_rules": {"urls": ["https://example.com/c"]},
+        },
+    )
+
+    assert source["source_type"] == "url_list"
+    assert source["url"] == "https://example.com/a"
+    assert source["settings"]["extraction_rules"] == {
+        "urls": ["https://example.com/a", "https://example.com/b"]
+    }
+    assert source["settings"]["processing_options"] == {"max_urls": 2}
+    assert source["settings"]["extraction_method"] == "full"
+    assert source["settings"]["check_frequency"] == 300
+    assert updated["url"] == "https://example.com/c"
+    assert updated["settings"]["processing_options"] == {"max_urls": 1}
+    assert updated["settings"]["extraction_rules"] == {"urls": ["https://example.com/c"]}
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_executes_url_list_sources_with_default_url_monitor(tmp_path, monkeypatch):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    seen_urls = []
+
+    class FakeURLMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            seen_urls.append(subscription["source"])
+            return {
+                "url": subscription["source"],
+                "title": f"Changed {len(seen_urls)}",
+                "content_hash": f"hash-{len(seen_urls)}",
+                "published_date": "2026-04-25T00:00:00+00:00",
+            }
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+        FakeURLMonitor,
+    )
+    source = await service.create_source(
+        {
+            "name": "Docs",
+            "source_type": "url_list",
+            "extraction_rules": {
+                "urls": ["https://example.com/a", "https://example.com/b"],
+            },
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    completed = await service.execute_run(launched["run_id"])
+
+    stored_items = db.conn.execute(
+        "SELECT url, title, content_hash FROM subscription_items WHERE subscription_id = ? ORDER BY id ASC",
+        (source["source_id"],),
+    ).fetchall()
+    assert completed["status"] == "completed"
+    assert completed["stats"]["items_found"] == 2
+    assert completed["stats"]["items_ingested"] == 2
+    assert seen_urls == ["https://example.com/a", "https://example.com/b"]
+    assert [dict(row) for row in stored_items] == [
+        {
+            "url": "https://example.com/a",
+            "title": "Changed 1",
+            "content_hash": "hash-1",
+        },
+        {
+            "url": "https://example.com/b",
+            "title": "Changed 2",
+            "content_hash": "hash-2",
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_local_watchlists_service_evaluates_completed_run_alerts_into_notifications(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     notification_store = ClientNotificationsDB(tmp_path / "notifications.db")

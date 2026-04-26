@@ -72,12 +72,19 @@ class LocalWatchlistsService:
     async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         db = self._db()
         local_type = self._local_type_for_source_type(payload.get("source_type"))
+        source = str(
+            payload.get("url")
+            or payload.get("source")
+            or self._first_configured_url(payload)
+            or ""
+        )
         source_id = db.add_subscription(
             name=str(payload.get("name") or "Untitled subscription"),
             type=local_type,
-            source=str(payload.get("url") or payload.get("source") or ""),
+            source=source,
             tags=list(payload.get("tags") or []),
             description=payload.get("description"),
+            **self._subscription_config_fields(payload),
         )
         return normalize_local_subscription_row(db.get_subscription(source_id))
 
@@ -88,6 +95,12 @@ class LocalWatchlistsService:
             changes["name"] = payload["name"]
         if "url" in payload:
             changes["source"] = payload["url"]
+        elif "source" in payload:
+            changes["source"] = payload["source"]
+        elif "extraction_rules" in payload:
+            configured_url = self._first_configured_url(payload)
+            if configured_url:
+                changes["source"] = configured_url
         if "tags" in payload:
             changes["tags"] = payload["tags"]
         if "active" in payload:
@@ -96,6 +109,7 @@ class LocalWatchlistsService:
             changes["description"] = payload["description"]
         if "source_type" in payload:
             changes["type"] = self._local_type_for_source_type(payload["source_type"])
+        changes.update(self._subscription_config_fields(payload))
         if changes:
             db.update_subscription(int(source_id), **changes)
         return normalize_local_subscription_row(db.get_subscription(int(source_id)))
@@ -434,6 +448,36 @@ class LocalWatchlistsService:
             return normalized
         raise ValueError(f"Unsupported local watchlist source type: {normalized}")
 
+    @classmethod
+    def _first_configured_url(cls, payload: Mapping[str, Any]) -> str | None:
+        extraction_rules = cls._parse_json_value(payload.get("extraction_rules"))
+        urls = cls._coerce_url_list(
+            extraction_rules.get("urls") if isinstance(extraction_rules, Mapping) else None
+        )
+        if urls:
+            return urls[0]
+        return None
+
+    @staticmethod
+    def _subscription_config_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
+        allowed_fields = (
+            "check_frequency",
+            "extraction_method",
+            "extraction_rules",
+            "processing_options",
+            "notification_config",
+            "change_threshold",
+            "ignore_selectors",
+            "custom_headers",
+            "rate_limit_config",
+            "auto_pause_threshold",
+        )
+        return {
+            field: payload[field]
+            for field in allowed_fields
+            if field in payload and payload[field] is not None
+        }
+
     @staticmethod
     def _utc_now() -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -484,18 +528,87 @@ class LocalWatchlistsService:
     ) -> dict[str, Any]:
         from .monitoring_engine import FeedMonitor, URLMonitor
 
-        source_type = str(subscription.get("type") or "").strip()
+        subscription_config = self._subscription_execution_config(subscription)
+        source_type = str(subscription_config.get("type") or "").strip()
         if source_type in {"rss", "atom", "json_feed", "podcast"}:
-            items = await FeedMonitor().check_feed(dict(subscription))
-        elif source_type in {"url", "url_list"}:
-            result = await URLMonitor(db).check_url(dict(subscription))
+            items = await FeedMonitor().check_feed(subscription_config)
+        elif source_type == "url":
+            result = await URLMonitor(db).check_url(subscription_config)
             items = [result] if result else []
+        elif source_type == "url_list":
+            monitor = URLMonitor(db)
+            items = []
+            for url in self._urls_for_url_list(subscription_config):
+                result = await monitor.check_url(
+                    {
+                        **subscription_config,
+                        "source": url,
+                        "type": "url",
+                    }
+                )
+                if result:
+                    items.append(result)
         else:
             raise ValueError(f"Unsupported local watchlist source type for execution: {source_type}")
         return {
             "items": items,
             "log_text": f"Local watchlist execution completed with {len(items)} item(s).",
         }
+
+    @classmethod
+    def _subscription_execution_config(cls, subscription: Mapping[str, Any]) -> dict[str, Any]:
+        config = dict(subscription)
+        for field in (
+            "extraction_rules",
+            "processing_options",
+            "notification_config",
+            "rate_limit_config",
+        ):
+            if field in config:
+                config[field] = cls._parse_json_value(config[field])
+        return config
+
+    @classmethod
+    def _urls_for_url_list(cls, subscription: Mapping[str, Any]) -> list[str]:
+        extraction_rules = subscription.get("extraction_rules")
+        urls = []
+        if isinstance(extraction_rules, Mapping):
+            urls = cls._coerce_url_list(extraction_rules.get("urls"))
+        if not urls:
+            urls = cls._coerce_url_list(subscription.get("source"))
+
+        processing_options = subscription.get("processing_options")
+        max_urls = None
+        if isinstance(processing_options, Mapping) and processing_options.get("max_urls") is not None:
+            try:
+                max_urls = max(int(processing_options["max_urls"]), 0)
+            except (TypeError, ValueError):
+                max_urls = None
+        return urls[:max_urls] if max_urls is not None else urls
+
+    @staticmethod
+    def _parse_json_value(value: Any) -> Any:
+        if value in (None, ""):
+            return {}
+        if isinstance(value, (Mapping, list)):
+            return value
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+        return value
+
+    @staticmethod
+    def _coerce_url_list(value: Any) -> list[str]:
+        if value in (None, ""):
+            return []
+        if isinstance(value, str):
+            parts = value.replace(",", "\n").splitlines()
+            return [part.strip() for part in parts if part.strip()]
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
 
     @staticmethod
     def _ensure_run_schema(db: SubscriptionsDB) -> None:

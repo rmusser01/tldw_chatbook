@@ -30,6 +30,53 @@ def _coerce_tags(value: Any) -> list[str]:
     return []
 
 
+def _json_mapping(value: Any) -> dict[str, Any]:
+    if value in (None, ""):
+        return {}
+    if isinstance(value, Mapping):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return dict(parsed) if isinstance(parsed, Mapping) else {}
+    return {}
+
+
+def _local_source_settings(row: Mapping[str, Any]) -> dict[str, Any]:
+    settings: dict[str, Any] = {}
+    scalar_fields = (
+        "check_frequency",
+        "extraction_method",
+        "change_threshold",
+        "auto_ingest",
+    )
+    for field in scalar_fields:
+        value = row.get(field)
+        if value is not None:
+            settings[field] = value
+
+    for field in (
+        "extraction_rules",
+        "processing_options",
+        "notification_config",
+        "rate_limit_config",
+    ):
+        parsed = _json_mapping(row.get(field))
+        if parsed:
+            settings[field] = parsed
+
+    ignore_selectors = row.get("ignore_selectors")
+    if ignore_selectors:
+        settings["ignore_selectors"] = [
+            selector.strip()
+            for selector in str(ignore_selectors).split("\n")
+            if selector.strip()
+        ]
+    return settings
+
+
 def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
     """Normalize a local subscriptions DB row as a watch item."""
     source_id = row["id"]
@@ -52,7 +99,7 @@ def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "active": active,
         "tags": _coerce_tags(row.get("tags")),
         "group_ids": [],
-        "settings": {},
+        "settings": _local_source_settings(row),
         "status_summary": status_summary,
         "last_checked_or_scraped_at": row.get("last_checked") or row.get("last_successful_check"),
         "created_at": row.get("created_at"),
