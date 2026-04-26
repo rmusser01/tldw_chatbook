@@ -69,6 +69,7 @@ from .config import (
     get_notifications_db_path,
     get_research_db_path,
     get_subscriptions_db_path,
+    get_user_data_dir,
     get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
@@ -1972,6 +1973,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             tts_provider_loader=lambda: {"chatbook_tts": {"available": True, "source": "local"}},
             stt_provider_loader=lambda: {"chatbook_stt": {"available": True, "source": "local"}},
             voice_catalog_loader=lambda: {},
+            history_store_path=get_user_data_dir() / "tldw_chatbook_audio_history.json",
             policy_enforcer=self.service_policy_enforcer,
         )
         try:

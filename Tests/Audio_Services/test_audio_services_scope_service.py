@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Audio_Services_Interop.audio_services_scope_service import AudioServicesScopeService
+from tldw_chatbook.Audio_Services_Interop.local_audio_services_service import LocalAudioServicesService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -271,18 +272,17 @@ def test_audio_services_scope_service_reports_known_unsupported_capabilities():
 
     assert local_report == [
         {
-            "operation_id": "audio.central_local_generation.local",
+            "operation_id": "audio.local_jobs_and_advanced_generation.local",
             "source": "local",
             "supported": False,
             "reason_code": "existing_ui_owned_surface",
-            "user_message": "Local TTS/STT generation remains in Chatbook's existing TTS/STTS event handlers; this source-aware seam exposes local discovery until those call sites are adopted.",
+            "user_message": "Local immediate TTS generation and TTS history are available through the source-aware seam; local speech jobs, STT/translation, tokenizer, custom voices, and audiobook generation remain in older UI-owned surfaces or are not implemented locally yet.",
             "affected_action_ids": [
                 "audio.voices.create.local",
                 "audio.voices.delete.local",
                 "audio.voices.detail.local",
                 "audio.voices.launch.local",
                 "audio.voices.preview.local",
-                "audio.speech.launch.local",
                 "audio.speech_jobs.detail.local",
                 "audio.jobs.create.local",
                 "audio.jobs.detail.local",
@@ -302,19 +302,6 @@ def test_audio_services_scope_service_reports_known_unsupported_capabilities():
                 "audiobooks.voice_profiles.create.local",
                 "audiobooks.voice_profiles.delete.local",
                 "audiobooks.voice_profiles.list.local",
-            ],
-        },
-        {
-            "operation_id": "audio.local_history_artifact_scope.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "sync_semantics_deferred",
-            "user_message": "Local audio history/artifact identity is not yet centralized with server history and artifacts; sync/mirroring remains deferred.",
-            "affected_action_ids": [
-                "audio.history.list.local",
-                "audio.history.detail.local",
-                "audio.history.update.local",
-                "audio.history.delete.local",
             ],
         },
         {
@@ -348,6 +335,47 @@ def test_audio_services_scope_service_reports_known_unsupported_capabilities():
             "user_message": "Admin audio-job controls are outside Chatbook client parity for this slice.",
             "affected_action_ids": [],
         },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_audio_services_scope_service_routes_local_speech_and_history(tmp_path):
+    async def fake_generator(**kwargs):
+        return b"audio"
+
+    local = LocalAudioServicesService(
+        tts_audio_generator=fake_generator,
+        history_store_path=tmp_path / "audio-history.json",
+    )
+    policy = FakePolicyEnforcer()
+    scope = AudioServicesScopeService(local_service=local, server_service=None, policy_enforcer=policy)
+
+    speech = await scope.create_audio_speech(
+        mode="local",
+        request_data={"model": "kokoro", "input": "Local speech", "response_format": "wav"},
+    )
+    history = await scope.list_tts_history(mode="local")
+    detail = await scope.get_tts_history_entry(mode="local", history_id=1)
+    updated = await scope.update_tts_history_favorite(
+        mode="local",
+        history_id=1,
+        request_data={"favorite": True},
+    )
+    deleted = await scope.delete_tts_history_entry(mode="local", history_id=1)
+
+    assert speech["record_id"] == "local:audio:speech"
+    assert speech["history_id"] == 1
+    assert history["items"][0]["record_id"] == "local:audio_history:1"
+    assert detail["record_id"] == "local:audio_history:1"
+    assert detail["text"] == "Local speech"
+    assert updated["favorite"] is True
+    assert deleted["deleted"] is True
+    assert policy.calls == [
+        "audio.speech.launch.local",
+        "audio.history.list.local",
+        "audio.history.detail.local",
+        "audio.history.update.local",
+        "audio.history.delete.local",
     ]
 
 

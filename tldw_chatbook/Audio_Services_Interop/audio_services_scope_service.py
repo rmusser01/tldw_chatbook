@@ -14,18 +14,17 @@ class AudioServicesBackend(str, Enum):
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
-        "operation_id": "audio.central_local_generation.local",
+        "operation_id": "audio.local_jobs_and_advanced_generation.local",
         "source": "local",
         "supported": False,
         "reason_code": "existing_ui_owned_surface",
-        "user_message": "Local TTS/STT generation remains in Chatbook's existing TTS/STTS event handlers; this source-aware seam exposes local discovery until those call sites are adopted.",
+        "user_message": "Local immediate TTS generation and TTS history are available through the source-aware seam; local speech jobs, STT/translation, tokenizer, custom voices, and audiobook generation remain in older UI-owned surfaces or are not implemented locally yet.",
         "affected_action_ids": [
             "audio.voices.create.local",
             "audio.voices.delete.local",
             "audio.voices.detail.local",
             "audio.voices.launch.local",
             "audio.voices.preview.local",
-            "audio.speech.launch.local",
             "audio.speech_jobs.detail.local",
             "audio.jobs.create.local",
             "audio.jobs.detail.local",
@@ -45,19 +44,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
             "audiobooks.voice_profiles.create.local",
             "audiobooks.voice_profiles.delete.local",
             "audiobooks.voice_profiles.list.local",
-        ],
-    },
-    {
-        "operation_id": "audio.local_history_artifact_scope.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "sync_semantics_deferred",
-        "user_message": "Local audio history/artifact identity is not yet centralized with server history and artifacts; sync/mirroring remains deferred.",
-        "affected_action_ids": [
-            "audio.history.list.local",
-            "audio.history.detail.local",
-            "audio.history.update.local",
-            "audio.history.delete.local",
         ],
     },
     {
