@@ -309,6 +309,15 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("companion.conversation_prompts", actions=(LIST,)),
             _resource("companion.goals", actions=(LIST, CREATE, UPDATE)),
             _resource("companion.lifecycle", actions=(PURGE, LAUNCH)),
+            _resource("personalization.profile", actions=(DETAIL,)),
+            _resource("personalization.opt_in", actions=(UPDATE,)),
+            _resource("personalization.preferences", actions=(UPDATE,)),
+            _resource("personalization.lifecycle", actions=(PURGE,)),
+            _resource(
+                "personalization.memories",
+                actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, IMPORT, EXPORT, VALIDATE),
+            ),
+            _resource("personalization.explanations", actions=(LIST,)),
         ),
     ),
     _capability(

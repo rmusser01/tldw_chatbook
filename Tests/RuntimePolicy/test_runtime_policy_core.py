@@ -419,6 +419,19 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         companion.lifecycle.launch.server
         companion.lifecycle.purge.server
         companion.reflections.detail.server
+        personalization.lifecycle.purge.server
+        personalization.memories.create.server
+        personalization.memories.delete.server
+        personalization.memories.detail.server
+        personalization.memories.export.server
+        personalization.memories.import.server
+        personalization.memories.list.server
+        personalization.memories.update.server
+        personalization.memories.validate.server
+        personalization.opt_in.update.server
+        personalization.preferences.update.server
+        personalization.explanations.list.server
+        personalization.profile.detail.server
     """),
     "chat": _action_ids("""
         chat.create.local

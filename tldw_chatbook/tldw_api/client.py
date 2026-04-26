@@ -146,6 +146,21 @@ from .companion_schemas import (
     CompanionRebuildRequest,
     CompanionReflectionDetail,
 )
+from .personalization_schemas import (
+    PersonalizationDetailResponse,
+    PersonalizationExplanationListResponse,
+    PersonalizationMemoryCreate,
+    PersonalizationMemoryExportResponse,
+    PersonalizationMemoryImportRequest,
+    PersonalizationMemoryItem,
+    PersonalizationMemoryListResponse,
+    PersonalizationMemoryUpdate,
+    PersonalizationMemoryValidateRequest,
+    PersonalizationOptInRequest,
+    PersonalizationPreferencesUpdate,
+    PersonalizationProfile,
+    PersonalizationPurgeResponse,
+)
 from .ocr_vlm_schemas import (
     OCRBackendsResponse,
     OCRPointsPreloadResponse,
@@ -1779,6 +1794,128 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(mode="json"),
         )
         return CompanionLifecycleResponse.model_validate(response)
+
+    async def get_personalization_profile(self) -> PersonalizationProfile:
+        response = await self._request("GET", "/api/v1/personalization/profile")
+        return PersonalizationProfile.model_validate(response)
+
+    async def set_personalization_opt_in(
+        self,
+        request_data: PersonalizationOptInRequest,
+    ) -> PersonalizationProfile:
+        response = await self._request(
+            "POST",
+            "/api/v1/personalization/opt-in",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return PersonalizationProfile.model_validate(response)
+
+    async def update_personalization_preferences(
+        self,
+        request_data: PersonalizationPreferencesUpdate,
+    ) -> PersonalizationProfile:
+        response = await self._request(
+            "POST",
+            "/api/v1/personalization/preferences",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PersonalizationProfile.model_validate(response)
+
+    async def purge_personalization_data(self) -> PersonalizationPurgeResponse:
+        response = await self._request("POST", "/api/v1/personalization/purge")
+        return PersonalizationPurgeResponse.model_validate(response)
+
+    async def list_personalization_memories(
+        self,
+        *,
+        memory_type: str | None = None,
+        q: str | None = None,
+        page: int = 1,
+        size: int = 50,
+        include_hidden: bool = False,
+    ) -> PersonalizationMemoryListResponse:
+        params: Dict[str, Any] = {"page": page, "size": size, "include_hidden": include_hidden}
+        if memory_type is not None:
+            params["type"] = memory_type
+        if q is not None:
+            params["q"] = q
+        response = await self._request("GET", "/api/v1/personalization/memories", params=params)
+        return PersonalizationMemoryListResponse.model_validate(response)
+
+    async def export_personalization_memories(self) -> PersonalizationMemoryExportResponse:
+        response = await self._request("GET", "/api/v1/personalization/memories/export")
+        return PersonalizationMemoryExportResponse.model_validate(response)
+
+    async def get_personalization_memory(self, memory_id: str) -> PersonalizationMemoryItem:
+        response = await self._request(
+            "GET",
+            f"/api/v1/personalization/memories/{quote(memory_id, safe='')}",
+        )
+        return PersonalizationMemoryItem.model_validate(response)
+
+    async def create_personalization_memory(
+        self,
+        request_data: PersonalizationMemoryCreate,
+    ) -> PersonalizationMemoryItem:
+        response = await self._request(
+            "POST",
+            "/api/v1/personalization/memories",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PersonalizationMemoryItem.model_validate(response)
+
+    async def update_personalization_memory(
+        self,
+        memory_id: str,
+        request_data: PersonalizationMemoryUpdate,
+    ) -> PersonalizationMemoryItem:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/personalization/memories/{quote(memory_id, safe='')}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return PersonalizationMemoryItem.model_validate(response)
+
+    async def delete_personalization_memory(self, memory_id: str) -> PersonalizationDetailResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/personalization/memories/{quote(memory_id, safe='')}",
+        )
+        return PersonalizationDetailResponse.model_validate(response)
+
+    async def validate_personalization_memories(
+        self,
+        request_data: PersonalizationMemoryValidateRequest,
+    ) -> PersonalizationDetailResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/personalization/memories/validate",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return PersonalizationDetailResponse.model_validate(response)
+
+    async def import_personalization_memories(
+        self,
+        request_data: PersonalizationMemoryImportRequest,
+    ) -> PersonalizationDetailResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/personalization/memories/import",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return PersonalizationDetailResponse.model_validate(response)
+
+    async def list_personalization_explanations(
+        self,
+        *,
+        limit: int = 10,
+    ) -> PersonalizationExplanationListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/personalization/explanations",
+            params={"limit": limit},
+        )
+        return PersonalizationExplanationListResponse.model_validate(response)
 
     async def process_voice_command(self, request_data: VoiceCommandRequest) -> VoiceCommandResponse:
         response = await self._request(

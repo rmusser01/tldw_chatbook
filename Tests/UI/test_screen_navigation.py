@@ -35,6 +35,10 @@ from tldw_chatbook.Notifications import (
     ServerNotificationsService,
 )
 from tldw_chatbook.Outputs_Interop import OutputsScopeService, ServerOutputsService
+from tldw_chatbook.Personalization_Interop import (
+    PersonalizationScopeService,
+    ServerPersonalizationService,
+)
 from tldw_chatbook.Prompt_Management import (
     LocalPromptService,
     PromptChatbookScopeService,
@@ -175,6 +179,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.voice_assistant_scope_service, VoiceAssistantScopeService)
     assert isinstance(app.server_companion_service, ServerCompanionService)
     assert isinstance(app.companion_scope_service, CompanionScopeService)
+    assert isinstance(app.server_personalization_service, ServerPersonalizationService)
+    assert isinstance(app.personalization_scope_service, PersonalizationScopeService)
     assert isinstance(app.server_collections_feeds_service, ServerCollectionsFeedsService)
     assert isinstance(app.collections_feeds_scope_service, CollectionsFeedsScopeService)
     assert app.collections_feeds_scope_service.local_service is app.local_watchlists_service

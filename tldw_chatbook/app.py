@@ -238,6 +238,10 @@ from tldw_chatbook.Notifications import (
     ServerNotificationsService,
 )
 from tldw_chatbook.Outputs_Interop import OutputsScopeService, ServerOutputsService
+from tldw_chatbook.Personalization_Interop import (
+    PersonalizationScopeService,
+    ServerPersonalizationService,
+)
 from tldw_chatbook.Prompt_Studio_Interop import PromptStudioScopeService, ServerPromptStudioService
 from tldw_chatbook.Research_Interop import (
     LocalResearchSearchService,
@@ -1805,6 +1809,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.companion_scope_service = CompanionScopeService(
             server_service=self.server_companion_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_personalization_service = ServerPersonalizationService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_personalization_service = ServerPersonalizationService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.personalization_scope_service = PersonalizationScopeService(
+            server_service=self.server_personalization_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
