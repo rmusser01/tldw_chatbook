@@ -14,13 +14,20 @@ class ScopeType(str, Enum):
     WORKSPACE = "workspace"
 
 
+_SERVER_GRAPH_ACTION_IDS = [
+    "notes.graph.list.server",
+    "notes.graph.detail.server",
+    "notes.graph.create.server",
+    "notes.graph.delete.server",
+]
+
 _LOCAL_GRAPH_UNSUPPORTED_CAPABILITY = {
     "operation_id": "notes.graph.local",
     "source": "local",
     "supported": False,
     "reason_code": "local_contract_missing",
     "user_message": "Local/offline notes graph generation and manual graph links are deferred; graph operations are server-backed today.",
-    "affected_action_ids": [],
+    "affected_action_ids": list(_SERVER_GRAPH_ACTION_IDS),
 }
 
 _WORKSPACE_GRAPH_UNSUPPORTED_CAPABILITY = {
@@ -29,7 +36,7 @@ _WORKSPACE_GRAPH_UNSUPPORTED_CAPABILITY = {
     "supported": False,
     "reason_code": "scope_not_supported",
     "user_message": "Workspace-scoped notes remain isolated from the global notes graph until sync/graph semantics are designed.",
-    "affected_action_ids": [],
+    "affected_action_ids": list(_SERVER_GRAPH_ACTION_IDS),
 }
 
 
@@ -72,6 +79,10 @@ class NotesScopeService:
     @staticmethod
     def _graph_action_id(action: str) -> str:
         return f"notes.graph.{action}.server"
+
+    @staticmethod
+    def _workspace_action_id(action: str) -> str:
+        return f"notes.workspace.{action}.server"
 
     def _require_server_graph_scope(self, scope: ScopeType | str) -> None:
         if self._normalize_scope(scope) != ScopeType.SERVER_NOTE:
@@ -303,8 +314,104 @@ class NotesScopeService:
         raise ValueError("Workspace notes require a selected workspace context.")
 
     async def list_workspaces(self) -> Any:
-        self._enforce_policy("notes.workspace.list.server")
+        self._enforce_policy(self._workspace_action_id("list"))
         return await self.server_service.list_workspaces()
+
+    async def save_workspace(
+        self,
+        *,
+        workspace_id: Optional[str],
+        version: Optional[int] = None,
+        **fields: Any,
+    ) -> Any:
+        self._enforce_policy(
+            self._workspace_action_id("update" if version is not None else "create")
+        )
+        payload = dict(fields)
+        if version is not None:
+            payload["version"] = version
+        return await self.server_service.save_workspace(
+            workspace_id=self._require_workspace_id(workspace_id),
+            **payload,
+        )
+
+    async def delete_workspace(self, *, workspace_id: Optional[str]) -> Any:
+        self._enforce_policy(self._workspace_action_id("delete"))
+        return await self.server_service.delete_workspace(
+            self._require_workspace_id(workspace_id)
+        )
+
+    async def list_workspace_sources(self, *, workspace_id: Optional[str]) -> Any:
+        self._enforce_policy(self._workspace_action_id("detail"))
+        return await self.server_service.list_workspace_sources(
+            self._require_workspace_id(workspace_id)
+        )
+
+    async def save_workspace_source(
+        self,
+        *,
+        workspace_id: Optional[str],
+        source_id: str,
+        version: Optional[int] = None,
+        **fields: Any,
+    ) -> Any:
+        self._enforce_policy(self._workspace_action_id("update"))
+        payload = dict(fields)
+        if version is not None:
+            payload["version"] = version
+        return await self.server_service.save_workspace_source(
+            workspace_id=self._require_workspace_id(workspace_id),
+            source_id=source_id,
+            **payload,
+        )
+
+    async def delete_workspace_source(
+        self,
+        *,
+        workspace_id: Optional[str],
+        source_id: str,
+    ) -> Any:
+        self._enforce_policy(self._workspace_action_id("update"))
+        return await self.server_service.delete_workspace_source(
+            self._require_workspace_id(workspace_id),
+            source_id,
+        )
+
+    async def list_workspace_artifacts(self, *, workspace_id: Optional[str]) -> Any:
+        self._enforce_policy(self._workspace_action_id("detail"))
+        return await self.server_service.list_workspace_artifacts(
+            self._require_workspace_id(workspace_id)
+        )
+
+    async def save_workspace_artifact(
+        self,
+        *,
+        workspace_id: Optional[str],
+        artifact_id: str,
+        version: Optional[int] = None,
+        **fields: Any,
+    ) -> Any:
+        self._enforce_policy(self._workspace_action_id("update"))
+        payload = dict(fields)
+        if version is not None:
+            payload["version"] = version
+        return await self.server_service.save_workspace_artifact(
+            workspace_id=self._require_workspace_id(workspace_id),
+            artifact_id=artifact_id,
+            **payload,
+        )
+
+    async def delete_workspace_artifact(
+        self,
+        *,
+        workspace_id: Optional[str],
+        artifact_id: str,
+    ) -> Any:
+        self._enforce_policy(self._workspace_action_id("update"))
+        return await self.server_service.delete_workspace_artifact(
+            self._require_workspace_id(workspace_id),
+            artifact_id,
+        )
 
     async def get_note_detail(
         self,

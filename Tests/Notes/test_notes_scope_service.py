@@ -103,6 +103,12 @@ class FakeServerNotes:
     def __init__(self):
         self.saved_ids = []
         self.workspace_saved = []
+        self.workspace_record_saves = []
+        self.workspace_deletes = []
+        self.workspace_source_saves = []
+        self.workspace_source_deletes = []
+        self.workspace_artifact_saves = []
+        self.workspace_artifact_deletes = []
         self.deleted_ids = []
         self.server_queries = []
         self.workspace_queries = []
@@ -116,6 +122,38 @@ class FakeServerNotes:
     async def save_workspace_note(self, **kwargs):
         self.workspace_saved.append((kwargs["workspace_id"], kwargs["note_id"]))
         return {"id": kwargs["note_id"], "workspace_id": kwargs["workspace_id"]}
+
+    async def save_workspace(self, **kwargs):
+        self.workspace_record_saves.append(kwargs)
+        return {"id": kwargs["workspace_id"], "version": kwargs.get("version") or 1}
+
+    async def delete_workspace(self, workspace_id):
+        self.workspace_deletes.append(workspace_id)
+        return {"deleted": True, "workspace_id": workspace_id}
+
+    async def list_workspace_sources(self, workspace_id):
+        self.workspace_queries.append(("sources", workspace_id))
+        return [{"id": "src-1", "workspace_id": workspace_id}]
+
+    async def save_workspace_source(self, **kwargs):
+        self.workspace_source_saves.append(kwargs)
+        return {"id": kwargs["source_id"], "workspace_id": kwargs["workspace_id"]}
+
+    async def delete_workspace_source(self, workspace_id, source_id):
+        self.workspace_source_deletes.append((workspace_id, source_id))
+        return {"deleted": True, "source_id": source_id}
+
+    async def list_workspace_artifacts(self, workspace_id):
+        self.workspace_queries.append(("artifacts", workspace_id))
+        return [{"id": "artifact-1", "workspace_id": workspace_id}]
+
+    async def save_workspace_artifact(self, **kwargs):
+        self.workspace_artifact_saves.append(kwargs)
+        return {"id": kwargs["artifact_id"], "workspace_id": kwargs["workspace_id"]}
+
+    async def delete_workspace_artifact(self, workspace_id, artifact_id):
+        self.workspace_artifact_deletes.append((workspace_id, artifact_id))
+        return {"deleted": True, "artifact_id": artifact_id}
 
     async def delete_server_note(self, note_id, version):
         self.deleted_ids.append(("server", note_id, version))
@@ -262,6 +300,127 @@ async def test_scope_service_routes_workspace_note_save_to_workspace_service():
     )
 
     assert scope_service.server_service.workspace_saved == [("ws-1", 11)]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_workspace_record_crud_to_server_service():
+    server = FakeServerNotes()
+    policy_enforcer = FakePolicyEnforcer()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    created = await scope_service.save_workspace(
+        workspace_id="ws-1",
+        name="Research",
+    )
+    updated = await scope_service.save_workspace(
+        workspace_id="ws-1",
+        name="Research Updated",
+        version=3,
+        archived=True,
+    )
+    deleted = await scope_service.delete_workspace(workspace_id="ws-1")
+
+    assert created == {"id": "ws-1", "version": 1}
+    assert updated == {"id": "ws-1", "version": 3}
+    assert deleted == {"deleted": True, "workspace_id": "ws-1"}
+    assert server.workspace_record_saves == [
+        {"workspace_id": "ws-1", "name": "Research"},
+        {"workspace_id": "ws-1", "name": "Research Updated", "version": 3, "archived": True},
+    ]
+    assert server.workspace_deletes == ["ws-1"]
+    assert policy_enforcer.calls == [
+        "notes.workspace.create.server",
+        "notes.workspace.update.server",
+        "notes.workspace.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_workspace_source_crud_to_server_service():
+    server = FakeServerNotes()
+    policy_enforcer = FakePolicyEnforcer()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    sources = await scope_service.list_workspace_sources(workspace_id="ws-1")
+    saved = await scope_service.save_workspace_source(
+        workspace_id="ws-1",
+        source_id="src-1",
+        media_id=42,
+        title="Paper",
+        source_type="pdf",
+    )
+    deleted = await scope_service.delete_workspace_source(
+        workspace_id="ws-1",
+        source_id="src-1",
+    )
+
+    assert sources == [{"id": "src-1", "workspace_id": "ws-1"}]
+    assert saved == {"id": "src-1", "workspace_id": "ws-1"}
+    assert deleted == {"deleted": True, "source_id": "src-1"}
+    assert server.workspace_source_saves == [
+        {
+            "workspace_id": "ws-1",
+            "source_id": "src-1",
+            "media_id": 42,
+            "title": "Paper",
+            "source_type": "pdf",
+        }
+    ]
+    assert server.workspace_source_deletes == [("ws-1", "src-1")]
+    assert policy_enforcer.calls == [
+        "notes.workspace.detail.server",
+        "notes.workspace.update.server",
+        "notes.workspace.update.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_workspace_artifact_crud_to_server_service():
+    server = FakeServerNotes()
+    policy_enforcer = FakePolicyEnforcer()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    artifacts = await scope_service.list_workspace_artifacts(workspace_id="ws-1")
+    saved = await scope_service.save_workspace_artifact(
+        workspace_id="ws-1",
+        artifact_id="artifact-1",
+        artifact_type="summary",
+        title="Summary",
+    )
+    deleted = await scope_service.delete_workspace_artifact(
+        workspace_id="ws-1",
+        artifact_id="artifact-1",
+    )
+
+    assert artifacts == [{"id": "artifact-1", "workspace_id": "ws-1"}]
+    assert saved == {"id": "artifact-1", "workspace_id": "ws-1"}
+    assert deleted == {"deleted": True, "artifact_id": "artifact-1"}
+    assert server.workspace_artifact_saves == [
+        {
+            "workspace_id": "ws-1",
+            "artifact_id": "artifact-1",
+            "artifact_type": "summary",
+            "title": "Summary",
+        }
+    ]
+    assert server.workspace_artifact_deletes == [("ws-1", "artifact-1")]
+    assert policy_enforcer.calls == [
+        "notes.workspace.detail.server",
+        "notes.workspace.update.server",
+        "notes.workspace.update.server",
+    ]
 
 
 @pytest.mark.asyncio
@@ -457,7 +616,12 @@ def test_scope_service_reports_known_notes_graph_capability_gaps():
             "supported": False,
             "reason_code": "local_contract_missing",
             "user_message": "Local/offline notes graph generation and manual graph links are deferred; graph operations are server-backed today.",
-            "affected_action_ids": [],
+            "affected_action_ids": [
+                "notes.graph.list.server",
+                "notes.graph.detail.server",
+                "notes.graph.create.server",
+                "notes.graph.delete.server",
+            ],
         }
     ]
     assert workspace_report == [
@@ -467,7 +631,12 @@ def test_scope_service_reports_known_notes_graph_capability_gaps():
             "supported": False,
             "reason_code": "scope_not_supported",
             "user_message": "Workspace-scoped notes remain isolated from the global notes graph until sync/graph semantics are designed.",
-            "affected_action_ids": [],
+            "affected_action_ids": [
+                "notes.graph.list.server",
+                "notes.graph.detail.server",
+                "notes.graph.create.server",
+                "notes.graph.delete.server",
+            ],
         }
     ]
     assert server_report == []
