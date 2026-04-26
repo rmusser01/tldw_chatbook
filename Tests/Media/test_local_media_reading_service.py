@@ -417,6 +417,54 @@ def test_local_service_builds_generated_media_navigation_from_chunks(memory_db_f
     assert [node["id"] for node in with_fallback["nodes"]] == ["chunk-0", "chunk-1"]
 
 
+def test_local_service_persists_reading_digest_schedules(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+
+    created = service.create_reading_digest_schedule(
+        name="Morning",
+        cron="0 8 * * *",
+        timezone="America/Los_Angeles",
+        enabled=True,
+        require_online=False,
+        format="md",
+        retention_days=14,
+        filters={"status": ["saved"], "tags": ["research"]},
+    )
+    listed = service.list_reading_digest_schedules(limit=10, offset=0)
+    detail = service.get_reading_digest_schedule(created["id"])
+    updated = service.update_reading_digest_schedule(
+        created["id"],
+        name="Evening",
+        cron="0 18 * * *",
+        enabled=False,
+        filters={"status": ["archived"]},
+    )
+    outputs = service.list_reading_digest_outputs(schedule_id=created["id"], limit=5, offset=0)
+    deleted = service.delete_reading_digest_schedule(created["id"])
+    after_delete = service.list_reading_digest_schedules()
+
+    assert created["id"].startswith("local-digest-")
+    assert created["name"] == "Morning"
+    assert created["cron"] == "0 8 * * *"
+    assert created["timezone"] == "America/Los_Angeles"
+    assert created["enabled"] is True
+    assert created["require_online"] is False
+    assert created["format"] == "md"
+    assert created["retention_days"] == 14
+    assert created["filters"] == {"status": ["saved"], "tags": ["research"]}
+    assert listed["items"] == [created]
+    assert listed["total"] == 1
+    assert detail == created
+    assert updated["name"] == "Evening"
+    assert updated["cron"] == "0 18 * * *"
+    assert updated["enabled"] is False
+    assert updated["filters"] == {"status": ["archived"]}
+    assert outputs == {"items": [], "total": 0, "limit": 5, "offset": 0}
+    assert deleted == {"ok": True, "id": created["id"]}
+    assert after_delete["items"] == []
+
+
 def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(

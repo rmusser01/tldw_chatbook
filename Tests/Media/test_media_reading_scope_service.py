@@ -196,6 +196,35 @@ class FakeLocalMediaService:
         self.calls.append(("get_reading_import_job", job_id))
         return {"job_id": job_id, "job_uuid": "local-job-uuid", "status": "queued"}
 
+    def create_reading_digest_schedule(self, **kwargs):
+        self.calls.append(("create_reading_digest_schedule", kwargs))
+        return {"id": "local-digest-1", **kwargs}
+
+    def list_reading_digest_schedules(self, *, limit=50, offset=0):
+        self.calls.append(("list_reading_digest_schedules", limit, offset))
+        return {
+            "items": [{"id": "local-digest-1", "name": "Morning", "cron": "0 8 * * *"}],
+            "total": 1,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def get_reading_digest_schedule(self, schedule_id):
+        self.calls.append(("get_reading_digest_schedule", schedule_id))
+        return {"id": schedule_id, "name": "Morning", "cron": "0 8 * * *"}
+
+    def update_reading_digest_schedule(self, schedule_id, **changes):
+        self.calls.append(("update_reading_digest_schedule", schedule_id, changes))
+        return {"id": schedule_id, **changes}
+
+    def delete_reading_digest_schedule(self, schedule_id):
+        self.calls.append(("delete_reading_digest_schedule", schedule_id))
+        return {"ok": True, "id": schedule_id}
+
+    def list_reading_digest_outputs(self, *, schedule_id=None, limit=50, offset=0):
+        self.calls.append(("list_reading_digest_outputs", schedule_id, limit, offset))
+        return {"items": [], "total": 0, "limit": limit, "offset": offset}
+
     def create_saved_search(self, **kwargs):
         self.calls.append(("create_saved_search", kwargs))
         return {"id": 1, "created_at": "2026-04-21T12:00:00Z", "updated_at": "2026-04-21T12:00:00Z", **kwargs}
@@ -1234,7 +1263,7 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
 
     assert [item["operation_id"] for item in local_report] == [
         "media.file_artifacts.local",
-        "media.reading_digests.local",
+        "media.reading_digests.scheduler.local",
         "media.add.local",
         "media.web_content_ingest.local",
         "media.processing.code.local",
@@ -2753,11 +2782,12 @@ async def test_scope_service_routes_local_media_navigation_with_navigation_actio
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_server_reading_digests_and_blocks_local_mode():
+async def test_scope_service_routes_reading_digests_for_local_and_server_modes():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     server = FakeServerMediaService()
     scope_service = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=server,
         policy_enforcer=policy,
     )
@@ -2824,8 +2854,59 @@ async def test_scope_service_routes_server_reading_digests_and_blocks_local_mode
         "media.reading.digest_outputs.list.server",
     ]
 
-    with pytest.raises(ValueError, match="Reading digest schedules are server-only"):
-        await scope_service.list_reading_digest_schedules(mode="local")
+    local_created = await scope_service.create_reading_digest_schedule(
+        mode="local",
+        name="Local Morning",
+        cron="0 7 * * *",
+        timezone="UTC",
+        filters={"status": ["saved"]},
+    )
+    local_listed = await scope_service.list_reading_digest_schedules(mode="local", limit=10, offset=2)
+    local_detail = await scope_service.get_reading_digest_schedule(mode="local", schedule_id="local-digest-1")
+    local_updated = await scope_service.update_reading_digest_schedule(
+        mode="local",
+        schedule_id="local-digest-1",
+        enabled=False,
+    )
+    local_deleted = await scope_service.delete_reading_digest_schedule(mode="local", schedule_id="local-digest-1")
+    local_outputs = await scope_service.list_reading_digest_outputs(mode="local", schedule_id="local-digest-1")
+
+    assert local_created["id"] == "local-digest-1"
+    assert local_listed["items"][0]["id"] == "local-digest-1"
+    assert local_detail["name"] == "Morning"
+    assert local_updated == {"id": "local-digest-1", "enabled": False}
+    assert local_deleted == {"ok": True, "id": "local-digest-1"}
+    assert local_outputs["items"] == []
+    assert local.calls[-6:] == [
+        (
+            "create_reading_digest_schedule",
+            {
+                "name": "Local Morning",
+                "cron": "0 7 * * *",
+                "timezone": "UTC",
+                "enabled": True,
+                "require_online": False,
+                "format": "md",
+                "template_id": None,
+                "template_name": None,
+                "retention_days": None,
+                "filters": {"status": ["saved"]},
+            },
+        ),
+        ("list_reading_digest_schedules", 10, 2),
+        ("get_reading_digest_schedule", "local-digest-1"),
+        ("update_reading_digest_schedule", "local-digest-1", {"enabled": False}),
+        ("delete_reading_digest_schedule", "local-digest-1"),
+        ("list_reading_digest_outputs", "local-digest-1", 50, 0),
+    ]
+    assert policy.calls[-6:] == [
+        "media.reading.digest_schedules.create.local",
+        "media.reading.digest_schedules.list.local",
+        "media.reading.digest_schedules.detail.local",
+        "media.reading.digest_schedules.update.local",
+        "media.reading.digest_schedules.delete.local",
+        "media.reading.digest_outputs.list.local",
+    ]
 
 
 @pytest.mark.asyncio

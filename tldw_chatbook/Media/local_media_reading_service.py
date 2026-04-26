@@ -1124,6 +1124,184 @@ class LocalMediaReadingService:
             raise KeyError(f"Local reading import job not found: {job_id}")
         return self._reading_import_job_status_from_ingest_job(job)
 
+    def create_reading_digest_schedule(
+        self,
+        *,
+        name: str | None = None,
+        cron: str,
+        timezone: str | None = None,
+        enabled: bool = True,
+        require_online: bool = False,
+        format: str = "md",
+        template_id: int | None = None,
+        template_name: str | None = None,
+        retention_days: int | None = None,
+        filters: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_cron = str(cron or "").strip()
+        if not normalized_cron:
+            raise ValueError("cron is required for local reading digest schedules.")
+        normalized_format = str(format or "md").strip().lower() or "md"
+        schedule_id = f"local-digest-{uuid.uuid4().hex}"
+        now = db._get_current_utc_timestamp_str()
+        with db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO local_reading_digest_schedules (
+                    id, name, cron, timezone, enabled, require_online, format,
+                    template_id, template_name, retention_days, filters_json,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    schedule_id,
+                    name,
+                    normalized_cron,
+                    timezone or "UTC",
+                    1 if enabled else 0,
+                    1 if require_online else 0,
+                    normalized_format,
+                    template_id,
+                    template_name,
+                    retention_days,
+                    self._json_dumps(dict(filters or {})),
+                    now,
+                    now,
+                ),
+            )
+        return self.get_reading_digest_schedule(schedule_id)
+
+    def list_reading_digest_schedules(self, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_limit = max(int(limit or 50), 0)
+        normalized_offset = max(int(offset or 0), 0)
+        total = db.get_connection().execute(
+            "SELECT COUNT(*) FROM local_reading_digest_schedules"
+        ).fetchone()[0]
+        rows = db.get_connection().execute(
+            """
+            SELECT * FROM local_reading_digest_schedules
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (normalized_limit, normalized_offset),
+        ).fetchall()
+        return {
+            "items": [self._reading_digest_schedule_row_to_dict(row) for row in rows],
+            "total": total,
+            "limit": normalized_limit,
+            "offset": normalized_offset,
+        }
+
+    def get_reading_digest_schedule(self, schedule_id: str) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        row = db.get_connection().execute(
+            "SELECT * FROM local_reading_digest_schedules WHERE id = ?",
+            (str(schedule_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Local reading digest schedule not found: {schedule_id}")
+        return self._reading_digest_schedule_row_to_dict(row)
+
+    def update_reading_digest_schedule(self, schedule_id: str, **changes: Any) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        self.get_reading_digest_schedule(schedule_id)
+        field_map = {
+            "name": "name",
+            "cron": "cron",
+            "timezone": "timezone",
+            "enabled": "enabled",
+            "require_online": "require_online",
+            "format": "format",
+            "template_id": "template_id",
+            "template_name": "template_name",
+            "retention_days": "retention_days",
+            "filters": "filters_json",
+        }
+        assignments: list[str] = []
+        values: list[Any] = []
+        for key, column in field_map.items():
+            if key not in changes or changes[key] is None:
+                continue
+            value = changes[key]
+            if key in {"enabled", "require_online"}:
+                value = 1 if value else 0
+            elif key == "format":
+                value = str(value or "md").strip().lower() or "md"
+            elif key == "cron":
+                value = str(value or "").strip()
+                if not value:
+                    raise ValueError("cron cannot be blank.")
+            elif key == "filters":
+                value = self._json_dumps(dict(value or {}))
+            assignments.append(f"{column} = ?")
+            values.append(value)
+        if assignments:
+            now = db._get_current_utc_timestamp_str()
+            assignments.append("updated_at = ?")
+            values.append(now)
+            values.append(str(schedule_id))
+            with db.transaction() as conn:
+                conn.execute(
+                    f"""
+                    UPDATE local_reading_digest_schedules
+                    SET {', '.join(assignments)}
+                    WHERE id = ?
+                    """,
+                    tuple(values),
+                )
+        return self.get_reading_digest_schedule(schedule_id)
+
+    def delete_reading_digest_schedule(self, schedule_id: str) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        self.get_reading_digest_schedule(schedule_id)
+        with db.transaction() as conn:
+            conn.execute("DELETE FROM local_reading_digest_schedules WHERE id = ?", (str(schedule_id),))
+        return {"ok": True, "id": str(schedule_id)}
+
+    def list_reading_digest_outputs(
+        self,
+        *,
+        schedule_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        self._ensure_local_reading_aux_schema(db)
+        normalized_limit = max(int(limit or 50), 0)
+        normalized_offset = max(int(offset or 0), 0)
+        where = "1 = 1"
+        params: list[Any] = []
+        if schedule_id is not None:
+            where += " AND schedule_id = ?"
+            params.append(str(schedule_id))
+        total = db.get_connection().execute(
+            f"SELECT COUNT(*) FROM local_reading_digest_outputs WHERE {where}",
+            params,
+        ).fetchone()[0]
+        rows = db.get_connection().execute(
+            f"""
+            SELECT * FROM local_reading_digest_outputs
+            WHERE {where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            params + [normalized_limit, normalized_offset],
+        ).fetchall()
+        return {
+            "items": [self._reading_digest_output_row_to_dict(row) for row in rows],
+            "total": total,
+            "limit": normalized_limit,
+            "offset": normalized_offset,
+        }
+
     def _execute_reading_import_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
         options = dict(job.get("options") or {})
         requested_source = str(options.get("source") or job.get("source_kind") or "auto")
@@ -3080,6 +3258,34 @@ class LocalMediaReadingService:
                 );
                 CREATE INDEX IF NOT EXISTS idx_local_document_annotations_media_id
                     ON local_document_annotations(media_id);
+                CREATE TABLE IF NOT EXISTS local_reading_digest_schedules (
+                    id TEXT PRIMARY KEY,
+                    name TEXT,
+                    cron TEXT NOT NULL,
+                    timezone TEXT NOT NULL DEFAULT 'UTC',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    require_online INTEGER NOT NULL DEFAULT 0,
+                    format TEXT NOT NULL DEFAULT 'md',
+                    template_id INTEGER,
+                    template_name TEXT,
+                    retention_days INTEGER,
+                    filters_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS local_reading_digest_outputs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    schedule_id TEXT,
+                    title TEXT NOT NULL,
+                    format TEXT NOT NULL DEFAULT 'md',
+                    storage_path TEXT,
+                    content TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (schedule_id) REFERENCES local_reading_digest_schedules(id) ON DELETE SET NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_local_reading_digest_outputs_schedule_id
+                    ON local_reading_digest_outputs(schedule_id);
                 """
             )
 
@@ -3232,6 +3438,38 @@ class LocalMediaReadingService:
             "sort": payload.get("sort"),
             "created_at": payload.get("created_at"),
             "updated_at": payload.get("updated_at"),
+        }
+
+    def _reading_digest_schedule_row_to_dict(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        return {
+            "id": payload["id"],
+            "name": payload.get("name"),
+            "cron": payload.get("cron"),
+            "timezone": payload.get("timezone") or "UTC",
+            "enabled": bool(payload.get("enabled")),
+            "require_online": bool(payload.get("require_online")),
+            "format": payload.get("format") or "md",
+            "template_id": payload.get("template_id"),
+            "template_name": payload.get("template_name"),
+            "retention_days": payload.get("retention_days"),
+            "filters": self._json_loads(payload.get("filters_json")),
+            "created_at": payload.get("created_at"),
+            "updated_at": payload.get("updated_at"),
+        }
+
+    def _reading_digest_output_row_to_dict(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        return {
+            "output_id": payload["id"],
+            "schedule_id": payload.get("schedule_id"),
+            "title": payload.get("title"),
+            "format": payload.get("format") or "md",
+            "storage_path": payload.get("storage_path"),
+            "download_url": payload.get("storage_path"),
+            "content": payload.get("content"),
+            "metadata": self._json_loads(payload.get("metadata_json")),
+            "created_at": payload.get("created_at"),
         }
 
     def _note_link_row_to_dict(self, row: Mapping[str, Any] | None) -> dict[str, Any]:

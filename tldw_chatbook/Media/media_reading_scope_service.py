@@ -29,11 +29,11 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "affected_action_ids": [],
     },
     {
-        "operation_id": "media.reading_digests.local",
+        "operation_id": "media.reading_digests.scheduler.local",
         "source": "local",
         "supported": False,
-        "reason_code": "remote_only_surface",
-        "user_message": "Reading digest schedules are server-owned and unavailable in local/offline mode.",
+        "reason_code": "local_worker_missing",
+        "user_message": "Local reading digest schedule CRUD is available, but automatic local scheduler execution is not wired yet.",
         "affected_action_ids": [],
     },
     {
@@ -251,12 +251,12 @@ class MediaReadingScopeService:
         return f"media.reading_import_jobs.{action}.{mode.value}"
 
     @staticmethod
-    def _reading_digest_schedule_action_id(action: str) -> str:
-        return f"media.reading.digest_schedules.{action}.server"
+    def _reading_digest_schedule_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading.digest_schedules.{action}.{mode.value}"
 
     @staticmethod
-    def _reading_digest_output_action_id(action: str) -> str:
-        return f"media.reading.digest_outputs.{action}.server"
+    def _reading_digest_output_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.reading.digest_outputs.{action}.{mode.value}"
 
     @staticmethod
     def _web_content_ingest_action_id(action: str) -> str:
@@ -361,11 +361,6 @@ class MediaReadingScopeService:
         if self.server_service is None:
             raise ValueError("Server media backend is unavailable.")
         return self.server_service
-
-    def _server_digest_service(self, mode: MediaReadingBackend) -> Any:
-        if mode == MediaReadingBackend.LOCAL:
-            raise ValueError("Reading digest schedules are server-only; switch to server mode to manage them.")
-        return self._service_for_mode(mode)
 
     def _server_web_content_ingest_service(self, mode: MediaReadingBackend) -> Any:
         if mode == MediaReadingBackend.LOCAL:
@@ -983,8 +978,8 @@ class MediaReadingScopeService:
         filters: Mapping[str, Any] | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_digest_service(normalized_mode)
-        self._enforce_policy(self._reading_digest_schedule_action_id("create"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "create"))
         return await self._maybe_await(
             service.create_reading_digest_schedule(
                 name=name,
@@ -1008,8 +1003,8 @@ class MediaReadingScopeService:
         offset: int = 0,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_digest_service(normalized_mode)
-        self._enforce_policy(self._reading_digest_schedule_action_id("list"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "list"))
         return await self._maybe_await(service.list_reading_digest_schedules(limit=limit, offset=offset))
 
     async def get_reading_digest_schedule(
@@ -1019,8 +1014,8 @@ class MediaReadingScopeService:
         schedule_id: str,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_digest_service(normalized_mode)
-        self._enforce_policy(self._reading_digest_schedule_action_id("detail"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "detail"))
         return await self._maybe_await(service.get_reading_digest_schedule(schedule_id))
 
     async def update_reading_digest_schedule(
@@ -1031,8 +1026,8 @@ class MediaReadingScopeService:
         **changes: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_digest_service(normalized_mode)
-        self._enforce_policy(self._reading_digest_schedule_action_id("update"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "update"))
         return await self._maybe_await(service.update_reading_digest_schedule(schedule_id, **changes))
 
     async def delete_reading_digest_schedule(
@@ -1042,8 +1037,8 @@ class MediaReadingScopeService:
         schedule_id: str,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_digest_service(normalized_mode)
-        self._enforce_policy(self._reading_digest_schedule_action_id("delete"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "delete"))
         return await self._maybe_await(service.delete_reading_digest_schedule(schedule_id))
 
     async def list_reading_digest_outputs(
@@ -1055,8 +1050,8 @@ class MediaReadingScopeService:
         offset: int = 0,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_digest_service(normalized_mode)
-        self._enforce_policy(self._reading_digest_output_action_id("list"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._reading_digest_output_action_id(normalized_mode, "list"))
         return await self._maybe_await(
             service.list_reading_digest_outputs(schedule_id=schedule_id, limit=limit, offset=offset)
         )

@@ -816,11 +816,17 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.web_scraping.service.shutdown.server
         media.web_scraping.status.server
         media.web_content_ingest.launch.server
+        media.reading.digest_outputs.list.local
         media.reading.digest_outputs.list.server
+        media.reading.digest_schedules.create.local
         media.reading.digest_schedules.create.server
+        media.reading.digest_schedules.delete.local
         media.reading.digest_schedules.delete.server
+        media.reading.digest_schedules.detail.local
         media.reading.digest_schedules.detail.server
+        media.reading.digest_schedules.list.local
         media.reading.digest_schedules.list.server
+        media.reading.digest_schedules.update.local
         media.reading.digest_schedules.update.server
         media.reading.create.local
         media.reading.create.server
