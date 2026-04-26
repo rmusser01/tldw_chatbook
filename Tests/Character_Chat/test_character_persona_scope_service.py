@@ -475,6 +475,36 @@ class FakeLocalPersonaProfileBackend(FakeLocalCharacterBackend):
         return {"id": persona_id, "deleted": False, "version": expected_version + 1}
 
 
+class FakeLocalPersonaExemplarBackend(FakeLocalPersonaProfileBackend):
+    def list_persona_exemplars(self, persona_id, **kwargs):
+        self.calls.append(("list_persona_exemplars", persona_id, kwargs))
+        return [{"id": "local-ex-1", "persona_id": persona_id, "content": "Be concise."}]
+
+    def get_persona_exemplar(self, persona_id, exemplar_id):
+        self.calls.append(("get_persona_exemplar", persona_id, exemplar_id))
+        return {"id": exemplar_id, "persona_id": persona_id, "content": "Be concise."}
+
+    def create_persona_exemplar(self, persona_id, request_data):
+        self.calls.append(("create_persona_exemplar", persona_id, request_data))
+        return {"id": "local-ex-created", "persona_id": persona_id, "content": "Created"}
+
+    def import_persona_exemplars(self, persona_id, request_data):
+        self.calls.append(("import_persona_exemplars", persona_id, request_data))
+        return {"persona_id": persona_id, "created": 2}
+
+    def update_persona_exemplar(self, persona_id, exemplar_id, request_data):
+        self.calls.append(("update_persona_exemplar", persona_id, exemplar_id, request_data))
+        return {"id": exemplar_id, "persona_id": persona_id, "content": "Updated"}
+
+    def review_persona_exemplar(self, persona_id, exemplar_id, request_data):
+        self.calls.append(("review_persona_exemplar", persona_id, exemplar_id, request_data))
+        return {"id": exemplar_id, "persona_id": persona_id, "reviewed": True}
+
+    def delete_persona_exemplar(self, persona_id, exemplar_id):
+        self.calls.append(("delete_persona_exemplar", persona_id, exemplar_id))
+        return {"status": "deleted", "persona_id": persona_id, "exemplar_id": exemplar_id}
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
         self.denied_reason = denied_reason
@@ -763,6 +793,71 @@ async def test_scope_service_routes_persona_exemplar_crud_to_server_backend():
     assert updated["content"] == "updated"
     assert reviewed["review"] == {"action": "approve"}
     assert deleted == {"status": "deleted", "persona_id": "persona-1", "exemplar_id": "ex-1"}
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_persona_exemplar_crud_to_local_backend():
+    local_service = FakeLocalPersonaExemplarBackend()
+    scope_service = CharacterPersonaScopeService(
+        local_service=local_service,
+        server_service=FakeCharacterPersonaClient(),
+    )
+    create_data = Mock()
+    import_data = Mock()
+    update_data = Mock()
+    review_data = Mock()
+
+    exemplars = await scope_service.list_persona_exemplars(
+        "local-persona-1",
+        mode="local",
+        include_disabled=True,
+        include_deleted=True,
+        limit=5,
+        offset=2,
+    )
+    exemplar = await scope_service.get_persona_exemplar("local-persona-1", "local-ex-1", mode="local")
+    created = await scope_service.create_persona_exemplar("local-persona-1", create_data, mode="local")
+    imported = await scope_service.import_persona_exemplars("local-persona-1", import_data, mode="local")
+    updated = await scope_service.update_persona_exemplar(
+        "local-persona-1",
+        "local-ex-1",
+        update_data,
+        mode="local",
+    )
+    reviewed = await scope_service.review_persona_exemplar(
+        "local-persona-1",
+        "local-ex-1",
+        review_data,
+        mode="local",
+    )
+    deleted = await scope_service.delete_persona_exemplar("local-persona-1", "local-ex-1", mode="local")
+
+    assert exemplars[0]["id"] == "local-ex-1"
+    assert exemplar["id"] == "local-ex-1"
+    assert created["id"] == "local-ex-created"
+    assert imported["created"] == 2
+    assert updated["content"] == "Updated"
+    assert reviewed["reviewed"] is True
+    assert deleted == {"status": "deleted", "persona_id": "local-persona-1", "exemplar_id": "local-ex-1"}
+    assert local_service.calls == [
+        (
+            "list_persona_exemplars",
+            "local-persona-1",
+            {
+                "include_disabled": True,
+                "include_deleted": True,
+                "include_deleted_personas": False,
+                "limit": 5,
+                "offset": 2,
+            },
+        ),
+        ("get_persona_exemplar", "local-persona-1", "local-ex-1"),
+        ("create_persona_exemplar", "local-persona-1", create_data),
+        ("import_persona_exemplars", "local-persona-1", import_data),
+        ("update_persona_exemplar", "local-persona-1", "local-ex-1", update_data),
+        ("review_persona_exemplar", "local-persona-1", "local-ex-1", review_data),
+        ("delete_persona_exemplar", "local-persona-1", "local-ex-1"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -1163,6 +1258,22 @@ def test_scope_service_does_not_report_local_persona_profiles_when_backend_wraps
 
     assert "character.persona.profiles.local" not in operation_ids
     assert "character.persona.exemplars.local" in operation_ids
+
+
+def test_scope_service_does_not_report_local_persona_exemplars_when_backend_wraps_them():
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalPersonaExemplarBackend(),
+        server_service=FakeCharacterPersonaClient(),
+    )
+
+    operation_ids = {
+        item["operation_id"]
+        for item in scope_service.list_unsupported_capabilities(mode="local")
+    }
+
+    assert "character.persona.profiles.local" not in operation_ids
+    assert "character.persona.exemplars.local" not in operation_ids
+    assert "character.exemplars.local" in operation_ids
 
 
 @pytest.mark.asyncio

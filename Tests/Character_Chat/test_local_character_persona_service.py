@@ -4,6 +4,10 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     CharacterChatSessionUpdate,
     CharacterCreateRequest,
     CharacterUpdateRequest,
+    PersonaExemplarCreate,
+    PersonaExemplarImportRequest,
+    PersonaExemplarReviewRequest,
+    PersonaExemplarUpdate,
     PersonaProfileCreate,
     PersonaProfileUpdate,
 )
@@ -313,3 +317,55 @@ def test_local_character_persona_service_persists_persona_profile_crud(tmp_path)
     assert restored["deleted"] is False
     assert restored["version"] == 4
     assert reloaded.get_persona_profile("guide")["name"] == "Guide v2"
+
+
+def test_local_character_persona_service_persists_persona_exemplar_crud(tmp_path):
+    db = FakeConversationDB()
+    store_path = tmp_path / "personas.json"
+    service = LocalCharacterPersonaService(db, persona_store_path=store_path)
+    service.create_persona_profile(PersonaProfileCreate(id="guide", name="Guide"))
+
+    created = service.create_persona_exemplar(
+        "guide",
+        PersonaExemplarCreate(
+            id="ex-1",
+            content="Use concise answers.",
+            tone="direct",
+        ),
+    )
+    listed = service.list_persona_exemplars("guide")
+    updated = service.update_persona_exemplar(
+        "guide",
+        "ex-1",
+        PersonaExemplarUpdate(content="Use concise answers with citations.", enabled=False),
+    )
+    disabled_hidden = service.list_persona_exemplars("guide")
+    reviewed = service.review_persona_exemplar(
+        "guide",
+        "ex-1",
+        PersonaExemplarReviewRequest(action="approve", notes="Reviewed locally."),
+    )
+    imported = service.import_persona_exemplars(
+        "guide",
+        PersonaExemplarImportRequest(transcript="Prefer short sentences.\nAsk before destructive actions.", max_candidates=2),
+    )
+    deleted = service.delete_persona_exemplar("guide", "ex-1")
+    visible_after_delete = service.list_persona_exemplars("guide", include_disabled=True)
+    reloaded = LocalCharacterPersonaService(db, persona_store_path=store_path)
+
+    assert created["record_id"] == "local:persona_exemplar:guide:ex-1"
+    assert created["backend"] == "local"
+    assert created["version"] == 1
+    assert listed == [created]
+    assert updated["content"] == "Use concise answers with citations."
+    assert updated["enabled"] is False
+    assert updated["version"] == 2
+    assert disabled_hidden == []
+    assert reviewed["enabled"] is True
+    assert reviewed["notes"] == "Reviewed locally."
+    assert reviewed["version"] == 3
+    assert imported["created"] == 2
+    assert imported["items"][0]["source_type"] == "transcript_import"
+    assert deleted == {"status": "deleted", "persona_id": "guide", "exemplar_id": "ex-1"}
+    assert all(item["id"] != "ex-1" for item in visible_after_delete)
+    assert len(reloaded.list_persona_exemplars("guide", include_disabled=True)) == 2

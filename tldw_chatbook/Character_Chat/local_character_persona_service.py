@@ -14,6 +14,10 @@ from ..tldw_api.character_persona_schemas import (
     CharacterChatSessionUpdate,
     CharacterCreateRequest,
     CharacterUpdateRequest,
+    PersonaExemplarCreate,
+    PersonaExemplarImportRequest,
+    PersonaExemplarReviewRequest,
+    PersonaExemplarUpdate,
     PersonaProfileCreate,
     PersonaProfileUpdate,
 )
@@ -40,6 +44,7 @@ class LocalCharacterPersonaService:
         self.conversations = ChatConversationService(db)
         self.persona_store_path = Path(persona_store_path).expanduser() if persona_store_path is not None else None
         self._persona_profiles: list[dict[str, Any]] = []
+        self._persona_exemplars: list[dict[str, Any]] = []
         self._load_persona_profiles()
 
     def _require_db(self) -> Any:
@@ -85,11 +90,21 @@ class LocalCharacterPersonaService:
         except (OSError, json.JSONDecodeError):
             self._persona_profiles = []
             return
-        records = payload.get("items", payload.get("profiles", [])) if isinstance(payload, dict) else payload
-        if not isinstance(records, list):
+        if isinstance(payload, dict):
+            profile_records = payload.get("profiles", payload.get("items", []))
+            exemplar_records = payload.get("exemplars", [])
+        else:
+            profile_records = payload
+            exemplar_records = []
+        if not isinstance(profile_records, list):
             self._persona_profiles = []
             return
-        self._persona_profiles = [dict(item) for item in records if isinstance(item, dict)]
+        self._persona_profiles = [dict(item) for item in profile_records if isinstance(item, dict)]
+        self._persona_exemplars = [
+            dict(item)
+            for item in exemplar_records
+            if isinstance(item, dict)
+        ] if isinstance(exemplar_records, list) else []
 
     def _persist_persona_profiles(self) -> None:
         if self.persona_store_path is None:
@@ -97,7 +112,14 @@ class LocalCharacterPersonaService:
         self.persona_store_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.persona_store_path.with_suffix(self.persona_store_path.suffix + ".tmp")
         temp_path.write_text(
-            json.dumps({"items": self._persona_profiles}, indent=2, sort_keys=True),
+            json.dumps(
+                {
+                    "profiles": self._persona_profiles,
+                    "exemplars": self._persona_exemplars,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
             encoding="utf-8",
         )
         temp_path.replace(self.persona_store_path)
@@ -127,6 +149,38 @@ class LocalCharacterPersonaService:
             return
         if int(record.get("version", 1) or 1) != int(expected_version):
             raise ValueError(f"local_persona_profile_version_conflict:{persona_id}")
+
+    @staticmethod
+    def _persona_exemplar_view(record: Mapping[str, Any]) -> dict[str, Any]:
+        normalized = dict(record)
+        normalized.setdefault("backend", "local")
+        normalized.setdefault(
+            "record_id",
+            f"local:persona_exemplar:{normalized.get('persona_id')}:{normalized.get('id')}",
+        )
+        normalized["deleted"] = bool(normalized.get("deleted", False))
+        normalized["enabled"] = bool(normalized.get("enabled", True))
+        normalized["version"] = int(normalized.get("version", 1) or 1)
+        return normalized
+
+    def _find_persona_exemplar(
+        self,
+        persona_id: str,
+        exemplar_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> dict[str, Any]:
+        normalized_persona_id = str(persona_id)
+        normalized_exemplar_id = str(exemplar_id)
+        for record in self._persona_exemplars:
+            if str(record.get("persona_id")) != normalized_persona_id:
+                continue
+            if str(record.get("id")) != normalized_exemplar_id:
+                continue
+            if record.get("deleted") and not include_deleted:
+                break
+            return record
+        raise ValueError(f"local_persona_exemplar_not_found:{persona_id}:{exemplar_id}")
 
     def list_characters(self, limit: int = 100, offset: int = 0) -> Any:
         return self._require_db().list_character_cards(limit=limit, offset=offset)
@@ -258,6 +312,109 @@ class LocalCharacterPersonaService:
         record["version"] = int(record.get("version", 1) or 1) + 1
         self._persist_persona_profiles()
         return self._persona_profile_view(record)
+
+    def list_persona_exemplars(
+        self,
+        persona_id: str,
+        *,
+        include_disabled: bool = False,
+        include_deleted: bool = False,
+        include_deleted_personas: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        self._find_persona_profile(persona_id, include_deleted=include_deleted_personas)
+        records = [
+            self._persona_exemplar_view(record)
+            for record in self._persona_exemplars
+            if str(record.get("persona_id")) == str(persona_id)
+            and (include_deleted or not record.get("deleted", False))
+            and (include_disabled or bool(record.get("enabled", True)))
+        ]
+        records = sorted(records, key=lambda item: (item.get("priority", 0), item.get("created_at", "")), reverse=True)
+        return records[offset : offset + limit]
+
+    def get_persona_exemplar(self, persona_id: str, exemplar_id: str) -> dict[str, Any]:
+        self._find_persona_profile(persona_id)
+        return self._persona_exemplar_view(self._find_persona_exemplar(persona_id, exemplar_id))
+
+    def create_persona_exemplar(self, persona_id: str, request_data: Any) -> dict[str, Any]:
+        self._find_persona_profile(persona_id)
+        payload = _model_payload(PersonaExemplarCreate.model_validate(_model_payload(request_data)))
+        exemplar_id = str(payload.get("id") or f"local-exemplar-{uuid.uuid4().hex}")
+        if any(
+            str(record.get("persona_id")) == str(persona_id)
+            and str(record.get("id")) == exemplar_id
+            and not record.get("deleted")
+            for record in self._persona_exemplars
+        ):
+            raise ValueError(f"local_persona_exemplar_exists:{persona_id}:{exemplar_id}")
+        now = self._now()
+        payload.update(
+            {
+                "id": exemplar_id,
+                "persona_id": str(persona_id),
+                "user_id": "local",
+                "created_at": now,
+                "last_modified": now,
+                "version": 1,
+                "deleted": False,
+            }
+        )
+        self._persona_exemplars.append(payload)
+        self._persist_persona_profiles()
+        return self._persona_exemplar_view(payload)
+
+    def import_persona_exemplars(self, persona_id: str, request_data: Any) -> dict[str, Any]:
+        self._find_persona_profile(persona_id)
+        request = PersonaExemplarImportRequest.model_validate(_model_payload(request_data))
+        lines = [line.strip() for line in request.transcript.splitlines() if line.strip()]
+        candidates = lines[: request.max_candidates] or [request.transcript.strip()]
+        items = [
+            self.create_persona_exemplar(
+                persona_id,
+                PersonaExemplarCreate(
+                    content=content,
+                    source_type="transcript_import",
+                    source_ref=request.source_ref,
+                    notes=request.notes,
+                ),
+            )
+            for content in candidates
+        ]
+        return {"persona_id": persona_id, "created": len(items), "items": items}
+
+    def update_persona_exemplar(self, persona_id: str, exemplar_id: str, request_data: Any) -> dict[str, Any]:
+        self._find_persona_profile(persona_id)
+        record = self._find_persona_exemplar(persona_id, exemplar_id)
+        request = PersonaExemplarUpdate.model_validate(_model_payload(request_data))
+        payload = request.model_dump(mode="json", exclude_none=True)
+        record.update(payload)
+        record["last_modified"] = self._now()
+        record["version"] = int(record.get("version", 1) or 1) + 1
+        self._persist_persona_profiles()
+        return self._persona_exemplar_view(record)
+
+    def review_persona_exemplar(self, persona_id: str, exemplar_id: str, request_data: Any) -> dict[str, Any]:
+        self._find_persona_profile(persona_id)
+        record = self._find_persona_exemplar(persona_id, exemplar_id, include_deleted=True)
+        request = PersonaExemplarReviewRequest.model_validate(_model_payload(request_data))
+        record["enabled"] = request.action == "approve"
+        if request.notes is not None:
+            record["notes"] = request.notes
+        record["last_modified"] = self._now()
+        record["version"] = int(record.get("version", 1) or 1) + 1
+        self._persist_persona_profiles()
+        return self._persona_exemplar_view(record)
+
+    def delete_persona_exemplar(self, persona_id: str, exemplar_id: str) -> dict[str, Any]:
+        self._find_persona_profile(persona_id)
+        record = self._find_persona_exemplar(persona_id, exemplar_id)
+        record["deleted"] = True
+        record["last_modified"] = self._now()
+        record["version"] = int(record.get("version", 1) or 1) + 1
+        self._persist_persona_profiles()
+        return {"status": "deleted", "persona_id": persona_id, "exemplar_id": exemplar_id}
 
     def create_character_chat_session(self, request_data: Any, **_: Any) -> dict[str, Any]:
         payload = _model_payload(CharacterChatSessionCreate.model_validate(_model_payload(request_data)))
