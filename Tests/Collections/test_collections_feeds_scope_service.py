@@ -302,6 +302,10 @@ def test_collections_feeds_scope_service_reports_known_unsupported_capabilities(
             "supported": False,
             "reason_code": "server_authority_required",
             "user_message": "WebSub subscriptions require the server because local Chatbook has no public callback authority.",
-            "affected_action_ids": [],
+            "affected_action_ids": [
+                "collections.feeds.websub.launch.server",
+                "collections.feeds.websub.detail.server",
+                "collections.feeds.websub.delete.server",
+            ],
         }
     ]

@@ -135,7 +135,8 @@ class WatchlistScopeService:
 
     @staticmethod
     def _reject_deferred_group_editing(payload: Mapping[str, Any]) -> None:
-        if "group_ids" in payload:
+        group_keys = {"group", "group_id", "group_ids", "groups"}
+        if any(key in payload for key in group_keys):
             raise ValueError("Watchlist group editing is deferred in this slice.")
 
     def list_unsupported_capabilities(

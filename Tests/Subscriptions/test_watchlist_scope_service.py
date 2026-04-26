@@ -237,7 +237,27 @@ async def test_scope_service_blocks_deferred_group_editing_before_dispatch():
             payload={"group_ids": [3]},
         )
 
+    with pytest.raises(ValueError, match="Watchlist group editing is deferred"):
+        await scope.create_watch_item(
+            runtime_backend="local",
+            payload={
+                "name": "Docs",
+                "url": "https://example.com/docs",
+                "source_type": "site",
+                "group_id": 1,
+            },
+        )
+
+    with pytest.raises(ValueError, match="Watchlist group editing is deferred"):
+        await scope.update_watch_item(
+            "server:watchlist_source:18",
+            runtime_backend="server",
+            payload={"groups": [{"id": 3}]},
+        )
+
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "watchlists.create.local",
+        "watchlists.update.server",
         "watchlists.create.local",
         "watchlists.update.server",
     ]
