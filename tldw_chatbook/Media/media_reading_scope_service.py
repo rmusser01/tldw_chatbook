@@ -36,6 +36,14 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "user_message": "The server transcription-model discovery endpoint is server-owned; local model discovery remains in local transcription settings.",
         "affected_action_ids": [],
     },
+    {
+        "operation_id": "media.versions.advanced.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Advanced media-version rollback and metadata endpoints are server-owned; local mode uses document-version create/delete helpers.",
+        "affected_action_ids": ["media.reading.update.local"],
+    },
 ]
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
@@ -2121,3 +2129,101 @@ class MediaReadingScopeService:
         self._enforce_policy(self._reading_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.delete_analysis_version(version_uuid))
+
+    @staticmethod
+    def _raise_local_advanced_version_unsupported() -> None:
+        raise NotImplementedError(
+            "Advanced media-version rollback and metadata operations are server-owned; "
+            "local mode uses document-version create/delete helpers."
+        )
+
+    async def rollback_document_version(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        version_number: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "update"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_advanced_version_unsupported()
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.rollback_document_version(media_id, version_number=version_number)
+        )
+
+    async def patch_media_safe_metadata(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        safe_metadata: Mapping[str, Any],
+        merge: bool = True,
+        new_version: bool = False,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "update"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_advanced_version_unsupported()
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.patch_media_safe_metadata(
+                media_id,
+                safe_metadata=safe_metadata,
+                merge=merge,
+                new_version=new_version,
+            )
+        )
+
+    async def put_document_version_metadata(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        version_number: Any,
+        safe_metadata: Mapping[str, Any],
+        merge: bool = True,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "update"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_advanced_version_unsupported()
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.put_document_version_metadata(
+                media_id,
+                version_number,
+                safe_metadata=safe_metadata,
+                merge=merge,
+            )
+        )
+
+    async def upsert_document_version_advanced(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        content: str | None = None,
+        prompt: str | None = None,
+        analysis_content: str | None = None,
+        safe_metadata: Mapping[str, Any] | None = None,
+        merge: bool = True,
+        new_version: bool = True,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "update"))
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            self._raise_local_advanced_version_unsupported()
+        service = self._service_for_mode(normalized_mode)
+        return await self._maybe_await(
+            service.upsert_document_version_advanced(
+                media_id,
+                content=content,
+                prompt=prompt,
+                analysis_content=analysis_content,
+                safe_metadata=safe_metadata,
+                merge=merge,
+                new_version=new_version,
+            )
+        )

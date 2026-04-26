@@ -871,6 +871,43 @@ class FakeServerMediaService:
     async def delete_analysis_version(self, version_uuid):
         raise ValueError("Server document version deletion requires media_id and version_number.")
 
+    async def rollback_document_version(self, media_id, *, version_number):
+        self.calls.append(("rollback_document_version", media_id, version_number))
+        return {"media_id": media_id, "version_number": version_number, "rolled_back": True}
+
+    async def patch_media_safe_metadata(self, media_id, *, safe_metadata, merge=True, new_version=False):
+        self.calls.append(("patch_media_safe_metadata", media_id, safe_metadata, merge, new_version))
+        return {"media_id": media_id, "safe_metadata": safe_metadata, "patched": True}
+
+    async def put_document_version_metadata(self, media_id, version_number, *, safe_metadata, merge=True):
+        self.calls.append(("put_document_version_metadata", media_id, version_number, safe_metadata, merge))
+        return {"media_id": media_id, "version_number": version_number, "safe_metadata": safe_metadata}
+
+    async def upsert_document_version_advanced(
+        self,
+        media_id,
+        *,
+        content=None,
+        prompt=None,
+        analysis_content=None,
+        safe_metadata=None,
+        merge=True,
+        new_version=True,
+    ):
+        self.calls.append(
+            (
+                "upsert_document_version_advanced",
+                media_id,
+                content,
+                prompt,
+                analysis_content,
+                safe_metadata,
+                merge,
+                new_version,
+            )
+        )
+        return {"media_id": media_id, "version_number": 3, "advanced": True}
+
     async def create_highlight(self, item_id, **kwargs):
         self.calls.append(("create_highlight", item_id, kwargs))
         return {"id": 5, "item_id": item_id, "quote": kwargs["quote"]}
@@ -1432,8 +1469,11 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
     assert [item["operation_id"] for item in local_report] == [
         "media.web_content_ingest.local",
         "media.transcription_models.local",
+        "media.versions.advanced.local",
     ]
-    assert all(item["affected_action_ids"] == [] for item in local_report)
+    assert local_report[0]["affected_action_ids"] == []
+    assert local_report[1]["affected_action_ids"] == []
+    assert local_report[2]["affected_action_ids"] == ["media.reading.update.local"]
     assert server_report == [
         {
             "operation_id": "collections.reading_list.per_media_type.server",
@@ -2761,6 +2801,102 @@ async def test_scope_service_routes_server_document_versions():
 
     assert versions == [{"uuid": "server-version-1", "media_id": 99, "analysis_content": "analysis"}]
     assert saved["uuid"] == "server-version-2"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_advanced_document_version_helpers_with_policy():
+    policy = FakePolicyEnforcer()
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    rollback = await scope_service.rollback_document_version(mode="server", media_id=99, version_number=2)
+    patched = await scope_service.patch_media_safe_metadata(
+        mode="server",
+        media_id=99,
+        safe_metadata={"source": "import"},
+        merge=False,
+        new_version=True,
+    )
+    version_metadata = await scope_service.put_document_version_metadata(
+        mode="server",
+        media_id=99,
+        version_number=2,
+        safe_metadata={"quality": "reviewed"},
+    )
+    advanced = await scope_service.upsert_document_version_advanced(
+        mode="server",
+        media_id=99,
+        content="updated body",
+        prompt="summarize",
+        analysis_content="summary",
+        safe_metadata={"kind": "analysis"},
+        merge=False,
+        new_version=True,
+    )
+
+    assert rollback["rolled_back"] is True
+    assert patched["safe_metadata"] == {"source": "import"}
+    assert version_metadata["safe_metadata"] == {"quality": "reviewed"}
+    assert advanced["advanced"] is True
+    assert policy.calls[-4:] == [
+        "media.reading.update.server",
+        "media.reading.update.server",
+        "media.reading.update.server",
+        "media.reading.update.server",
+    ]
+    assert server.calls[-4:] == [
+        ("rollback_document_version", 99, 2),
+        ("patch_media_safe_metadata", 99, {"source": "import"}, False, True),
+        ("put_document_version_metadata", 99, 2, {"quality": "reviewed"}, True),
+        (
+            "upsert_document_version_advanced",
+            99,
+            "updated body",
+            "summarize",
+            "summary",
+            {"kind": "analysis"},
+            False,
+            True,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_reports_local_advanced_document_version_helpers_as_unsupported():
+    policy = FakePolicyEnforcer()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(NotImplementedError, match="server-owned"):
+        await scope_service.rollback_document_version(mode="local", media_id=99, version_number=2)
+
+    with pytest.raises(NotImplementedError, match="server-owned"):
+        await scope_service.patch_media_safe_metadata(mode="local", media_id=99, safe_metadata={"source": "import"})
+
+    with pytest.raises(NotImplementedError, match="server-owned"):
+        await scope_service.put_document_version_metadata(
+            mode="local",
+            media_id=99,
+            version_number=2,
+            safe_metadata={"quality": "reviewed"},
+        )
+
+    with pytest.raises(NotImplementedError, match="server-owned"):
+        await scope_service.upsert_document_version_advanced(mode="local", media_id=99, safe_metadata={"kind": "analysis"})
+
+    assert policy.calls[-4:] == [
+        "media.reading.update.local",
+        "media.reading.update.local",
+        "media.reading.update.local",
+        "media.reading.update.local",
+    ]
 
 
 @pytest.mark.asyncio

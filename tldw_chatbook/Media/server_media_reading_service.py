@@ -23,7 +23,10 @@ from ..tldw_api import (
     MediaItemUpdateRequest,
     MediaKeywordsUpdateRequest,
     MediaSearchRequest,
+    MediaAdvancedVersionUpsertRequest,
+    MediaMetadataPatchRequest,
     MediaVersionCreateRequest,
+    MediaVersionRollbackRequest,
     BatchMediaProcessResponse,
     ProcessAudioRequest,
     ProcessCodeRequest,
@@ -1419,6 +1422,69 @@ class ServerMediaReadingService:
     async def delete_document_version(self, media_id: Any, version_number: Any) -> Any:
         self._enforce(self._reading_action_id("delete"))
         return await self._require_client().delete_media_version(int(media_id), int(version_number))
+
+    async def rollback_document_version(self, media_id: Any, *, version_number: Any) -> Any:
+        self._enforce(self._reading_action_id("update"))
+        request_data = MediaVersionRollbackRequest(version_number=int(version_number))
+        return await self._require_client().rollback_media_version(int(media_id), request_data)
+
+    async def patch_media_safe_metadata(
+        self,
+        media_id: Any,
+        *,
+        safe_metadata: Mapping[str, Any],
+        merge: bool = True,
+        new_version: bool = False,
+    ) -> Any:
+        self._enforce(self._reading_action_id("update"))
+        request_data = MediaMetadataPatchRequest(
+            safe_metadata=dict(safe_metadata),
+            merge=bool(merge),
+            new_version=bool(new_version),
+        )
+        return await self._require_client().patch_media_metadata(int(media_id), request_data)
+
+    async def put_document_version_metadata(
+        self,
+        media_id: Any,
+        version_number: Any,
+        *,
+        safe_metadata: Mapping[str, Any],
+        merge: bool = True,
+    ) -> Any:
+        self._enforce(self._reading_action_id("update"))
+        request_data = MediaMetadataPatchRequest(
+            safe_metadata=dict(safe_metadata),
+            merge=bool(merge),
+            new_version=False,
+        )
+        return await self._require_client().put_media_version_metadata(
+            int(media_id),
+            int(version_number),
+            request_data,
+        )
+
+    async def upsert_document_version_advanced(
+        self,
+        media_id: Any,
+        *,
+        content: str | None = None,
+        prompt: str | None = None,
+        analysis_content: str | None = None,
+        safe_metadata: Mapping[str, Any] | None = None,
+        merge: bool = True,
+        new_version: bool = True,
+    ) -> Any:
+        self._enforce(self._reading_action_id("update"))
+        request_data = MediaAdvancedVersionUpsertRequest(
+            content=content,
+            prompt=prompt,
+            analysis_content=analysis_content,
+            safe_metadata=dict(safe_metadata) if safe_metadata is not None else None,
+            merge=bool(merge),
+            new_version=bool(new_version),
+        )
+        return await self._require_client().upsert_media_version_advanced(int(media_id), request_data)
 
     async def delete_analysis_version(self, version_uuid: str) -> Any:
         self._enforce(self._reading_action_id("delete"))

@@ -198,6 +198,22 @@ class FakeClient:
         self.calls.append(("delete_media_version", media_id, version_number))
         return {"deleted": True, "media_id": media_id, "version_number": version_number}
 
+    async def rollback_media_version(self, media_id, request_data):
+        self.calls.append(("rollback_media_version", media_id, request_data.model_dump(mode="json")))
+        return {"rolled_back": True, "media_id": media_id, "version_number": request_data.version_number}
+
+    async def patch_media_metadata(self, media_id, request_data):
+        self.calls.append(("patch_media_metadata", media_id, request_data.model_dump(mode="json")))
+        return {"media_id": media_id, "safe_metadata": request_data.safe_metadata, "patched": True}
+
+    async def put_media_version_metadata(self, media_id, version_number, request_data):
+        self.calls.append(("put_media_version_metadata", media_id, version_number, request_data.model_dump(mode="json")))
+        return {"media_id": media_id, "version_number": version_number, "safe_metadata": request_data.safe_metadata}
+
+    async def upsert_media_version_advanced(self, media_id, request_data):
+        self.calls.append(("upsert_media_version_advanced", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"media_id": media_id, "version_number": 3, "advanced": True}
+
     async def save_reading_item(self, request_data):
         self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
         return {"id": 50, "title": "Saved URL", "url": "https://example.com", "tags": ["ai"]}
@@ -889,6 +905,72 @@ async def test_server_service_routes_document_version_helpers_and_keeps_uuid_del
 
     with pytest.raises(ValueError, match="Server document version deletion requires media_id and version_number."):
         await service.delete_analysis_version("version-1")
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_advanced_document_version_helpers_with_policy_actions():
+    client = FakeClient()
+    policy = Mock()
+    service = ServerMediaReadingService(client=client, policy_enforcer=policy)
+
+    rollback = await service.rollback_document_version(99, version_number=2)
+    patched = await service.patch_media_safe_metadata(
+        99,
+        safe_metadata={"source": "import"},
+        merge=False,
+        new_version=True,
+    )
+    version_metadata = await service.put_document_version_metadata(
+        99,
+        2,
+        safe_metadata={"quality": "reviewed"},
+    )
+    advanced = await service.upsert_document_version_advanced(
+        99,
+        content="updated body",
+        prompt="summarize",
+        analysis_content="summary",
+        safe_metadata={"kind": "analysis"},
+        merge=False,
+        new_version=True,
+    )
+
+    assert rollback["rolled_back"] is True
+    assert patched["safe_metadata"] == {"source": "import"}
+    assert version_metadata["safe_metadata"] == {"quality": "reviewed"}
+    assert advanced["advanced"] is True
+    assert client.calls[-4:] == [
+        ("rollback_media_version", 99, {"version_number": 2}),
+        (
+            "patch_media_metadata",
+            99,
+            {"safe_metadata": {"source": "import"}, "merge": False, "new_version": True},
+        ),
+        (
+            "put_media_version_metadata",
+            99,
+            2,
+            {"safe_metadata": {"quality": "reviewed"}, "merge": True, "new_version": False},
+        ),
+        (
+            "upsert_media_version_advanced",
+            99,
+            {
+                "content": "updated body",
+                "prompt": "summarize",
+                "analysis_content": "summary",
+                "safe_metadata": {"kind": "analysis"},
+                "merge": False,
+                "new_version": True,
+            },
+        ),
+    ]
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list[-4:]] == [
+        "media.reading.update.server",
+        "media.reading.update.server",
+        "media.reading.update.server",
+        "media.reading.update.server",
+    ]
 
 
 @pytest.mark.asyncio
