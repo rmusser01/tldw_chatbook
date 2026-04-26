@@ -45,14 +45,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "affected_action_ids": [],
     },
     {
-        "operation_id": "media.processing.web_scraping.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "source_specific_equivalent",
-        "user_message": "The server process-web-scraping endpoint is server-owned; local mode should use local URL ingestion or scraping tooling instead.",
-        "affected_action_ids": [],
-    },
-    {
         "operation_id": "media.processing.mediawiki.local",
         "source": "local",
         "supported": False,
@@ -1232,7 +1224,7 @@ class MediaReadingScopeService:
         **kwargs: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_processing_service(normalized_mode, "process-web-scraping")
+        service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._processing_action_id("web_scraping", "process", normalized_mode))
         return self._to_plain(
             await self._maybe_await(

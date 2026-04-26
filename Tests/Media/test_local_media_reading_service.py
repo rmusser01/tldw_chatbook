@@ -723,6 +723,40 @@ def test_local_service_processes_email_files_without_persisting(memory_db_factor
     assert service.list_media_items()["pagination"]["total_items"] == 0
 
 
+def test_local_service_processes_web_scraping_urls_without_persisting(memory_db_factory):
+    db = memory_db_factory()
+    calls = []
+
+    def fake_scraper(url, *, custom_cookies=None):
+        calls.append((url, custom_cookies))
+        return {
+            "url": url,
+            "title": "Scraped Post",
+            "content": "Scraped body",
+            "author": "Web Author",
+            "keywords": ["scraped"],
+        }
+
+    service = LocalMediaReadingService(db, url_article_scraper=fake_scraper)
+
+    web = service.process_web_scraping(
+        scrape_method="individual",
+        url_input="https://example.com/post",
+        mode="ephemeral",
+        keywords="ai,reading",
+    )
+
+    assert calls == [("https://example.com/post", None)]
+    assert web["status"] == "success"
+    assert web["backend"] == "local"
+    assert web["persisted"] is False
+    assert web["count"] == 1
+    assert web["results"][0]["url"] == "https://example.com/post"
+    assert web["results"][0]["title"] == "Scraped Post"
+    assert web["results"][0]["content"] == "Scraped body"
+    assert service.list_media_items()["pagination"]["total_items"] == 0
+
+
 def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(

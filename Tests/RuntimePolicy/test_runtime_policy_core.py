@@ -829,6 +829,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.processing.plaintext.process.local
         media.processing.plaintext.process.server
         media.processing.video.process.server
+        media.processing.web_scraping.process.local
         media.processing.web_scraping.process.server
         media.transcription_models.list.server
         media.web_scraping.cancel.server

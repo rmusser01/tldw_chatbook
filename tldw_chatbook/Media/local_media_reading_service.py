@@ -670,6 +670,69 @@ class LocalMediaReadingService:
             "results": results,
         }
 
+    def process_web_scraping(
+        self,
+        *,
+        scrape_method: str,
+        url_input: str,
+        mode: str = "ephemeral",
+        keywords: str | None = None,
+        custom_titles: str | None = None,
+        custom_cookies: list[dict[str, Any]] | None = None,
+        **options: Any,
+    ) -> dict[str, Any]:
+        urls = self._split_url_input(url_input)
+        results: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        if not urls:
+            errors.append({"source": "input", "message": "At least one URL is required for local web scraping."})
+
+        scraper = self.url_article_scraper or self._default_url_article_scraper
+        title_candidates = self._split_title_input(custom_titles)
+        for index, url in enumerate(urls):
+            try:
+                scraped = scraper(url, custom_cookies=custom_cookies)
+                if not isinstance(scraped, Mapping):
+                    raise ValueError("Local URL article scraper must return a mapping.")
+                if scraped.get("extraction_successful") is False:
+                    raise ValueError(str(scraped.get("error") or "URL article extraction failed."))
+                content = self._first_present_text(scraped, "content", "text", "markdown", "body") or ""
+                title = (
+                    title_candidates[index]
+                    if index < len(title_candidates)
+                    else str(scraped.get("title") or url)
+                )
+                results.append(
+                    {
+                        "status": "Success",
+                        "backend": "local",
+                        "persisted": False,
+                        "input_ref": url,
+                        "source": "url",
+                        "url": str(scraped.get("url") or url),
+                        "title": title,
+                        "content": content,
+                        "author": scraped.get("author"),
+                        "keywords": self._merge_keyword_values(keywords, scraped.get("keywords")),
+                        "media_type": "web_scraping",
+                        "scrape_method": scrape_method,
+                        "requested_mode": mode,
+                    }
+                )
+            except Exception as exc:
+                errors.append({"source": "url", "url": url, "message": str(exc)})
+
+        return {
+            "status": "success" if results and not errors else "partial_success" if results else "failed",
+            "message": "Local web content processed" if results else "Local web content processing failed",
+            "backend": "local",
+            "persisted": False,
+            "count": len(results),
+            "errors_count": len(errors),
+            "errors": errors,
+            "results": results,
+        }
+
     def process_code(
         self,
         *,
@@ -804,6 +867,21 @@ class LocalMediaReadingService:
             return re.sub(r"<[^>]+>", " ", raw_html)
         soup = BeautifulSoup(raw_html, "html.parser")
         return soup.get_text("\n")
+
+    @staticmethod
+    def _split_url_input(url_input: str | None) -> list[str]:
+        raw = str(url_input or "")
+        candidates: list[str] = []
+        for line in raw.replace(",", "\n").splitlines():
+            value = line.strip()
+            if value:
+                candidates.append(value)
+        return candidates
+
+    @staticmethod
+    def _split_title_input(custom_titles: str | None) -> list[str]:
+        raw = str(custom_titles or "")
+        return [line.strip() for line in raw.splitlines() if line.strip()]
 
     @classmethod
     def _parse_local_email_path(cls, path: Path, *, accept_mbox: bool) -> list[dict[str, Any]]:

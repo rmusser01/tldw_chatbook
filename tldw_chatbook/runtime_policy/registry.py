@@ -337,7 +337,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("media.processing.plaintext", actions=(PROCESS,)),
             _resource("media.processing.code", actions=(PROCESS,)),
             _resource("media.processing.emails", actions=(PROCESS,)),
-            _resource("media.processing.web_scraping", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
+            _resource("media.processing.web_scraping", actions=(PROCESS,)),
             _resource("media.web_scraping", actions=(STATUS, DETAIL, CANCEL, OBSERVE, INSPECT), sources=(SERVER_SOURCE,)),
             _resource("media.web_scraping.cookies", actions=(DETAIL, UPDATE), sources=(SERVER_SOURCE,)),
             _resource("media.web_scraping.service", actions=(INITIALIZE, SHUTDOWN), sources=(SERVER_SOURCE,)),

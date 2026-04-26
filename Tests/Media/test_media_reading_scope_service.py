@@ -222,6 +222,10 @@ class FakeLocalMediaService:
         self.calls.append(("process_emails", kwargs))
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "email"}]}
 
+    def process_web_scraping(self, **kwargs):
+        self.calls.append(("process_web_scraping", kwargs))
+        return {"status": "success", "count": 1, "results": [{"media_type": "web", "title": "Local Post"}]}
+
     def process_code(self, **kwargs):
         self.calls.append(("process_code", kwargs))
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "code"}]}
@@ -1413,7 +1417,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
         "media.web_content_ingest.local",
         "media.processing.video.local",
         "media.processing.audio.local",
-        "media.processing.web_scraping.local",
         "media.processing.mediawiki.local",
         "media.transcription_models.local",
     ]
@@ -3314,6 +3317,14 @@ async def test_scope_service_routes_server_processing_and_transcription_models_a
     local_emails = await scope_service.process_emails(mode="local", file_paths=["/tmp/message.eml"], title="Inbox")
     assert local_emails["results"][0]["media_type"] == "email"
     assert policy.calls[-1] == "media.processing.emails.process.local"
+    local_web = await scope_service.process_web_scraping(
+        mode="local",
+        scrape_method="individual",
+        url_input="https://example.com/local-post",
+        mode_value="ephemeral",
+    )
+    assert local_web["results"][0]["title"] == "Local Post"
+    assert policy.calls[-1] == "media.processing.web_scraping.process.local"
     with pytest.raises(ValueError, match="server-only"):
         await scope_service.get_transcription_models(mode="local")
 
