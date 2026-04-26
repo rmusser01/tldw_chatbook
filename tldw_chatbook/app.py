@@ -212,7 +212,7 @@ from tldw_chatbook.Chat_Grammars_Interop import ChatGrammarsScopeService, Server
 from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
-from tldw_chatbook.Feedback_Interop import FeedbackScopeService, ServerFeedbackService
+from tldw_chatbook.Feedback_Interop import FeedbackScopeService, LocalFeedbackService, ServerFeedbackService
 from tldw_chatbook.Kanban_Interop import KanbanScopeService, ServerKanbanService
 from tldw_chatbook.LLM_Provider_Catalog import (
     LLMProviderCatalogScopeService,
@@ -1831,6 +1831,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_chat_grammars_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self.local_feedback_service = LocalFeedbackService(
+            store_path=get_user_data_dir() / "tldw_chatbook_feedback.json",
+            policy_enforcer=self.service_policy_enforcer,
+        )
         try:
             self.server_feedback_service = ServerFeedbackService.from_config(
                 self.app_config,
@@ -1842,6 +1846,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 policy_enforcer=self.service_policy_enforcer,
             )
         self.feedback_scope_service = FeedbackScopeService(
+            local_service=self.local_feedback_service,
             server_service=self.server_feedback_service,
             policy_enforcer=self.service_policy_enforcer,
         )

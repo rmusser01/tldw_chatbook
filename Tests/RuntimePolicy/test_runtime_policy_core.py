@@ -141,6 +141,7 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "explicit_feedback": {
         "expected_domain_ids": {"feedback"},
         "expected_action_kinds_by_source": {
+            "local": FULL_CRUD,
             "server": FULL_CRUD,
         },
     },
@@ -497,10 +498,15 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         chat.grammars.update.server
     """),
     "explicit_feedback": _action_ids("""
+        feedback.create.local
         feedback.create.server
+        feedback.delete.local
         feedback.delete.server
+        feedback.detail.local
         feedback.detail.server
+        feedback.list.local
         feedback.list.server
+        feedback.update.local
         feedback.update.server
     """),
     "claims_notifications_alerts": _action_ids("""

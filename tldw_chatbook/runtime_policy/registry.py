@@ -529,7 +529,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "explicit_feedback",
         "Explicit Feedback",
         "feedback",
-        sources=REMOTE_ONLY_SOURCES,
+        sources=SEPARATED_SOURCES,
         resources=(
             _resource("feedback", actions=CRUD_ACTIONS),
         ),

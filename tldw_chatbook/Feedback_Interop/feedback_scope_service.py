@@ -1,4 +1,4 @@
-"""Source-aware routing for remote-owned explicit feedback."""
+"""Source-aware routing for explicit feedback."""
 
 from __future__ import annotations
 
@@ -12,16 +12,7 @@ class FeedbackBackend(str, Enum):
     SERVER = "server"
 
 
-_LOCAL_UNSUPPORTED_CAPABILITIES = [
-    {
-        "operation_id": "feedback.remote_only.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "remote_only_surface",
-        "user_message": "Explicit feedback is unavailable in local/offline mode.",
-        "affected_action_ids": [],
-    }
-]
+_LOCAL_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
     {
@@ -36,9 +27,16 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
 
 
 class FeedbackScopeService:
-    """Route explicit feedback actions through an active-server source boundary."""
+    """Route explicit feedback actions through local or active-server boundaries."""
 
-    def __init__(self, *, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any = None,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+    ):
+        self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
@@ -52,11 +50,11 @@ class FeedbackScopeService:
         except ValueError as exc:
             raise ValueError(f"Invalid feedback backend: {mode}") from exc
 
-    def _require_server_service(self, mode: FeedbackBackend) -> Any:
+    def _service_for_mode(self, mode: FeedbackBackend) -> Any:
         if mode == FeedbackBackend.LOCAL:
-            raise ValueError(
-                "Explicit feedback is server-only; local feedback persistence has not been approved yet."
-            )
+            if self.local_service is None:
+                raise ValueError("Local feedback backend is unavailable.")
+            return self.local_service
         if self.server_service is None:
             raise ValueError("Server feedback backend is unavailable.")
         return self.server_service
@@ -73,8 +71,8 @@ class FeedbackScopeService:
         self.policy_enforcer.require_allowed(action_id=action_id)
 
     @staticmethod
-    def _action_id(action: str) -> str:
-        return f"feedback.{action}.server"
+    def _action_id(action: str, mode: FeedbackBackend) -> str:
+        return f"feedback.{action}.{mode.value}"
 
     @staticmethod
     def _with_record_id(mode: FeedbackBackend, item: dict[str, Any]) -> dict[str, Any]:
@@ -120,8 +118,8 @@ class FeedbackScopeService:
         kwargs: dict[str, Any] | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._require_server_service(normalized_mode)
-        self._enforce_policy(self._action_id(action))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._action_id(action, normalized_mode))
         result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
         return self._normalize_response(normalized_mode, result)
 
@@ -135,6 +133,20 @@ class FeedbackScopeService:
         mode: FeedbackBackend | str | None = None,
     ) -> dict[str, Any]:
         return await self._call(mode=mode, action="list", method_name="list_feedback", args=(conversation_id,))
+
+    async def get_feedback(
+        self,
+        feedback_id: str,
+        *,
+        mode: FeedbackBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("detail", normalized_mode))
+        if normalized_mode == FeedbackBackend.SERVER:
+            raise ValueError("The current server feedback API does not expose single-feedback detail.")
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(service.get_feedback(feedback_id))
+        return self._normalize_response(normalized_mode, result)
 
     async def update_feedback(
         self,
